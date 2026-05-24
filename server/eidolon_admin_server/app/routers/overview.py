@@ -47,28 +47,65 @@ def _compose_probe_url(base_url: str, health: str | None) -> str | None:
 async def _probe_http(
     client: httpx.AsyncClient, url: str | None
 ) -> dict[str, Any]:
+    """Single probe with one transparent retry on transport-level failures.
+
+    Why retry: the UI polls overview every 5s, and uvicorn's default idle
+    keep-alive is also 5s. When the next probe picks up a TCP connection
+    from httpx's pool that the server has *just* closed, the call fails
+    with RemoteProtocolError / ReadError / WriteError. A second attempt
+    opens a fresh TCP and always succeeds (the ``Connection: close``
+    header below ensures the pool never holds a connection past one
+    request). Without this, "online" services flicker offline once every
+    minute or two and bounce back — pure UI noise with no real outage.
+    """
     if not url:
         return {"configured": False}
     start = time.perf_counter()
-    try:
-        resp = await client.get(url, timeout=2.0)
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-        return {
-            "configured": True,
-            "url": url,
-            "ok": resp.status_code < 500,
-            "status_code": resp.status_code,
-            "latency_ms": elapsed_ms,
-        }
-    except Exception as exc:  # noqa: BLE001 — surface any transport failure
-        elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
-        return {
-            "configured": True,
-            "url": url,
-            "ok": False,
-            "error": str(exc),
-            "latency_ms": elapsed_ms,
-        }
+    last_exc: Exception | None = None
+    for attempt in (1, 2):
+        try:
+            resp = await client.get(
+                url,
+                timeout=2.0,
+                # Belt-and-suspenders: ask the server to close the TCP
+                # after replying so the pool never holds a connection
+                # that's about to expire on the server side.
+                headers={"Connection": "close"},
+            )
+            elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+            payload: dict[str, Any] = {
+                "configured": True,
+                "url": url,
+                "ok": resp.status_code < 500,
+                "status_code": resp.status_code,
+                "latency_ms": elapsed_ms,
+            }
+            if attempt == 2:
+                payload["retried"] = True
+            return payload
+        except (
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.ConnectError,
+        ) as exc:
+            # Transient transport hiccup — try once more before giving up.
+            last_exc = exc
+            if attempt == 1:
+                continue
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            break
+
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+    return {
+        "configured": True,
+        "url": url,
+        "ok": False,
+        "error": str(last_exc) if last_exc else "unknown",
+        "latency_ms": elapsed_ms,
+    }
 
 
 def _program_payload(info: ProcessInfo) -> dict[str, Any]:
