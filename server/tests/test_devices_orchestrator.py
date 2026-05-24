@@ -276,6 +276,61 @@ async def test_switch_active_to_already_active_agent_is_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_delete_active_falls_back_to_insertion_order_when_all_meta_rows_missing(
+    orchestrator: DeviceOrchestrator, repo: DeviceBindingRepository,
+) -> None:
+    """``_pick_newest`` degraded path: when no remaining agent has a
+    metadata row to compare ``created_at`` on, fall back to the last
+    entry in ``agent_ids`` (insertion-order proxy).
+
+    Reachable in practice if souls/agents bucket retention diverged
+    from mappings, or someone manually deleted meta rows via ``nats kv``.
+    Without this branch, ``delete_agent`` would crash on the active
+    fallback step in exactly the scenarios where the operator needs
+    delete to *succeed* (cleaning up partial state).
+
+    All operations real: real bind flow seeds 3 agents, then
+    ``repo.delete_agent_meta`` removes their metadata rows via real
+    NATS deletes — no mocks, no monkeypatches.
+    """
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json=_approved_device_payload("d1"))
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(200, json={"markdown": "a", "template_id": "A", "template_revision": 1})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/B/render").mock(
+            return_value=httpx.Response(200, json={"markdown": "b", "template_id": "B", "template_revision": 1})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/C/render").mock(
+            return_value=httpx.Response(200, json={"markdown": "c", "template_id": "C", "template_revision": 1})
+        )
+        a1, *_ = await orchestrator.create_agent("d1", "A", "alice")
+        a2, *_ = await orchestrator.create_agent("d1", "B", "alice")
+        a3, *_ = await orchestrator.create_agent("d1", "C", "alice")
+
+    # a3 is the active (newest wins on bind). Wipe ALL three meta rows so
+    # _pick_newest can't compare created_at — it must fall back to
+    # agent_ids insertion order's last surviving entry.
+    await repo.delete_agent_meta(a1)
+    await repo.delete_agent_meta(a2)
+    await repo.delete_agent_meta(a3)
+    # Sanity: the mapping still references all three.
+    pre = await repo.get_mapping("d1")
+    assert pre is not None and pre.agent_ids == [a1, a2, a3]
+
+    # Delete the active (a3). _pick_newest runs over [a1, a2] with NO
+    # metadata available → falls back to the last in insertion order: a2.
+    new_active, kind = await orchestrator.delete_agent("d1", a3)
+    assert kind == "next_newest"
+    assert new_active == a2, (
+        f"expected insertion-order fallback to pick a2 (last surviving "
+        f"id in [a1,a2]), got {new_active}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_list_devices_surfaces_nats_orphan_when_hub_does_not_know_device(
     orchestrator: DeviceOrchestrator, repo: DeviceBindingRepository
 ) -> None:

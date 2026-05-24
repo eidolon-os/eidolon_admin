@@ -465,13 +465,29 @@ class DeviceOrchestrator:
         return body["markdown"], int(body["template_revision"])
 
     async def _mint_unique_agent_id(self, max_attempts: int = 5) -> str:
+        """Mint a UUID4 agent_id that's not already present in NATS.
+
+        The retry loop is defensive-only code: with uuid4's 128 bits of
+        entropy the collision probability is ~1 / 2^128 per attempt, so
+        in practice the first iteration always returns. The loop earns
+        its keep ONLY against the scenario where NATS is corrupted /
+        returns stale "exists=true" for everything — raising after
+        ``max_attempts`` then surfaces a loud failure instead of an
+        infinite spin.
+
+        Why this path has no automated test:
+            Forcing a real UUID4 collision is computationally impossible
+            (search space too large) and we deliberately do NOT inject
+            a fake UUID factory just to make this testable — that would
+            be the mocking pattern the project's testing philosophy
+            avoids. The retry's correctness is enforced by code review
+            + the small surface (5 lines) rather than by a test that
+            would have to lie about its setup.
+        """
         for _ in range(max_attempts):
             candidate = uuid.uuid4().hex
             if not await self._repo.agent_exists(candidate):
                 return candidate
-        # Astronomically unlikely; raising rather than silently growing the
-        # attempt count makes the failure mode loud if something is wrong
-        # (e.g. NATS returning stale "exists" for everything).
         raise OrchestratorError(
             f"failed to mint a non-colliding agent_id after {max_attempts} attempts"
         )
