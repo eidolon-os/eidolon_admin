@@ -32,6 +32,24 @@ class FeatureEntry(BaseModel):
     route: str | None = None
 
 
+class ConfigEntry(BaseModel):
+    """A single editable config file declared by a service.
+
+    The {svc}/{cfg} URL pair is just a lookup key; the actual filesystem path
+    is resolved server-side from this declaration. ``path`` may contain ``~``
+    and ``$VAR`` for portability between machines.
+    """
+    id: str
+    label: str | None = None
+    path: str
+    format: Literal["yaml", "dotenv", "ini"] = "yaml"
+    reload: Literal[
+        "sighup_program", "restart_program", "restart_group", "none"
+    ] = "none"
+    reload_target: str | None = None
+    template: str | None = None
+
+
 class ServiceConfig(BaseModel):
     id: str
     name: str
@@ -47,6 +65,7 @@ class ServiceConfig(BaseModel):
     health: str | None = None
     supervisor: SupervisorRef | None = None
     features: list[FeatureEntry] = Field(default_factory=list)
+    configs: list[ConfigEntry] = Field(default_factory=list)
 
     @field_validator("base_url")
     @classmethod

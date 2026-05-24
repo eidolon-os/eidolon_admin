@@ -41,6 +41,26 @@ admin:
 
 services:
 
+  # ── native (admin itself) ───────────────────────────────────────────────
+  # This entry only exists to expose the gateway's own services.yaml in the
+  # Configs UI — it has no features menu so it doesn't appear in the main
+  # service navigation.
+  - id: admin
+    name: Eidolon Admin
+    integration: native
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    features: []
+    configs:
+      - id: services
+        label: "services.yaml"
+        path: /Users/manson/ai/eidolon/eidolon_admin/config/services.yaml
+        format: yaml
+        # Editing the gateway's own registry requires restarting the admin
+        # API itself (uvicorn) — supervisord doesn't manage that process.
+        reload: none
+
   # ── proxy ───────────────────────────────────────────────────────────────
   - id: agent
     name: Eidolon Agent
@@ -63,6 +83,14 @@ services:
       - { key: chat-stream,        label: "Chat", stream: true }
       - { key: chat-test,          label: "Chat (events)", stream: true }
       - { key: console,            label: "API Console" }
+    configs:
+      - id: config
+        label: "agent config.yaml"
+        path: /Users/manson/ai/eidolon/eidolon_agent/config/config.yaml
+        format: yaml
+        reload: restart_program
+        reload_target: agent:agent
+        template: /Users/manson/ai/eidolon/eidolon_agent/config/config.yaml.example
 
   # ── proxy ───────────────────────────────────────────────────────────────
   - id: hub
@@ -85,6 +113,14 @@ services:
       - { key: events,   label: "Events", stream: true }
       - { key: metrics,  label: "Metrics" }
       - { key: console,  label: "API Console" }
+    configs:
+      - id: env
+        label: "hub .env"
+        path: /Users/manson/ai/eidolon/eidolon_hub/.env
+        format: dotenv
+        reload: restart_program
+        reload_target: hub:hub-api
+        template: /Users/manson/ai/eidolon/eidolon_hub/.env.example
 
   # ── native ──────────────────────────────────────────────────────────────
   - id: memory
@@ -115,6 +151,23 @@ services:
       - { key: graph,     label: "Graph" }
       - { key: kg,        label: "Knowledge Graph" }
       - { key: mcp,       label: "MCP Tools" }
+    configs:
+      - id: memory-default
+        label: "memory.default.yaml"
+        path: /Users/manson/ai/eidolon/eidolon_memory/eidolon/memory/config/memory.default.yaml
+        format: yaml
+        # Defaults file is read by every runner at process start — only a full
+        # group restart picks up changes.
+        reload: restart_group
+        reload_target: memory
+      - id: users
+        label: "users.yaml"
+        path: /Users/manson/ai/eidolon/eidolon_memory/eidolon/memory/config/users.yaml
+        format: yaml
+        # The supervisor process watches users.yaml and reloads on SIGHUP —
+        # no restart needed to add/remove users.
+        reload: sighup_program
+        reload_target: memory:memory-supervisor
 
   # ── process ─────────────────────────────────────────────────────────────
   - id: channel
@@ -136,6 +189,14 @@ services:
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
+    configs:
+      - id: env
+        label: "channel .env"
+        path: /Users/manson/ai/eidolon/eidolon_channel/deploy/.livekit-channel.env
+        format: dotenv
+        reload: restart_program
+        reload_target: channel:channel-worker
+        template: /Users/manson/ai/eidolon/eidolon_channel/deploy/livekit-channel.env.template
 
   # ── process ─────────────────────────────────────────────────────────────
   - id: client-web
@@ -158,3 +219,11 @@ services:
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
+    configs:
+      - id: env-local
+        label: ".env.local"
+        path: /Users/manson/ai/eidolon/eidolon_client_web/.env.local
+        format: dotenv
+        reload: restart_program
+        reload_target: client-web:client-web
+        template: /Users/manson/ai/eidolon/eidolon_client_web/.env.local.example

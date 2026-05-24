@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
+from .configs.router import router as configs_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.nats_publisher import JetStreamPublisher
@@ -94,6 +95,7 @@ def create_app(
     app.include_router(memory_router, prefix="/api")
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
+    app.include_router(configs_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
     # exact path GET /api/services.

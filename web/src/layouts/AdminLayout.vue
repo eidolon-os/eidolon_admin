@@ -19,11 +19,18 @@ const isMemoryRoute = computed(() => {
 
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
+  if (route.name === 'configs') return 'configs'
   if (route.params.serviceId && route.params.feature) {
     return `${route.params.serviceId}::${route.params.feature}`
   }
   return ''
 })
+
+// Hide meta-services (e.g. the synthetic "admin" entry that only exposes
+// configs: blocks) from the main service navigation.
+const navigableServices = computed(() =>
+  store.services.filter((s) => s.features.length > 0),
+)
 
 function go(serviceId: string, feature: string) {
   router.push({ name: 'feature', params: { serviceId, feature } })
@@ -43,8 +50,12 @@ function go(serviceId: string, feature: string) {
           <el-icon><Cpu /></el-icon>
           <span>Supervisor</span>
         </el-menu-item>
+        <el-menu-item index="configs" @click="router.push({ name: 'configs' })">
+          <el-icon><Document /></el-icon>
+          <span>Configs</span>
+        </el-menu-item>
         <el-sub-menu
-          v-for="svc in store.services"
+          v-for="svc in navigableServices"
           :key="svc.id"
           :index="svc.id"
         >
@@ -67,6 +78,7 @@ function go(serviceId: string, feature: string) {
       <el-header class="header">
         <span class="crumb">
           <template v-if="route.name === 'supervisor'">Supervisor</template>
+          <template v-else-if="route.name === 'configs'">Configs</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
             <span class="sep">/</span>
