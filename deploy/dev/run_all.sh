@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # Eidolon dev stack — supervisord edition.
 #
-# This wrapper owns three things:
-#   1. eidolon-admin gateway api  (uvicorn :9000)
-#   2. eidolon-admin web (vite :9001)
-#   3. supervisord daemon, which itself launches every enabled sub-project
-#      defined under deploy/supervisor/enabled/*.conf.
+# This wrapper does only what supervisord can't do for itself:
+#   1. first-run bootstrap (venv + uv install, pnpm install, log dirs)
+#   2. start the supervisord daemon (which then starts admin-api + every
+#      enabled sub-project under deploy/supervisor/enabled/*.conf)
+#   3. launch the vite dev server for the admin web (port 9001)
+#   4. clean stop of everything in reverse order
 #
-# Per-program control (start/stop/restart memory-supervisor etc.) happens via
-# the admin UI or `supervisorctl`. This script is just the top-level lifecycle.
+# admin-api itself is now a supervised program (see
+# deploy/supervisor/available/admin.conf), so it inherits auto-restart,
+# unified logs, and remote-controlled restart from the Configs page.
+#
+# Per-program control (start/stop/restart memory-supervisor etc.) happens
+# via the admin UI or `supervisorctl`. This script is just the top-level
+# bootstrap + lifecycle.
 #
 # Usage:
-#   ./deploy/dev/run_all.sh                # foreground admin only
-#   ./deploy/dev/run_all.sh start          # supervisord + admin
+#   ./deploy/dev/run_all.sh                # foreground admin-api + web (Ctrl+C)
+#   ./deploy/dev/run_all.sh start          # supervisord (incl. admin-api) + vite
 #   ./deploy/dev/run_all.sh stop           # reverse
 #   ./deploy/dev/run_all.sh restart
-#   ./deploy/dev/run_all.sh status         # admin + supervisorctl status
-#   ./deploy/dev/run_all.sh foreground     # admin in foreground (Ctrl+C)
+#   ./deploy/dev/run_all.sh status         # admin web + supervisorctl status
+#   ./deploy/dev/run_all.sh foreground     # admin-api + web in foreground
 #
 #   ./deploy/dev/run_all.sh sv [...]       # passthrough to supervisorctl
 #                                          # e.g. `sv status`, `sv tail -f memory:memory-supervisor`
@@ -37,7 +43,7 @@ LOG_DIR="${HOME}/eidolon/logs"
 RUN_DIR="${HOME}/eidolon/run"
 
 # Log layout: ~/eidolon/logs/<project>/<file>.log
-#   admin/      supervisord + gateway api/web
+#   admin/      supervisord + gateway api (api) + vite (web)
 #   nats/       server
 #   livekit/    server
 #   memory/     supervisor + discovery
@@ -45,8 +51,8 @@ RUN_DIR="${HOME}/eidolon/run"
 #   agent/      main
 #   channel/    worker
 #   client-web/ dev
-# supervisord requires log directories to exist before spawning; pre-create
-# everything our own configs reference so the user never sees a phantom
+# supervisord refuses to spawn a program if its log dir doesn't exist; pre-
+# create everything our own configs reference so the user never sees a phantom
 # "no such file" on first start.
 LOG_PROJECTS=(admin nats livekit memory hub agent channel)
 for _p in "${LOG_PROJECTS[@]}"; do
@@ -54,10 +60,8 @@ for _p in "${LOG_PROJECTS[@]}"; do
 done
 mkdir -p "$VAR_DIR" "$RUN_DIR" "${LOG_DIR}/admin/childlogs"
 
-# admin gateway pid/log (unique to avoid colliding with sub-projects' own files)
-API_PID_FILE="${RUN_DIR}/eidolon-admin-gateway-api.pid"
+# Vite dev server pid/log — admin-api's pid is owned by supervisord now.
 WEB_PID_FILE="${RUN_DIR}/eidolon-admin-gateway-web.pid"
-API_LOG_FILE="${LOG_DIR}/admin/gateway-api.log"
 WEB_LOG_FILE="${LOG_DIR}/admin/gateway-web.log"
 
 API_HOST="${EIDOLON_ADMIN_HOST:-127.0.0.1}"
@@ -98,46 +102,9 @@ ensure_web_deps() {
   fi
 }
 
-# --- admin gateway ----------------------------------------------------------
+# --- vite dev server --------------------------------------------------------
 
-api_alive() { [[ -f "$API_PID_FILE" ]] && kill -0 "$(cat "$API_PID_FILE")" 2>/dev/null; }
 web_alive() { [[ -f "$WEB_PID_FILE" ]] && kill -0 "$(cat "$WEB_PID_FILE")" 2>/dev/null; }
-
-do_api_start() {
-  ensure_api_deps
-  if api_alive; then
-    info "api already running (PID $(cat "$API_PID_FILE"))"
-    return 0
-  fi
-  info "starting api (log $API_LOG_FILE)"
-  nohup "${VENV}/bin/uvicorn" eidolon_admin_server.app.main:app \
-    --host "$API_HOST" --port "$API_PORT" \
-    >>"$API_LOG_FILE" 2>&1 &
-  echo $! >"$API_PID_FILE"
-  sleep 0.7
-  if ! api_alive; then
-    error "api died immediately; tail $API_LOG_FILE :"
-    tail -30 "$API_LOG_FILE" >&2 || true
-    rm -f "$API_PID_FILE"
-    return 1
-  fi
-  info "api PID $(cat "$API_PID_FILE")  /  http://${API_HOST}:${API_PORT}/docs"
-}
-
-do_api_stop() {
-  if ! api_alive; then
-    info "api not running"
-    rm -f "$API_PID_FILE" 2>/dev/null || true
-    return 0
-  fi
-  local pid; pid="$(cat "$API_PID_FILE")"
-  info "SIGTERM api $pid"
-  kill -TERM "$pid"
-  for _ in $(seq 1 30); do api_alive || break; sleep 0.5; done
-  if api_alive; then warn "SIGKILL api"; kill -KILL "$pid" || true; fi
-  rm -f "$API_PID_FILE"
-  info "api stopped"
-}
 
 do_web_start() {
   ensure_web_deps
@@ -176,21 +143,8 @@ do_web_stop() {
   info "web stopped"
 }
 
-do_admin_start()   { do_api_start; do_web_start; }
-do_admin_stop()    { do_web_stop;  do_api_stop;  }
-
-do_admin_status() {
-  header "admin :: api"
-  if api_alive; then
-    info "running PID $(cat "$API_PID_FILE")"
-    echo "  URL: http://${API_HOST}:${API_PORT}/docs"
-    echo "  Log: $API_LOG_FILE"
-  else
-    info "not running"
-    rm -f "$API_PID_FILE" 2>/dev/null || true
-  fi
-  echo
-  header "admin :: web"
+do_web_status() {
+  header "admin web (vite)"
   if web_alive; then
     info "running PID $(cat "$WEB_PID_FILE")"
     echo "  URL: http://127.0.0.1:${WEB_PORT}/"
@@ -222,11 +176,12 @@ do_sv_start() {
   # supervisord daemonises immediately and writes the pid file.
   sleep 0.5
   if ! sv_alive; then
-    error "supervisord did not start; tail of $VAR_DIR/supervisord.log:"
-    tail -30 "$VAR_DIR/supervisord.log" >&2 || true
+    error "supervisord did not start; tail of supervisord.log:"
+    tail -30 "$LOG_DIR/admin/supervisord.log" >&2 || true
     return 1
   fi
   info "supervisord PID $(cat "$SV_PID"), socket $SV_SOCK"
+  info "  (admin-api auto-starts under supervisord)"
 }
 
 do_sv_stop() {
@@ -235,7 +190,7 @@ do_sv_stop() {
     rm -f "$SV_PID" 2>/dev/null || true
     return 0
   fi
-  info "supervisord shutdown (will stop all enabled programs)"
+  info "supervisord shutdown (will stop admin-api + all enabled programs)"
   "${VENV}/bin/supervisorctl" -c "$SV_CONF" shutdown || warn "shutdown rpc failed"
   for _ in $(seq 1 40); do sv_alive || break; sleep 0.5; done
   if sv_alive; then warn "SIGKILL supervisord"; kill -KILL "$(cat "$SV_PID")" || true; fi
@@ -261,16 +216,16 @@ do_sv_passthrough() {
 # --- combined ---------------------------------------------------------------
 
 do_start() {
-  header "supervisord"
+  header "supervisord (incl. admin-api)"
   do_sv_start
   echo
-  header "admin"
-  do_admin_start
+  header "admin web"
+  do_web_start
 }
 
 do_stop() {
-  header "admin"
-  do_admin_stop
+  header "admin web"
+  do_web_stop
   echo
   header "supervisord"
   do_sv_stop
@@ -283,7 +238,7 @@ do_restart() {
 }
 
 do_status() {
-  do_admin_status
+  do_web_status
   echo
   do_sv_status
 }
@@ -307,7 +262,7 @@ do_foreground() {
   info "eidolon-admin (foreground) — supervisord NOT touched"
   echo "  API: http://${API_HOST}:${API_PORT}/docs"
   echo "  Web: http://127.0.0.1:${WEB_PORT}/"
-  echo "  Use '$0 start' for the full stack (supervisord + admin)."
+  echo "  Use '$0 start' for the full stack (supervisord + admin-api + sub-projects + vite)."
   echo "  Ctrl+C to stop."
   echo
   wait "$API_PID" "$WEB_PID" || true
@@ -323,10 +278,32 @@ case "${1:-}" in
   foreground) do_foreground ;;
   "")         do_foreground ;;
 
-  start-admin)   do_admin_start ;;
-  stop-admin)    do_admin_stop ;;
-  restart-admin) do_admin_stop; sleep 1; do_admin_start ;;
-  status-admin)  do_admin_status ;;
+  # Targeted admin-web control (api now goes through supervisorctl).
+  start-web|web-start)   do_web_start ;;
+  stop-web|web-stop)     do_web_stop ;;
+  restart-web|web-restart) do_web_stop; sleep 1; do_web_start ;;
+  status-web|web-status) do_web_status ;;
+
+  # Compat: old "start-admin" used to mean "start api+web". api is supervised
+  # now, so map these to the web-only flow + a friendly hint.
+  start-admin)
+    warn "admin-api is now supervised; '$0 sv start admin:admin-api' restarts the api."
+    do_web_start
+    ;;
+  stop-admin)
+    warn "admin-api is now supervised; '$0 sv stop admin:admin-api' stops the api."
+    do_web_stop
+    ;;
+  restart-admin)
+    warn "admin-api is now supervised; restarting admin web (vite) only."
+    warn "  to restart the api: '$0 sv restart admin:admin-api'"
+    do_web_stop; sleep 1; do_web_start
+    ;;
+  status-admin)
+    do_web_status
+    echo
+    "${VENV}/bin/supervisorctl" -c "$SV_CONF" status admin:admin-api 2>/dev/null || warn "supervisord not running"
+    ;;
 
   start-sv|sv-start)   do_sv_start ;;
   stop-sv|sv-stop)     do_sv_stop ;;
@@ -337,13 +314,14 @@ case "${1:-}" in
     ;;
 
   -h|--help|help)
-    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     error "usage: $0 [start|stop|restart|status|foreground]"
-    error "       $0 [start-admin|stop-admin|restart-admin|status-admin]"
+    error "       $0 [start-web|stop-web|restart-web|status-web]"
     error "       $0 [start-sv|stop-sv|status-sv]"
     error "       $0 sv <supervisorctl-args>     # passthrough"
+    error "       (admin-api is supervised — use 'sv restart admin:admin-api')"
     exit 1
     ;;
 esac

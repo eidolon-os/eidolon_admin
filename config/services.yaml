@@ -42,24 +42,40 @@ admin:
 services:
 
   # ── native (admin itself) ───────────────────────────────────────────────
-  # This entry only exists to expose the gateway's own services.yaml in the
-  # Configs UI — it has no features menu so it doesn't appear in the main
-  # service navigation.
+  # The admin gateway supervises itself: admin-api lives in supervisord like
+  # every other long-running process. The vite dev server (admin web) is
+  # NOT supervised — it stays under run_all.sh as a dev tool.
+  #
+  # No `features` block on purpose: this entry exists for status / config
+  # surfaces; the actual UI lives at the top-level Supervisor and Configs
+  # pages, not under a per-service menu.
   - id: admin
     name: Eidolon Admin
     integration: native
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
+    # Light-touch HTTP probe — uvicorn always answers /docs once it's up.
+    health: http://127.0.0.1:9000/docs
+    supervisor:
+      config_file: deploy/supervisor/available/admin.conf
+      group: admin
+      programs:
+        - admin-api
     features: []
     configs:
       - id: services
         label: "services.yaml"
         path: /Users/manson/ai/eidolon/eidolon_admin/config/services.yaml
         format: yaml
-        # Editing the gateway's own registry requires restarting the admin
-        # API itself (uvicorn) — supervisord doesn't manage that process.
-        reload: none
+        # Editing the gateway's own registry takes effect on admin-api
+        # restart. The Configs page's "立即 reload" button triggers
+        # supervisor.restart_program(admin:admin-api), which SIGTERMs
+        # the in-flight uvicorn (incl. the POST that fired the reload)
+        # and starts a fresh one. The browser sees the request drop;
+        # auto-refresh on the next interaction picks up the new state.
+        reload: restart_program
+        reload_target: admin:admin-api
 
   # ── proxy ───────────────────────────────────────────────────────────────
   - id: agent
