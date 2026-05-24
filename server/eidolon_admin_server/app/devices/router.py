@@ -12,6 +12,7 @@ in the orchestrator instead.
 from __future__ import annotations
 
 import logging
+from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -67,8 +68,13 @@ def _orchestrator(request: Request) -> DeviceOrchestrator:
     return orch
 
 
-def _raise_for(exc: OrchestratorError) -> None:
-    """Map an OrchestratorError subclass to its HTTP equivalent."""
+def _raise_for(exc: OrchestratorError) -> NoReturn:
+    """Map an OrchestratorError subclass to its HTTP equivalent.
+
+    Annotated ``NoReturn`` so static type-checkers (and human readers)
+    know control never returns from the call site — the ``except`` blocks
+    that invoke it don't need an explicit ``return`` afterwards.
+    """
     raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
