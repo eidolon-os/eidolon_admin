@@ -367,3 +367,70 @@ async def test_admin_unapproved_device_blocks_bind_against_real_hub(
     )
     assert resp.status_code == 409
     assert "not yet approved" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_full_lifecycle_switch_active_delete_with_fallback_zero_mocks(
+    fullstack, client: httpx.AsyncClient,
+) -> None:
+    """The other half of the lifecycle that the first fullstack test
+    deliberately stops short of: bind two agents, swap active, edit a
+    soul, delete the active one (auto-fallback), delete the last one
+    (active cleared). All upstreams are real apps.
+
+    This proves the contract for switch + soul-edit + delete is intact
+    end-to-end. The first fullstack test covered bind + read; together
+    they exercise every operator action against zero mocks.
+    """
+    fullstack.hub_dm.register(device_id="fs-lifecycle", name="Lifecycle Device")
+    await client.post("/api/devices/fs-lifecycle/approve")
+
+    # Bind agent A first, then B. B becomes active (newest wins).
+    agent_a = (await client.post(
+        "/api/devices/fs-lifecycle/agents",
+        json={"template_id": "caretaker_jiezhi", "user_id": "alice"},
+    )).json()["agent_id"]
+    agent_b = (await client.post(
+        "/api/devices/fs-lifecycle/agents",
+        json={"template_id": "caretaker_jiezhi", "user_id": "alice"},
+    )).json()["agent_id"]
+
+    # Switch active back to A.
+    switch = await client.post(
+        "/api/devices/fs-lifecycle/active-agent",
+        json={"agent_id": agent_a},
+    )
+    assert switch.status_code == 200
+    assert switch.json()["active_agent_id"] == agent_a
+
+    # Edit A's soul. Real markdown → real NATS → real read-back.
+    edited = "# edited by operator\n## custom section\n"
+    put = await client.put(
+        f"/api/devices/fs-lifecycle/agents/{agent_a}/soul",
+        json={"markdown": edited},
+    )
+    assert put.status_code == 200
+    got = await client.get(f"/api/devices/fs-lifecycle/agents/{agent_a}/soul")
+    assert got.json()["markdown"] == edited
+
+    # Delete active A → fallback to B.
+    del_a = await client.delete(f"/api/devices/fs-lifecycle/agents/{agent_a}")
+    assert del_a.status_code == 200
+    body = del_a.json()
+    assert body["fallback_kind"] == "next_newest"
+    assert body["new_active_agent_id"] == agent_b
+
+    # Delete the last one → active cleared.
+    del_b = await client.delete(f"/api/devices/fs-lifecycle/agents/{agent_b}")
+    assert del_b.status_code == 200
+    body = del_b.json()
+    assert body["fallback_kind"] == "cleared"
+    assert body["new_active_agent_id"] is None
+
+    # The device still exists in hub (delete only removed the binding;
+    # device lifecycle is independent of agent lifecycle).
+    final_list = await client.get("/api/devices")
+    fs = next(d for d in final_list.json()["devices"] if d["device_id"] == "fs-lifecycle")
+    # binding row may either be None or have empty agent_ids — both are
+    # acceptable steady states for "approved but unbound".
+    assert fs["binding"] is None or fs["binding"]["agent_ids"] == []

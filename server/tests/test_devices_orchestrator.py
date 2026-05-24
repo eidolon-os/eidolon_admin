@@ -231,6 +231,102 @@ async def test_switch_active_to_unknown_agent_404s(
         await orchestrator.switch_active("d1", "imaginary")
 
 
+@pytest.mark.asyncio
+async def test_switch_active_to_valid_agent_updates_mapping(
+    orchestrator: DeviceOrchestrator, repo: DeviceBindingRepository
+) -> None:
+    """Happy path: switch active to another agent in the device's binding.
+
+    Returned value is the new active id; persisted mapping reflects it.
+    Without this, the only switch coverage was the failure case — we'd
+    have no signal that the success path actually mutates state.
+    """
+    from eidolon_admin_server.app.devices.repository import Mapping
+    await repo.put_mapping("d1", Mapping(
+        user_id="alice",
+        agent_ids=["a-one", "a-two"],
+        active_agent_id="a-one",
+    ))
+
+    new_active = await orchestrator.switch_active("d1", "a-two")
+    assert new_active == "a-two"
+    persisted = await repo.get_mapping("d1")
+    assert persisted is not None and persisted.active_agent_id == "a-two"
+    # agent_ids list must be untouched — switch only moves the pointer.
+    assert persisted.agent_ids == ["a-one", "a-two"]
+
+
+@pytest.mark.asyncio
+async def test_switch_active_to_already_active_agent_is_idempotent(
+    orchestrator: DeviceOrchestrator, repo: DeviceBindingRepository
+) -> None:
+    """Re-asserting the current active must not error — operator double-
+    clicks shouldn't surface as failure."""
+    from eidolon_admin_server.app.devices.repository import Mapping
+    await repo.put_mapping("d1", Mapping(
+        user_id="alice",
+        agent_ids=["a-one"],
+        active_agent_id="a-one",
+    ))
+    result = await orchestrator.switch_active("d1", "a-one")
+    assert result == "a-one"
+
+
+# ---- list_devices: orphan-binding edge -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_devices_surfaces_nats_orphan_when_hub_does_not_know_device(
+    orchestrator: DeviceOrchestrator, repo: DeviceBindingRepository
+) -> None:
+    """Edge: NATS has a mapping for a device that hub doesn't list.
+
+    Possible because (a) hub's devices.json was hand-edited and a record
+    was removed without unbinding first, or (b) admin booted against a
+    different hub instance whose state diverged. Either way operator
+    needs to *see* the orphan so they can clean it up — silently
+    omitting it would hide the inconsistency.
+
+    Spec: the device appears in the list with name=='(orphan)' and
+    status='unknown'; its binding field carries the NATS data so the
+    operator can decide what to do.
+    """
+    from eidolon_admin_server.app.devices.repository import Mapping
+    await repo.put_mapping("dead-device", Mapping(
+        user_id="alice",
+        agent_ids=["stranded-agent"],
+        active_agent_id="stranded-agent",
+    ))
+    # Also seed an agent_meta so the binding view doesn't drop the agent_id
+    # as a stale reference — we want to confirm full surfacing, not a half-row.
+    from eidolon_admin_server.app.devices.repository import AgentMeta
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    await repo.put_agent_meta("stranded-agent", AgentMeta(
+        template_id="orphan_template",
+        template_revision=1,
+        owner_user_id="alice",
+        owner_device_id="dead-device",
+        created_at=now,
+        updated_at=now,
+    ))
+
+    with respx.mock:
+        # Hub doesn't know "dead-device" exists.
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json={"devices": []})
+        )
+        composites = await orchestrator.list_devices()
+
+    orphan = next((c for c in composites if c.device_id == "dead-device"), None)
+    assert orphan is not None, "orphan binding should appear in the list view"
+    assert orphan.name == "(orphan)"
+    assert orphan.status == "unknown"
+    assert orphan.approved is False
+    assert orphan.binding is not None
+    assert orphan.binding.active_agent_id == "stranded-agent"
+
+
 # ---- delete_agent --------------------------------------------------------
 
 

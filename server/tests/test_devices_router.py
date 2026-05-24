@@ -337,6 +337,55 @@ async def test_switch_active_to_unknown_agent_returns_404(
     assert resp.status_code == 404  # DeviceNotFound is also 404
 
 
+@pytest.mark.asyncio
+async def test_switch_active_happy_path_returns_new_active_via_http(
+    client: httpx.AsyncClient,
+) -> None:
+    """Operator binds two agents, then flips active. The HTTP response
+    must reflect the new active id; a subsequent GET must show the same.
+
+    Without this, only the 404 path was covered at the router layer —
+    a regression that broke active-switching via HTTP would slip
+    through (the orchestrator unit test alone wouldn't catch a router
+    misroute or schema-validation accident).
+    """
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json={"devices": [_device_payload("d1")]})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "soul a", "template_id": "A", "template_revision": 1,
+            })
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/B/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "soul b", "template_id": "B", "template_revision": 1,
+            })
+        )
+        agent_a = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "A", "user_id": "alice"},
+        )).json()["agent_id"]
+        agent_b = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "B", "user_id": "alice"},
+        )).json()["agent_id"]
+        # Newer (agent_b) is active after bind. Flip to agent_a.
+        switch = await client.post(
+            "/api/devices/d1/active-agent",
+            json={"agent_id": agent_a},
+        )
+        assert switch.status_code == 200
+        assert switch.json()["active_agent_id"] == agent_a
+
+        # And a list refresh confirms persistence.
+        listed = await client.get("/api/devices")
+        d1 = next(d for d in listed.json()["devices"] if d["device_id"] == "d1")
+        assert d1["binding"]["active_agent_id"] == agent_a
+        assert {a["agent_id"] for a in d1["binding"]["agents"]} == {agent_a, agent_b}
+
+
 # ---- delete agent ---------------------------------------------------------
 
 
@@ -344,6 +393,104 @@ async def test_switch_active_to_unknown_agent_returns_404(
 async def test_delete_unknown_agent_returns_404(client: httpx.AsyncClient) -> None:
     resp = await client.delete("/api/devices/nope/agents/imaginary")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_non_active_agent_via_http_returns_no_change(
+    client: httpx.AsyncClient,
+) -> None:
+    """HTTP-level contract for the no_change fallback: deleting a non-
+    active agent leaves active untouched and the response carries
+    fallback_kind='no_change'."""
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json={"devices": [_device_payload("d1")]})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "a", "template_id": "A", "template_revision": 1,
+            })
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/B/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "b", "template_id": "B", "template_revision": 1,
+            })
+        )
+        agent_a = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "A", "user_id": "alice"},
+        )).json()["agent_id"]
+        agent_b = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "B", "user_id": "alice"},
+        )).json()["agent_id"]
+        # B is active (newer always wins). Delete A — non-active.
+        resp = await client.delete(f"/api/devices/d1/agents/{agent_a}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["fallback_kind"] == "no_change"
+    assert body["new_active_agent_id"] == agent_b
+    assert body["deleted_agent_id"] == agent_a
+
+
+@pytest.mark.asyncio
+async def test_delete_active_agent_via_http_falls_back_to_next_newest(
+    client: httpx.AsyncClient,
+) -> None:
+    """HTTP-level contract for the next_newest fallback."""
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json={"devices": [_device_payload("d1")]})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "a", "template_id": "A", "template_revision": 1,
+            })
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/B/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "b", "template_id": "B", "template_revision": 1,
+            })
+        )
+        agent_a = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "A", "user_id": "alice"},
+        )).json()["agent_id"]
+        agent_b = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "B", "user_id": "alice"},
+        )).json()["agent_id"]
+        # B is active. Delete B → fallback to A.
+        resp = await client.delete(f"/api/devices/d1/agents/{agent_b}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["fallback_kind"] == "next_newest"
+    assert body["new_active_agent_id"] == agent_a
+
+
+@pytest.mark.asyncio
+async def test_delete_last_agent_via_http_clears_active(
+    client: httpx.AsyncClient,
+) -> None:
+    """HTTP-level contract for the cleared fallback (active=null)."""
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json={"devices": [_device_payload("d1")]})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "a", "template_id": "A", "template_revision": 1,
+            })
+        )
+        agent_a = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "A", "user_id": "alice"},
+        )).json()["agent_id"]
+        resp = await client.delete(f"/api/devices/d1/agents/{agent_a}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["fallback_kind"] == "cleared"
+    assert body["new_active_agent_id"] is None
 
 
 # ---- soul endpoints -------------------------------------------------------
@@ -378,6 +525,44 @@ async def test_update_soul_oversized_returns_413(client: httpx.AsyncClient) -> N
             json={"markdown": "x" * (MAX_SOUL_SIZE_BYTES + 1)},
         )
     assert resp.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_put_soul_happy_path_persists_new_markdown(
+    client: httpx.AsyncClient,
+) -> None:
+    """Operator edits a soul: PUT writes, subsequent GET returns the new text.
+
+    Before this test only the 413 rejection was covered — the actual
+    "edit and save" flow had no router-level assertion, meaning a JSON
+    field rename or body-shape bug would slip past CI.
+    """
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json={"devices": [_device_payload("d1")]})
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/T/render").mock(
+            return_value=httpx.Response(200, json={
+                "markdown": "# original\n", "template_id": "T", "template_revision": 1,
+            })
+        )
+        agent_id = (await client.post(
+            "/api/devices/d1/agents",
+            json={"template_id": "T", "user_id": "alice"},
+        )).json()["agent_id"]
+
+        edited = "# operator-edited soul\nmore body text\n"
+        put = await client.put(
+            f"/api/devices/d1/agents/{agent_id}/soul",
+            json={"markdown": edited},
+        )
+        assert put.status_code == 200
+        assert put.json()["size_bytes"] == len(edited.encode("utf-8"))
+
+        # Round-trip: read back via GET, must equal what we wrote.
+        got = await client.get(f"/api/devices/d1/agents/{agent_id}/soul")
+        assert got.status_code == 200
+        assert got.json()["markdown"] == edited
 
 
 @pytest.mark.asyncio
