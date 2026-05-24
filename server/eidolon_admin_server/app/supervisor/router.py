@@ -99,7 +99,7 @@ async def list_programs(request: Request) -> dict[str, Any]:
     return {"programs": [_process_payload(i) for i in infos]}
 
 
-@router.get("/programs/{name:path}")
+@router.get("/programs/{name}")
 async def get_program(name: str, request: Request) -> dict[str, Any]:
     client = _client(request)
     try:
@@ -115,7 +115,7 @@ class _WaitBody(BaseModel):
     wait: bool = True
 
 
-@router.post("/programs/{name:path}/start")
+@router.post("/programs/{name}/start")
 async def start_program(name: str, request: Request, body: _WaitBody = _WaitBody()) -> dict[str, Any]:
     try:
         ok = await _client(request).start_process(name, wait=body.wait)
@@ -126,7 +126,7 @@ async def start_program(name: str, request: Request, body: _WaitBody = _WaitBody
     return {"started": ok, "name": name}
 
 
-@router.post("/programs/{name:path}/stop")
+@router.post("/programs/{name}/stop")
 async def stop_program(name: str, request: Request, body: _WaitBody = _WaitBody()) -> dict[str, Any]:
     try:
         ok = await _client(request).stop_process(name, wait=body.wait)
@@ -137,7 +137,7 @@ async def stop_program(name: str, request: Request, body: _WaitBody = _WaitBody(
     return {"stopped": ok, "name": name}
 
 
-@router.post("/programs/{name:path}/restart")
+@router.post("/programs/{name}/restart")
 async def restart_program(name: str, request: Request) -> dict[str, Any]:
     client = _client(request)
     try:
@@ -179,7 +179,7 @@ async def stop_group(group: str, request: Request) -> dict[str, Any]:
 # ---------- logs ---------------------------------------------------------
 
 
-@router.get("/programs/{name:path}/logs")
+@router.get("/programs/{name}/logs")
 async def tail_log(
     name: str,
     request: Request,
@@ -199,28 +199,61 @@ async def tail_log(
     return {"name": name, "stream": stream, "text": text, "offset": offset, "overflow": overflow}
 
 
-@router.get("/programs/{name:path}/logs/stream")
+@router.get("/programs/{name}/logs/stream")
 async def follow_log(
     name: str,
     request: Request,
     stream: Literal["stdout", "stderr"] = Query("stdout"),
 ):
+    """SSE log tailer with resume support.
+
+    Each emitted message carries ``id: <byte_offset>`` so that when the
+    browser's EventSource transparently reconnects after a transient drop,
+    it sends back ``Last-Event-ID: <byte_offset>`` and we pick up exactly
+    where the previous stream stopped — no re-seed, no duplicated lines.
+
+    First connect (no Last-Event-ID): seed with the last 8 KB of the log
+    file so the viewer has context immediately. Subsequent reconnects skip
+    the seed.
+    """
     client = _client(request)
 
-    async def _gen():
-        offset = 0
-        yield f"data: # tail -F {name} ({stream})\n\n".encode()
-        # Seed with the last 8KB so the viewer has context immediately.
+    # EventSource auto-reconnect supplies Last-Event-ID as a header. If
+    # parsing fails (header missing or corrupt), fall through to a fresh
+    # seed — safer than silently dropping lines.
+    resume_offset: int | None = None
+    last_event_id = request.headers.get("last-event-id")
+    if last_event_id:
         try:
-            if stream == "stdout":
-                text, offset, _ = await client.tail_process_stdout_log(name, 0, 8192)
-            else:
-                text, offset, _ = await client.tail_process_stderr_log(name, 0, 8192)
-            for line in text.splitlines():
-                yield f"data: {line}\n\n".encode()
-        except (SupervisorError, SupervisorUnavailable) as exc:
-            yield f"data: [error] {exc}\n\n".encode()
-            return
+            resume_offset = int(last_event_id)
+        except ValueError:
+            resume_offset = None
+
+    async def _gen():
+        # SSE comment (`:` prefix) — visible in the wire but the browser
+        # discards it instead of dispatching a message event. Keeps the
+        # frontend line buffer clean.
+        yield f": tail -F {name} ({stream})\n\n".encode()
+
+        if resume_offset is not None:
+            offset = resume_offset
+        else:
+            # Fresh connect — seed the last 8 KB.
+            try:
+                if stream == "stdout":
+                    text, offset, _ = await client.tail_process_stdout_log(name, 0, 8192)
+                else:
+                    text, offset, _ = await client.tail_process_stderr_log(name, 0, 8192)
+            except (SupervisorError, SupervisorUnavailable) as exc:
+                yield f"data: [error] {exc}\n\n".encode()
+                return
+            if text:
+                # Emit seed lines under a single id (= the offset *after*
+                # the seed). On reconnect the browser sends this id back
+                # and we resume from there.
+                for line in text.splitlines():
+                    yield f"data: {line}\n\n".encode()
+                yield f"id: {offset}\n\n".encode()
 
         while True:
             if await request.is_disconnected():
@@ -237,7 +270,14 @@ async def follow_log(
             if chunk:
                 for line in chunk.splitlines():
                     yield f"data: {line}\n\n".encode()
+                # Tag the batch end with the new offset so EventSource
+                # tracks it as Last-Event-ID for the next reconnect.
+                yield f"id: {offset}\n\n".encode()
             else:
+                # Heartbeat comment — keeps proxies (nginx, vite, etc.)
+                # from killing the idle connection and gives the browser
+                # a signal that we're still alive.
+                yield b": keepalive\n\n"
                 await asyncio.sleep(0.8)
 
     return StreamingResponse(
