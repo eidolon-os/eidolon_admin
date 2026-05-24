@@ -22,6 +22,14 @@ dev = [
     "pytest-asyncio>=0.24",
     "respx>=0.21",
 ]
+# To enable the cross-repo in-process fullstack test
+# (server/tests/test_devices_fullstack.py), editable-install the sibling
+# repos into this venv:
+#     pip install -e ../eidolon_hub -e ../eidolon_agent
+# These are NOT declared as deps here because PEP 508 doesn't have a
+# portable relative-path syntax and we don't want every dev to need
+# both sibling repos checked out. Without them, the fullstack test file
+# skips cleanly via importlib.util.find_spec at module load.
 
 [project.scripts]
 eidolon-admin = "eidolon_admin_server.app.cli:main"

@@ -314,3 +314,100 @@ async def test_update_soul_rejects_oversized(
         agent_id, *_ = await orchestrator.create_agent("d1", "A", "alice")
     with pytest.raises(SoulTooLarge):
         await orchestrator.update_soul("d1", agent_id, "x" * (MAX_SOUL_SIZE_BYTES + 1))
+
+
+# ---- create_agent compensation/rollback paths ----------------------------
+#
+# These are the trickiest correctness properties to enforce: the orchestrator
+# writes three NATS buckets in sequence and must reverse earlier writes if a
+# later one fails. The pattern: stub a single repo method to raise, drive
+# create_agent end-to-end, then assert that no orphan rows remain in NATS.
+# Using a real repo + monkey-patching one method keeps the rest of the
+# pipeline honest (real serialisation, real NATS interaction); only the
+# failure injection is synthetic.
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rolls_back_souls_when_agents_meta_write_fails(
+    orchestrator: DeviceOrchestrator,
+    repo: DeviceBindingRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If put_agent_meta fails after put_soul succeeded, the soul row must
+    be deleted so we don't accumulate orphans in the souls bucket."""
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated NATS failure on agents bucket")
+
+    monkeypatch.setattr(repo, "put_agent_meta", _boom)
+
+    soul_keys_before = await repo._kv.list_keys(SOULS_BUCKET.name, prefix="agent.")  # noqa: SLF001
+
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json=_approved_device_payload("d1"))
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(
+                200, json={"markdown": "soul-text", "template_id": "A", "template_revision": 1}
+            )
+        )
+        with pytest.raises(Exception):  # noqa: PT011 — orchestrator wraps as OrchestratorError
+            await orchestrator.create_agent("d1", "A", "alice")
+
+    # No new soul key should remain — compensation deleted whatever was written.
+    soul_keys_after = await repo._kv.list_keys(SOULS_BUCKET.name, prefix="agent.")  # noqa: SLF001
+    assert set(soul_keys_after) == set(soul_keys_before)
+    # And no mapping should have been created.
+    assert await repo.get_mapping("d1") is None
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rolls_back_souls_and_agents_when_mapping_user_mismatch(
+    orchestrator: DeviceOrchestrator,
+    repo: DeviceBindingRepository,
+) -> None:
+    """When an existing mapping points at a different user_id, create_agent
+    must refuse — AND clean up the souls + agents rows it just wrote.
+
+    Scenario: alice binds an agent first (sets mapping user=alice). Later
+    bob tries to bind on the same device. Orchestrator's defensive check
+    rejects bob; the soul and agent-meta it wrote during this attempt must
+    not survive.
+    """
+    # Seed: alice's binding is in place.
+    from eidolon_admin_server.app.devices.repository import Mapping
+    await repo.put_mapping("d1", Mapping(user_id="alice", agent_ids=["pre-existing"]))
+
+    souls_before = set(await repo._kv.list_keys(SOULS_BUCKET.name, prefix="agent."))  # noqa: SLF001
+    agents_before = set(await repo._kv.list_keys(AGENTS_BUCKET.name, prefix="agent."))  # noqa: SLF001
+
+    with respx.mock:
+        respx.get(f"{HUB_URL}/api/admin/devices").mock(
+            return_value=httpx.Response(200, json=_approved_device_payload("d1"))
+        )
+        respx.post(f"{AGENT_URL}/api/admin/personas/templates/A/render").mock(
+            return_value=httpx.Response(
+                200, json={"markdown": "bob's soul", "template_id": "A", "template_revision": 1}
+            )
+        )
+        with pytest.raises(Exception):  # noqa: PT011 — wrapped OrchestratorError
+            await orchestrator.create_agent("d1", "A", "bob")
+
+    souls_after = set(await repo._kv.list_keys(SOULS_BUCKET.name, prefix="agent."))  # noqa: SLF001
+    agents_after = set(await repo._kv.list_keys(AGENTS_BUCKET.name, prefix="agent."))  # noqa: SLF001
+    # No new orphans in either bucket.
+    assert souls_after == souls_before, (
+        f"expected souls bucket unchanged on rollback; new keys: "
+        f"{souls_after - souls_before}"
+    )
+    assert agents_after == agents_before, (
+        f"expected agents bucket unchanged on rollback; new keys: "
+        f"{agents_after - agents_before}"
+    )
+    # And the mapping must still point at alice — bob's failed attempt
+    # didn't corrupt the pre-existing binding.
+    final = await repo.get_mapping("d1")
+    assert final is not None
+    assert final.user_id == "alice"
+    assert final.agent_ids == ["pre-existing"]
