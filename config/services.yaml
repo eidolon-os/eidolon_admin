@@ -1,0 +1,160 @@
+# Eidolon Admin Gateway — service registry.
+#
+# Each `services[]` entry declares one sub-project and how this gateway
+# integrates with it. Four integration modes are supported:
+#
+#   native    — admin endpoints are implemented in this gateway under
+#               /api/<id>/* using the sub-project's external protocols
+#               (NATS, MCP, files). base_url is empty.
+#               Example: memory.
+#
+#   proxy     — transparent HTTP forward: /api/services/<id>/<path> →
+#               base_url + upstream_prefix + path. Sub-project owns the
+#               admin implementation; this gateway just relays.
+#               Examples: hub, agent.
+#
+#   process   — process_only: no HTTP/NATS admin surface from the sub-project.
+#               supervisord owns lifecycle; UI shows status / logs / config.
+#               Example: channel.
+#
+#   infra     — shared infrastructure (NATS, future Postgres, etc).
+#               Listed only in supervisor configs, not as a service.
+#
+# Fields:
+#   id              short identifier
+#   name            display name (UI menu, status cards)
+#   integration     one of: native | proxy | process
+#   base_url        upstream HTTP base (empty for native / process)
+#   upstream_prefix path prefix added before forwarded requests
+#   auth            { type: none | bearer, token_env: <ENV_VAR> }
+#   health          relative path or absolute URL probed by /api/overview
+#   supervisor      { config_file, group, programs[] } — links service to
+#                   its supervisord program group (if any)
+#   features        UI menu entries (key + label, optional stream flag)
+
+admin:
+  host: 127.0.0.1
+  port: 9000
+  cors_origins:
+    - http://127.0.0.1:9001
+    - http://localhost:9001
+
+services:
+
+  # ── proxy ───────────────────────────────────────────────────────────────
+  - id: agent
+    name: Eidolon Agent
+    integration: proxy
+    base_url: http://127.0.0.1:8081
+    upstream_prefix: /api/admin
+    auth: { type: none }
+    health: /api/admin/personas/templates
+    supervisor:
+      config_file: deploy/supervisor/available/agent.conf
+      group: agent
+      programs:
+        - agent
+    features:
+      - { key: personas-templates, label: "Persona 模板" }
+      - { key: personas-instances, label: "Persona 实例" }
+      - { key: persona-lab,        label: "Persona Lab" }
+      - { key: devices,            label: "Devices" }
+      - { key: pairing,            label: "Pairing" }
+      - { key: chat-stream,        label: "Chat", stream: true }
+      - { key: chat-test,          label: "Chat (events)", stream: true }
+      - { key: console,            label: "API Console" }
+
+  # ── proxy ───────────────────────────────────────────────────────────────
+  - id: hub
+    name: Eidolon Hub
+    integration: proxy
+    # hub-api binds whichever port its .env declares (we standardise on 8082
+    # in hub's .env to avoid clashing with agent's admin_port 8081).
+    base_url: http://127.0.0.1:8082
+    upstream_prefix: /api/admin
+    auth: { type: none }
+    health: /api/admin/probe/health
+    supervisor:
+      config_file: deploy/supervisor/available/hub.conf
+      group: hub
+      programs:
+        - hub-api
+    features:
+      - { key: devices,  label: "Devices" }
+      - { key: commands, label: "Commands" }
+      - { key: events,   label: "Events", stream: true }
+      - { key: metrics,  label: "Metrics" }
+      - { key: console,  label: "API Console" }
+
+  # ── native ──────────────────────────────────────────────────────────────
+  - id: memory
+    name: Eidolon Memory
+    integration: native
+    # memory-admin-api has been fully migrated into this gateway under
+    # /api/memory/* (see server/eidolon_admin_server/app/memory/). The
+    # `legacy/admin/` directory in the memory repo can be deleted.
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    # discovery is the only HTTP face we still probe externally.
+    health: http://127.0.0.1:8020/api/discovery/agent-routing
+    supervisor:
+      config_file: deploy/supervisor/available/memory.conf
+      group: memory
+      programs:
+        - memory-supervisor
+        - memory-discovery
+    features:
+      - { key: runners,   label: "Agent Runners" }
+      - { key: users,     label: "Users" }
+      - { key: memories,  label: "Memories" }
+      - { key: search,    label: "Search" }
+      - { key: write,     label: "Write Turn" }
+      - { key: recall,    label: "Recall" }
+      - { key: hierarchy, label: "Hierarchy" }
+      - { key: graph,     label: "Graph" }
+      - { key: kg,        label: "Knowledge Graph" }
+      - { key: mcp,       label: "MCP Tools" }
+
+  # ── process ─────────────────────────────────────────────────────────────
+  - id: channel
+    name: Eidolon Channel
+    integration: process
+    # LiveKit voice worker — no HTTP / NATS admin surface. Status lives
+    # entirely in supervisor process info; config is read-only from the
+    # project's .env via /api/channel/config.
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    # no `health:` — overview marks supervised services online when all
+    # supervisor.programs are RUNNING.
+    supervisor:
+      config_file: deploy/supervisor/available/channel.conf
+      group: channel
+      programs:
+        - channel-worker
+    features:
+      - { key: overview, label: "Overview" }
+      - { key: config,   label: "Config" }
+
+  # ── process ─────────────────────────────────────────────────────────────
+  - id: client-web
+    name: Eidolon Client Web
+    integration: process
+    # Next.js dev server (port 3000). Browser-facing client; no admin HTTP
+    # surface of its own. Config is read-only from .env.local via
+    # /api/client-web/config.
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    # Next dev server returns 200 on root by default — light-touch HTTP probe
+    # confirms the bundler is serving.
+    health: http://127.0.0.1:3000/
+    supervisor:
+      config_file: deploy/supervisor/available/client-web.conf
+      group: client-web
+      programs:
+        - client-web
+    features:
+      - { key: overview, label: "Overview" }
+      - { key: config,   label: "Config" }

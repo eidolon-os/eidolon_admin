@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# venv
+.venv/
+venv/
+env/
+
+# Node / Vite
+web/node_modules/
+web/dist/
+web/.vite/
+.npm/
+.pnpm-store/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Runtime artifacts (supervisord pid/socket/childlogs)
+var/
+
+# Local override for service registry (if you ever do per-machine tweaks)
+config/services.local.yaml
+
+# Plans, ad-hoc notes
+plans/
+*.local.md
+
+# Editor-generated
+*.tmp
+*.bak

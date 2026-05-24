@@ -1,93 +1,265 @@
 # eidolon_admin
 
+Unified admin gateway for the Eidolon ecosystem.
 
+A thin FastAPI gateway plus a Vue 3 (Element Plus) SPA. The gateway forwards
+HTTP requests to each sub-project's existing admin API, exposes a one-click
+Deploy/Dev panel that drives every sub-project's `deploy/dev/run_all.sh`, and
+declares all integration through a single YAML file.
+
+## Integration spectrum
+
+Each sub-project is integrated via one of four modes (declared in
+`config/services.yaml`'s `integration:` field):
+
+| Mode      | What it means                                                                                              | Examples       |
+| --------- | ---------------------------------------------------------------------------------------------------------- | -------------- |
+| `native`  | Admin endpoints implemented **inside this gateway** at `/api/<id>/*`. Talks to the sub-project via external protocols only (MCP / NATS / files). | `memory`       |
+| `proxy`   | Transparent HTTP forward to the sub-project's existing admin API at `base_url + upstream_prefix`.          | `hub`, `agent` |
+| `process` | No HTTP/NATS admin surface; supervisord owns lifecycle; UI shows status + logs + read-only config.         | `channel`      |
+| `infra`   | Shared infrastructure listed only in supervisor configs.                                                   | `nats`         |
+
+### Per-project notes
+
+- **`memory`** — fully native. `legacy/admin/` in the memory repo can be
+  deleted; this gateway provides all of Users / Memories / Search / Recall /
+  KG / Graph / Hierarchy / MCP Tools natively via MCP HTTP + NATS JetStream +
+  `users.yaml` + SIGHUP to memory-supervisor.
+- **`hub`** — proxy. Hub's in-memory state (commands, probe stats, presence)
+  and tight LiveKit integration make native re-implementation worse, not
+  better. Our gateway relays `/api/services/hub/*` → `:8082/api/admin/*` and
+  provides a polished UI on top. Hub's Next.js `client/web` and Vite
+  `client/admin` are NOT under our supervisord — they remain hub-project
+  concerns.
+- **`agent`** — proxy. PersonasService is dense domain logic; we proxy to it
+  rather than vendor it. Agent's own `admin_web/` can be retired once you're
+  satisfied with our UI.
+- **`channel`** — process-only. LiveKit voice worker with no HTTP/NATS admin
+  surface. We expose process status (from supervisord) and a read-only view
+  of `deploy/.livekit-channel.env` (secrets masked) — no channel project
+  changes required.
+- **`nats`** — shared infra under our supervisord (`nats-server` on
+  `:4222` / `:8222` JetStream). One source of truth across the stack.
+
+### Adding a new sub-project
+
+1. Write `deploy/supervisor/available/<id>.conf` (use `wrappers/with-env.sh`
+   if it needs a `.env` loaded).
+2. Append a `services[]` entry to `config/services.yaml` with the right
+   `integration:` mode and `supervisor:` block.
+3. (For `native` only) implement `server/eidolon_admin_server/app/<id>/`
+   following the memory module shape (`schemas.py`, `router.py`, `routers/`,
+   protocol clients in their own files).
+4. (For UI) add page components under `web/src/modules/<id>/` and register
+   them in `FeatureDispatcher.vue`. Unmapped features fall back to the
+   generic `ApiConsole`.
+
+## Architecture
+
+```
+┌─────────────────┐     /api/services/{id}/...     ┌────────────────────┐
+│   Vue 3 SPA     │ ─────────── proxy ───────────► │  FastAPI gateway   │
+│  (Element Plus) │                                │   (port 9000)      │
+│   port 9001     │ ◄──── JSON / SSE / binary ──── │                    │
+└─────────────────┘                                └────────┬───────────┘
+                                                            │
+                                              ┌─────────────┼──────────────┐
+                                              ▼             ▼              ▼
+                                       eidolon_agent  eidolon_hub  eidolon_memory
+                                       (whatever port is configured in services.yaml)
+```
+
+The gateway has no business logic. It does four things:
+
+1. **Forward** requests under `/api/services/{service_id}/{sub_path}` to the
+   right upstream (`base_url + upstream_prefix + sub_path`).
+2. **Probe** each upstream's `health` endpoint concurrently for the Health
+   panel.
+3. **Drive** each sub-project's `deploy/dev/run_all.sh` via a tightly
+   whitelisted subprocess runner — one-click start/stop/restart.
+4. **Serve** the SPA configuration (`/api/services` returns the menu).
+
+## Repo layout
+
+```
+config/services.yaml          # service registry — edit this to add projects
+server/                       # FastAPI gateway
+  eidolon_admin_server/
+    app/
+      main.py                 # FastAPI factory
+      settings.py             # services.yaml loader (Pydantic)
+      gateway/                # proxy + router + registry
+      deploy/                 # safe runner + deploy router
+      routers/                # /api/services, /api/health
+  tests/
+web/                          # Vue 3 SPA (Vite)
+  src/
+    api/                      # axios client, service & deploy clients
+    layouts/                  # AdminLayout with dynamic menu
+    modules/                  # one folder per service (+ deploy, common, health)
+```
 
 ## Getting started
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+### One-shot (supervisord-managed stack)
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+This wrapper owns three things:
 
-## Add your files
+1. The admin **gateway api** (uvicorn :9000)
+2. The admin **web** (vite :9001)
+3. A **supervisord daemon** that launches every sub-project declared under
+   `deploy/supervisor/enabled/*.conf`.
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+```bash
+./deploy/dev/run_all.sh                  # foreground admin only (Ctrl+C exits)
+./deploy/dev/run_all.sh start            # supervisord + admin
+./deploy/dev/run_all.sh stop             # reverse
+./deploy/dev/run_all.sh restart
+./deploy/dev/run_all.sh status           # admin + supervisorctl status
 
+# Granular control
+./deploy/dev/run_all.sh start-admin | stop-admin | restart-admin | status-admin
+./deploy/dev/run_all.sh start-sv   | stop-sv   | status-sv
+
+# Direct supervisorctl passthrough
+./deploy/dev/run_all.sh sv status
+./deploy/dev/run_all.sh sv tail -f memory:memory-supervisor
+
+# Pre-supervisord wrapper (drives each sub-project's run_all.sh directly)
+./deploy/dev/run_all.sh --legacy status
 ```
-cd existing_repo
-git remote add origin https://gitlab.aimanthor.com/jarvis/eidolon/eidolon_admin.git
-git branch -M main
-git push -uf origin main
+
+Per-program control (start / stop / restart of `memory-supervisor`, etc.)
+happens via the admin UI's **Supervisor** page or via `sv` passthrough — this
+top-level script doesn't touch individual programs.
+
+First run auto-creates `.venv`, installs `eidolon-admin` (which brings
+supervisord), and runs `pnpm install` (or `npm install`) for the web. PID /
+log files for the gateway live under `~/eidolon/run/eidolon-admin-gateway-*.pid`
+and `~/eidolon/logs/eidolon-admin-gateway-*.log`. The supervisord daemon
+itself stores its pid + socket under `var/` inside this repo (so the unix
+socket path stays short enough for macOS's 104-byte limit).
+
+### Adding a new sub-project to the supervisor
+
+1. Write `deploy/supervisor/available/<id>.conf` (`[program:...]` blocks +
+   optional `[group:<id>]`).
+2. Enable it — either from the admin UI's **Supervisor** page (toggle switch
+   on the config card) or manually:
+   ```bash
+   ln -snf ../available/<id>.conf deploy/supervisor/enabled/<id>.conf
+   ./deploy/dev/run_all.sh sv reread
+   ./deploy/dev/run_all.sh sv update
+   ```
+3. (Optional) add a `supervisor:` block to `config/services.yaml` so the UI
+   knows which programs belong to which service card:
+   ```yaml
+   - id: my-service
+     name: My Service
+     ...
+     supervisor:
+       config_file: deploy/supervisor/available/my-service.conf
+       group: my-service
+       programs: [my-prog-1, my-prog-2]
+   ```
+
+### Manual (each part separately)
+
+```bash
+# Backend
+.venv/bin/eidolon-admin              # uvicorn on 127.0.0.1:9000
+.venv/bin/pytest server/tests/ -v
+
+# Frontend
+cd web && pnpm dev                   # Vite on 127.0.0.1:9001
 ```
 
-## Integrate with your tools
+Open <http://127.0.0.1:9001>. Vite proxies `/api` → `http://127.0.0.1:9000`.
 
-- [ ] [Set up project integrations](https://git.aimanthor.com/jarvis/eidolon/eidolon_admin/-/settings/integrations)
+### End-to-end: start every sub-project from the UI
 
-## Collaborate with your team
+1. Boot the gateway and the frontend (above).
+2. Open the **Deploy / Dev** page (the default landing page).
+3. Click **全部启动** — the gateway invokes each sub-project's
+   `deploy/dev/run_all.sh start` in parallel.
+4. The Health panel turns green once each upstream comes online.
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+Run output streams into a side drawer; logs declared in `services.yaml` are
+viewable from the same page.
 
-## Test and Deploy
+## Adding a new sub-project
 
-Use the built-in continuous integration in GitLab.
+Append a block to `config/services.yaml` and restart the gateway:
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+```yaml
+services:
+  - id: my-service
+    name: My Service
+    base_url: http://127.0.0.1:8123
+    upstream_prefix: /api/admin
+    auth: { type: none }
+    health: /api/admin/health
+    deploy:
+      script: /path/to/my-service/deploy/dev/run_all.sh
+      cwd:    /path/to/my-service
+      commands: [start, stop, restart, status]
+      log_files:
+        - /path/to/my-service/logs/app.log
+    features:
+      - { key: dashboard, label: "Dashboard" }
+      - { key: console,   label: "API Console" }
+```
 
-***
+The menu picks it up automatically. Endpoints not yet covered by a hand-written
+page fall back to the generic **API Console** (an HTTP request builder bound to
+this service), so day-one coverage is complete by construction.
 
-# Editing this README
+## Deploy / Dev runner — safety model
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+The runner is the only part of the gateway that executes arbitrary shell.
+Hardening:
 
-## Suggestions for a good README
+- **Command whitelist** — only commands listed in `deploy.commands` for the
+  service are accepted; anything else returns 400 before any process spawn.
+- **No shell** — uses `asyncio.create_subprocess_exec(script, command, ...)`
+  with positional args. Shell metacharacters in the command parameter cannot
+  reach a shell.
+- **Path validation** — script existence + executability checked at request
+  time; log files must match the configured `log_files` whitelist exactly
+  (after `~`/`$VAR` expansion + resolve).
+- **Timeouts** — 30s for status/reload, 120s for start/stop/restart; SIGTERM
+  on timeout, SIGKILL 5s later if still alive.
+- **Per-service lock** — concurrent invocations on the same service serialise
+  via `asyncio.Lock` so two starts can't race.
+- **Restart degradation** — services whose script lacks native `restart` (e.g.
+  `hub`) get a synthesised `stop → sleep 1s → start` in the gateway, leaving
+  the sub-project script untouched.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## Configuration via env
 
-## Name
-Choose a self-explaining name for your project.
+| Env var                     | Default                                  | Purpose                                              |
+| --------------------------- | ---------------------------------------- | ---------------------------------------------------- |
+| `EIDOLON_ADMIN_SERVICES_FILE` | `<repo>/config/services.yaml`          | Path to the service registry                         |
+| `EIDOLON_MEMORY_ADMIN_TOKEN` | (unset)                                  | Bearer token forwarded to eidolon_memory if required |
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Tests
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```bash
+.venv/bin/pytest server/tests/ -v
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Covers:
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+- Proxy: forwarding, query strings, header filtering, bearer injection,
+  upstream errors → 502, SSE/JSON branching, services catalog, concurrent
+  health probes.
+- Deploy runner: whitelist enforcement, shell-injection rejection, restart
+  fallback, native restart preference, timeout/SIGKILL path, lock
+  serialisation, log whitelist enforcement, all HTTP routes.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## Roadmap (post-MVP, not implemented)
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- Authentication (single admin account → JWT)
+- Operation audit log (JSONL)
+- Permission model for multi-user gateways
+- Docker compose for one-shot deployment

@@ -1,0 +1,140 @@
+"""Tests for the unified gateway proxy."""
+from __future__ import annotations
+
+import httpx
+import pytest
+import respx
+
+
+pytestmark = pytest.mark.asyncio
+
+
+@respx.mock
+async def test_proxy_forwards_get(app):
+    route = respx.get("http://agent.test/api/admin/personas/templates").mock(
+        return_value=httpx.Response(200, json={"templates": ["a", "b"]})
+    )
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.get("/api/services/agent/personas/templates")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"templates": ["a", "b"]}
+    assert route.called
+
+
+@respx.mock
+async def test_proxy_unknown_service_returns_404(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.get("/api/services/nope/foo")
+    assert resp.status_code == 404
+
+
+@respx.mock
+async def test_proxy_injects_bearer_token(app, monkeypatch):
+    monkeypatch.setenv("TEST_MEMORY_TOKEN", "secret-xyz")
+    captured: dict[str, str] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization", "")
+        return httpx.Response(200, json={"users": []})
+
+    respx.get("http://memory.test/api/users").mock(side_effect=_capture)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        # Send a frontend-provided Authorization that must be stripped
+        resp = await ac.get(
+            "/api/services/memory/users",
+            headers={"Authorization": "Bearer client-token"},
+        )
+
+    assert resp.status_code == 200
+    assert captured["auth"] == "Bearer secret-xyz"
+
+
+@respx.mock
+async def test_proxy_passes_query_string(app):
+    route = respx.get("http://memory.test/api/memories?q=hello&top_k=5").mock(
+        return_value=httpx.Response(200, json={"hits": []})
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.get("/api/services/memory/memories?q=hello&top_k=5")
+    assert resp.status_code == 200
+    assert route.called
+
+
+@respx.mock
+async def test_proxy_upstream_error_returns_502(app):
+    respx.get("http://agent.test/api/admin/personas/templates").mock(
+        side_effect=httpx.ConnectError("upstream down")
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.get("/api/services/agent/personas/templates")
+    assert resp.status_code == 502
+    body = resp.json()
+    assert body["service_id"] == "agent"
+    assert "upstream_error" in body
+
+
+@respx.mock
+async def test_proxy_post_body(app):
+    captured = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content
+        captured["ctype"] = request.headers.get("content-type")
+        return httpx.Response(201, json={"ok": True})
+
+    respx.post("http://agent.test/api/admin/personas/instances").mock(side_effect=_capture)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.post(
+            "/api/services/agent/personas/instances",
+            json={"template_id": "t1"},
+        )
+
+    assert resp.status_code == 201
+    assert b"template_id" in captured["body"]
+    assert "application/json" in captured["ctype"]
+
+
+async def test_services_catalog(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.get("/api/services")
+    assert resp.status_code == 200
+    data = resp.json()
+    ids = [s["id"] for s in data["services"]]
+    assert ids == ["agent", "memory"]
+    # token_env / script must NOT leak
+    assert "token_env" not in data["services"][1].get("auth", {})
+
+
+@respx.mock
+async def test_overview_probes_concurrently(app):
+    """Overview endpoint runs HTTP probes against every service in parallel.
+
+    Comprehensive overview tests live in test_overview.py — this one just
+    confirms the http_client + registry wiring works from the proxy fixture.
+    """
+    respx.get("http://agent.test/api/admin/personas/templates").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get("http://memory.test/api/health").mock(
+        return_value=httpx.Response(503, json={"status": "down"})
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+        resp = await ac.get("/api/overview/services")
+    assert resp.status_code == 200
+    data = resp.json()
+    by_id = {s["id"]: s for s in data["services"]}
+    # agent returned 200, memory returned 503 → http_probe.ok flips accordingly
+    assert by_id["agent"]["http_probe"]["ok"] is True
+    assert by_id["memory"]["http_probe"]["ok"] is False

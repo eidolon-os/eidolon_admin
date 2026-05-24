@@ -1,0 +1,38 @@
+[project]
+name = "eidolon-admin"
+version = "0.1.0"
+description = "Unified admin gateway for Eidolon sub-projects (agent / hub / memory)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.5",
+    "pyyaml>=6.0",
+    "supervisor>=4.2.5",
+    "psutil>=6.0",
+    "mcp>=1.2.0",
+    "nats-py>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+]
+
+[project.scripts]
+eidolon-admin = "eidolon_admin_server.app.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["server"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["server/tests"]

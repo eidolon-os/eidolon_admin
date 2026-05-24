@@ -1,0 +1,56 @@
+/* Eidolon Admin — Linear-style dark theme tokens.
+ * Single source of truth for colors, spacing, typography. Every component should
+ * reference these via var(--eid-*) rather than hardcoding hex values.
+ */
+:root {
+  /* Surfaces */
+  --eid-bg-canvas:     #0b1020;   /* page background, behind everything */
+  --eid-bg-panel:      #111827;   /* cards, drawers, menus */
+  --eid-bg-elev:       #1f2937;   /* hover/active surfaces, table stripe */
+  --eid-bg-inset:      #0f172a;   /* code blocks, console output */
+  --eid-bg-overlay:    #0b1020e0; /* modal scrim */
+
+  /* Borders */
+  --eid-border:        #1f2937;
+  --eid-border-strong: #374151;
+  --eid-border-focus:  #6366f1;
+
+  /* Text */
+  --eid-text-primary:   #f3f4f6;
+  --eid-text-secondary: #9ca3af;
+  --eid-text-muted:     #6b7280;
+  --eid-text-inverse:   #0b1020;
+
+  /* Accent — indigo/violet, Linear-ish */
+  --eid-accent:         #6366f1;
+  --eid-accent-soft:    rgba(99, 102, 241, 0.16);
+  --eid-accent-hover:   #818cf8;
+
+  /* Semantic */
+  --eid-success:        #10b981;
+  --eid-success-soft:   rgba(16, 185, 129, 0.18);
+  --eid-warning:        #f59e0b;
+  --eid-warning-soft:   rgba(245, 158, 11, 0.18);
+  --eid-danger:         #ef4444;
+  --eid-danger-soft:    rgba(239, 68, 68, 0.18);
+  --eid-info:           #60a5fa;
+  --eid-info-soft:      rgba(96, 165, 250, 0.18);
+
+  /* Layout */
+  --eid-aside-w:    240px;
+  --eid-header-h:   56px;
+  --eid-radius:     8px;
+  --eid-radius-sm:  6px;
+  --eid-radius-lg:  12px;
+
+  /* Shadows (subtle in dark) */
+  --eid-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --eid-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --eid-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+
+  /* Typography */
+  --eid-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
+                   "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --eid-font-mono: ui-monospace, "JetBrains Mono", "Fira Code", Menlo,
+                   "SF Mono", Consolas, monospace;
+}
