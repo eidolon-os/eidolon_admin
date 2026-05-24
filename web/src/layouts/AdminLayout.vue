@@ -20,6 +20,7 @@ const isMemoryRoute = computed(() => {
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
+  if (route.name === 'devices') return 'devices'
   if (route.params.serviceId && route.params.feature) {
     return `${route.params.serviceId}::${route.params.feature}`
   }
@@ -54,6 +55,10 @@ function go(serviceId: string, feature: string) {
           <el-icon><Document /></el-icon>
           <span>Configs</span>
         </el-menu-item>
+        <el-menu-item index="devices" @click="router.push({ name: 'devices' })">
+          <el-icon><Monitor /></el-icon>
+          <span>Devices</span>
+        </el-menu-item>
         <el-sub-menu
           v-for="svc in navigableServices"
           :key="svc.id"
@@ -79,6 +84,7 @@ function go(serviceId: string, feature: string) {
         <span class="crumb">
           <template v-if="route.name === 'supervisor'">Supervisor</template>
           <template v-else-if="route.name === 'configs'">Configs</template>
+          <template v-else-if="route.name === 'devices'">Devices</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
             <span class="sep">/</span>
