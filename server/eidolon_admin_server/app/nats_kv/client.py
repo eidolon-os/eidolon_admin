@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal
 
 import nats
+from nats.js import kv as nats_kv  # for KV_DEL / KV_PURGE op constants in watch()
 from nats.js.api import KeyValueConfig, StorageType
 from nats.js.errors import KeyNotFoundError, NoKeysError
 
@@ -197,28 +198,74 @@ class KVClient:
             return list(all_keys)
         return [k for k in all_keys if k.startswith(prefix)]
 
-    # ---- watch (STUB — Phase 26 implements) --------------------------------
+    # ---- watch -------------------------------------------------------------
 
-    async def watch(self, bucket: str) -> AsyncIterator[tuple[WatchOp, str, bytes | None]]:
-        """STUB. Will yield ``(op, key, value)`` tuples on KV change.
+    async def watch(
+        self,
+        bucket: str,
+        *,
+        include_history: bool = False,
+    ) -> AsyncIterator[tuple[WatchOp, str, bytes | None]]:
+        """Stream KV change events as ``(op, key, value)`` tuples.
 
-        ``op`` is "put" or "delete"; ``value`` is the new bytes on "put",
-        ``None`` on "delete". The caller treats this as an async iterator
-        and never sees the underlying nats-py watch primitive.
+        ``op`` is ``"put"`` or ``"delete"``. ``value`` is the new bytes
+        on a put, ``None`` on a delete. Returned by the underlying
+        async iterator until the caller breaks out of the loop, at
+        which point we stop the watcher and unsubscribe.
 
-        Why a stub now: Phase 25 admin is single-instance and reads NATS
-        through directly on every request (no in-process cache that needs
-        invalidation). Multi-instance / cache-warming is Phase 26's problem.
-        Reserving the signature today means Phase 26 lands without API
-        churn at the call sites.
+        Delivery semantics (matching nats-py's ``KeyValue.watch``):
+
+        - ``include_history=False`` (default, snapshot mode): the watcher
+          first delivers the *current value* of every key in the bucket
+          (one event per key, at its latest revision), then continues
+          with future put/delete events. This is the right mode for
+          cache-warming: subscriber sees the world as it stands, then
+          stays in sync. The watcher does NOT replay older revisions
+          that have been overwritten.
+
+        - ``include_history=True`` (full replay): every revision of every
+          key is delivered in order, then live updates. Use for audit
+          / rebuild flows that need the full history.
+
+        Either mode silently drops nats-py's "init complete" sentinel
+        (the lone ``None`` entry) — callers see only real events.
+
+        Why this matters now (Phase 26):
+            Multi-admin coordination + future in-process caches both
+            need this. Phase 25 left it stubbed because admin was
+            single-instance and read-through was correct + simple.
+            With this implementation the same signature now does what
+            its docstring promises — no caller has to change.
         """
-        raise NotImplementedError(
-            f"KVClient.watch({bucket!r}) is stubbed — Phase 26 will implement. "
-            "Until then, callers must read-through on each request."
+        kv = await self._kv(bucket)
+        watcher = await kv.watch(
+            keys=">",  # nats-py KV wildcard for "every key in bucket"
+            include_history=include_history,
         )
-        # The yield below is unreachable but tells type checkers this is
-        # an async generator (so the return type holds).
-        yield ("put", "", None)  # pragma: no cover
+        try:
+            async for entry in watcher:
+                # ``None`` is the init-complete sentinel from nats-py:
+                # "history replay finished, you're live now". Callers
+                # don't care about this — they want events, not lifecycle
+                # markers. Drop and continue.
+                if entry is None:
+                    continue
+                op: WatchOp
+                if entry.operation in (nats_kv.KV_DEL, nats_kv.KV_PURGE):
+                    op = "delete"
+                    value: bytes | None = None
+                else:
+                    op = "put"
+                    value = entry.value
+                yield (op, entry.key, value)
+        finally:
+            # Best-effort stop — if the connection's already gone the
+            # unsubscribe fails harmlessly and we don't want that
+            # masking the original exit reason.
+            try:
+                await watcher.stop()
+            except Exception:  # noqa: BLE001
+                logger.debug("KVClient.watch: stop() failed; ignored", exc_info=True)
 
     # ---- internals ---------------------------------------------------------
 
