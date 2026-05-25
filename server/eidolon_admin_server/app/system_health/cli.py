@@ -88,18 +88,51 @@ async def check(
             "Refusing to start: orphans hold ports admin's children will need.",
             _RED,
         ))
+        foreign = [o for o in orphans if not _looks_like_eidolon_stack(o["command"])]
+        if foreign:
+            print()
+            print(_color(
+                "Some listeners look like unrelated system services (e.g. nginx on :8080).",
+                _YELLOW,
+            ))
+            print(
+                "Do " + _color("not", _RED) + " use --cleanup on those — change "
+                + _color("config/ports.yaml", _GREEN)
+                + " or stop the other service instead."
+            )
+        print()
         print(
             "Re-run with " + _color("--cleanup", _GREEN)
-            + " to SIGTERM them automatically,"
+            + " to SIGTERM stale Eidolon orphans only,"
         )
         print("or inspect with " + _color("lsof -i :<port>", _GREEN)
               + " and kill manually.")
         return 1
 
     # Cleanup path: SIGTERM each orphan, give them a moment to die, re-audit.
+    # Skip listeners that look like unrelated system daemons (nginx, etc.).
+    cleanup_targets = [o for o in orphans if _looks_like_eidolon_stack(o["command"])]
+    skipped = [o for o in orphans if o not in cleanup_targets]
+    if skipped:
+        print()
+        print(_color(
+            f"Skipping cleanup for {len(skipped)} non-Eidolon listener(s):",
+            _YELLOW,
+        ))
+        for o in skipped:
+            print(f"  pid {o['pid']:>6}  :{o['port']:<6}  {_color(o['command'][:120], _DIM)}")
+    if not cleanup_targets:
+        print()
+        print(_color(
+            "No Eidolon orphans to clean — fix port conflicts in config/ports.yaml "
+            "or stop the other service(s).",
+            _RED,
+        ))
+        return 1
+
     print()
     print(_color("Cleaning up orphans (SIGTERM)...", _YELLOW))
-    for o in orphans:
+    for o in cleanup_targets:
         ok, err = probe.send_signal(o["pid"], signal.SIGTERM)
         if ok:
             print(f"  pid {o['pid']:>6}  ✓ SIGTERM sent")
@@ -131,6 +164,24 @@ async def check(
 
     print(_color(f"✗ {len(final)} orphan(s) survived even SIGKILL — manual intervention needed", _RED))
     return 1
+
+
+def _looks_like_eidolon_stack(command: str) -> bool:
+    """Heuristic: is this listener probably a leftover from our dev stack?"""
+    cmd = command.lower()
+    markers = (
+        "eidolon",
+        "uvicorn",
+        "supervisord",
+        "nats-server",
+        "livekit-server",
+        "vite",
+        "next dev",
+        "node_modules/.bin/next",
+        "eidolon-memory",
+        "eidolon-agent",
+    )
+    return any(m in cmd for m in markers)
 
 
 def _scan_for_orphans(cfg, unmanaged: dict[str, set[int]]) -> list[dict]:

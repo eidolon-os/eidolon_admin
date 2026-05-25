@@ -1,0 +1,49 @@
+# Eidolon dev stack — port registry (single source of truth).
+#
+# Edit bind ports here only. deploy/dev/run_all.sh exports EIDOLON_* env vars
+# for supervisord and runs sync to push values into sub-project settings files.
+
+admin:
+  api:
+    host: 127.0.0.1
+    port: 9000
+  web:
+    port: 9001
+
+hub:
+  api:
+    host: 0.0.0.0
+    port: 8082
+
+agent:
+  http:
+    # Avoid 8080 — commonly taken by Homebrew nginx (http-alt).
+    port: 8180
+  admin:
+    port: 8081
+  grpc:
+    port: 50051
+
+memory:
+  discovery:
+    host: 127.0.0.1
+    port: 8020
+  mcp:
+    port: 8030
+
+channel:
+  worker:
+    port: 8766
+
+client_web:
+  port: 3000
+
+nats:
+  port: 4222
+  http_port: 8222
+
+livekit:
+  port: 7880
+  turn_udp_port: 3478
+  rtc_port_start: 50000
+  rtc_port_end: 60000

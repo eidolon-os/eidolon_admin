@@ -1,12 +1,13 @@
 # Eidolon Admin Gateway — service registry.
 # Paths use $EIDOLON_ROOT (export from deploy/dev/run_all.sh or set manually).
+# Bind ports come from config/ports.yaml → EIDOLON_* env vars (see app/ports.py).
 
 admin:
-  host: 127.0.0.1
-  port: 9000
+  host: $EIDOLON_ADMIN_API_HOST
+  port: $EIDOLON_ADMIN_API_PORT
   cors_origins:
-    - http://127.0.0.1:9001
-    - http://localhost:9001
+    - http://127.0.0.1:$EIDOLON_ADMIN_WEB_PORT
+    - http://localhost:$EIDOLON_ADMIN_WEB_PORT
 
 services:
 
@@ -16,14 +17,14 @@ services:
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    health: http://127.0.0.1:9000/docs
+    health: http://127.0.0.1:$EIDOLON_ADMIN_API_PORT/docs
     supervisor:
       config_file: deploy/supervisor/available/admin.conf
       group: admin
       programs:
         - admin-api
     ports:
-      declared: [9000, 9001]
+      declared: [$EIDOLON_ADMIN_API_PORT, $EIDOLON_ADMIN_WEB_PORT]
     features: []
     configs:
       - id: services
@@ -36,7 +37,7 @@ services:
   - id: agent
     name: Eidolon Agent
     integration: proxy
-    base_url: http://127.0.0.1:8081
+    base_url: http://127.0.0.1:$EIDOLON_AGENT_ADMIN_PORT
     upstream_prefix: /api/admin
     auth: { type: none }
     health: /api/admin/personas/templates
@@ -46,7 +47,7 @@ services:
       programs:
         - agent
     ports:
-      declared: [8081, 8083, 50052]
+      declared: [$EIDOLON_AGENT_HTTP_PORT, $EIDOLON_AGENT_ADMIN_PORT, $EIDOLON_AGENT_GRPC_PORT]
     features:
       - { key: personas-templates, label: "Persona 模板" }
       - { key: personas-instances, label: "Persona 实例" }
@@ -75,7 +76,7 @@ services:
   - id: hub
     name: Eidolon Hub
     integration: proxy
-    base_url: http://127.0.0.1:8082
+    base_url: http://127.0.0.1:$EIDOLON_HUB_API_PORT
     upstream_prefix: /api/admin
     auth: { type: none }
     health: /api/admin/probe/health
@@ -85,7 +86,7 @@ services:
       programs:
         - hub-api
     ports:
-      declared: [8082]
+      declared: [$EIDOLON_HUB_API_PORT]
     features:
       - { key: devices,  label: "Devices" }
       - { key: commands, label: "Commands" }
@@ -114,7 +115,7 @@ services:
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    health: http://127.0.0.1:8020/api/discovery/agent-routing
+    health: http://127.0.0.1:$EIDOLON_MEMORY_DISCOVERY_PORT/api/discovery/agent-routing
     supervisor:
       config_file: deploy/supervisor/available/memory.conf
       group: memory
@@ -122,7 +123,7 @@ services:
         - memory-supervisor
         - memory-discovery
     ports:
-      declared: [8020]
+      declared: [$EIDOLON_MEMORY_DISCOVERY_PORT]
     features:
       - { key: runners,   label: "Agent Runners" }
       - { key: users,     label: "Users" }
@@ -168,7 +169,7 @@ services:
       programs:
         - channel-worker
     ports:
-      declared: [8766]
+      declared: [$EIDOLON_CHANNEL_WORKER_PORT]
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
@@ -194,14 +195,14 @@ services:
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    health: http://127.0.0.1:3000/
+    health: http://127.0.0.1:$EIDOLON_CLIENT_WEB_PORT/
     supervisor:
       config_file: deploy/supervisor/available/client-web.conf
       group: client-web
       programs:
         - client-web
     ports:
-      declared: [3000]
+      declared: [$EIDOLON_CLIENT_WEB_PORT]
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }

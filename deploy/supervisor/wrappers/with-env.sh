@@ -33,7 +33,7 @@ cd "$project_dir"
 
 if [[ ! -f "$env_file" ]]; then
   echo "error: env file not found: ${project_dir}/${env_file}" >&2
-  echo "hint: run ./deploy/dev/init.sh in ${project_dir}" >&2
+  echo "hint: run ./scripts/init-config.sh in ${project_dir}" >&2
   exit 1
 fi
 

@@ -140,6 +140,9 @@ def default_eidolon_root() -> Path:
 
 
 def load_gateway_config(path: Path | None = None) -> GatewayConfig:
+    from .ports import apply_ports_to_environ
+
+    apply_ports_to_environ()
     target = path or get_settings().services_file
     text = target.read_text(encoding="utf-8")
     if "EIDOLON_ROOT" in text and not os.environ.get("EIDOLON_ROOT"):

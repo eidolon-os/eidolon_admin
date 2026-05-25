@@ -68,9 +68,23 @@ mkdir -p "$VAR_DIR" "$RUN_DIR" "${LOG_DIR}/admin/childlogs"
 WEB_PID_FILE="${RUN_DIR}/eidolon-admin-gateway-web.pid"
 WEB_LOG_FILE="${LOG_DIR}/admin/gateway-web.log"
 
-API_HOST="${EIDOLON_ADMIN_HOST:-127.0.0.1}"
-API_PORT="${EIDOLON_ADMIN_PORT:-9000}"
+API_HOST="${EIDOLON_ADMIN_API_HOST:-127.0.0.1}"
+API_PORT="${EIDOLON_ADMIN_API_PORT:-9000}"
 WEB_PORT="${EIDOLON_ADMIN_WEB_PORT:-9001}"
+
+load_ports_env() {
+  ensure_api_deps
+  # shellcheck disable=SC2046
+  eval "$("${VENV}/bin/python" -m eidolon_admin_server.app.ports export)"
+  API_HOST="${EIDOLON_ADMIN_API_HOST:-127.0.0.1}"
+  API_PORT="${EIDOLON_ADMIN_API_PORT:-9000}"
+  WEB_PORT="${EIDOLON_ADMIN_WEB_PORT:-9001}"
+}
+
+sync_ports_from_registry() {
+  ensure_api_deps
+  "${VENV}/bin/python" -m eidolon_admin_server.app.ports sync
+}
 
 VENV="${ROOT}/.venv"
 WEB_DIR="${ROOT}/web"
@@ -351,6 +365,8 @@ do_preflight() {
 }
 
 do_start() {
+  load_ports_env
+  sync_ports_from_registry
   header "pre-flight port audit"
   do_preflight
   echo
@@ -382,7 +398,8 @@ do_status() {
 }
 
 do_foreground() {
-  ensure_api_deps
+  load_ports_env
+  sync_ports_from_registry
   ensure_web_deps
   cleanup() {
     [[ -n "${API_PID:-}" ]] && kill "$API_PID" 2>/dev/null || true

@@ -40,6 +40,16 @@ Each sub-project is integrated via one of four modes (declared in
   changes required.
 - **`nats`** — shared infra under our supervisord (`nats-server` on
   `:4222` / `:8222` JetStream). One source of truth across the stack.
+- **`livekit`** — shared infra under our supervisord (`livekit-server` on
+  `:7880`). Config at `deploy/livekit/livekit.yaml`; hub and channel only
+  need matching `LIVEKIT_API_*` in their `.env`.
+
+### Port registry
+
+Dev bind ports live in **`config/ports.yaml`**. `./deploy/dev/run_all.sh`
+exports `EIDOLON_*` env vars for supervisord, syncs sub-project
+`settings.yaml` / LiveKit config, and drives `services.yaml` URL expansion.
+Change a port there, then `./deploy/dev/run_all.sh restart`.
 
 ### Adding a new sub-project
 
@@ -83,6 +93,8 @@ The gateway has no business logic. It does four things:
 
 ```
 config/services.yaml          # service registry — edit this to add projects
+config/ports.yaml             # dev stack port registry (single source of truth)
+docs/                         # cross-project conventions (config, reference loaders)
 server/                       # FastAPI gateway
   eidolon_admin_server/
     app/
