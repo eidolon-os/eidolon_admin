@@ -224,6 +224,34 @@ sv_ctl_ready() {
 }
 
 # Reload deploy/supervisor/enabled/*.conf into a running supervisord.
+# Stop channel before LiveKit during stack shutdown so the worker does not log
+# ConnectionRefused while livekit-server is tearing down (supervisorctl
+# shutdown stops programs in parallel by default).
+do_sv_stop_channel_first() {
+  if ! sv_ctl_ready; then
+    return 0
+  fi
+  local raw state
+  raw="$("${VENV}/bin/supervisorctl" -c "$SV_CONF" status channel:channel-worker 2>/dev/null || true)"
+  state="$(echo "$raw" | awk '{print $2}')"
+  if [[ -z "$state" || "$state" == "STOPPED" ]]; then
+    return 0
+  fi
+  info "stopping channel-worker before stack shutdown (clean LiveKit disconnect)"
+  "${VENV}/bin/supervisorctl" -c "$SV_CONF" stop channel:channel-worker 2>/dev/null \
+    || warn "supervisorctl stop channel:channel-worker failed (continuing)"
+  local i
+  for i in $(seq 1 80); do
+    raw="$("${VENV}/bin/supervisorctl" -c "$SV_CONF" status channel:channel-worker 2>/dev/null || true)"
+    state="$(echo "$raw" | awk '{print $2}')"
+    if [[ -z "$state" || "$state" == "STOPPED" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  warn "channel-worker still ${state:-running} after 40s; proceeding with shutdown"
+}
+
 do_sv_reread_update() {
   ensure_api_deps
   if ! sv_alive; then
@@ -280,18 +308,19 @@ do_sv_stop() {
   fi
   local sv_pid; sv_pid=$(cat "$SV_PID")
 
-  # Step 1: ask supervisord to gracefully shut down its program tree.
+  # Step 1: stop channel while LiveKit is still up (avoids reconnect errors in logs).
+  do_sv_stop_channel_first
+
+  # Step 2: ask supervisord to gracefully shut down the rest of the program tree.
   #
   # It will send SIGTERM to each program and wait up to that program's
-  # ``stopwaitsecs`` (max in our setup is 40s for channel-worker) before
-  # SIGKILL-ing. Programs are shut down in parallel, so total wall time
-  # is bounded by the max ``stopwaitsecs`` plus supervisord's own
-  # bookkeeping overhead.
+  # ``stopwaitsecs`` before SIGKILL-ing. Remaining programs shut down in parallel;
+  # wall time is bounded by the max ``stopwaitsecs`` plus supervisord overhead.
   info "supervisord shutdown (will stop admin-api + all enabled programs)"
   "${VENV}/bin/supervisorctl" -c "$SV_CONF" shutdown 2>/dev/null \
     || warn "supervisorctl shutdown rpc failed (continuing with patient wait)"
 
-  # Step 2: patient wait. 60s = max(stopwaitsecs)=40 + 20s buffer for
+  # Step 3: patient wait. 60s = max(stopwaitsecs)=40 + 20s buffer for
   # supervisord's own teardown. Previously this was 20s, which routinely
   # truncated channel-worker's graceful exit and forced step 3.
   local wait_seconds=60
@@ -303,7 +332,7 @@ do_sv_stop() {
     return 0
   fi
 
-  # Step 3: escalation. Graceful shutdown didn't complete in time. This
+  # Step 4: escalation. Graceful shutdown didn't complete in time. This
   # is where the old code SIGKILL'd just supervisord — and every child
   # immediately became a PPID=1 orphan because supervisord uses setsid
   # to isolate each child into its own session, so signaling supervisord
