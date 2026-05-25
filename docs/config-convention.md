@@ -80,8 +80,9 @@ command=.../eidolon_admin/deploy/supervisor/wrappers/with-env.sh <repo_root> con
 
 ## 密钥与 YAML 占位符
 
-- `settings.yaml` 中声明密钥字段，**值必须为空字符串**（如 `livekit.api_key: ""`），注释标明对应 env 名（`# env: LIVEKIT_API_KEY`）
-- 实际密钥只写在 `config/.env`（或容器环境变量）
+- `settings.yaml` 中声明密钥字段时，**占位符值 = 环境变量名**（如 `livekit.api_key: LIVEKIT_API_KEY`），与 `config/.env` / `.env.example` 中的键一致
+- 实际密钥只写在 `config/.env`（或容器环境变量）；`.env.example` 中建议 `KEY=KEY` 自引用占位，便于复制后替换
+- 禁止在 yaml 中写入真实密钥（非空且不是合法 `UPPER_SNAKE_CASE` 占位符名）
 - pydantic 服务：YAML 校验拒绝非空 `api_key` / `secret` / `token`；可用 `SecretStr` + `Field(validation_alias="ENV_NAME")`
 - 日志 `model_dump()` 须脱敏
 

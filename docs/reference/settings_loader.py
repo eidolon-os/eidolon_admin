@@ -5,8 +5,18 @@ Synced convention: eidolon_admin/docs/config-convention.md
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
+
+# Placeholder in settings.yaml: value equals the env var name (e.g. LIVEKIT_API_KEY).
+_ENV_PLACEHOLDER_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+def is_env_placeholder(value: str) -> bool:
+    """True when ``value`` is an env-var name used as a yaml secret placeholder."""
+    v = (value or "").strip()
+    return bool(v) and _ENV_PLACEHOLDER_RE.fullmatch(v) is not None
 
 import yaml
 from pydantic import BaseModel
@@ -95,13 +105,19 @@ class YamlSettingsSource(PydanticBaseSettingsSource):
 
 
 def reject_inline_secrets(data: Any, *, path: str = "") -> None:
-    """Raise if yaml contains non-empty secret-like keys."""
+    """Raise if yaml contains non-placeholder secret-like string values."""
     if isinstance(data, dict):
         for k, v in data.items():
             p = f"{path}.{k}" if path else k
-            if k.lower() in ("api_key", "secret", "token") and isinstance(v, str) and v.strip():
+            if (
+                k.lower() in ("api_key", "secret", "token")
+                and isinstance(v, str)
+                and v.strip()
+                and not is_env_placeholder(v)
+            ):
                 raise ValueError(
-                    f"inline secret not allowed at {p}; use config/.env and SecretStr"
+                    f"inline secret not allowed at {p}; use config/.env "
+                    f"(yaml placeholder = env var name, e.g. LIVEKIT_API_KEY)"
                 )
             reject_inline_secrets(v, path=p)
     elif isinstance(data, list):
