@@ -83,20 +83,31 @@ class KVClient:
     async def connect(self) -> None:
         """Establish the connection. Idempotent.
 
-        Called once at admin startup. If NATS is unreachable, raises — the
-        caller (main.py lifespan) decides whether to swallow that and mark
-        ``app.state.nats_kv = None`` so /api/devices can return 503 cleanly.
+        Called once at admin startup. If NATS is unreachable, raises quickly
+        (no infinite reconnect loop) — the caller (main.py lifespan) swallows
+        the error so /api/devices returns 503 while the rest of admin keeps
+        running. Use ``./deploy/dev/run_all.sh start`` to bring up NATS via
+        supervisord.
         """
         if self._nc is not None and self._nc.is_connected:
             return
         async with self._connect_lock:
             if self._nc is not None and self._nc.is_connected:
                 return
-            self._nc = await nats.connect(
-                self._url,
-                allow_reconnect=True,
-                max_reconnect_attempts=-1,
-            )
+            try:
+                self._nc = await asyncio.wait_for(
+                    nats.connect(
+                        self._url,
+                        connect_timeout=2,
+                        allow_reconnect=True,
+                        max_reconnect_attempts=0,
+                    ),
+                    timeout=3.0,
+                )
+            except Exception as exc:
+                raise ConnectionError(
+                    f"could not connect to NATS at {self._url!r}"
+                ) from exc
             self._js = self._nc.jetstream()
             logger.info("KVClient connected to %s", self._url)
 

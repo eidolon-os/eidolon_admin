@@ -28,6 +28,10 @@ class ResolvedConfig:
 
 def _resolve(p: str) -> Path:
     """Expand $VAR + ~ in a yaml-supplied path."""
+    if "$EIDOLON_ROOT" in p and not os.environ.get("EIDOLON_ROOT"):
+        from ..settings import default_eidolon_root
+
+        os.environ.setdefault("EIDOLON_ROOT", str(default_eidolon_root()))
     return Path(os.path.expandvars(p)).expanduser().resolve()
 
 

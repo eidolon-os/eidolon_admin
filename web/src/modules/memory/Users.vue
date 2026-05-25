@@ -93,7 +93,7 @@ async function onCreate() {
   }
 }
 
-const usersFile = computed(() => store.users.length ? '~/eidolon/memory/config/users.yaml' : '')
+const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/users.yaml' : '')
 </script>
 
 <template>

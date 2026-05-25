@@ -31,8 +31,13 @@ shift
 
 cd "$project_dir"
 
-if [[ -f "$env_file" ]]; then
-  while IFS= read -r line || [[ -n "$line" ]]; do
+if [[ ! -f "$env_file" ]]; then
+  echo "error: env file not found: ${project_dir}/${env_file}" >&2
+  echo "hint: run ./deploy/dev/init.sh in ${project_dir}" >&2
+  exit 1
+fi
+
+while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "${line//[[:space:]]/}" ]] && continue
     [[ "${line#"${line%%[![:space:]]*}"}" == \#* ]] && continue
     [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=(.*)$ ]] || continue
@@ -42,8 +47,10 @@ if [[ -f "$env_file" ]]; then
     if [[ "$val" =~ ^\"(.*)\"$ ]] || [[ "$val" =~ ^\'(.*)\'$ ]]; then
       val="${BASH_REMATCH[1]}"
     fi
-    export "$key=$val"
+    # Do not override variables already set in the parent environment.
+    if [[ -z "${!key+x}" ]]; then
+      export "$key=$val"
+    fi
   done < "$env_file"
-fi
 
 exec "$@"

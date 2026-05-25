@@ -19,8 +19,9 @@
 # Usage:
 #   ./deploy/dev/run_all.sh                # foreground admin-api + web (Ctrl+C)
 #   ./deploy/dev/run_all.sh start          # supervisord (incl. admin-api) + vite
+#                                          # (runs supervisorctl reread + update)
 #   ./deploy/dev/run_all.sh stop           # reverse
-#   ./deploy/dev/run_all.sh restart
+#   ./deploy/dev/run_all.sh restart        # stop + start (reloads supervisor conf)
 #   ./deploy/dev/run_all.sh status         # admin web + supervisorctl status
 #   ./deploy/dev/run_all.sh foreground     # admin-api + web in foreground
 #
@@ -30,6 +31,9 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+
+# Monorepo root (eidolon_admin/..) — expands $EIDOLON_ROOT in config/services.yaml
+export EIDOLON_ROOT="${EIDOLON_ROOT:-$(cd "${ROOT}/.." && pwd)}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[INFO]${NC} $*"; }
@@ -201,10 +205,37 @@ do_web_status() {
 
 sv_alive() { [[ -f "$SV_PID" ]] && kill -0 "$(cat "$SV_PID")" 2>/dev/null; }
 
+sv_ctl_ready() {
+  [[ -S "$SV_SOCK" ]] && "${VENV}/bin/supervisorctl" -c "$SV_CONF" version >/dev/null 2>&1
+}
+
+# Reload deploy/supervisor/enabled/*.conf into a running supervisord.
+do_sv_reread_update() {
+  ensure_api_deps
+  if ! sv_alive; then
+    return 0
+  fi
+  local i
+  for i in $(seq 1 40); do
+    sv_ctl_ready && break
+    sleep 0.25
+  done
+  if ! sv_ctl_ready; then
+    warn "supervisorctl not ready on $SV_SOCK — skip reread/update"
+    return 1
+  fi
+  info "supervisord reread + update (reload enabled/*.conf)"
+  "${VENV}/bin/supervisorctl" -c "$SV_CONF" reread \
+    || warn "supervisorctl reread failed"
+  "${VENV}/bin/supervisorctl" -c "$SV_CONF" update \
+    || warn "supervisorctl update failed"
+}
+
 do_sv_start() {
   ensure_api_deps
   if sv_alive; then
     info "supervisord already running (PID $(cat "$SV_PID"), socket $SV_SOCK)"
+    do_sv_reread_update
     return 0
   fi
   # If a stale socket lingers from a crashed daemon, supervisord will refuse
@@ -224,6 +255,7 @@ do_sv_start() {
   fi
   info "supervisord PID $(cat "$SV_PID"), socket $SV_SOCK"
   info "  (admin-api auto-starts under supervisord)"
+  do_sv_reread_update
 }
 
 do_sv_stop() {
@@ -365,10 +397,11 @@ do_foreground() {
   WEB_PID=$!
 
   echo
-  info "eidolon-admin (foreground) — supervisord NOT touched"
+  info "eidolon-admin (foreground) — supervisord NOT touched (NATS / sub-projects not started)"
   echo "  API: http://${API_HOST}:${API_PORT}/docs"
   echo "  Web: http://127.0.0.1:${WEB_PORT}/"
-  echo "  Use '$0 start' for the full stack (supervisord + admin-api + sub-projects + vite)."
+  echo "  Use '$0 start' for the full stack (NATS, memory, hub, agent, channel, … + vite)."
+  echo "  Foreground mode still serves the UI; /api/devices needs NATS from 'start'."
   echo "  Ctrl+C to stop."
   echo
   wait "$API_PID" "$WEB_PID" || true

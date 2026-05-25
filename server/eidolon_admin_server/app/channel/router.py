@@ -19,18 +19,19 @@ from ..common.dotenv_view import read_dotenv_view
 
 router = APIRouter(prefix="/channel", tags=["channel"])
 
-_DEFAULT_ENV_PATH = Path(
-    "/Users/manson/ai/eidolon/eidolon_channel/deploy/.livekit-channel.env"
-)
+def _default_env_path() -> Path:
+    from ..settings import default_eidolon_root
+
+    return default_eidolon_root() / "eidolon_channel" / "config" / ".env"
 
 
 def _env_path() -> Path:
-    return Path(os.environ.get("EIDOLON_CHANNEL_ENV_FILE") or _DEFAULT_ENV_PATH).expanduser()
+    return Path(os.environ.get("EIDOLON_CHANNEL_ENV_FILE") or _default_env_path()).expanduser()
 
 
 @router.get("/config")
 def get_channel_config() -> dict:
     return read_dotenv_view(
         _env_path(),
-        missing_hint="copy deploy/livekit-channel.env.template to deploy/.livekit-channel.env",
+        missing_hint="copy deploy/livekit-channel.env.template to config/.env",
     )

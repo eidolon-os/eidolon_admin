@@ -1,6 +1,7 @@
 """Gateway settings — loaded from environment + services.yaml."""
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -130,7 +131,18 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def default_eidolon_root() -> Path:
+    """Monorepo root containing eidolon_admin, eidolon_agent, etc."""
+    env = os.environ.get("EIDOLON_ROOT", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    return (_REPO_ROOT.parent).resolve()
+
+
 def load_gateway_config(path: Path | None = None) -> GatewayConfig:
     target = path or get_settings().services_file
-    raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    text = target.read_text(encoding="utf-8")
+    if "EIDOLON_ROOT" in text and not os.environ.get("EIDOLON_ROOT"):
+        os.environ.setdefault("EIDOLON_ROOT", str(default_eidolon_root()))
+    raw = yaml.safe_load(os.path.expandvars(text)) or {}
     return GatewayConfig.model_validate(raw)

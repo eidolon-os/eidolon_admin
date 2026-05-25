@@ -1,36 +1,5 @@
 # Eidolon Admin Gateway — service registry.
-#
-# Each `services[]` entry declares one sub-project and how this gateway
-# integrates with it. Four integration modes are supported:
-#
-#   native    — admin endpoints are implemented in this gateway under
-#               /api/<id>/* using the sub-project's external protocols
-#               (NATS, MCP, files). base_url is empty.
-#               Example: memory.
-#
-#   proxy     — transparent HTTP forward: /api/services/<id>/<path> →
-#               base_url + upstream_prefix + path. Sub-project owns the
-#               admin implementation; this gateway just relays.
-#               Examples: hub, agent.
-#
-#   process   — process_only: no HTTP/NATS admin surface from the sub-project.
-#               supervisord owns lifecycle; UI shows status / logs / config.
-#               Example: channel.
-#
-#   infra     — shared infrastructure (NATS, future Postgres, etc).
-#               Listed only in supervisor configs, not as a service.
-#
-# Fields:
-#   id              short identifier
-#   name            display name (UI menu, status cards)
-#   integration     one of: native | proxy | process
-#   base_url        upstream HTTP base (empty for native / process)
-#   upstream_prefix path prefix added before forwarded requests
-#   auth            { type: none | bearer, token_env: <ENV_VAR> }
-#   health          relative path or absolute URL probed by /api/overview
-#   supervisor      { config_file, group, programs[] } — links service to
-#                   its supervisord program group (if any)
-#   features        UI menu entries (key + label, optional stream flag)
+# Paths use $EIDOLON_ROOT (export from deploy/dev/run_all.sh or set manually).
 
 admin:
   host: 127.0.0.1
@@ -41,48 +10,29 @@ admin:
 
 services:
 
-  # ── native (admin itself) ───────────────────────────────────────────────
-  # The admin gateway supervises itself: admin-api lives in supervisord like
-  # every other long-running process. The vite dev server (admin web) is
-  # NOT supervised — it stays under run_all.sh as a dev tool.
-  #
-  # No `features` block on purpose: this entry exists for status / config
-  # surfaces; the actual UI lives at the top-level Supervisor and Configs
-  # pages, not under a per-service menu.
   - id: admin
     name: Eidolon Admin
     integration: native
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    # Light-touch HTTP probe — uvicorn always answers /docs once it's up.
     health: http://127.0.0.1:9000/docs
     supervisor:
       config_file: deploy/supervisor/available/admin.conf
       group: admin
       programs:
         - admin-api
-    # 9000 = supervised admin-api uvicorn; 9001 = vite dev (NOT supervised,
-    # run_all.sh-managed). System Health audit treats 9001 as "expected
-    # unmanaged" — present but PPID not in supervisord's child set.
     ports:
       declared: [9000, 9001]
     features: []
     configs:
       - id: services
         label: "services.yaml"
-        path: /Users/manson/ai/eidolon/eidolon_admin/config/services.yaml
+        path: $EIDOLON_ROOT/eidolon_admin/config/services.yaml
         format: yaml
-        # Editing the gateway's own registry takes effect on admin-api
-        # restart. The Configs page's "立即 reload" button triggers
-        # supervisor.restart_program(admin:admin-api), which SIGTERMs
-        # the in-flight uvicorn (incl. the POST that fired the reload)
-        # and starts a fresh one. The browser sees the request drop;
-        # auto-refresh on the next interaction picks up the new state.
         reload: restart_program
         reload_target: admin:admin-api
 
-  # ── proxy ───────────────────────────────────────────────────────────────
   - id: agent
     name: Eidolon Agent
     integration: proxy
@@ -95,7 +45,6 @@ services:
       group: agent
       programs:
         - agent
-    # One eidolon-agent process binds all three ports.
     ports:
       declared: [8081, 8083, 50052]
     features:
@@ -108,20 +57,24 @@ services:
       - { key: chat-test,          label: "Chat (events)", stream: true }
       - { key: console,            label: "API Console" }
     configs:
-      - id: config
-        label: "agent config.yaml"
-        path: /Users/manson/ai/eidolon/eidolon_agent/config/config.yaml
+      - id: settings
+        label: "agent settings.yaml"
+        path: $EIDOLON_ROOT/eidolon_agent/config/settings.yaml
         format: yaml
         reload: restart_program
         reload_target: agent:agent
-        template: /Users/manson/ai/eidolon/eidolon_agent/config/config.yaml.example
+        template: $EIDOLON_ROOT/eidolon_agent/config/settings.example.yaml
+      - id: env
+        label: "agent .env"
+        path: $EIDOLON_ROOT/eidolon_agent/config/.env
+        format: dotenv
+        reload: restart_program
+        reload_target: agent:agent
+        template: $EIDOLON_ROOT/eidolon_agent/config/.env.example
 
-  # ── proxy ───────────────────────────────────────────────────────────────
   - id: hub
     name: Eidolon Hub
     integration: proxy
-    # hub-api binds whichever port its .env declares (we standardise on 8082
-    # in hub's .env to avoid clashing with agent's admin_port 8081).
     base_url: http://127.0.0.1:8082
     upstream_prefix: /api/admin
     auth: { type: none }
@@ -140,25 +93,27 @@ services:
       - { key: metrics,  label: "Metrics" }
       - { key: console,  label: "API Console" }
     configs:
+      - id: settings
+        label: "hub settings.yaml"
+        path: $EIDOLON_ROOT/eidolon_hub/config/settings.yaml
+        format: yaml
+        reload: restart_program
+        reload_target: hub:hub-api
+        template: $EIDOLON_ROOT/eidolon_hub/config/settings.example.yaml
       - id: env
         label: "hub .env"
-        path: /Users/manson/ai/eidolon/eidolon_hub/.env
+        path: $EIDOLON_ROOT/eidolon_hub/config/.env
         format: dotenv
         reload: restart_program
         reload_target: hub:hub-api
-        template: /Users/manson/ai/eidolon/eidolon_hub/.env.example
+        template: $EIDOLON_ROOT/eidolon_hub/config/.env.example
 
-  # ── native ──────────────────────────────────────────────────────────────
   - id: memory
     name: Eidolon Memory
     integration: native
-    # memory-admin-api has been fully migrated into this gateway under
-    # /api/memory/* (see server/eidolon_admin_server/app/memory/). The
-    # `legacy/admin/` directory in the memory repo can be deleted.
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    # discovery is the only HTTP face we still probe externally.
     health: http://127.0.0.1:8020/api/discovery/agent-routing
     supervisor:
       config_file: deploy/supervisor/available/memory.conf
@@ -166,10 +121,6 @@ services:
       programs:
         - memory-supervisor
         - memory-discovery
-    # memory-discovery binds 8020; memory-supervisor itself doesn't bind a
-    # port but its agent_runner grandchildren bind 8030+ per user (those
-    # are dynamic and not declared here — they're audited via the runners
-    # API instead).
     ports:
       declared: [8020]
     features:
@@ -184,68 +135,65 @@ services:
       - { key: kg,        label: "Knowledge Graph" }
       - { key: mcp,       label: "MCP Tools" }
     configs:
-      - id: memory-default
-        label: "memory.default.yaml"
-        path: /Users/manson/ai/eidolon/eidolon_memory/eidolon/memory/config/memory.default.yaml
+      - id: settings
+        label: "memory settings.yaml"
+        path: $EIDOLON_ROOT/eidolon_memory/config/settings.yaml
         format: yaml
-        # Defaults file is read by every runner at process start — only a full
-        # group restart picks up changes.
         reload: restart_group
         reload_target: memory
+        template: $EIDOLON_ROOT/eidolon_memory/config/settings.example.yaml
+      - id: env
+        label: "memory .env"
+        path: $EIDOLON_ROOT/eidolon_memory/config/.env
+        format: dotenv
+        reload: restart_group
+        reload_target: memory
+        template: $EIDOLON_ROOT/eidolon_memory/config/.env.example
       - id: users
         label: "users.yaml"
-        path: /Users/manson/ai/eidolon/eidolon_memory/eidolon/memory/config/users.yaml
+        path: $EIDOLON_ROOT/eidolon_memory/config/users.yaml
         format: yaml
-        # The supervisor process watches users.yaml and reloads on SIGHUP —
-        # no restart needed to add/remove users.
         reload: sighup_program
         reload_target: memory:memory-supervisor
 
-  # ── process ─────────────────────────────────────────────────────────────
   - id: channel
     name: Eidolon Channel
     integration: process
-    # LiveKit voice worker — no HTTP / NATS admin surface. Status lives
-    # entirely in supervisor process info; config is read-only from the
-    # project's .env via /api/channel/config.
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    # no `health:` — overview marks supervised services online when all
-    # supervisor.programs are RUNNING.
     supervisor:
       config_file: deploy/supervisor/available/channel.conf
       group: channel
       programs:
         - channel-worker
-    # LiveKit agent binds 8766 for its own HTTP health/metrics surface
-    # (used internally by livekit framework).
     ports:
       declared: [8766]
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
     configs:
+      - id: settings
+        label: "channel settings.yaml"
+        path: $EIDOLON_ROOT/eidolon_channel/config/settings.yaml
+        format: yaml
+        reload: restart_program
+        reload_target: channel:channel-worker
+        template: $EIDOLON_ROOT/eidolon_channel/config/settings.example.yaml
       - id: env
         label: "channel .env"
-        path: /Users/manson/ai/eidolon/eidolon_channel/deploy/.livekit-channel.env
+        path: $EIDOLON_ROOT/eidolon_channel/config/.env
         format: dotenv
         reload: restart_program
         reload_target: channel:channel-worker
-        template: /Users/manson/ai/eidolon/eidolon_channel/deploy/livekit-channel.env.template
+        template: $EIDOLON_ROOT/eidolon_channel/config/.env.example
 
-  # ── process ─────────────────────────────────────────────────────────────
   - id: client-web
     name: Eidolon Client Web
     integration: process
-    # Next.js dev server (port 3000). Browser-facing client; no admin HTTP
-    # surface of its own. Config is read-only from .env.local via
-    # /api/client-web/config.
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }
-    # Next dev server returns 200 on root by default — light-touch HTTP probe
-    # confirms the bundler is serving.
     health: http://127.0.0.1:3000/
     supervisor:
       config_file: deploy/supervisor/available/client-web.conf
@@ -260,8 +208,8 @@ services:
     configs:
       - id: env-local
         label: ".env.local"
-        path: /Users/manson/ai/eidolon/eidolon_client_web/.env.local
+        path: $EIDOLON_ROOT/eidolon_client_web/.env.local
         format: dotenv
         reload: restart_program
         reload_target: client-web:client-web
-        template: /Users/manson/ai/eidolon/eidolon_client_web/.env.local.example
+        template: $EIDOLON_ROOT/eidolon_client_web/.env.local.example

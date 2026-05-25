@@ -82,10 +82,15 @@ def create_app(
                     "device orchestrator NOT initialized — hub or agent service "
                     "missing from services.yaml"
                 )
+        except ConnectionError as exc:
+            logger.warning(
+                "device orchestrator unavailable (%s); /api/devices will return 503. "
+                "Start the full stack with ./deploy/dev/run_all.sh start (includes NATS).",
+                exc,
+            )
         except Exception:  # noqa: BLE001
-            # Any failure (NATS down, buckets fail to create, etc.) → leave
-            # device_orchestrator unset. Router emits 503; the rest of admin
-            # is unaffected.
+            # Any failure (buckets fail to create, etc.) → leave device_orchestrator
+            # unset. Router emits 503; the rest of admin is unaffected.
             logger.exception("device orchestrator init failed; /api/devices will return 503")
 
         try:

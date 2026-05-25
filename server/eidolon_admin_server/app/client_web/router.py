@@ -15,11 +15,14 @@ from ..common.dotenv_view import read_dotenv_view
 
 router = APIRouter(prefix="/client-web", tags=["client-web"])
 
-_DEFAULT_ENV_PATH = Path("/Users/manson/ai/eidolon/eidolon_client_web/.env.local")
+def _default_env_path() -> Path:
+    from ..settings import default_eidolon_root
+
+    return default_eidolon_root() / "eidolon_client_web" / ".env.local"
 
 
 def _env_path() -> Path:
-    return Path(os.environ.get("EIDOLON_CLIENT_WEB_ENV_FILE") or _DEFAULT_ENV_PATH).expanduser()
+    return Path(os.environ.get("EIDOLON_CLIENT_WEB_ENV_FILE") or _default_env_path()).expanduser()
 
 
 @router.get("/config")
