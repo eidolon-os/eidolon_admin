@@ -32,6 +32,21 @@ class FeatureEntry(BaseModel):
     route: str | None = None
 
 
+class PortsDecl(BaseModel):
+    """Ports a service is expected to listen on.
+
+    Drives the System Health audit: admin enumerates these and checks
+    (a) is something listening? (b) is that something one of the
+    service's supervised processes? Discrepancies (no listener, or a
+    listener that supervisord doesn't know about) become observable
+    orphan / down signals.
+
+    Kept optional so services with no network surface (e.g. memory
+    internals that talk only over NATS) don't need to declare anything.
+    """
+    declared: list[int] = Field(default_factory=list)
+
+
 class ConfigEntry(BaseModel):
     """A single editable config file declared by a service.
 
@@ -66,6 +81,7 @@ class ServiceConfig(BaseModel):
     supervisor: SupervisorRef | None = None
     features: list[FeatureEntry] = Field(default_factory=list)
     configs: list[ConfigEntry] = Field(default_factory=list)
+    ports: PortsDecl = Field(default_factory=PortsDecl)
 
     @field_validator("base_url")
     @classmethod

@@ -43,6 +43,7 @@ from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
 from .supervisor.client import SupervisorClient
 from .supervisor.config import ConfigStore
 from .supervisor.router import router as supervisor_router
+from .system_health import router as system_health_router
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
+    app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
     # exact path GET /api/services.

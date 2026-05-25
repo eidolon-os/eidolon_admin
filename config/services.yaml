@@ -62,6 +62,11 @@ services:
       group: admin
       programs:
         - admin-api
+    # 9000 = supervised admin-api uvicorn; 9001 = vite dev (NOT supervised,
+    # run_all.sh-managed). System Health audit treats 9001 as "expected
+    # unmanaged" — present but PPID not in supervisord's child set.
+    ports:
+      declared: [9000, 9001]
     features: []
     configs:
       - id: services
@@ -90,6 +95,9 @@ services:
       group: agent
       programs:
         - agent
+    # One eidolon-agent process binds all three ports.
+    ports:
+      declared: [8081, 8083, 50052]
     features:
       - { key: personas-templates, label: "Persona 模板" }
       - { key: personas-instances, label: "Persona 实例" }
@@ -123,6 +131,8 @@ services:
       group: hub
       programs:
         - hub-api
+    ports:
+      declared: [8082]
     features:
       - { key: devices,  label: "Devices" }
       - { key: commands, label: "Commands" }
@@ -156,6 +166,12 @@ services:
       programs:
         - memory-supervisor
         - memory-discovery
+    # memory-discovery binds 8020; memory-supervisor itself doesn't bind a
+    # port but its agent_runner grandchildren bind 8030+ per user (those
+    # are dynamic and not declared here — they're audited via the runners
+    # API instead).
+    ports:
+      declared: [8020]
     features:
       - { key: runners,   label: "Agent Runners" }
       - { key: users,     label: "Users" }
@@ -202,6 +218,10 @@ services:
       group: channel
       programs:
         - channel-worker
+    # LiveKit agent binds 8766 for its own HTTP health/metrics surface
+    # (used internally by livekit framework).
+    ports:
+      declared: [8766]
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
@@ -232,6 +252,8 @@ services:
       group: client-web
       programs:
         - client-web
+    ports:
+      declared: [3000]
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
