@@ -22,7 +22,8 @@ agent:
   admin:
     port: 8081
   grpc:
-    port: 50051
+    # Outside livekit.rtc_port_start..rtc_port_end below — LiveKit binds the whole RTC range.
+    port: 45051
 
 memory:
   discovery:

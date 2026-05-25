@@ -88,9 +88,13 @@ def export_shell(ports: dict[str, Any] | None = None) -> str:
 
 
 def _set_nested(data: dict[str, Any], dotted: str, value: Any) -> bool:
+    """Set ``dotted`` key (e.g. ``llm.models.0.api_base``) without clobbering lists."""
     parts = dotted.split(".")
+    if not parts:
+        return False
     cur: Any = data
-    for part in parts[:-1]:
+    for i, part in enumerate(parts[:-1]):
+        next_part = parts[i + 1]
         if part.isdigit():
             idx = int(part)
             if not isinstance(cur, list):
@@ -99,15 +103,24 @@ def _set_nested(data: dict[str, Any], dotted: str, value: Any) -> bool:
                 cur.append({})
             cur = cur[idx]
             continue
-        nxt = cur.get(part) if isinstance(cur, dict) else None
-        if not isinstance(nxt, dict):
-            if not isinstance(cur, dict):
-                return False
-            cur[part] = {}
-            nxt = cur[part]
+        if not isinstance(cur, dict):
+            return False
+        nxt = cur.get(part)
+        if next_part.isdigit():
+            if not isinstance(nxt, list):
+                # Recover from ``models: {}`` corruption caused by older sync logic.
+                cur[part] = []
+                nxt = cur[part]
+        else:
+            if not isinstance(nxt, dict):
+                if nxt is None:
+                    cur[part] = {}
+                    nxt = cur[part]
+                else:
+                    return False
         cur = nxt
     leaf = parts[-1]
-    if not isinstance(cur, dict):
+    if leaf.isdigit() or not isinstance(cur, dict):
         return False
     if cur.get(leaf) == value:
         return False
@@ -226,8 +239,13 @@ def sync_subproject_configs(ports: dict[str, Any] | None = None) -> list[str]:
             changed.append(str(path))
 
     channel_env = root / "eidolon_channel/config/.env"
-    if _sync_dotenv_key(channel_env, "LIVEKIT_URL", f"ws://127.0.0.1:{lk_port}"):
-        changed.append(str(channel_env))
+    agent_grpc = f"127.0.0.1:{p['agent']['grpc']['port']}"
+    for key, val in (
+        ("LIVEKIT_URL", f"ws://127.0.0.1:{lk_port}"),
+        ("REMOTE_AGENT_RPC_TARGET", agent_grpc),
+    ):
+        if _sync_dotenv_key(channel_env, key, val):
+            changed.append(str(channel_env))
 
     return changed
 
