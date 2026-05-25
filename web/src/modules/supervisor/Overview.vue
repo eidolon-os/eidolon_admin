@@ -18,6 +18,7 @@ import {
 } from '@/api/supervisor'
 import { getOverview, type OverviewResponse, type ProgramView } from '@/api/overview'
 import ConfigEditor from './ConfigEditor.vue'
+import SystemHealthPanel from './SystemHealthPanel.vue'
 import LogViewer from '@/modules/common/LogViewer.vue'
 
 const overview = ref<OverviewResponse | null>(null)
@@ -179,6 +180,9 @@ function probeLabel(probe: { configured: boolean; ok?: boolean; status_code?: nu
         supervisord 未运行。在终端启动：<code>./deploy/dev/run_all.sh start</code>
       </template>
     </el-alert>
+
+    <!-- === System Health === -->
+    <SystemHealthPanel class="health-panel" />
 
     <!-- === Services === -->
     <h3 class="section-title">Services</h3>
@@ -424,6 +428,9 @@ function probeLabel(probe: { configured: boolean; ok?: boolean; status_code?: nu
 }
 .section-title:first-of-type {
   margin-top: 4px;
+}
+.health-panel {
+  margin-bottom: 8px;
 }
 .grid {
   display: flex;
