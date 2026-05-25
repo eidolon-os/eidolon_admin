@@ -298,7 +298,30 @@ do_sv_passthrough() {
 
 # --- combined ---------------------------------------------------------------
 
+# Pre-flight: refuse to start if any declared port is held by a process
+# not under our control. Catches the "previous run's orphan" case before
+# it cascades into supervisord's "Exited too quickly" failures.
+#
+# Pass --force-cleanup to auto-SIGTERM any orphans found (the audit CLI
+# handles SIGTERM → re-scan → escalate to SIGKILL → re-scan). If even
+# SIGKILL doesn't free the port, we still refuse to start because
+# something is deeply wrong and silent failure would be worse.
+do_preflight() {
+  ensure_api_deps
+  local cli="${VENV}/bin/python -m eidolon_admin_server.app.system_health.cli check"
+  if [[ "${PREFLIGHT_CLEANUP:-0}" == "1" ]]; then
+    cli="$cli --cleanup"
+  fi
+  if ! $cli; then
+    error "pre-flight failed — refusing to start"
+    exit 1
+  fi
+}
+
 do_start() {
+  header "pre-flight port audit"
+  do_preflight
+  echo
   header "supervisord (incl. admin-api)"
   do_sv_start
   echo
@@ -352,6 +375,15 @@ do_foreground() {
 }
 
 # --- dispatch ---------------------------------------------------------------
+
+# ``--force-cleanup`` is a flag both ``start`` and ``restart`` accept;
+# parse and remove from $@ before the case match.
+for arg in "$@"; do
+  if [[ "$arg" == "--force-cleanup" ]]; then
+    export PREFLIGHT_CLEANUP=1
+  fi
+done
+set -- "${@/--force-cleanup/}"
 
 case "${1:-}" in
   start)      do_start ;;
