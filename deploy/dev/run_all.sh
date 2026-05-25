@@ -102,6 +102,42 @@ ensure_web_deps() {
   fi
 }
 
+# --- process tree helpers --------------------------------------------------
+#
+# Why we need these: supervisord starts each child program with its own
+# session (setsid), which means every child becomes a process-group leader
+# independent of supervisord's group. So ``kill -<supervisord_pgid>`` only
+# reaches supervisord itself — its children survive as orphans (PPID=1).
+#
+# The fix is to walk the PPID tree explicitly: enumerate descendants via
+# pgrep -P, then signal each. This is the only way to guarantee that when
+# we SIGKILL supervisord (because graceful shutdown timed out), we don't
+# leave subprocesses hanging on to ports.
+
+# Print all descendants of $1 (recursive). Empty if no children.
+collect_descendants() {
+  local parent=$1
+  local children child
+  children=$(pgrep -P "$parent" 2>/dev/null || true)
+  for child in $children; do
+    echo "$child"
+    collect_descendants "$child"
+  done
+}
+
+# Signal the entire tree rooted at $1 with signal $2 (e.g. "-TERM" or "-KILL").
+#
+# Order: parent first (stops supervisord's autorestart from racing us by
+# respawning a child mid-shutdown), then descendants. Each kill is
+# best-effort — already-dead PIDs return non-zero, which is fine.
+kill_tree() {
+  local root=$1 signal=$2 pid
+  kill "$signal" "$root" 2>/dev/null || true
+  for pid in $(collect_descendants "$root"); do
+    kill "$signal" "$pid" 2>/dev/null || true
+  done
+}
+
 # --- vite dev server --------------------------------------------------------
 
 web_alive() { [[ -f "$WEB_PID_FILE" ]] && kill -0 "$(cat "$WEB_PID_FILE")" 2>/dev/null; }
@@ -135,10 +171,16 @@ do_web_stop() {
     return 0
   fi
   local pid; pid="$(cat "$WEB_PID_FILE")"
-  info "SIGTERM web $pid"
-  kill -TERM "$pid"
-  sleep 0.5
-  if web_alive; then kill -KILL "$pid" 2>/dev/null || true; fi
+  # Vite spawns esbuild + occasional node worker children for HMR. Use
+  # kill_tree so they all go down together — otherwise we leave esbuild
+  # daemons holding scratch ports / file watches as orphans.
+  info "SIGTERM web $pid (+ descendants)"
+  kill_tree "$pid" "-TERM"
+  for _ in $(seq 1 10); do web_alive || break; sleep 0.2; done
+  if web_alive; then
+    warn "vite tree still alive after 2s; SIGKILL whole tree"
+    kill_tree "$pid" "-KILL"
+  fi
   rm -f "$WEB_PID_FILE"
   info "web stopped"
 }
@@ -190,10 +232,51 @@ do_sv_stop() {
     rm -f "$SV_PID" 2>/dev/null || true
     return 0
   fi
+  local sv_pid; sv_pid=$(cat "$SV_PID")
+
+  # Step 1: ask supervisord to gracefully shut down its program tree.
+  #
+  # It will send SIGTERM to each program and wait up to that program's
+  # ``stopwaitsecs`` (max in our setup is 40s for channel-worker) before
+  # SIGKILL-ing. Programs are shut down in parallel, so total wall time
+  # is bounded by the max ``stopwaitsecs`` plus supervisord's own
+  # bookkeeping overhead.
   info "supervisord shutdown (will stop admin-api + all enabled programs)"
-  "${VENV}/bin/supervisorctl" -c "$SV_CONF" shutdown || warn "shutdown rpc failed"
-  for _ in $(seq 1 40); do sv_alive || break; sleep 0.5; done
-  if sv_alive; then warn "SIGKILL supervisord"; kill -KILL "$(cat "$SV_PID")" || true; fi
+  "${VENV}/bin/supervisorctl" -c "$SV_CONF" shutdown 2>/dev/null \
+    || warn "supervisorctl shutdown rpc failed (continuing with patient wait)"
+
+  # Step 2: patient wait. 60s = max(stopwaitsecs)=40 + 20s buffer for
+  # supervisord's own teardown. Previously this was 20s, which routinely
+  # truncated channel-worker's graceful exit and forced step 3.
+  local wait_seconds=60
+  local checks=$((wait_seconds * 2))
+  for _ in $(seq 1 $checks); do sv_alive || break; sleep 0.5; done
+
+  if ! sv_alive; then
+    rm -f "$SV_PID" 2>/dev/null || true
+    return 0
+  fi
+
+  # Step 3: escalation. Graceful shutdown didn't complete in time. This
+  # is where the old code SIGKILL'd just supervisord — and every child
+  # immediately became a PPID=1 orphan because supervisord uses setsid
+  # to isolate each child into its own session, so signaling supervisord
+  # alone doesn't reach its descendants.
+  #
+  # ``kill_tree`` walks the PPID hierarchy explicitly and signals every
+  # descendant individually, eliminating the orphan window. We do this
+  # in two stages: TERM first (some children may still react), then KILL
+  # if anyone survives.
+  warn "supervisord didn't exit within ${wait_seconds}s — escalating to TERM-tree"
+  kill_tree "$sv_pid" "-TERM"
+  for _ in $(seq 1 30); do sv_alive || break; sleep 0.5; done
+
+  if sv_alive; then
+    warn "still alive after TERM-tree (15s); SIGKILL whole tree"
+    kill_tree "$sv_pid" "-KILL"
+    sleep 1
+  fi
+
   rm -f "$SV_PID" 2>/dev/null || true
 }
 
