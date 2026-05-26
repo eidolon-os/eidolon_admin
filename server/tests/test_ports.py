@@ -43,7 +43,7 @@ def test_sync_yaml_updates_list_leaf_without_clobbering_models(tmp_path: Path) -
                     "models": [
                         {
                             "name": "openai/deepseek-v4-flash",
-                            "api_base": "http://127.0.0.1:8080/v1",
+                            "api_base": "http://127.0.0.1:8180/v1",
                         }
                     ],
                     "default_model": "openai/deepseek-v4-flash",

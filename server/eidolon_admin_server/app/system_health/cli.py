@@ -69,54 +69,28 @@ async def check(
     orphans = _scan_for_orphans(cfg, unmanaged)
 
     if not orphans:
-        print(_color("✓ pre-flight clean — no orphan processes on declared ports", _GREEN))
+        print(_color(
+            "✓ pre-flight passed — declared ports are free (ready for supervisord cold start)",
+            _GREEN,
+        ))
         if verbose:
             _print_declared_ports(cfg)
         return 0
 
-    print(_color(f"⚠ pre-flight: {len(orphans)} orphan process(es) on declared ports", _YELLOW))
-    for o in orphans:
-        age = _format_age(probe.process_age_seconds(o["pid"]))
-        print(
-            f"  pid {o['pid']:>6}  :{o['port']:<6}  age {age:>8}  "
-            f"({o['service_id']})  {_color(o['command'][:120], _DIM)}"
-        )
+    eidolon_like, foreign = _partition_listeners(orphans)
+    _print_listener_table(orphans)
 
     if not cleanup:
-        print()
-        print(_color(
-            "Refusing to start: orphans hold ports admin's children will need.",
-            _RED,
-        ))
-        foreign = [o for o in orphans if not _looks_like_eidolon_stack(o["command"])]
-        if foreign:
-            print()
-            print(_color(
-                "Some listeners look like unrelated system services (e.g. nginx on :8080).",
-                _YELLOW,
-            ))
-            print(
-                "Do " + _color("not", _RED) + " use --cleanup on those — change "
-                + _color("config/ports.yaml", _GREEN)
-                + " or stop the other service instead."
-            )
-        print()
-        print(
-            "Re-run with " + _color("--cleanup", _GREEN)
-            + " to SIGTERM stale Eidolon orphans only,"
-        )
-        print("or inspect with " + _color("lsof -i :<port>", _GREEN)
-              + " and kill manually.")
+        _print_preflight_refusal(eidolon_like, foreign)
         return 1
 
-    # Cleanup path: SIGTERM each orphan, give them a moment to die, re-audit.
-    # Skip listeners that look like unrelated system daemons (nginx, etc.).
-    cleanup_targets = [o for o in orphans if _looks_like_eidolon_stack(o["command"])]
-    skipped = [o for o in orphans if o not in cleanup_targets]
+    # Cleanup path: SIGTERM Eidolon-looking listeners only, then re-audit.
+    cleanup_targets = eidolon_like
+    skipped = foreign
     if skipped:
         print()
         print(_color(
-            f"Skipping cleanup for {len(skipped)} non-Eidolon listener(s):",
+            f"Skipping {len(skipped)} non-Eidolon listener(s) (will not SIGTERM):",
             _YELLOW,
         ))
         for o in skipped:
@@ -124,14 +98,17 @@ async def check(
     if not cleanup_targets:
         print()
         print(_color(
-            "No Eidolon orphans to clean — fix port conflicts in config/ports.yaml "
-            "or stop the other service(s).",
+            "Nothing to clean: only non-Eidolon listeners hold the ports. "
+            "Edit config/ports.yaml or stop those services, then retry.",
             _RED,
         ))
         return 1
 
     print()
-    print(_color("Cleaning up orphans (SIGTERM)...", _YELLOW))
+    print(_color(
+        f"Cleaning up {len(cleanup_targets)} Eidolon-looking listener(s) (SIGTERM)...",
+        _YELLOW,
+    ))
     for o in cleanup_targets:
         ok, err = probe.send_signal(o["pid"], signal.SIGTERM)
         if ok:
@@ -144,7 +121,7 @@ async def check(
 
     survivors = _scan_for_orphans(cfg, unmanaged)
     if not survivors:
-        print(_color("✓ all orphans cleaned, pre-flight ready", _GREEN))
+        print(_color("✓ cleanup done — declared ports are free", _GREEN))
         return 0
 
     # Escalate to SIGKILL on stragglers.
@@ -159,11 +136,108 @@ async def check(
 
     final = _scan_for_orphans(cfg, unmanaged)
     if not final:
-        print(_color("✓ all orphans cleaned (via SIGKILL), pre-flight ready", _GREEN))
+        print(_color("✓ cleanup done (via SIGKILL) — declared ports are free", _GREEN))
         return 0
 
-    print(_color(f"✗ {len(final)} orphan(s) survived even SIGKILL — manual intervention needed", _RED))
+    print(_color(
+        f"✗ {len(final)} listener(s) still hold ports after SIGKILL — manual intervention needed",
+        _RED,
+    ))
     return 1
+
+
+def _partition_listeners(
+    orphans: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    eidolon_like: list[dict] = []
+    foreign: list[dict] = []
+    for o in orphans:
+        if _looks_like_eidolon_stack(o["command"]):
+            eidolon_like.append(o)
+        else:
+            foreign.append(o)
+    return eidolon_like, foreign
+
+
+def _print_listener_table(orphans: list[dict]) -> None:
+    print()
+    print(_color(
+        f"pre-flight: {len(orphans)} process(es) already listening on Eidolon ports",
+        _YELLOW,
+    ))
+    print(_color(
+        "  ('start' expects these ports to be free before supervisord launches children)",
+        _DIM,
+    ))
+    for o in orphans:
+        age = _format_age(probe.process_age_seconds(o["pid"]))
+        kind = "eidolon" if _looks_like_eidolon_stack(o["command"]) else "other"
+        print(
+            f"  [{kind:<7}] pid {o['pid']:>6}  :{o['port']:<6}  age {age:>8}  "
+            f"service={o['service_id']}  {_color(o['command'][:100], _DIM)}"
+        )
+
+
+def _print_preflight_refusal(
+    eidolon_like: list[dict],
+    foreign: list[dict],
+) -> None:
+    print()
+    print(_color("Cannot run 'start' — ports are not free.", _RED))
+    print()
+    print("What this means:")
+    print(
+        "  Pre-flight only checks whether something is bound to each port in "
+        + _color("config/services.yaml", _GREEN)
+        + ". It does "
+        + _color("not", _RED)
+        + " inspect supervisord or nginx globally."
+    )
+    if eidolon_like:
+        ports = ", ".join(f":{o['port']}" for o in sorted(eidolon_like, key=lambda x: x["port"]))
+        print()
+        print(_color(f"  • {len(eidolon_like)} listener(s) look like Eidolon dev stack ({ports})", _YELLOW))
+        print("    Often this is a stack already running (manual start, old supervisord,")
+        print("    or a previous session). This is not necessarily a port misconfiguration.")
+    if foreign:
+        ports = ", ".join(f":{o['port']}" for o in sorted(foreign, key=lambda x: x["port"]))
+        print()
+        print(_color(f"  • {len(foreign)} listener(s) look like non-Eidolon services ({ports})", _YELLOW))
+        for o in foreign:
+            print(f"      pid {o['pid']}  :{o['port']}  {_color(o['command'][:80], _DIM)}")
+        print(
+            "    Change "
+            + _color("config/ports.yaml", _GREEN)
+            + " to avoid that port, or stop that service. "
+            + _color("Do not use --force-cleanup", _RED)
+            + " on these."
+        )
+    print()
+    print("What to do:")
+    print(
+        "  "
+        + _color("./deploy/dev/run_all.sh status", _GREEN)
+        + "  — see whether the stack is already up (no port check)"
+    )
+    print(
+        "  "
+        + _color("./deploy/dev/run_all.sh restart", _GREEN)
+        + "  — stop via this script, then start fresh (recommended)"
+    )
+    if eidolon_like:
+        print(
+            "  "
+            + _color("./deploy/dev/run_all.sh start --force-cleanup", _GREEN)
+            + "  — SIGTERM Eidolon-looking listeners only, then cold start"
+        )
+    print(
+        "  "
+        + _color("lsof -i :<port>", _GREEN)
+        + "  — inspect a specific port manually"
+    )
+    print()
+    print(_color("Note:", _YELLOW) + " agent HTTP uses :8180 in config/ports.yaml (not :8080).")
+    print("      A conflict with nginx on :8080 does not affect this pre-flight check.")
 
 
 def _looks_like_eidolon_stack(command: str) -> bool:

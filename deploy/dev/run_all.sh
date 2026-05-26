@@ -17,16 +17,17 @@
 # bootstrap + lifecycle.
 #
 # Usage:
-#   ./deploy/dev/run_all.sh                # foreground admin-api + web (Ctrl+C)
-#   ./deploy/dev/run_all.sh start          # supervisord (incl. admin-api) + vite
-#                                          # (runs supervisorctl reread + update)
-#   ./deploy/dev/run_all.sh stop           # reverse
-#   ./deploy/dev/run_all.sh restart        # stop + start (reloads supervisor conf)
-#   ./deploy/dev/run_all.sh status         # admin web + supervisorctl status
-#   ./deploy/dev/run_all.sh foreground     # admin-api + web in foreground
+#   ./deploy/dev/run_all.sh                # foreground admin-api + web only (no supervisord)
+#   ./deploy/dev/run_all.sh start          # cold start: ports must be free, then supervisord + vite
+#   ./deploy/dev/run_all.sh start --force-cleanup
+#                                        # SIGTERM Eidolon-looking port holders, then cold start
+#   ./deploy/dev/run_all.sh stop           # stop vite + supervisord (all supervised programs)
+#   ./deploy/dev/run_all.sh restart        # stop then start (use when stack is already running)
+#   ./deploy/dev/run_all.sh status         # show vite + supervisorctl status (no port check)
+#   ./deploy/dev/run_all.sh foreground     # admin-api + web in foreground (no sub-projects)
 #
 #   ./deploy/dev/run_all.sh sv [...]       # passthrough to supervisorctl
-#                                          # e.g. `sv status`, `sv tail -f memory:memory-supervisor`
+#                                        # e.g. sv status, sv restart channel:channel-worker
 #
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -83,7 +84,8 @@ load_ports_env() {
 
 sync_ports_from_registry() {
   ensure_api_deps
-  "${VENV}/bin/python" -m eidolon_admin_server.app.ports sync
+  info "syncing config/ports.yaml into sub-project settings (if changed)"
+  "${VENV}/bin/python" -m eidolon_admin_server.app.ports sync || true
 }
 
 VENV="${ROOT}/.venv"
@@ -277,6 +279,7 @@ do_sv_start() {
   ensure_api_deps
   if sv_alive; then
     info "supervisord already running (PID $(cat "$SV_PID"), socket $SV_SOCK)"
+    info "  config reload only — use '$0 status' to inspect; '$0 restart' for full stop+start"
     do_sv_reread_update
     return 0
   fi
@@ -316,7 +319,7 @@ do_sv_stop() {
   # It will send SIGTERM to each program and wait up to that program's
   # ``stopwaitsecs`` before SIGKILL-ing. Remaining programs shut down in parallel;
   # wall time is bounded by the max ``stopwaitsecs`` plus supervisord overhead.
-  info "supervisord shutdown (will stop admin-api + all enabled programs)"
+  info "supervisord shutdown (stops admin-api and all enabled supervised programs)"
   "${VENV}/bin/supervisorctl" -c "$SV_CONF" shutdown 2>/dev/null \
     || warn "supervisorctl shutdown rpc failed (continuing with patient wait)"
 
@@ -386,9 +389,11 @@ do_preflight() {
   local cli="${VENV}/bin/python -m eidolon_admin_server.app.system_health.cli check"
   if [[ "${PREFLIGHT_CLEANUP:-0}" == "1" ]]; then
     cli="$cli --cleanup"
+    info "pre-flight: will SIGTERM Eidolon-looking listeners on declared ports, then continue"
+  else
+    info "pre-flight: checking declared ports are free (required for cold start)"
   fi
   if ! $cli; then
-    error "pre-flight failed — refusing to start"
     exit 1
   fi
 }
@@ -511,11 +516,19 @@ case "${1:-}" in
     sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
-    error "usage: $0 [start|stop|restart|status|foreground]"
-    error "       $0 [start-web|stop-web|restart-web|status-web]"
-    error "       $0 [start-sv|stop-sv|status-sv]"
-    error "       $0 sv <supervisorctl-args>     # passthrough"
-    error "       (admin-api is supervised — use 'sv restart admin:admin-api')"
+    error "unknown command: ${1:-}"
+    error ""
+    error "Lifecycle (full stack via supervisord):"
+    error "  $0 start [--force-cleanup]   cold start — ports must be free first"
+    error "  $0 stop                    stop vite + supervisord"
+    error "  $0 restart [--force-cleanup] stop then start (use if stack already running)"
+    error "  $0 status                    show vite + supervisorctl (no port check)"
+    error "  $0 foreground                admin-api + vite only (no NATS / sub-projects)"
+    error ""
+    error "Partial / passthrough:"
+    error "  $0 {start,stop,restart,status}-web"
+    error "  $0 {start,stop,status}-sv"
+    error "  $0 sv <args>                 supervisorctl passthrough"
     exit 1
     ;;
 esac
