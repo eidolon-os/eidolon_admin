@@ -332,6 +332,76 @@ async def test_watch_exits_cleanly_when_caller_breaks(
         await write_task
 
 
+# ---- close() lifecycle ---------------------------------------------------
+
+
+async def test_close_without_connect_is_noop() -> None:
+    """Calling ``close()`` on a never-connected client must not raise."""
+    client = KVClient()
+    await client.close()  # the assertion is: no exception
+    assert client._nc is None  # nothing to clean up
+
+
+async def test_close_after_connect_drains_cleanly(caplog: pytest.LogCaptureFixture) -> None:
+    """Normal shutdown: drain() succeeds, nothing logged at WARNING+."""
+    if not await _can_reach_nats():
+        pytest.skip("NATS not reachable at 127.0.0.1:4222")
+    client = KVClient()
+    await client.connect()
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="eidolon_admin_server.app.nats_kv.client"):
+        await client.close()
+    # No "NATS drain on close failed" / "NATS close failed" noise.
+    assert all("drain on close failed" not in r.message for r in caplog.records)
+    assert all("close failed" not in r.message for r in caplog.records)
+    assert client._nc is None
+    assert not client.is_connected
+
+
+async def test_close_swallows_reconnecting_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Reproduce the supervisord-shutdown race: NATS dies before admin.
+
+    Simulation: connect, then forcibly transition the underlying client
+    into a non-connected state (close socket out from under it). The
+    next ``KVClient.close()`` must finish silently — no stack trace at
+    WARNING, no exception.
+
+    This is the pre-Phase 28 regression we're guarding against. The old
+    code logged ``"NATS drain on close failed"`` with a full traceback
+    every time admin shut down faster than nats-server.
+    """
+    if not await _can_reach_nats():
+        pytest.skip("NATS not reachable at 127.0.0.1:4222")
+    client = KVClient()
+    await client.connect()
+    # Close the underlying nats client directly so KVClient still has a
+    # handle, but the connection is no longer ``is_connected``. This is
+    # the closest in-process simulation of "nats-server died" without
+    # actually killing supervised processes.
+    await client._nc.close()  # type: ignore[union-attr]
+    assert not client.is_connected
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="eidolon_admin_server.app.nats_kv.client"):
+        await client.close()  # the assertion is: no exception, no warning
+    assert all("drain on close failed" not in r.message for r in caplog.records), (
+        f"unexpected WARNING records: {[r.message for r in caplog.records]}"
+    )
+    assert client._nc is None
+
+
+async def test_close_is_idempotent() -> None:
+    """Calling close() twice in a row must not raise on the second call."""
+    if not await _can_reach_nats():
+        pytest.skip("NATS not reachable at 127.0.0.1:4222")
+    client = KVClient()
+    await client.connect()
+    await client.close()
+    await client.close()  # second close: nothing to do, must not raise
+
+
 # ---- json helpers (pure unit tests, no NATS needed) ----------------------
 
 

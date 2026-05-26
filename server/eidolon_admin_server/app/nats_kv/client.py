@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Literal
 
 import nats
+from nats.errors import ConnectionClosedError, ConnectionReconnectingError
 from nats.js import kv as nats_kv  # for KV_DEL / KV_PURGE op constants in watch()
 from nats.js.api import KeyValueConfig, StorageType
 from nats.js.errors import KeyNotFoundError, NoKeysError
@@ -112,14 +113,59 @@ class KVClient:
             logger.info("KVClient connected to %s", self._url)
 
     async def close(self) -> None:
-        if self._nc is not None:
+        """Release the NATS connection. Best-effort, never raises.
+
+        Why this is more elaborate than a single ``drain()``:
+            ``drain()`` requires a fully-connected socket — it flushes
+            outstanding publishes then closes cleanly. But our lifespan
+            tears admin down in an arbitrary order relative to nats-server
+            (supervisord stops both ~simultaneously). If nats-server beat
+            us to it, the client is in the "reconnecting" state and
+            ``drain()`` immediately raises ``ConnectionReconnectingError``,
+            which the previous version dutifully logged with a full
+            traceback at WARNING level — pure stderr noise during normal
+            shutdown.
+
+            The right behavior is:
+              1. Try ``drain()`` only when actually connected (graceful
+                 flush of any pending writes — there usually aren't any).
+              2. If we're in any transient state (reconnecting / closed)
+                 skip drain and go straight to ``close()``.
+              3. ``close()`` itself is forgiving — already-closed
+                 connections just no-op.
+
+            Anything still throwing past step 3 is genuinely unexpected
+            and worth logging.
+        """
+        nc = self._nc
+        if nc is None:
+            return
+        # Always null these out first so a partial-close failure doesn't
+        # leave the next call to ``connect()`` thinking we're still attached.
+        self._nc = None
+        self._js = None
+        self._buckets.clear()
+
+        if nc.is_connected:
             try:
-                await self._nc.drain()
-            except Exception:  # noqa: BLE001 — closing is best-effort
+                await nc.drain()
+                return  # drain() implies close() — no need for both
+            except ConnectionReconnectingError:
+                # Lost the connection between is_connected check and drain;
+                # fall through to close() for socket cleanup.
+                pass
+            except ConnectionClosedError:
+                return  # someone else already finished the job
+            except Exception:  # noqa: BLE001
                 logger.warning("NATS drain on close failed", exc_info=True)
-            self._nc = None
-            self._js = None
-            self._buckets.clear()
+                # still fall through to close() to be sure the socket is gone
+
+        try:
+            await nc.close()
+        except ConnectionClosedError:
+            pass  # already closed — fine
+        except Exception:  # noqa: BLE001
+            logger.warning("NATS close failed", exc_info=True)
 
     @property
     def is_connected(self) -> bool:
