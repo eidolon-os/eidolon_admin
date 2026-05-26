@@ -47,9 +47,19 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$val" =~ ^\"(.*)\"$ ]] || [[ "$val" =~ ^\'(.*)\'$ ]]; then
       val="${BASH_REMATCH[1]}"
     fi
-    # Do not override variables already set in the parent environment.
+    # Do not override variables already set in the parent environment —
+    # this is the contract supervisord users rely on (admin's ports.yaml /
+    # services.yaml inject canonical values via ``environment=`` lines).
+    #
+    # But silent skipping was confusing: edit project ``.env``, restart,
+    # nothing changes because supervisord's environment block still wins.
+    # Emit a one-line stderr breadcrumb whenever the values disagree so the
+    # operator sees "we kept the parent env value, ignored the .env value"
+    # in the supervisord stderr log.
     if [[ -z "${!key+x}" ]]; then
       export "$key=$val"
+    elif [[ "${!key}" != "$val" ]]; then
+      echo "with-env: keeping parent ${key}=${!key} (ignored ${env_file} value '${val}')" >&2
     fi
   done < "$env_file"
 

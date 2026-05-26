@@ -134,13 +134,22 @@ ensure_web_deps() {
 # we SIGKILL supervisord (because graceful shutdown timed out), we don't
 # leave subprocesses hanging on to ports.
 
-# Print all descendants of $1 (recursive). Empty if no children.
+# Print all descendants of $1 (recursive) as ``pid|comm`` lines, where
+# ``comm`` is the command name at snapshot time. Empty if no children.
+#
+# We snapshot the command name now so ``kill_tree`` can re-check it
+# before signaling: a PID we collected at t=0 may have died and been
+# reused by the kernel for a wholly unrelated process by t=signal.
+# Without this guard we'd SIGKILL random innocents whenever shutdown
+# stretched long enough for PID reuse (more common on busy macOS).
 collect_descendants() {
   local parent=$1
-  local children child
+  local children child comm
   children=$(pgrep -P "$parent" 2>/dev/null || true)
   for child in $children; do
-    echo "$child"
+    comm=$(ps -o comm= -p "$child" 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$comm" ]] && continue  # PID died between pgrep and ps; skip
+    echo "${child}|${comm}"
     collect_descendants "$child"
   done
 }
@@ -150,12 +159,29 @@ collect_descendants() {
 # Order: parent first (stops supervisord's autorestart from racing us by
 # respawning a child mid-shutdown), then descendants. Each kill is
 # best-effort — already-dead PIDs return non-zero, which is fine.
+#
+# Each descendant is verified against its snapshotted comm: if the PID
+# has been reused (different comm) we skip it. This is best-effort
+# protection — comm match doesn't prove identity (two processes with
+# the same name still alias) but it eliminates the common case where
+# the PID has been recycled into something unrelated (a shell, sshd).
 kill_tree() {
-  local root=$1 signal=$2 pid
+  local root=$1 signal=$2 entry pid snap_comm cur_comm
   kill "$signal" "$root" 2>/dev/null || true
-  for pid in $(collect_descendants "$root"); do
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    pid="${entry%%|*}"
+    snap_comm="${entry#*|}"
+    cur_comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$cur_comm" ]]; then
+      continue  # already gone, fine
+    fi
+    if [[ "$cur_comm" != "$snap_comm" ]]; then
+      warn "kill_tree: skip PID $pid — comm changed ($snap_comm → $cur_comm), likely PID reuse"
+      continue
+    fi
     kill "$signal" "$pid" 2>/dev/null || true
-  done
+  done < <(collect_descendants "$root")
 }
 
 # --- vite dev server --------------------------------------------------------
