@@ -80,6 +80,10 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     put("EIDOLON_MEMORY_DISCOVERY_PORT", memory["discovery"]["port"])
     put("EIDOLON_MEMORY_MCP_PORT", memory["mcp"]["port"])
 
+    eidolon_root = os.environ.get("EIDOLON_ROOT", "").strip() or str(_REPO_ROOT.parent)
+    users_yaml = Path(eidolon_root) / "eidolon_memory" / "config" / "users.yaml"
+    put("EIDOLON_MEMORY_USERS_YAML", users_yaml.resolve())
+
     channel = p["channel"]
     put("EIDOLON_CHANNEL_WORKER_PORT", channel["worker"]["port"])
 

@@ -15,6 +15,27 @@ from pydantic import BaseModel, Field, field_validator
 # -- Users --------------------------------------------------------------------
 
 
+class ConsolidatorStatus(BaseModel):
+    configured: bool = False
+    enabled: bool = False
+    interval_hours: float | None = None
+    window_days: int | None = None
+    min_drawers: int | None = None
+    min_confidence: float | None = None
+    running: bool = False
+    pid: int | None = None
+    uptime_sec: int | None = None
+    log_path: str = ""
+
+
+class ConsolidatorUpdateRequest(BaseModel):
+    enabled: bool
+    interval_hours: float = Field(gt=0, default=6.0)
+    window_days: int = Field(gt=0, default=30)
+    min_drawers: int = Field(ge=1, default=3)
+    min_confidence: float = Field(ge=0.0, le=1.0, default=0.6)
+
+
 class UserDetail(BaseModel):
     user_id: str
     port: int
@@ -26,6 +47,8 @@ class UserDetail(BaseModel):
     managed_by_admin: bool = False
     pid: int | None = None
     log_path: str | None = None
+    agent_log_path: str = ""
+    consolidator: ConsolidatorStatus | None = None
     runner_status: dict[str, Any] | None = None
 
 

@@ -2,7 +2,7 @@
 
 memory-supervisor reloads users.yaml on SIGHUP. When admin mutates the yaml
 (create user, toggle enabled), we send the signal so memory-supervisor
-reconciles agent_runner subprocesses without an external nudge.
+reconciles agent_runner and consolidator subprocesses without an external nudge.
 """
 from __future__ import annotations
 

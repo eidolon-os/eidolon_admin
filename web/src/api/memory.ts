@@ -2,6 +2,21 @@ import client from './client'
 
 // ── Runners (Phase 10) ───────────────────────────────────────────────────────
 
+export interface ConsolidatorRunnerInfo {
+  configured: boolean
+  enabled: boolean
+  interval_hours: number | null
+  window_days: number | null
+  min_drawers: number | null
+  min_confidence: number | null
+  running: boolean
+  pid: number | null
+  uptime_sec: number | null
+  cpu_percent?: number | null
+  rss_mb?: number | null
+  log_path: string
+}
+
 export interface RunnerInfo {
   user_id: string
   port: number
@@ -13,10 +28,13 @@ export interface RunnerInfo {
   uptime_sec: number | null
   cpu_percent: number | null
   rss_mb: number | null
+  agent_log_path?: string
+  consolidator: ConsolidatorRunnerInfo
 }
 
 export interface OrphanInfo {
   user_id: string
+  role?: 'agent' | 'consolidator'
   pid: number | null
   uptime_sec: number | null
   cpu_percent: number | null
@@ -28,6 +46,7 @@ export interface RunnersResponse {
   users_yaml_exists: boolean
   runners: RunnerInfo[]
   orphans: OrphanInfo[]
+  consolidator_orphans: OrphanInfo[]
 }
 
 export async function listRunners(): Promise<RunnersResponse> {
@@ -36,6 +55,19 @@ export async function listRunners(): Promise<RunnersResponse> {
 }
 
 // ── Users ────────────────────────────────────────────────────────────────────
+
+export interface ConsolidatorStatus {
+  configured: boolean
+  enabled: boolean
+  interval_hours: number | null
+  window_days: number | null
+  min_drawers: number | null
+  min_confidence: number | null
+  running: boolean
+  pid: number | null
+  uptime_sec: number | null
+  log_path: string
+}
 
 export interface MemoryUserDetail {
   user_id: string
@@ -48,7 +80,17 @@ export interface MemoryUserDetail {
   managed_by_admin: boolean
   pid: number | null
   log_path: string | null
+  agent_log_path?: string
+  consolidator: ConsolidatorStatus | null
   runner_status: Record<string, any> | null
+}
+
+export interface ConsolidatorUpdateBody {
+  enabled: boolean
+  interval_hours?: number
+  window_days?: number
+  min_drawers?: number
+  min_confidence?: number
 }
 
 export interface UsersListResponse {
@@ -109,6 +151,24 @@ export async function stopMemoryUser(userId: string): Promise<UserMutateResponse
 export async function initMemoryUserPalace(userId: string): Promise<UserMutateResponse> {
   const { data } = await client.post<UserMutateResponse>(
     `/memory/users/${encodeURIComponent(userId)}/init`,
+  )
+  return data
+}
+
+export async function updateMemoryUserConsolidator(
+  userId: string,
+  body: ConsolidatorUpdateBody,
+): Promise<UserMutateResponse> {
+  const { data } = await client.put<UserMutateResponse>(
+    `/memory/users/${encodeURIComponent(userId)}/consolidator`,
+    body,
+  )
+  return data
+}
+
+export async function removeMemoryUserConsolidator(userId: string): Promise<UserMutateResponse> {
+  const { data } = await client.delete<UserMutateResponse>(
+    `/memory/users/${encodeURIComponent(userId)}/consolidator`,
   )
   return data
 }

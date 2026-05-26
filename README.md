@@ -24,7 +24,10 @@ Each sub-project is integrated via one of four modes (declared in
 - **`memory`** — fully native. `legacy/admin/` in the memory repo can be
   deleted; this gateway provides all of Users / Memories / Search / Recall /
   KG / Graph / Hierarchy / MCP Tools natively via MCP HTTP + NATS JetStream +
-  `users.yaml` + SIGHUP to memory-supervisor.
+  `users.yaml` + SIGHUP to memory-supervisor. Per-user **agent** and opt-in
+  **consolidator** workers are both children of `memory-supervisor` (not separate
+  supervisord programs); Admin edits `consolidator:` in users.yaml and surfaces
+  PIDs/logs on Runners & Workers / Users pages.
 - **`hub`** — proxy. Hub's in-memory state (commands, probe stats, presence)
   and tight LiveKit integration make native re-implementation worse, not
   better. Our gateway relays `/api/services/hub/*` → `:8082/api/admin/*` and

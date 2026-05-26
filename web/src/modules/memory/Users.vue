@@ -5,9 +5,13 @@ import { Plus, Refresh } from '@element-plus/icons-vue'
 import {
   createMemoryUser,
   initMemoryUserPalace,
+  removeMemoryUserConsolidator,
   setMemoryUserEnabled,
   startMemoryUser,
   stopMemoryUser,
+  updateMemoryUserConsolidator,
+  type ConsolidatorStatus,
+  type ConsolidatorUpdateBody,
 } from '@/api/memory'
 import { useMemoryUserStore } from '@/stores/memoryUser'
 
@@ -16,6 +20,17 @@ const busy = ref<Record<string, boolean>>({})
 const dialogOpen = ref(false)
 const submitting = ref(false)
 const form = ref({ id: '', port: 8030, enabled: true, palace_path: '' })
+
+const consDialogOpen = ref(false)
+const consSubmitting = ref(false)
+const consUserId = ref('')
+const consForm = ref<ConsolidatorUpdateBody>({
+  enabled: false,
+  interval_hours: 6,
+  window_days: 30,
+  min_drawers: 3,
+  min_confidence: 0.6,
+})
 
 onMounted(() => store.load())
 
@@ -67,7 +82,6 @@ async function onInit(userId: string) {
 }
 
 function openCreate() {
-  // Pick next free port.
   const used = new Set(store.users.map((u) => u.port))
   let p = 8030
   while (used.has(p)) p += 1
@@ -93,6 +107,58 @@ async function onCreate() {
   }
 }
 
+function openConsolidator(userId: string, c: ConsolidatorStatus | null | undefined) {
+  consUserId.value = userId
+  consForm.value = {
+    enabled: c?.enabled ?? false,
+    interval_hours: c?.interval_hours ?? 6,
+    window_days: c?.window_days ?? 30,
+    min_drawers: c?.min_drawers ?? 3,
+    min_confidence: c?.min_confidence ?? 0.6,
+  }
+  consDialogOpen.value = true
+}
+
+async function onSaveConsolidator() {
+  consSubmitting.value = true
+  try {
+    const r = await updateMemoryUserConsolidator(consUserId.value, { ...consForm.value })
+    ElMessage.success(r.message)
+    consDialogOpen.value = false
+    await refresh()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || e.message)
+  } finally {
+    consSubmitting.value = false
+  }
+}
+
+async function onRemoveConsolidator(userId: string) {
+  await ElMessageBox.confirm(
+    `移除 ${userId} 的 consolidator 配置块？`,
+    '确认',
+    { type: 'warning' },
+  )
+  await withBusy(userId, async () => {
+    const r = await removeMemoryUserConsolidator(userId)
+    ElMessage.success(r.message)
+  })
+}
+
+function consolidatorLabel(c: ConsolidatorStatus | null | undefined) {
+  if (!c?.configured) return '未配置'
+  if (!c.enabled) return '已配置 / 未启用'
+  if (c.running) return '运行中'
+  return '已启用 / 未运行'
+}
+
+function consolidatorTagType(c: ConsolidatorStatus | null | undefined) {
+  if (!c?.configured) return 'info'
+  if (!c.enabled) return 'info'
+  if (c.running) return 'success'
+  return 'warning'
+}
+
 const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/users.yaml' : '')
 </script>
 
@@ -109,16 +175,22 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
       </div>
     </div>
 
+    <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px">
+      <template #title>
+        Consolidator 为 opt-in 后台主题 worker，会调用 LLM；由 memory-supervisor 子进程管理，无需单独 supervisord program。
+      </template>
+    </el-alert>
+
     <el-table :data="store.users" v-loading="store.loading" stripe>
-      <el-table-column label="User ID" min-width="140">
+      <el-table-column label="User ID" min-width="120">
         <template #default="{ row }">
           <span class="user-id">{{ row.user_id }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="Port" width="90">
+      <el-table-column label="Port" width="80">
         <template #default="{ row }"><span class="mono">{{ row.port }}</span></template>
       </el-table-column>
-      <el-table-column label="启用" width="80">
+      <el-table-column label="启用" width="72">
         <template #default="{ row }">
           <el-switch
             :model-value="row.enabled"
@@ -128,7 +200,7 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
           />
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="150">
+      <el-table-column label="Agent" width="140">
         <template #default="{ row }">
           <el-tag
             v-if="row.enabled && row.agent_reachable"
@@ -139,20 +211,27 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
             type="warning" effect="dark" size="small"
           >STARTING / DOWN</el-tag>
           <el-tag v-else type="info" effect="plain" size="small">disabled</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="Consolidator" width="150">
+        <template #default="{ row }">
+          <el-tag :type="consolidatorTagType(row.consolidator)" size="small" effect="plain">
+            {{ consolidatorLabel(row.consolidator) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="Palace" min-width="180">
+        <template #default="{ row }">
+          <span v-if="row.palace_path" class="mono path">{{ row.palace_path }}</span>
+          <span v-else class="muted">(default)</span>
           <el-tag
             v-if="row.palace_initialized"
             type="success" effect="plain" size="small"
             style="margin-left: 4px"
-          >palace ✓</el-tag>
+          >✓</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="Palace path" min-width="240">
-        <template #default="{ row }">
-          <span v-if="row.palace_path" class="mono path">{{ row.palace_path }}</span>
-          <span v-else class="muted">(default)</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="280">
+      <el-table-column label="操作" width="360" fixed="right">
         <template #default="{ row }">
           <el-button size="small" :loading="busy[row.user_id]" @click="onInit(row.user_id)">init</el-button>
           <el-button
@@ -167,6 +246,17 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
             :loading="busy[row.user_id]"
             @click="onStop(row.user_id)"
           >stop</el-button>
+          <el-button
+            size="small"
+            :loading="busy[row.user_id]"
+            @click="openConsolidator(row.user_id, row.consolidator)"
+          >consolidator</el-button>
+          <el-button
+            v-if="row.consolidator?.configured"
+            size="small" type="danger" link
+            :loading="busy[row.user_id]"
+            @click="onRemoveConsolidator(row.user_id)"
+          >移除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -189,6 +279,30 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
       <template #footer>
         <el-button @click="dialogOpen = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="onCreate">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="consDialogOpen" :title="`Consolidator — ${consUserId}`" width="520px">
+      <el-form label-position="top" :model="consForm">
+        <el-form-item label="启用（opt-in，会消耗 LLM）">
+          <el-switch v-model="consForm.enabled" />
+        </el-form-item>
+        <el-form-item label="interval_hours">
+          <el-input-number v-model="consForm.interval_hours" :min="0.1" :step="0.5" />
+        </el-form-item>
+        <el-form-item label="window_days">
+          <el-input-number v-model="consForm.window_days" :min="1" />
+        </el-form-item>
+        <el-form-item label="min_drawers">
+          <el-input-number v-model="consForm.min_drawers" :min="1" />
+        </el-form-item>
+        <el-form-item label="min_confidence">
+          <el-input-number v-model="consForm.min_confidence" :min="0" :max="1" :step="0.05" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="consDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="consSubmitting" @click="onSaveConsolidator">保存并 SIGHUP</el-button>
       </template>
     </el-dialog>
   </div>

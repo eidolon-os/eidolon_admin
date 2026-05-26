@@ -21,6 +21,14 @@ def test_apply_ports_exports_hub_port(monkeypatch) -> None:
     assert os.environ.get("EIDOLON_HUB_API_PORT") == "8082"
 
 
+def test_apply_ports_exports_memory_users_yaml(monkeypatch) -> None:
+    monkeypatch.delenv("EIDOLON_MEMORY_USERS_YAML", raising=False)
+    apply_ports_to_environ()
+    path = os.environ.get("EIDOLON_MEMORY_USERS_YAML", "")
+    assert path.endswith("eidolon_memory/config/users.yaml")
+    assert Path(path).is_file()
+
+
 def test_gateway_config_uses_port_registry(monkeypatch) -> None:
     monkeypatch.delenv("EIDOLON_HUB_API_PORT", raising=False)
     cfg = load_gateway_config()

@@ -28,11 +28,12 @@ onBeforeUnmount(() => {
 })
 
 const summary = computed(() => {
-  if (!data.value) return { total: 0, running: 0, listening: 0 }
+  if (!data.value) return { total: 0, running: 0, listening: 0, consRunning: 0 }
   return {
     total: data.value.runners.length,
     running: data.value.runners.filter((r) => r.running).length,
     listening: data.value.runners.filter((r) => r.listening).length,
+    consRunning: data.value.runners.filter((r) => r.consolidator?.running).length,
   }
 })
 
@@ -43,18 +44,42 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
   if (!r.running) return { type: 'danger', label: 'stopped' }
   return { type: 'info', label: 'unknown' }
 }
+
+function consolidatorTag(c: {
+  configured: boolean
+  enabled: boolean
+  running: boolean
+}) {
+  if (!c.configured) return { type: 'info', label: 'off' }
+  if (!c.enabled) return { type: 'info', label: 'configured, disabled' }
+  if (c.running) return { type: 'success', label: 'running' }
+  return { type: 'warning', label: 'enabled, down' }
+}
 </script>
 
 <template>
   <div class="page">
     <div class="topbar">
       <div class="title-row">
-        <h2 class="title">Agent Runners</h2>
+        <h2 class="title">Runners & Workers</h2>
         <el-tag size="small" effect="dark">
-          {{ summary.running }} / {{ summary.total }} running
+          agent {{ summary.running }} / {{ summary.total }}
+        </el-tag>
+        <el-tag size="small" type="info" effect="plain">
+          consolidator {{ summary.consRunning }}
         </el-tag>
         <el-tag v-if="data && data.orphans.length" size="small" type="warning" effect="dark">
-          {{ data.orphans.length }} orphan{{ data.orphans.length > 1 ? 's' : '' }}
+          {{ data.orphans.length }} agent orphan{{ data.orphans.length > 1 ? 's' : '' }}
+        </el-tag>
+        <el-tag
+          v-if="data && data.consolidator_orphans?.length"
+          size="small"
+          type="warning"
+          effect="dark"
+        >
+          {{ data.consolidator_orphans.length }} consolidator orphan{{
+            data.consolidator_orphans.length > 1 ? 's' : ''
+          }}
         </el-tag>
       </div>
       <div class="actions">
@@ -83,15 +108,15 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
       </template>
 
       <el-table :data="data?.runners || []" stripe v-loading="loading">
-        <el-table-column label="User ID" width="180">
+        <el-table-column label="User ID" width="160">
           <template #default="{ row }">
             <span class="user-id">{{ row.user_id }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Port" width="80">
+        <el-table-column label="Port" width="72">
           <template #default="{ row }">{{ row.port || '-' }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="180">
+        <el-table-column label="Agent" width="168">
           <template #default="{ row }">
             <el-tag
               :type="(statusTag(row).type as any)"
@@ -100,22 +125,43 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
             >
               {{ statusTag(row).label }}
             </el-tag>
+            <span v-if="row.pid" class="mono pid-hint">pid {{ row.pid }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="PID" width="100">
+        <el-table-column label="Consolidator" width="180">
           <template #default="{ row }">
-            <span class="mono">{{ row.pid ?? '-' }}</span>
+            <el-tag
+              :type="(consolidatorTag(row.consolidator).type as any)"
+              effect="plain"
+              size="small"
+            >
+              {{ consolidatorTag(row.consolidator).label }}
+            </el-tag>
+            <span v-if="row.consolidator?.pid" class="mono pid-hint">
+              pid {{ row.consolidator.pid }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="Uptime" width="120">
+        <el-table-column label="Uptime" width="100">
           <template #default="{ row }">{{ formatUptime(row.uptime_sec) }}</template>
         </el-table-column>
-        <el-table-column label="RSS" width="100">
+        <el-table-column label="日志" min-width="200">
           <template #default="{ row }">
-            {{ row.rss_mb !== null ? `${row.rss_mb} MB` : '-' }}
+            <div class="log-links">
+              <code v-if="row.agent_log_path" class="log-path" :title="row.agent_log_path">
+                agent
+              </code>
+              <code
+                v-if="row.consolidator?.log_path"
+                class="log-path"
+                :title="row.consolidator.log_path"
+              >
+                consolidator
+              </code>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="Palace">
+        <el-table-column label="Palace" min-width="160">
           <template #default="{ row }">
             <span v-if="row.palace_path" class="path">{{ row.palace_path }}</span>
             <span v-else class="muted">(default)</span>
@@ -124,23 +170,34 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
       </el-table>
     </el-card>
 
-    <el-card v-if="data && data.orphans.length" style="margin-top: 16px" shadow="hover">
+    <el-card
+      v-if="data && (data.orphans.length || data.consolidator_orphans?.length)"
+      style="margin-top: 16px"
+      shadow="hover"
+    >
       <template #header>
         <span style="color: var(--eid-warning)">⚠ 孤儿进程</span>
         <span class="hint">
-          这些 agent_runner 进程在运行，但 users.yaml 里找不到对应条目（通常因为 yaml 已修改但未 SIGHUP memory-supervisor）
+          进程在运行但 users.yaml 无对应条目（通常需 SIGHUP memory-supervisor）
         </span>
       </template>
-      <el-table :data="data.orphans" size="small">
+      <el-table
+        :data="[
+          ...data.orphans.map((o) => ({ ...o, role: o.role || 'agent' })),
+          ...(data.consolidator_orphans || []).map((o) => ({
+            ...o,
+            role: o.role || 'consolidator',
+          })),
+        ]"
+        size="small"
+      >
+        <el-table-column label="Role" prop="role" width="110" />
         <el-table-column label="User ID" prop="user_id" />
         <el-table-column label="PID">
           <template #default="{ row }"><span class="mono">{{ row.pid }}</span></template>
         </el-table-column>
         <el-table-column label="Uptime">
           <template #default="{ row }">{{ formatUptime(row.uptime_sec) }}</template>
-        </el-table-column>
-        <el-table-column label="RSS">
-          <template #default="{ row }">{{ row.rss_mb ? `${row.rss_mb} MB` : '-' }}</template>
         </el-table-column>
       </el-table>
     </el-card>
@@ -162,6 +219,7 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 .title {
   margin: 0;
@@ -185,6 +243,10 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
   font-family: var(--eid-font-mono);
   font-size: 12px;
 }
+.pid-hint {
+  margin-left: 6px;
+  color: var(--eid-text-muted);
+}
 .path {
   font-family: var(--eid-font-mono);
   font-size: 12px;
@@ -200,5 +262,14 @@ function statusTag(r: { running: boolean; listening: boolean; enabled: boolean }
   color: var(--eid-text-secondary);
   margin-top: 4px;
   font-weight: normal;
+}
+.log-links {
+  display: flex;
+  gap: 8px;
+}
+.log-path {
+  font-size: 11px;
+  cursor: help;
+  color: var(--eid-text-secondary);
 }
 </style>

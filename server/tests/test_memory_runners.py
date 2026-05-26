@@ -80,7 +80,10 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
     monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(p))
     app = _app(tmp_path, p)
 
-    with patch.object(runners_mod, "find_agent_processes", return_value={}):
+    with (
+        patch.object(runners_mod, "find_agent_processes", return_value={}),
+        patch.object(runners_mod, "find_consolidator_processes", return_value={}),
+    ):
         async with await _http(app) as ac:
             resp = await ac.get("/api/memory/runners")
 
@@ -91,6 +94,8 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
     assert ids == ["alice", "bob", "disabled-carol"]
     # None of them are running.
     assert all(r["pid"] is None and r["running"] is False for r in data["runners"])
+    assert all(r["consolidator"]["running"] is False for r in data["runners"])
+    assert data["consolidator_orphans"] == []
     # Disabled user is not probed.
     carol = next(r for r in data["runners"] if r["user_id"] == "disabled-carol")
     assert carol["listening"] is False
@@ -127,7 +132,10 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
     # Map includes one orphan user not in users.yaml.
     fake_map = {"alice": fake_proc, "ghost": FakeProc(pid=99002, create_time=0.0)}
 
-    with patch.object(runners_mod, "find_agent_processes", return_value=fake_map):
+    with (
+        patch.object(runners_mod, "find_agent_processes", return_value=fake_map),
+        patch.object(runners_mod, "find_consolidator_processes", return_value={}),
+    ):
         async with await _http(app) as ac:
             resp = await ac.get("/api/memory/runners")
 
@@ -142,7 +150,10 @@ async def test_endpoint_when_users_yaml_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(tmp_path / "missing.yaml"))
     app = _app(tmp_path, tmp_path / "missing.yaml")
 
-    with patch.object(runners_mod, "find_agent_processes", return_value={}):
+    with (
+        patch.object(runners_mod, "find_agent_processes", return_value={}),
+        patch.object(runners_mod, "find_consolidator_processes", return_value={}),
+    ):
         async with await _http(app) as ac:
             resp = await ac.get("/api/memory/runners")
 
@@ -150,3 +161,21 @@ async def test_endpoint_when_users_yaml_missing(tmp_path, monkeypatch):
     assert resp.status_code == 200
     assert data["users_yaml_exists"] is False
     assert data["runners"] == []
+
+
+def test_load_users_parses_consolidator(tmp_path):
+    p = tmp_path / "users.yaml"
+    p.write_text(textwrap.dedent("""\
+        users:
+          - id: alice
+            port: 8030
+            enabled: true
+            consolidator:
+              enabled: true
+          - id: bob
+            port: 8031
+            enabled: true
+    """))
+    users = runners_mod.load_users(p)
+    assert users[0].consolidator_enabled() is True
+    assert users[1].consolidator is None
