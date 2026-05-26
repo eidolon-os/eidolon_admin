@@ -31,6 +31,13 @@ const loading = ref(false)
 const acting = ref<Record<number, boolean>>({})
 let timer: ReturnType<typeof setInterval> | null = null
 
+// Singleton in-flight promise: any concurrent caller (interval tick,
+// manual click, post-kill refresh) re-uses the existing fetch instead
+// of stacking N concurrent requests. Without this, rapid button clicks
+// produced out-of-order responses — the latest click's data might be
+// overwritten by an earlier-fetched response landing after.
+let inflight: Promise<void> | null = null
+
 const orphanCount = computed(() => data.value?.orphans.length ?? 0)
 const downCount = computed(() => {
   let n = 0
@@ -40,15 +47,20 @@ const downCount = computed(() => {
   return n
 })
 
-async function refresh() {
+async function refresh(): Promise<void> {
+  if (inflight) return inflight
   loading.value = true
-  try {
-    data.value = await getSystemHealth()
-  } catch (e: any) {
-    ElMessage.error(`加载 system health 失败: ${e?.response?.data?.detail || e?.message || e}`)
-  } finally {
-    loading.value = false
-  }
+  inflight = (async () => {
+    try {
+      data.value = await getSystemHealth()
+    } catch (e: any) {
+      ElMessage.error(`加载 system health 失败: ${e?.response?.data?.detail || e?.message || e}`)
+    } finally {
+      loading.value = false
+      inflight = null
+    }
+  })()
+  return inflight
 }
 
 onMounted(async () => {

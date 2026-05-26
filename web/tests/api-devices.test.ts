@@ -78,6 +78,22 @@ async function findDevice(
   return null
 }
 
+/** Like ``findDevice`` but excludes presence-only entries that exist
+ * in LiveKit's room view but have no hub-side DeviceManager record.
+ *
+ * Heuristic: device is registered iff it's already ``approved`` OR
+ * ``paired`` — both states are only reachable via DeviceManager writes.
+ * Pure presence-only rows are always ``approved=false, paired=false``
+ * (synthesised by ``build_admin_devices`` from LiveKit alone).
+ */
+async function findRegisteredDevice(): Promise<devicesApi.DeviceView | null> {
+  const r = await devicesApi.listDevices()
+  for (const d of r.devices) {
+    if (d.approved || d.paired) return d
+  }
+  return null
+}
+
 /** Pick the user_id we'll bind agents as.
  *
  * If the device already has a binding, return its existing user_id —
@@ -115,7 +131,12 @@ describe('api/devices.ts — real calls to admin gateway', () => {
 
   it('approveDevice round-trips on a known device', async (ctx) => {
     if (await skipIfAdminDown(ctx)) return
-    const target = await findDevice(null)
+    // Prefer devices that hub-side has actually registered — presence-only
+    // devices (LiveKit knows about them, hub's DeviceManager doesn't)
+    // surface in the list but ``approve`` will 404 because hub refuses
+    // to approve a device it doesn't have a record for. Approved OR
+    // paired devices are guaranteed to have a DeviceManager record.
+    const target = await findRegisteredDevice()
     if (!target) {
       // eslint-disable-next-line no-console
       console.warn('no devices in hub — skipping approveDevice test')

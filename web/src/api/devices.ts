@@ -80,7 +80,12 @@ export interface UpdateSoulResponse {
 }
 
 export async function listDevices(): Promise<DeviceListResponse> {
-  const { data } = await client.get<DeviceListResponse>('/devices')
+  // Polled by /devices Overview every 10s. Errors are surfaced by the
+  // component's own banner so the global interceptor toast just
+  // duplicates noise.
+  const { data } = await client.get<DeviceListResponse>('/devices', {
+    suppressToast: true,
+  })
   return data
 }
 

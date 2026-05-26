@@ -37,13 +37,20 @@ const soulEditorOpen = ref(false)
 const soulTarget = ref<{ agentId: string; label: string } | null>(null)
 const acting = ref<Record<string, boolean>>({})
 
+// Sync ``localDevice`` whenever the parent's ``device`` prop changes —
+// including when ``device_id`` is the same but other fields (approval
+// status, binding list, last_seen, etc.) updated underneath us. The
+// older keyset ``[open, device?.device_id]`` only fired on identity
+// change, so a parent ``refresh()`` that mutated the SAME device's
+// state would leave our local copy stale (e.g. operator approves device,
+// drawer kept showing ``approved=false``).
 watch(
-  () => [props.open, props.device?.device_id],
-  ([open, _id]) => {
+  () => [props.open, props.device] as const,
+  ([open, device]) => {
     if (!open) return
-    localDevice.value = props.device
+    localDevice.value = device
   },
-  { immediate: true },
+  { immediate: true, deep: false },
 )
 
 const agents = computed<AgentEntry[]>(() => localDevice.value?.binding?.agents ?? [])

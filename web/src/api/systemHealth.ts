@@ -51,7 +51,12 @@ export interface KillOrphanResponse {
 }
 
 export async function getSystemHealth(): Promise<SystemHealthResponse> {
-  const { data } = await client.get<SystemHealthResponse>('/system/health')
+  // suppressToast: SystemHealthPanel polls every 5s and renders its own
+  // error inline. Letting the global interceptor toast on each poll
+  // failure would spam the user 12x/minute when admin is briefly down.
+  const { data } = await client.get<SystemHealthResponse>('/system/health', {
+    suppressToast: true,
+  })
   return data
 }
 

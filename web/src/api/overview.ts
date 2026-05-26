@@ -42,6 +42,11 @@ export interface OverviewResponse {
 }
 
 export async function getOverview(): Promise<OverviewResponse> {
-  const { data } = await client.get<OverviewResponse>('/overview/services')
+  // Polled by Supervisor + per-service Overview pages; component-level
+  // error UI handles failure. Suppress the global toast to avoid 12
+  // toasts/minute when the backend hiccups.
+  const { data } = await client.get<OverviewResponse>('/overview/services', {
+    suppressToast: true,
+  })
   return data
 }
