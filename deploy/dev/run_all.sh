@@ -219,7 +219,26 @@ do_web_status() {
 
 # --- supervisord ------------------------------------------------------------
 
-sv_alive() { [[ -f "$SV_PID" ]] && kill -0 "$(cat "$SV_PID")" 2>/dev/null; }
+# True only when var/supervisord.pid points at a *live supervisord process*.
+#
+# The PID-existence check alone isn't enough: PIDs get recycled by the
+# kernel. If our last supervisord crashed without removing its pid file,
+# and the kernel later reassigned that PID to (say) the shell ``sleep``
+# in run_all.sh, ``kill -0`` succeeds and we'd incorrectly skip startup.
+# Verifying the process is really a supervisord invocation closes that
+# hole.
+#
+# We grep ``ps -o args=`` rather than ``-o comm=`` because on macOS
+# ``comm`` returns the executable basename (``python3``) and supervisord
+# is launched as a script. The full args contain
+# ``.../bin/supervisord -c ...`` which we can match unambiguously.
+sv_alive() {
+  [[ -f "$SV_PID" ]] || return 1
+  local pid; pid=$(cat "$SV_PID" 2>/dev/null)
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  ps -o args= -p "$pid" 2>/dev/null | grep -q "bin/supervisord"
+}
 
 sv_ctl_ready() {
   [[ -S "$SV_SOCK" ]] && "${VENV}/bin/supervisorctl" -c "$SV_CONF" version >/dev/null 2>&1

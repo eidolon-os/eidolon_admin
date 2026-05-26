@@ -29,7 +29,18 @@ def load_ports(path: Path | None = None) -> dict[str, Any]:
 
 
 def _env(name: str, value: Any) -> None:
-    if name not in os.environ:
+    """Set the env var to ``value`` IF nothing meaningful is already there.
+
+    "Meaningful" = present AND non-empty after strip. The empty-string
+    check matters because an operator's stale shell config can have e.g.
+    ``export EIDOLON_ADMIN_API_PORT=""`` lying around — the old "in
+    os.environ" check treated that as "set, don't override", which then
+    let ``os.path.expandvars`` expand ``$EIDOLON_ADMIN_API_PORT`` to ``""``
+    inside services.yaml. Result: health URL ``http://127.0.0.1:/docs`` →
+    permanent probe timeout, very hard to debug.
+    """
+    current = os.environ.get(name, "")
+    if not current.strip():
         os.environ[name] = str(value)
 
 
