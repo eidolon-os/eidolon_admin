@@ -1,4 +1,12 @@
-"""Port registry — load config/ports.yaml, export env vars, sync sub-project configs."""
+"""Port registry — aggregate sub-project bind ports for admin; export EIDOLON_* env.
+
+Sub-project ``config/settings.yaml`` files are the **source of truth** for how
+each service starts. This module never writes into those files.
+
+``config/ports.yaml`` is an **admin-side index** (health checks, services.yaml
+``$EIDOLON_*`` expansion, supervisord). Refresh it with ``ports collect`` after
+you change a child project's ports (``run_all.sh start`` does this automatically).
+"""
 from __future__ import annotations
 
 import os
@@ -6,18 +14,27 @@ import shlex
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"
 
-# Hard cap on array indices in dotted paths (e.g. "llm.models.0.api_base").
-# Real configs use 0, 1, maybe up to a handful of models. A typo or
-# adversarial entry like "llm.models.99999.api_base" would otherwise force
-# _set_nested to append 99999 empty dicts to a list before setting the leaf.
-# 64 is plenty of headroom for legitimate use and bounds DoS at a few KB.
+# Hard cap on array indices in dotted paths (legacy helper for unit tests).
 _MAX_LIST_INDEX = 64
+
+_PORTS_HEADER = """\
+# Eidolon dev stack — port registry for admin (health / supervisord / services.yaml).
+#
+# Sub-project config/settings.yaml files are the source of truth for bind ports.
+# run_all.sh start runs ``python -m eidolon_admin_server.app.ports collect`` to
+# refresh this file (aggregation only — child settings are never modified).
+#
+# Edit admin / client_web / nats.http_port here when needed; service ports come
+# from the corresponding sub-project settings.yaml.
+
+"""
 
 
 def ports_file() -> Path:
@@ -29,23 +46,157 @@ def ports_file() -> Path:
 
 def load_ports(path: Path | None = None) -> dict[str, Any]:
     target = path or ports_file()
+    if not target.is_file():
+        return {}
     raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{target} must be a mapping")
     return raw
 
 
-def _env(name: str, value: Any) -> None:
-    """Set the env var to ``value`` IF nothing meaningful is already there.
+def _read_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return raw if isinstance(raw, dict) else {}
 
-    "Meaningful" = present AND non-empty after strip. The empty-string
-    check matters because an operator's stale shell config can have e.g.
-    ``export EIDOLON_ADMIN_API_PORT=""`` lying around — the old "in
-    os.environ" check treated that as "set, don't override", which then
-    let ``os.path.expandvars`` expand ``$EIDOLON_ADMIN_API_PORT`` to ``""``
-    inside services.yaml. Result: health URL ``http://127.0.0.1:/docs`` →
-    permanent probe timeout, very hard to debug.
-    """
+
+def _port_from_url(url: str, *, default: int) -> int:
+    text = (url or "").strip()
+    if not text:
+        return default
+    if "://" not in text:
+        text = f"tcp://{text}"
+    parsed = urlparse(text)
+    if parsed.port is not None:
+        return int(parsed.port)
+    return default
+
+
+def _deep_get(mapping: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    cur: Any = mapping
+    for key in keys:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(key)
+    return default if cur is None else cur
+
+
+def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
+    """Build the port registry dict by reading sub-project settings (no writes)."""
+    from .settings import default_eidolon_root
+
+    root = root or default_eidolon_root()
+    ports = load_ports()
+
+    agent_y = _read_yaml(root / "eidolon_agent/config/settings.yaml")
+    hub_y = _read_yaml(root / "eidolon_hub/config/settings.yaml")
+    memory_y = _read_yaml(root / "eidolon_memory/config/settings.yaml")
+    channel_y = _read_yaml(root / "eidolon_channel/config/settings.yaml")
+    lk_y = _read_yaml(_REPO_ROOT / "deploy/livekit/livekit.yaml")
+
+    http = agent_y.get("http") if isinstance(agent_y.get("http"), dict) else {}
+    grpc = agent_y.get("grpc") if isinstance(agent_y.get("grpc"), dict) else {}
+    ports["agent"] = {
+        "http": {
+            "port": int(
+                http.get("port", _deep_get(ports, "agent", "http", "port", default=8180))
+            ),
+        },
+        "admin": {
+            "port": int(
+                http.get(
+                    "admin_port",
+                    _deep_get(ports, "agent", "admin", "port", default=8081),
+                )
+            ),
+        },
+        "grpc": {
+            "port": int(
+                grpc.get("tcp_port", _deep_get(ports, "agent", "grpc", "port", default=45051))
+            ),
+        },
+    }
+
+    nats_url = str((agent_y.get("nats") or {}).get("url") or "")
+    ports["nats"] = {
+        "port": _port_from_url(nats_url, default=int(_deep_get(ports, "nats", "port", default=4222))),
+        "http_port": int(_deep_get(ports, "nats", "http_port", default=8222)),
+    }
+
+    api = hub_y.get("api") if isinstance(hub_y.get("api"), dict) else {}
+    lk_hub = hub_y.get("livekit") if isinstance(hub_y.get("livekit"), dict) else {}
+    esp32 = hub_y.get("esp32") if isinstance(hub_y.get("esp32"), dict) else {}
+    lk_default = int(_deep_get(ports, "livekit", "port", default=7880))
+    lk_port = _port_from_url(str(lk_hub.get("api_url") or ""), default=lk_default)
+    if esp32.get("livekit_port") is not None:
+        lk_port = int(esp32["livekit_port"])
+
+    ports["hub"] = {
+        "api": {
+            "host": str(
+                api.get("host", _deep_get(ports, "hub", "api", "host", default="0.0.0.0"))
+            ),
+            "port": int(api.get("port", _deep_get(ports, "hub", "api", "port", default=8082))),
+        },
+    }
+
+    disc = memory_y.get("discovery_http") if isinstance(memory_y.get("discovery_http"), dict) else {}
+    mcp = memory_y.get("mcp_http") if isinstance(memory_y.get("mcp_http"), dict) else {}
+    ports["memory"] = {
+        "discovery": {
+            "host": str(disc.get("host", _deep_get(ports, "memory", "discovery", "host", default="127.0.0.1"))),
+            "port": int(disc.get("port", _deep_get(ports, "memory", "discovery", "port", default=8020))),
+        },
+        "mcp": {
+            "port": int(mcp.get("port", _deep_get(ports, "memory", "mcp", "port", default=8030))),
+        },
+    }
+
+    core = channel_y.get("core") if isinstance(channel_y.get("core"), dict) else {}
+    ports["channel"] = {
+        "worker": {
+            "port": int(core.get("port", _deep_get(ports, "channel", "worker", "port", default=8766))),
+        },
+    }
+
+    rtc = lk_y.get("rtc") if isinstance(lk_y.get("rtc"), dict) else {}
+    turn = lk_y.get("turn") if isinstance(lk_y.get("turn"), dict) else {}
+    ports["livekit"] = {
+        "port": int(lk_y.get("port", lk_port)),
+        "turn_udp_port": int(
+            turn.get("udp_port", _deep_get(ports, "livekit", "turn_udp_port", default=3478))
+        ),
+        "rtc_port_start": int(
+            rtc.get("port_range_start", _deep_get(ports, "livekit", "rtc_port_start", default=50000))
+        ),
+        "rtc_port_end": int(
+            rtc.get("port_range_end", _deep_get(ports, "livekit", "rtc_port_end", default=60000))
+        ),
+    }
+
+    ports.setdefault("admin", _deep_get(ports, "admin", default={"api": {"host": "127.0.0.1", "port": 9000}, "web": {"port": 9001}}))
+    ports.setdefault("client_web", _deep_get(ports, "client_web", default={"port": 3000}))
+
+    return ports
+
+
+def write_ports_registry(ports: dict[str, Any], path: Path | None = None) -> Path:
+    target = path or ports_file()
+    target.write_text(
+        _PORTS_HEADER + yaml.safe_dump(ports, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return target
+
+
+def collect_ports_registry(root: Path | None = None) -> Path:
+    """Refresh ``config/ports.yaml`` from sub-project settings (aggregation only)."""
+    return write_ports_registry(collect_ports_from_subprojects(root))
+
+
+def _env(name: str, value: Any) -> None:
+    """Set the env var to ``value`` IF nothing meaningful is already there."""
     current = os.environ.get(name, "")
     if not current.strip():
         os.environ[name] = str(value)
@@ -120,9 +271,6 @@ def _set_nested(data: dict[str, Any], dotted: str, value: Any) -> bool:
         if part.isdigit():
             idx = int(part)
             if idx > _MAX_LIST_INDEX:
-                # Refuse to grow a list to absurd sizes from a single yaml
-                # entry. ports.yaml is operator-edited; if they really need
-                # index 65+ they can bump _MAX_LIST_INDEX intentionally.
                 return False
             if not isinstance(cur, list):
                 return False
@@ -135,7 +283,6 @@ def _set_nested(data: dict[str, Any], dotted: str, value: Any) -> bool:
         nxt = cur.get(part)
         if next_part.isdigit():
             if not isinstance(nxt, list):
-                # Recover from ``models: {}`` corruption caused by older sync logic.
                 cur[part] = []
                 nxt = cur[part]
         else:
@@ -156,6 +303,7 @@ def _set_nested(data: dict[str, Any], dotted: str, value: Any) -> bool:
 
 
 def _sync_yaml(path: Path, updates: dict[str, Any]) -> bool:
+    """Test helper — mirrors historical dotted-path yaml update (not used in prod)."""
     if not path.is_file():
         return False
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -170,125 +318,17 @@ def _sync_yaml(path: Path, updates: dict[str, Any]) -> bool:
     return changed
 
 
-def _sync_dotenv_key(path: Path, key: str, value: str) -> bool:
-    if not path.is_file():
-        return False
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    prefix = f"{key}="
-    replaced = False
-    out: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("#") or "=" not in stripped:
-            out.append(line)
-            continue
-        name = stripped.split("=", 1)[0].strip()
-        if name == key:
-            out.append(f"{key}={value}\n")
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        if out and not out[-1].endswith("\n"):
-            out[-1] = out[-1] + "\n"
-        out.append(f"{key}={value}\n")
-        replaced = True
-    if replaced:
-        path.write_text("".join(out), encoding="utf-8")
-    return replaced
-
-
-def sync_subproject_configs(ports: dict[str, Any] | None = None) -> list[str]:
-    """Push port registry into sub-project settings the stack reads at runtime."""
-    from .settings import default_eidolon_root
-
-    p = ports or load_ports()
-    root = default_eidolon_root()
-    lk_port = p["livekit"]["port"]
-    nats_url = f"nats://127.0.0.1:{p['nats']['port']}"
-    agent_http = p["agent"]["http"]["port"]
-    discovery_port = p["memory"]["discovery"]["port"]
-    changed: list[str] = []
-
-    targets: list[tuple[Path, dict[str, Any]]] = [
-        (
-            root / "eidolon_hub/config/settings.yaml",
-            {
-                "api.host": p["hub"]["api"]["host"],
-                "api.port": p["hub"]["api"]["port"],
-                "livekit.api_url": f"http://127.0.0.1:{lk_port}",
-                "esp32.livekit_port": lk_port,
-            },
-        ),
-        (
-            root / "eidolon_agent/config/settings.yaml",
-            {
-                "grpc.tcp_port": p["agent"]["grpc"]["port"],
-                "http.port": agent_http,
-                "http.admin_port": p["agent"]["admin"]["port"],
-                "nats.url": nats_url,
-                "memory.discovery_url": (
-                    f"http://127.0.0.1:{discovery_port}/api/discovery/agent-routing"
-                ),
-                "llm.models.0.api_base": f"http://127.0.0.1:{agent_http}/v1",
-            },
-        ),
-        (
-            root / "eidolon_memory/config/settings.yaml",
-            {
-                "discovery_http.host": p["memory"]["discovery"]["host"],
-                "discovery_http.port": discovery_port,
-                "mcp_http.port": p["memory"]["mcp"]["port"],
-                "nats.url": nats_url,
-                "llm.base_url": f"http://127.0.0.1:{agent_http}/v1",
-            },
-        ),
-        (
-            root / "eidolon_channel/config/settings.yaml",
-            {
-                "core.livekit_url": f"ws://127.0.0.1:{lk_port}",
-                "core.port": p["channel"]["worker"]["port"],
-            },
-        ),
-        (
-            _REPO_ROOT / "deploy/livekit/livekit.yaml",
-            {
-                "port": lk_port,
-                "turn.udp_port": p["livekit"]["turn_udp_port"],
-                "rtc.port_range_start": p["livekit"]["rtc_port_start"],
-                "rtc.port_range_end": p["livekit"]["rtc_port_end"],
-            },
-        ),
-    ]
-
-    for path, updates in targets:
-        if _sync_yaml(path, updates):
-            changed.append(str(path))
-
-    channel_env = root / "eidolon_channel/config/.env"
-    agent_grpc = f"127.0.0.1:{p['agent']['grpc']['port']}"
-    for key, val in (
-        ("LIVEKIT_URL", f"ws://127.0.0.1:{lk_port}"),
-        ("REMOTE_AGENT_RPC_TARGET", agent_grpc),
-    ):
-        if _sync_dotenv_key(channel_env, key, val):
-            changed.append(str(channel_env))
-
-    return changed
-
-
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
-    if not args or args[0] not in {"export", "sync"}:
-        print("usage: python -m eidolon_admin_server.app.ports export|sync", file=sys.stderr)
+    if not args or args[0] not in {"export", "collect"}:
+        print("usage: python -m eidolon_admin_server.app.ports export|collect", file=sys.stderr)
         return 2
     cmd = args[0]
     if cmd == "export":
         print(export_shell())
         return 0
-    changed = sync_subproject_configs()
-    for path in changed:
-        print(f"synced {path}")
+    path = collect_ports_registry()
+    print(f"collected {path}")
     return 0
 
 

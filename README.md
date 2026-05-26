@@ -49,10 +49,11 @@ Each sub-project is integrated via one of four modes (declared in
 
 ### Port registry
 
-Dev bind ports live in **`config/ports.yaml`**. `./deploy/dev/run_all.sh`
-exports `EIDOLON_*` env vars for supervisord, syncs sub-project
-`settings.yaml` / LiveKit config, and drives `services.yaml` URL expansion.
-Change a port there, then `./deploy/dev/run_all.sh restart`.
+Dev bind ports are defined in **each sub-project's `config/settings.yaml`**
+(source of truth). `./deploy/dev/run_all.sh` runs **`ports collect`** to
+aggregate them into **`config/ports.yaml`** for admin (health / supervisord /
+`services.yaml` expansion only — child settings are never modified). Change a
+service port in the sub-project, then `./deploy/dev/run_all.sh restart`.
 
 ### Adding a new sub-project
 
@@ -96,7 +97,7 @@ The gateway has no business logic. It does four things:
 
 ```
 config/services.yaml          # service registry — edit this to add projects
-config/ports.yaml             # dev stack port registry (single source of truth)
+config/ports.yaml             # admin port index (collected from sub-projects)
 docs/                         # cross-project conventions (config, reference loaders)
 server/                       # FastAPI gateway
   eidolon_admin_server/

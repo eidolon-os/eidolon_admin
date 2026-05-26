@@ -82,10 +82,10 @@ load_ports_env() {
   WEB_PORT="${EIDOLON_ADMIN_WEB_PORT:-9001}"
 }
 
-sync_ports_from_registry() {
+collect_ports_registry() {
   ensure_api_deps
-  info "syncing config/ports.yaml into sub-project settings (if changed)"
-  "${VENV}/bin/python" -m eidolon_admin_server.app.ports sync || true
+  info "collecting config/ports.yaml from sub-project settings (read-only)"
+  "${VENV}/bin/python" -m eidolon_admin_server.app.ports collect || true
 }
 
 VENV="${ROOT}/.venv"
@@ -444,8 +444,8 @@ do_preflight() {
 }
 
 do_start() {
+  collect_ports_registry
   load_ports_env
-  sync_ports_from_registry
   header "pre-flight port audit"
   do_preflight
   echo
@@ -477,8 +477,8 @@ do_status() {
 }
 
 do_foreground() {
+  collect_ports_registry
   load_ports_env
-  sync_ports_from_registry
   ensure_web_deps
   cleanup() {
     [[ -n "${API_PID:-}" ]] && kill "$API_PID" 2>/dev/null || true

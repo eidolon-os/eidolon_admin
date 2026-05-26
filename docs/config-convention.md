@@ -76,7 +76,9 @@ command=.../eidolon_admin/deploy/supervisor/wrappers/with-env.sh <repo_root> con
 
 - 所有 Python 服务：`config/.env`
 - `with-env.sh`：env 文件不存在 → **exit 1**
-- 绑定端口由 [`config/ports.yaml`](../config/ports.yaml) 导出为 `EIDOLON_*` 环境变量；`run_all.sh start` 会 sync 到各子项目 `settings.yaml`
+- **子项目 `config/settings.yaml` 是绑定端口的唯一真实源**（含栈内互连 URL、NATS 等）
+- [`config/ports.yaml`](../config/ports.yaml) 仅供 **admin** 聚合展示与健康检查：`run_all.sh start` 执行 `ports collect`（从子项目**读取**并更新 ports.yaml），**不会**改写任何子项目配置
+- `ports export` 将 ports.yaml 导出为 `EIDOLON_*` 环境变量（supervisord、`services.yaml` 展开）
 
 ## 密钥与 YAML 占位符
 

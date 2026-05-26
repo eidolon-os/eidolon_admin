@@ -1,7 +1,5 @@
-# Eidolon dev stack — port registry (single source of truth).
-#
-# Edit bind ports here only. deploy/dev/run_all.sh exports EIDOLON_* env vars
-# for supervisord and runs sync to push values into sub-project settings files.
+# Admin port index — refreshed by: python -m eidolon_admin_server.app.ports collect
+# Source of truth: each sub-project config/settings.yaml (not edited from here).
 
 admin:
   api:
