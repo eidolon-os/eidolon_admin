@@ -27,6 +27,72 @@ from eidolon_admin_server.app.settings import (
 # ---- formats ---------------------------------------------------------------
 
 
+def test_build_registry_rejects_path_outside_root(tmp_path, monkeypatch):
+    """services.yaml entries that resolve outside EIDOLON_ROOT must be refused.
+
+    Defense-in-depth: even though only registered files are reachable, we
+    don't want a buggy services.yaml to silently expose /etc/passwd or
+    ~/.ssh/id_rsa via the configs editor. The check runs at build_registry
+    time so the error fires at startup, not at first read.
+    """
+    import pytest
+    from eidolon_admin_server.app.configs.registry import build_registry
+
+    # Constrain "root" to tmp_path/safe, then point a config entry at
+    # tmp_path/escape — that path resolves outside the root.
+    safe_root = tmp_path / "safe"
+    safe_root.mkdir()
+    monkeypatch.setenv("EIDOLON_ROOT", str(safe_root))
+    escape_file = tmp_path / "escape" / "config.yaml"
+    escape_file.parent.mkdir()
+    escape_file.write_text("hi: 1\n")
+
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000),
+        services=[
+            ServiceConfig(
+                id="bad",
+                name="bad",
+                integration="native",
+                base_url="",
+                auth=AuthConfig(),
+                configs=[ConfigEntry(id="leak", label="leak", path=str(escape_file), format="yaml")],
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="outside the sanctioned root"):
+        build_registry(cfg)
+
+
+def test_build_registry_accepts_path_under_root(tmp_path, monkeypatch):
+    """Sanity: paths under EIDOLON_ROOT pass the check."""
+    from eidolon_admin_server.app.configs.registry import build_registry
+
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setenv("EIDOLON_ROOT", str(root))
+    inside = root / "subdir" / "config.yaml"
+    inside.parent.mkdir()
+    inside.write_text("a: 1\n")
+
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000),
+        services=[
+            ServiceConfig(
+                id="svc",
+                name="svc",
+                integration="native",
+                base_url="",
+                auth=AuthConfig(),
+                configs=[ConfigEntry(id="cfg", label="cfg", path=str(inside), format="yaml")],
+            ),
+        ],
+    )
+    entries = build_registry(cfg)
+    assert len(entries) == 1
+    assert entries[0].path == inside.resolve()
+
+
 def test_validate_yaml_ok():
     assert formats.validate("a: 1\nb: [1, 2]\n", "yaml") == {"a": 1, "b": [1, 2]}
 
@@ -99,8 +165,13 @@ def test_restore_round_trip(tmp_path: Path):
 
 
 @pytest.fixture
-def configs_gateway(tmp_path: Path) -> tuple[GatewayConfig, Path, Path]:
-    """Gateway config with one editable yaml and one editable dotenv."""
+def configs_gateway(tmp_path: Path, monkeypatch) -> tuple[GatewayConfig, Path, Path]:
+    """Gateway config with one editable yaml and one editable dotenv.
+
+    Pins EIDOLON_ROOT to tmp_path so the registry's path-prefix guard
+    treats the tmp config files as inside the sanctioned root.
+    """
+    monkeypatch.setenv("EIDOLON_ROOT", str(tmp_path))
     yaml_file = tmp_path / "app.yaml"
     yaml_file.write_text("name: hello\nport: 8080\n")
     env_file = tmp_path / "service.env"

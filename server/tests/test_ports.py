@@ -6,6 +6,8 @@ from pathlib import Path
 import yaml
 
 from eidolon_admin_server.app.ports import (
+    _MAX_LIST_INDEX,
+    _set_nested,
     _sync_yaml,
     apply_ports_to_environ,
     load_ports,
@@ -108,3 +110,27 @@ def test_apply_ports_preserves_explicit_env_override(monkeypatch) -> None:
     monkeypatch.setenv("EIDOLON_ADMIN_API_PORT", "65000")
     apply_ports_to_environ()
     assert os.environ["EIDOLON_ADMIN_API_PORT"] == "65000"
+
+
+def test_set_nested_rejects_oversized_list_index() -> None:
+    """A typo like ``llm.models.99999.api_base`` must not allocate 99999 dicts.
+
+    Regression: _set_nested previously had no upper bound on list growth, so
+    a single malformed dotted-path entry could force admin to allocate a
+    huge list at startup and write a multi-MB yaml back out.
+    """
+    data: dict[str, object] = {"llm": {"models": []}}
+    # Index just over the cap is rejected (returns False, leaves data alone).
+    assert _set_nested(data, f"llm.models.{_MAX_LIST_INDEX + 1}.api_base", "x") is False
+    assert data == {"llm": {"models": []}}
+
+
+def test_set_nested_allows_index_at_cap() -> None:
+    """The cap is inclusive — index == _MAX_LIST_INDEX must still succeed."""
+    data: dict[str, object] = {"llm": {"models": []}}
+    assert _set_nested(data, f"llm.models.{_MAX_LIST_INDEX}.api_base", "ok") is True
+    assert isinstance(data["llm"], dict)
+    models = data["llm"]["models"]  # type: ignore[index]
+    assert isinstance(models, list)
+    assert len(models) == _MAX_LIST_INDEX + 1
+    assert models[_MAX_LIST_INDEX] == {"api_base": "ok"}

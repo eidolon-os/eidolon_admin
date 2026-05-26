@@ -12,6 +12,13 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"
 
+# Hard cap on array indices in dotted paths (e.g. "llm.models.0.api_base").
+# Real configs use 0, 1, maybe up to a handful of models. A typo or
+# adversarial entry like "llm.models.99999.api_base" would otherwise force
+# _set_nested to append 99999 empty dicts to a list before setting the leaf.
+# 64 is plenty of headroom for legitimate use and bounds DoS at a few KB.
+_MAX_LIST_INDEX = 64
+
 
 def ports_file() -> Path:
     explicit = os.environ.get("EIDOLON_PORTS_FILE", "").strip()
@@ -108,6 +115,11 @@ def _set_nested(data: dict[str, Any], dotted: str, value: Any) -> bool:
         next_part = parts[i + 1]
         if part.isdigit():
             idx = int(part)
+            if idx > _MAX_LIST_INDEX:
+                # Refuse to grow a list to absurd sizes from a single yaml
+                # entry. ports.yaml is operator-edited; if they really need
+                # index 65+ they can bump _MAX_LIST_INDEX intentionally.
+                return False
             if not isinstance(cur, list):
                 return False
             while len(cur) <= idx:
