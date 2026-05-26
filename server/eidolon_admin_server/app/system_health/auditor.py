@@ -73,6 +73,20 @@ class SystemHealthAudit:
 # ---- the orchestrator ----------------------------------------------------
 
 
+# Services where supervised=False is legitimate (vite for admin, not really
+# a "service" but it's in services.yaml and has a port). For these ports,
+# a listener whose PPID chain is NOT under supervisord's tree is classified
+# as ``"unmanaged"`` instead of ``"wrong_owner"`` (i.e. NOT an orphan).
+#
+# Kept at module level (not class attribute) and exposed by name so callers
+# can compose / override per-instance via the constructor's ``unmanaged_ports``
+# parameter. Tests pass their own dict instead of mutating shared state —
+# safe for pytest-xdist parallel runs.
+DEFAULT_UNMANAGED_BY_DESIGN: dict[str, frozenset[int]] = {
+    "admin": frozenset({9001}),  # vite dev server is launched by run_all.sh
+}
+
+
 class SystemHealthAuditor:
     """Single shot ``audit()`` returns the whole picture.
 
@@ -81,21 +95,20 @@ class SystemHealthAuditor:
     cache because the answer is meant to be a *real-time* view.
     """
 
-    # Services where supervised=False is legitimate (vite for admin,
-    # not really a "service" but it's in services.yaml and has a port).
-    # For these, ports listening with PPID NOT in supervisord's child
-    # set are classified as "unmanaged" instead of "wrong_owner".
-    _UNMANAGED_BY_DESIGN: dict[str, set[int]] = {
-        "admin": {9001},  # vite dev server is launched by run_all.sh
-    }
-
     def __init__(
         self,
         gateway_config: GatewayConfig,
         supervisor_client: SupervisorClient,
+        *,
+        unmanaged_ports: dict[str, frozenset[int]] | None = None,
     ) -> None:
         self._cfg = gateway_config
         self._sv = supervisor_client
+        # Take a defensive copy: callers' dicts shouldn't be mutated by
+        # us, and any mutation here doesn't leak into the module-level
+        # default. ``frozenset`` values are already immutable.
+        source = unmanaged_ports if unmanaged_ports is not None else DEFAULT_UNMANAGED_BY_DESIGN
+        self._unmanaged_ports = dict(source)
 
     async def audit(self) -> SystemHealthAudit:
         sv_pid, sv_program_pids, sv_reachable = await self._supervisord_snapshot()
@@ -196,7 +209,7 @@ class SystemHealthAuditor:
     ) -> tuple[list[PortAudit], list[OrphanAudit]]:
         port_audits: list[PortAudit] = []
         orphans: list[OrphanAudit] = []
-        unmanaged_ports = self._UNMANAGED_BY_DESIGN.get(svc.id, set())
+        unmanaged_ports = self._unmanaged_ports.get(svc.id, frozenset())
 
         for port in svc.ports.declared:
             listener = probe.find_port_listener(port)

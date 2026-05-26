@@ -279,10 +279,13 @@ async def test_audit_marks_unowned_listener_as_orphan() -> None:
 
 @pytest.mark.asyncio
 async def test_audit_classifies_unmanaged_admin_9001_correctly() -> None:
-    """The synthetic ``admin`` service's vite port (9001) is in the
-    auditor's ``_UNMANAGED_BY_DESIGN`` set. If a listener is present
-    but not under supervisord, classify as 'unmanaged' rather than
-    'wrong_owner' — vite is meant to be run by run_all.sh.
+    """A port declared as "unmanaged by design" for a service must be
+    classified as ``"unmanaged"`` rather than ``"wrong_owner"`` even
+    when supervisord doesn't see its listener (e.g. vite at :9001 is
+    launched by run_all.sh, not supervised).
+
+    Injection via the constructor (proper DI) — no shared class-level
+    state, so parallel test runs cannot interfere.
     """
     port = _pick_free_port()
     proc = subprocess.Popen(
@@ -297,15 +300,12 @@ async def test_audit_classifies_unmanaged_admin_9001_correctly() -> None:
         proc.stdout.readline()
 
         cfg = _make_config(port=port, ports_for_admin=[port])
-        # Add port to UNMANAGED_BY_DESIGN at runtime — test-scoped
-        # via the class attribute, not a monkeypatch of behaviour.
-        orig = SystemHealthAuditor._UNMANAGED_BY_DESIGN.get("admin", set()).copy()
-        SystemHealthAuditor._UNMANAGED_BY_DESIGN["admin"] = {port}
-        try:
-            stub = _StubSupervisorClient(processes=[])  # no supervised programs at all
-            audit = await SystemHealthAuditor(cfg, stub).audit()  # type: ignore[arg-type]
-        finally:
-            SystemHealthAuditor._UNMANAGED_BY_DESIGN["admin"] = orig
+        stub = _StubSupervisorClient(processes=[])  # no supervised programs at all
+        auditor = SystemHealthAuditor(
+            cfg, stub,  # type: ignore[arg-type]
+            unmanaged_ports={"admin": frozenset({port})},
+        )
+        audit = await auditor.audit()
 
         svc = audit.services[0]
         assert svc.ports[0].state == "unmanaged"

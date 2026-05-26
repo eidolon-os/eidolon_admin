@@ -109,30 +109,26 @@ async def test_check_with_cleanup_kills_orphan_and_returns_zero() -> None:
 
 @pytest.mark.asyncio
 async def test_check_skips_unmanaged_ports() -> None:
-    """If a port is in ``_UNMANAGED_BY_DESIGN`` for its service, a
-    listener does NOT trigger orphan refusal — that's expected
-    unsupervised state (e.g. vite at :9001).
+    """If a port is declared unmanaged for its service, a listener does
+    NOT trigger orphan refusal — that's expected unsupervised state
+    (e.g. vite at :9001).
 
-    The unmanaged set IS module-level config (single source of truth
-    about which ports are admin-by-design unsupervised); mutating it
-    in a test is changing data, not monkey-patching behaviour. We
-    restore on teardown via ``finally``.
+    Injected via the ``unmanaged`` kwarg (proper DI), so the test
+    cannot leak state into other tests — important once pytest-xdist
+    runs the suite in parallel.
     """
-    from eidolon_admin_server.app.system_health.auditor import SystemHealthAuditor
-
     port = _pick_free_port()
     cfg = _config_with_port(port)
     proc = _spawn_listener(port)
     try:
-        orig = SystemHealthAuditor._UNMANAGED_BY_DESIGN.get("test-svc", set()).copy()
-        SystemHealthAuditor._UNMANAGED_BY_DESIGN["test-svc"] = {port}
-        try:
-            exit_code = await cli.check(cleanup=False, verbose=False, cfg=cfg)
-            assert exit_code == 0, (
-                "unmanaged-by-design port must not trigger orphan refusal"
-            )
-        finally:
-            SystemHealthAuditor._UNMANAGED_BY_DESIGN["test-svc"] = orig
+        exit_code = await cli.check(
+            cleanup=False, verbose=False,
+            cfg=cfg,
+            unmanaged={"test-svc": frozenset({port})},
+        )
+        assert exit_code == 0, (
+            "unmanaged-by-design port must not trigger orphan refusal"
+        )
     finally:
         proc.terminate()
         proc.wait(timeout=5)

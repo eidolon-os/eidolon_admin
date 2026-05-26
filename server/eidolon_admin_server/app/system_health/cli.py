@@ -47,24 +47,26 @@ async def check(
     cleanup: bool,
     verbose: bool,
     cfg: GatewayConfig | None = None,
+    unmanaged: dict[str, frozenset[int] | set[int]] | None = None,
 ) -> int:
     """Return process exit code: 0 = clean, 1 = orphans found / unfixable.
 
     Uses the auditor's probe helpers directly. Doesn't talk to
     supervisord — at pre-flight time it likely isn't running. Any
-    listener on a declared port that isn't in the auditor's
-    ``_UNMANAGED_BY_DESIGN`` set is treated as a potential orphan.
+    listener on a declared port that isn't in the ``unmanaged`` set is
+    treated as a potential orphan.
 
-    ``cfg`` is injectable for tests so they don't need to point at the
-    real services.yaml. In production (called from ``main``) we load
-    the on-disk config; this DI keeps the testable path explicit
-    instead of monkey-patching the module-level loader.
+    Both ``cfg`` and ``unmanaged`` are injectable for tests so they
+    don't need to mutate module-level globals. In production (called
+    from ``main``) we fall back to the real services.yaml and the
+    module-level ``DEFAULT_UNMANAGED_BY_DESIGN``.
     """
+    from .auditor import DEFAULT_UNMANAGED_BY_DESIGN
+
     if cfg is None:
         cfg = load_gateway_config()
-    from .auditor import SystemHealthAuditor
-
-    unmanaged = SystemHealthAuditor._UNMANAGED_BY_DESIGN
+    if unmanaged is None:
+        unmanaged = DEFAULT_UNMANAGED_BY_DESIGN  # type: ignore[assignment]
 
     orphans = _scan_for_orphans(cfg, unmanaged)
 
@@ -258,7 +260,9 @@ def _looks_like_eidolon_stack(command: str) -> bool:
     return any(m in cmd for m in markers)
 
 
-def _scan_for_orphans(cfg, unmanaged: dict[str, set[int]]) -> list[dict]:
+def _scan_for_orphans(
+    cfg, unmanaged: dict[str, frozenset[int] | set[int]]
+) -> list[dict]:
     """Pure listener enumeration, no supervisord involvement.
 
     At pre-flight time supervisord isn't running, so ANY listener on a
@@ -267,7 +271,7 @@ def _scan_for_orphans(cfg, unmanaged: dict[str, set[int]]) -> list[dict]:
     """
     results: list[dict] = []
     for svc in cfg.services:
-        unmanaged_for_svc = unmanaged.get(svc.id, set())
+        unmanaged_for_svc = unmanaged.get(svc.id, frozenset())
         for port in svc.ports.declared:
             if port in unmanaged_for_svc:
                 continue
