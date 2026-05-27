@@ -245,7 +245,7 @@ do_web_status() {
 
 # --- supervisord ------------------------------------------------------------
 
-# True only when var/supervisord.pid points at a *live supervisord process*.
+# Print the PID when var/supervisord.pid points at a live supervisord process.
 #
 # The PID-existence check alone isn't enough: PIDs get recycled by the
 # kernel. If our last supervisord crashed without removing its pid file,
@@ -258,16 +258,50 @@ do_web_status() {
 # ``comm`` returns the executable basename (``python3``) and supervisord
 # is launched as a script. The full args contain
 # ``.../bin/supervisord -c ...`` which we can match unambiguously.
-sv_alive() {
+sv_pid_from_file() {
   [[ -f "$SV_PID" ]] || return 1
   local pid; pid=$(cat "$SV_PID" 2>/dev/null)
   [[ -n "$pid" ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  ps -o args= -p "$pid" 2>/dev/null | grep -q "bin/supervisord"
+  ps -o args= -p "$pid" 2>/dev/null | grep -q "bin/supervisord" || return 1
+  echo "$pid"
 }
 
 sv_ctl_ready() {
   [[ -S "$SV_SOCK" ]] && "${VENV}/bin/supervisorctl" -c "$SV_CONF" version >/dev/null 2>&1
+}
+
+# Print the PID reported by the live supervisord XML-RPC socket.
+sv_pid_from_ctl() {
+  [[ -S "$SV_SOCK" ]] || return 1
+  local pid
+  pid="$("${VENV}/bin/supervisorctl" -c "$SV_CONF" pid 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  echo "$pid"
+}
+
+# Repair var/supervisord.pid from the socket when the daemon is alive but the
+# pidfile is missing or stale. This is the important split-brain guard: a live
+# supervisord keeps auto-restarting children, so treating "no pidfile" as "not
+# running" makes restart collide with its own managed processes.
+sv_repair_pidfile_from_ctl() {
+  local pid file_pid
+  pid="$(sv_pid_from_ctl)" || return 1
+  file_pid="$(cat "$SV_PID" 2>/dev/null || true)"
+  if [[ "$file_pid" != "$pid" ]]; then
+    warn "supervisord socket is live (PID $pid) but pidfile is stale/missing; repairing $SV_PID" >&2
+    echo "$pid" >"$SV_PID"
+  fi
+  echo "$pid"
+}
+
+sv_pid() {
+  sv_pid_from_file || sv_repair_pidfile_from_ctl
+}
+
+sv_alive() {
+  sv_pid >/dev/null
 }
 
 # Reload deploy/supervisor/enabled/*.conf into a running supervisord.
@@ -323,14 +357,14 @@ do_sv_reread_update() {
 do_sv_start() {
   ensure_api_deps
   if sv_alive; then
-    info "supervisord already running (PID $(cat "$SV_PID"), socket $SV_SOCK)"
+    info "supervisord already running (PID $(sv_pid), socket $SV_SOCK)"
     info "  config reload only — use '$0 status' to inspect; '$0 restart' for full stop+start"
     do_sv_reread_update
     return 0
   fi
   # If a stale socket lingers from a crashed daemon, supervisord will refuse
   # to start.
-  if [[ -S "$SV_SOCK" && ! -f "$SV_PID" ]]; then
+  if [[ -S "$SV_SOCK" ]] && ! sv_ctl_ready; then
     info "cleaning stale socket $SV_SOCK"
     rm -f "$SV_SOCK"
   fi
@@ -343,7 +377,7 @@ do_sv_start() {
     tail -30 "$LOG_DIR/admin/supervisord.log" >&2 || true
     return 1
   fi
-  info "supervisord PID $(cat "$SV_PID"), socket $SV_SOCK"
+  info "supervisord PID $(sv_pid), socket $SV_SOCK"
   info "  (admin-api auto-starts under supervisord)"
   do_sv_reread_update
 }
@@ -354,7 +388,7 @@ do_sv_stop() {
     rm -f "$SV_PID" 2>/dev/null || true
     return 0
   fi
-  local sv_pid; sv_pid=$(cat "$SV_PID")
+  local sv_pid; sv_pid="$(sv_pid)"
 
   # Step 1: stop channel while LiveKit is still up (avoids reconnect errors in logs).
   do_sv_stop_channel_first
@@ -406,7 +440,7 @@ do_sv_stop() {
 do_sv_status() {
   header "supervisord"
   if sv_alive; then
-    info "running PID $(cat "$SV_PID"), socket $SV_SOCK"
+    info "running PID $(sv_pid), socket $SV_SOCK"
     echo
     "${VENV}/bin/supervisorctl" -c "$SV_CONF" status || true
   else
