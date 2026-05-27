@@ -1,5 +1,11 @@
-# Admin port index — refreshed by: python -m eidolon_admin_server.app.ports collect
-# Source of truth: each sub-project config/settings.yaml (not edited from here).
+# Eidolon dev stack — port registry for admin (health / supervisord / services.yaml).
+#
+# Sub-project config/settings.yaml files are the source of truth for bind ports.
+# run_all.sh start runs ``python -m eidolon_admin_server.app.ports collect`` to
+# refresh this file (aggregation only — child settings are never modified).
+#
+# Edit admin / client_web / nats.http_port here when needed; service ports come
+# from the corresponding sub-project settings.yaml.
 
 admin:
   api:
@@ -7,40 +13,31 @@ admin:
     port: 9000
   web:
     port: 9001
-
 hub:
   api:
     host: 0.0.0.0
     port: 8082
-
 agent:
   http:
-    # Avoid 8080 — commonly taken by Homebrew nginx (http-alt).
     port: 8180
   admin:
     port: 8081
   grpc:
-    # Outside livekit.rtc_port_start..rtc_port_end below — LiveKit binds the whole RTC range.
     port: 45051
-
 memory:
   discovery:
     host: 127.0.0.1
     port: 8020
   mcp:
     port: 8030
-
 channel:
   worker:
     port: 8766
-
 client_web:
   port: 3000
-
 nats:
   port: 4222
   http_port: 8222
-
 livekit:
   port: 7880
   turn_udp_port: 3478
