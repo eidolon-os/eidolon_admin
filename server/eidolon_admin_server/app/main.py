@@ -109,14 +109,14 @@ def create_app(
     )
     app.state.registry = ServiceRegistry(cfg)
     app.state.gateway_config = cfg
-    # trust_env=False: skip HTTP_PROXY/HTTPS_PROXY env vars. The gateway only
-    # talks to localhost sub-projects, and a system proxy (e.g. Clash on :7890)
-    # would otherwise intercept these requests and return 502 with multi-second
-    # latency. NO_PROXY=127.0.0.1 cannot be relied on consistently across httpx
-    # versions, so we just disable env-derived proxy config outright.
+    # Proxy isolation is handled at supervisord level (HTTP_PROXY="" +
+    # NO_PROXY=loopback in deploy/dev/supervisord.conf [supervisord]
+    # environment=). httpx default trust_env=True is fine here — NO_PROXY
+    # already shields us from the macOS system-proxy fallback, and external
+    # HTTP (if any future feature adds it) will correctly honor whatever
+    # proxy the operator configured at the program level.
     app.state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(30.0, connect=5.0),
-        trust_env=False,
     )
     app.state.supervisor_client = SupervisorClient(settings.supervisor_socket)
     app.state.supervisor_configs = ConfigStore(
