@@ -18,9 +18,14 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
+import httpx
 from fastapi import HTTPException
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared._httpx_utils import (
+    MCP_DEFAULT_SSE_READ_TIMEOUT,
+    MCP_DEFAULT_TIMEOUT,
+)
 
 from .runners import UserEntry, load_users, users_yaml_path
 
@@ -32,6 +37,52 @@ _MCP_HOST = "127.0.0.1"
 _MCP_PATH = "/mcp"
 _DEFAULT_CONNECT_ATTEMPTS = 4
 _DEFAULT_BACKOFF_SECONDS = 0.4
+
+
+def _trust_env_false_factory(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    """httpx factory that ignores env/system proxy settings.
+
+    Why this exists:
+        Admin connects to memory's agent_runner over loopback
+        (127.0.0.1:80xx). httpx defaults to ``trust_env=True``, which means:
+        - reads HTTP_PROXY / HTTPS_PROXY env vars, AND
+        - on macOS falls back to ``getproxies_macosx_sysconf()`` (System
+          Settings → Network → Proxies) when no env var is set.
+
+        If the user has a system proxy configured (Clash, Mihomo,
+        ShadowSocks — common in CN dev setups), httpx routes loopback
+        MCP calls through that proxy. The proxy either:
+        - returns 502 outright (observed: "502 Bad Gateway,
+          Connection: close, Content-Length: 0" — proxy signature, not
+          uvicorn), or
+        - adds latency / breaks SSE.
+
+        supervisord.conf already clears HTTP_PROXY="" for admin's child
+        env, but empty env vars don't disable the macOS system-proxy
+        fallback. ``trust_env=False`` is the only reliable kill-switch.
+
+    Matches ``app.state.http_client`` in main.py which already does this
+    for the gateway proxy path — same rationale.
+
+    Signature matches ``McpHttpClientFactory`` so we can pass this as
+    ``httpx_client_factory=`` to ``streamablehttp_client``.
+    """
+    kwargs: dict[str, Any] = {
+        "follow_redirects": True,
+        "trust_env": False,
+    }
+    kwargs["timeout"] = timeout if timeout is not None else httpx.Timeout(
+        MCP_DEFAULT_TIMEOUT, read=MCP_DEFAULT_SSE_READ_TIMEOUT
+    )
+    if headers is not None:
+        kwargs["headers"] = headers
+    if auth is not None:
+        kwargs["auth"] = auth
+    return httpx.AsyncClient(**kwargs)
 
 
 class MemoryUserNotFound(HTTPException):
@@ -103,7 +154,11 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
         headers["Authorization"] = f"Bearer {token}"
 
     try:
-        async with streamablehttp_client(url, headers=headers or None) as (
+        async with streamablehttp_client(
+            url,
+            headers=headers or None,
+            httpx_client_factory=_trust_env_false_factory,
+        ) as (
             read,
             write,
             _get_session_id,

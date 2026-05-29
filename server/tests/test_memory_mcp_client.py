@@ -64,6 +64,50 @@ def _make_users(monkeypatch, *entries: UserEntry) -> None:
     monkeypatch.setattr(mc, "load_users", lambda: list(entries))
 
 
+# ---- httpx factory: trust_env=False ----------------------------------------
+
+
+def test_factory_disables_env_proxy_lookup() -> None:
+    """The factory we hand to streamablehttp_client must build httpx clients
+    that ignore HTTP_PROXY / HTTPS_PROXY env vars AND macOS system proxy.
+
+    Why this is the regression test that matters:
+        In production we hit a phantom 502 from memory's MCP endpoint that
+        was actually httpx routing localhost traffic through the user's
+        macOS system proxy (System Settings → Network → Proxies, 127.0.0.1
+        :7890). supervisord's ``HTTP_PROXY=""`` did not stop this because
+        ``trust_env=True`` (default) ALSO consults
+        ``urllib.request.getproxies_macosx_sysconf()`` when the env var is
+        empty. Only ``trust_env=False`` is reliable.
+    """
+    from eidolon_admin_server.app.memory.mcp_client import _trust_env_false_factory
+
+    client = _trust_env_false_factory()
+    try:
+        assert client.trust_env is False, (
+            "factory must set trust_env=False — otherwise httpx will route "
+            "localhost MCP calls through any HTTP_PROXY / system proxy"
+        )
+    finally:
+        # AsyncClient cleanup is async, but we never opened a connection;
+        # closing the sync way is fine. Suppress the runtime warning.
+        client._transport.close() if hasattr(client._transport, "close") else None
+
+
+def test_factory_preserves_mcp_defaults() -> None:
+    """Sanity: aside from trust_env, behave like create_mcp_http_client."""
+    from eidolon_admin_server.app.memory.mcp_client import _trust_env_false_factory
+
+    c = _trust_env_false_factory()
+    try:
+        assert c.follow_redirects is True
+        # default timeout matches MCP defaults (30s connect, 300s read)
+        assert c.timeout.read == 300.0
+        assert c.timeout.connect == 30.0
+    finally:
+        c._transport.close() if hasattr(c._transport, "close") else None
+
+
 # ---- probe_reachable: never raises -----------------------------------------
 
 
