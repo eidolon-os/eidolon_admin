@@ -77,7 +77,23 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
     """Open a fresh MCP session for ``user_id``. Yields (session, url).
 
     Caller is responsible for awaiting tool calls inside the ``async with``.
-    Errors connecting raise :class:`MemoryAgentUnreachable` (HTTP 502).
+    Any failure connecting / initializing the MCP session is normalized
+    into :class:`MemoryAgentUnreachable` (HTTP 502) so callers see a single
+    well-typed error instead of a zoo of httpx/anyio/runtime exceptions.
+
+    Why such a broad ``except``:
+        ``streamablehttp_client`` wraps its internals in an
+        ``anyio.TaskGroup``, so any failure inside (HTTP 502 from the
+        server, a flaky session resume, etc.) arrives as a
+        ``BaseExceptionGroup`` — NOT one of ``ConnectionError /
+        OSError / RuntimeError``. The previous narrow except let those
+        groups propagate up and the FastAPI handler raised a 500. That
+        masked the real symptom ("agent unreachable") under a generic
+        crash and broke every /api/memory/* endpoint as soon as the
+        user-worker entered a degraded MCP state. We'd rather always
+        report 502 with the underlying message — same contract whether
+        the failure is connect-refused, 502 from server, or a stream
+        protocol violation.
     """
     user = resolve_user(user_id)
     url = mcp_url_for_port(user.port)
@@ -95,8 +111,21 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 yield session, url
-    except (ConnectionError, OSError, RuntimeError) as exc:
-        raise MemoryAgentUnreachable(user_id, url, exc) from exc
+    except HTTPException:
+        # MemoryUserNotFound / MemoryUserDisabled are HTTPException subclasses
+        # raised by resolve_user(); re-raise unchanged so the user sees
+        # the precise 404/403 rather than a misleading 502.
+        raise
+    except BaseException as exc:  # noqa: BLE001 — see docstring
+        # Drill down into BaseExceptionGroup to surface a useful message
+        # (the inner cause, not the wrapper).
+        inner: BaseException = exc
+        while isinstance(inner, BaseExceptionGroup) and inner.exceptions:
+            inner = inner.exceptions[0]
+        # Cast to Exception for the constructor (we know it's catchable).
+        if not isinstance(inner, Exception):
+            inner = RuntimeError(str(inner) or type(inner).__name__)
+        raise MemoryAgentUnreachable(user_id, url, inner) from exc
 
 
 def _unwrap(payload: Any) -> Any:
@@ -150,9 +179,25 @@ async def list_tools(user_id: str) -> list[dict[str, Any]]:
 
 
 async def probe_reachable(user_id: str) -> bool:
-    """Cheap liveness probe — opens a session and immediately closes."""
+    """Cheap liveness probe — opens a session and immediately closes.
+
+    Returns True iff a fresh MCP session can be established and initialized
+    against the user's agent_runner.
+
+    **This function must never raise** — it's called from /api/memory/users
+    in an ``asyncio.gather`` over every configured user. A single user with
+    a wedged MCP transport must not crash the whole users-list response.
+    Any failure (HTTPException from resolve_user, MemoryAgentUnreachable
+    from connect, or anything genuinely unexpected) is logged and returned
+    as False. The caller renders this as "unreachable" in the UI, which is
+    exactly the operator-actionable signal we want.
+    """
     try:
         async with open_session(user_id):
             return True
     except HTTPException:
+        # Expected "not reachable" path — user disabled, agent down, etc.
+        return False
+    except BaseException as exc:  # noqa: BLE001 — see docstring
+        logger.warning("probe_reachable(%s) unexpected error: %s", user_id, exc)
         return False
