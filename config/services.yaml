@@ -173,6 +173,7 @@ services:
     features:
       - { key: overview, label: "Overview" }
       - { key: config,   label: "Config" }
+      - { key: benchmarks, label: "Benchmarks" }
     configs:
       - id: settings
         label: "channel settings.yaml"

@@ -26,6 +26,7 @@ const moduleMap: Record<string, Record<string, Component>> = {
   channel: {
     overview: defineAsyncComponent(() => import('./channel/Overview.vue')),
     config: defineAsyncComponent(() => import('./channel/Config.vue')),
+    benchmarks: defineAsyncComponent(() => import('./channel/Benchmarks.vue')),
   },
   'client-web': {
     overview: defineAsyncComponent(() => import('./client-web/Overview.vue')),
