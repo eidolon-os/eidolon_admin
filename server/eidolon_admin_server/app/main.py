@@ -64,6 +64,7 @@ from .registry.users import (
     UserOrchestrator,
     router as users_router,
 )
+from .routers.bootstrap import router as bootstrap_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
@@ -338,6 +339,7 @@ def create_app(
     app.include_router(agents_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
     app.include_router(resolve_router, prefix="/api")
+    app.include_router(bootstrap_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
