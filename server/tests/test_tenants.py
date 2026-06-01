@@ -29,6 +29,7 @@ from eidolon_admin_server.app.registry.schemas.tenant import (
 from eidolon_admin_server.app.registry.tenants import (
     LastTenantError,
     TenantAlreadyExists,
+    TenantInUse,
     TenantNotFound,
     TenantOrchestrator,
     TenantRepository,
@@ -195,6 +196,62 @@ async def test_orchestrator_delete_removes_record(
 async def test_orchestrator_delete_missing_raises_404(
     orchestrator: TenantOrchestrator,
 ) -> None:
+    with pytest.raises(TenantNotFound):
+        await orchestrator.delete("ghost")
+
+
+# ---- cascade refcount (29.E.1) ----------------------------------------------
+
+
+async def test_orchestrator_refuses_delete_when_users_reference_tenant(
+    orchestrator: TenantOrchestrator,
+) -> None:
+    """Cascade gate: if a refcount provider says N>0 users belong to
+    this tenant, delete refuses with TenantInUse (409). This protects
+    against orphaning users into a deleted tenant."""
+    await orchestrator.create(CreateTenantRequest(tenant_id="a", display_name="A"))
+    await orchestrator.create(CreateTenantRequest(tenant_id="b", display_name="B"))
+
+    # Wire a fake refcount provider that says 2 users reference 'a'.
+    async def _refcount(tenant_id: str) -> int:
+        return 2 if tenant_id == "a" else 0
+
+    orchestrator.set_user_refcount_provider(_refcount)
+
+    with pytest.raises(TenantInUse) as exc_info:
+        await orchestrator.delete("a")
+    assert "2 user(s)" in str(exc_info.value)
+    # Tenant still present.
+    assert (await orchestrator.get("a")).tenant_id == "a"
+
+    # With refcount = 0, delete succeeds.
+    await orchestrator.delete("b")  # b has refcount 0
+
+
+async def test_orchestrator_skips_cascade_when_no_provider_set(
+    orchestrator: TenantOrchestrator,
+) -> None:
+    """Backwards-compatible: without a refcount provider (tests, partial
+    init), delete works as it did pre-29.E.1 — only last-tenant guard."""
+    await orchestrator.create(CreateTenantRequest(tenant_id="a", display_name="A"))
+    await orchestrator.create(CreateTenantRequest(tenant_id="b", display_name="B"))
+    # No provider set — should proceed even if there "would have been" refs.
+    await orchestrator.delete("a")
+    with pytest.raises(TenantNotFound):
+        await orchestrator.get("a")
+
+
+async def test_orchestrator_404_beats_in_use_check(
+    orchestrator: TenantOrchestrator,
+) -> None:
+    """Error precedence: missing tenant gets 404 BEFORE the in-use check
+    even runs — operator typo / stale UI should see the most actionable
+    error."""
+
+    async def _refcount(tenant_id: str) -> int:
+        return 999  # would block delete if reached
+
+    orchestrator.set_user_refcount_provider(_refcount)
     with pytest.raises(TenantNotFound):
         await orchestrator.delete("ghost")
 

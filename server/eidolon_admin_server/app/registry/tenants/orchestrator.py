@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Awaitable, Callable, Optional
 
 from ..schemas.tenant import (
     CreateTenantRequest,
@@ -34,6 +35,13 @@ from ..schemas.tenant import (
 from .repository import TenantRepository
 
 logger = logging.getLogger(__name__)
+
+
+# Callable signature: given a tenant_id, return how many users still
+# belong to this tenant. The orchestrator uses this for the cascade
+# refuse-on-delete check. Injected by main.py's lifespan after both
+# tenant and user orchestrators exist.
+UserRefcountProvider = Callable[[str], Awaitable[int]]
 
 
 # ---- exceptions (router maps to HTTP status codes) -------------------------
@@ -59,6 +67,13 @@ class LastTenantError(TenantError):
     status_code = 409
 
 
+class TenantInUse(TenantError):
+    """Refused: at least one user still belongs to this tenant. Phase
+    29.E.1 added this gate — closes the cascade gap noted in 29.A doc."""
+
+    status_code = 409
+
+
 # ---- orchestration ---------------------------------------------------------
 
 
@@ -69,10 +84,26 @@ DEFAULT_TENANT_DISPLAY_NAME = "Default"
 
 
 class TenantOrchestrator:
-    """Tenant CRUD + business invariants. Stateless apart from the repo."""
+    """Tenant CRUD + business invariants. Stateless apart from the repo.
+
+    The Users module (29.E) plugs in a refcount provider via
+    :meth:`set_user_refcount_provider` so this orchestrator can refuse
+    to delete a tenant that still has users. Done via setter rather
+    than constructor to avoid a circular dependency at module-build
+    time (Users needs Tenants for create-user's tenant validation;
+    Tenants needs Users for delete-tenant's cascade check).
+    """
 
     def __init__(self, repo: TenantRepository) -> None:
         self._repo = repo
+        self._user_refcount_provider: Optional[UserRefcountProvider] = None
+
+    def set_user_refcount_provider(
+        self, provider: Optional[UserRefcountProvider]
+    ) -> None:
+        """Wire / unwire the cascade hook. Pass ``None`` to detach
+        (useful in tests that want to verify the no-cascade behavior)."""
+        self._user_refcount_provider = provider
 
     async def list_all(self) -> list[TenantSpec]:
         tenants = await self._repo.list_all()
@@ -118,18 +149,36 @@ class TenantOrchestrator:
         return updated
 
     async def delete(self, tenant_id: str) -> None:
-        """Delete a tenant. Refuses if it's the last one.
+        """Delete a tenant. Three guards in order of specificity:
 
-        TODO(29.E/F/G): once Users/Agents/Devices modules know about
-        tenant_id, this method should cascade — list owned entities,
-        delete each, THEN remove the tenant record. For now there are no
-        cross-references, so the cascade is a no-op.
+          1. **404** if the tenant doesn't exist (most specific —
+             operator typo or stale UI).
+          2. **TenantInUse** if any user still references this tenant
+             (cascade refuse — protects against orphaning users into
+             a deleted tenant; operator must delete those users first).
+          3. **LastTenantError** if this is the only tenant
+             (admin must always have ≥1 tenant for scoping).
+
+        Ordering chosen so the operator gets the most actionable error:
+        "you mistyped the id" > "you have users to migrate first" >
+        "you can't go to zero tenants".
         """
-        # Force a 404 before the last-tenant check so the operator sees the
-        # most specific error available.
         spec = await self._repo.get(tenant_id)
         if spec is None:
             raise TenantNotFound(f"tenant {tenant_id!r} not found")
+
+        # Cascade refcount check. Only enabled when a refcount provider
+        # is wired (Users module installs it at lifespan). Without one,
+        # we skip — useful for tests that exercise just the tenant logic.
+        if self._user_refcount_provider is not None:
+            refcount = await self._user_refcount_provider(tenant_id)
+            if refcount > 0:
+                raise TenantInUse(
+                    f"cannot delete tenant {tenant_id!r}: {refcount} user(s) "
+                    "still belong to it. Delete (or migrate) those users "
+                    "first, then retry."
+                )
+
         if await self._repo.count() <= 1:
             raise LastTenantError(
                 f"cannot delete tenant {tenant_id!r}: it is the only tenant. "

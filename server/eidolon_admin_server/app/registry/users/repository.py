@@ -21,9 +21,12 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
-
 from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
+from .._shared import (
+    SubProjectHTTPClient,
+    SubProjectUnreachable,
+    SubProjectUpstreamError,
+)
 from ..buckets import USERS_METADATA_BUCKET
 from ..keys import user_metadata_key
 
@@ -31,23 +34,16 @@ logger = logging.getLogger(__name__)
 
 
 # ===== memory HTTP client ===================================================
+#
+# Backwards-compatible aliases so the orchestrator + tests keep
+# importing the old names. The shared base classes ARE these classes —
+# we're just giving them domain-specific names.
+
+MemoryUserUnreachable = SubProjectUnreachable
+MemoryUserUpstreamError = SubProjectUpstreamError
 
 
-class MemoryUserUnreachable(Exception):
-    """Network-level failure (refused, timeout, DNS) talking to memory."""
-
-
-class MemoryUserUpstreamError(Exception):
-    """Memory responded with a 4xx/5xx — the orchestrator preserves the
-    status code so admin can map 404→404, 409→409, etc."""
-
-    def __init__(self, status_code: int, message: str) -> None:
-        super().__init__(message)
-        self.status_code = status_code
-        self.message = message
-
-
-class MemoryUserClient:
+class MemoryUserClient(SubProjectHTTPClient):
     """HTTP wrapper over memory's user CRUD surface.
 
     Memory exposes these on its supervisor-embedded HTTP (default
@@ -63,33 +59,13 @@ class MemoryUserClient:
     (tenant_id, active_agent_id) — the orchestrator enforces that.
     """
 
-    def __init__(self, http_client: httpx.AsyncClient, memory_admin_url: str) -> None:
-        self._http = http_client
-        self._base = memory_admin_url.rstrip("/")
-
-    def _url(self, path: str) -> str:
-        return f"{self._base}{path}"
-
     async def list_users(self) -> dict[str, Any]:
-        """GET /api/admin/users — returns the full envelope (users list +
-        memory_available flag)."""
-        try:
-            r = await self._http.get(self._url("/api/admin/users"))
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise MemoryUserUnreachable(str(exc)) from exc
-        if r.status_code >= 400:
-            raise MemoryUserUpstreamError(r.status_code, r.text)
+        """Returns the full envelope (users list + memory_available)."""
+        r = await self._request("GET", "/api/admin/users")
         return r.json()
 
     async def get_user(self, user_id: str) -> dict[str, Any]:
-        try:
-            r = await self._http.get(self._url(f"/api/admin/users/{user_id}"))
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise MemoryUserUnreachable(str(exc)) from exc
-        if r.status_code == 404:
-            raise MemoryUserUpstreamError(404, "user not found in memory")
-        if r.status_code >= 400:
-            raise MemoryUserUpstreamError(r.status_code, r.text)
+        r = await self._request("GET", f"/api/admin/users/{user_id}")
         return r.json()
 
     async def create_user(
@@ -103,28 +79,15 @@ class MemoryUserClient:
         body: dict[str, Any] = {"user_id": user_id, "palace_path": palace_path}
         if consolidator is not None:
             body["consolidator"] = consolidator
-        # memory's CreateUserRequest doesn't have a display_name field
-        # — it's an admin-side concept. We send only the fields memory
-        # accepts.
-        try:
-            r = await self._http.post(self._url("/api/admin/users"), json=body)
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise MemoryUserUnreachable(str(exc)) from exc
-        if r.status_code >= 400:
-            raise MemoryUserUpstreamError(r.status_code, r.text)
+        # memory's CreateUserRequest has no display_name field — that's
+        # an admin-side concept. We send only the fields memory accepts.
+        r = await self._request("POST", "/api/admin/users", json=body)
         return r.json()
 
     async def delete_user(self, user_id: str) -> dict[str, Any]:
-        """DELETE /api/admin/users/{user_id} — returns memory's response
-        envelope (includes ``palace_trashed_to`` when applicable)."""
-        try:
-            r = await self._http.delete(self._url(f"/api/admin/users/{user_id}"))
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise MemoryUserUnreachable(str(exc)) from exc
-        if r.status_code == 404:
-            raise MemoryUserUpstreamError(404, "user not found in memory")
-        if r.status_code >= 400:
-            raise MemoryUserUpstreamError(r.status_code, r.text)
+        """Returns memory's response envelope (includes
+        ``palace_trashed_to`` when applicable)."""
+        r = await self._request("DELETE", f"/api/admin/users/{user_id}")
         return r.json()
 
 

@@ -159,10 +159,17 @@ def create_app(
         ) is not None:
             user_client = MemoryUserClient(app.state.http_client, memory_admin_url)
             user_repo = UserMetadataRepository(app.state.nats_kv)
-            app.state.user_orchestrator = UserOrchestrator(
+            user_orch = UserOrchestrator(
                 memory_client=user_client,
                 metadata_repo=user_repo,
                 tenant_orchestrator=app.state.tenant_orchestrator,
+            )
+            app.state.user_orchestrator = user_orch
+            # Close the cascade gap noted in 29.A doc §10: now that Users
+            # exists, wire its refcount method into Tenants's delete
+            # check so we can't orphan users into a deleted tenant.
+            app.state.tenant_orchestrator.set_user_refcount_provider(
+                user_orch.count_users_for_tenant
             )
             logger.info("user orchestrator ready (memory=%s)", memory_admin_url)
         else:

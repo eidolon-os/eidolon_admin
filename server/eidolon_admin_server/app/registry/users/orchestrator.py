@@ -27,6 +27,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from .._shared import unwrap_detail
 from ..schemas.user import (
     ConsolidatorConfig,
     CreateUserRequest,
@@ -181,17 +182,35 @@ class UserOrchestrator:
         )
 
     def _map_memory_error(self, exc: MemoryUserUpstreamError) -> None:
-        """Status-code translation. memory's exception statuses are the
-        same shape we use, so map 1:1 with our exception classes."""
+        """Status-code translation. Unwraps memory's
+        ``{"detail": "..."}`` envelope so the message stays single-layer
+        through admin's HTTPException."""
+        message = unwrap_detail(exc.message)
         if exc.status_code == 404:
-            raise UserNotFound(exc.message)
+            raise UserNotFound(message)
         if exc.status_code == 409:
-            raise UserAlreadyExists(exc.message)
+            raise UserAlreadyExists(message)
         # 4xx-other and 5xx: surface as generic UserError so router emits
         # a useful status code.
-        raise UserError(f"memory returned {exc.status_code}: {exc.message}")
+        raise UserError(f"memory returned {exc.status_code}: {message}")
 
     # ---- public API ----------------------------------------------------
+
+    async def count_users_for_tenant(self, tenant_id: str) -> int:
+        """How many users currently belong to ``tenant_id``.
+
+        Wired into :class:`TenantOrchestrator` via
+        ``set_user_refcount_provider`` so deleting a tenant is refused
+        while users still reference it.
+
+        Implementation note: reads admin's own metadata KV (the
+        authoritative source for tenant↔user mapping). Doesn't hit
+        memory — if memory has a user without an admin metadata entry,
+        that user is by definition in the default tenant fallback and
+        wouldn't block a non-default tenant deletion.
+        """
+        all_meta = await self._meta.list_all()
+        return sum(1 for m in all_meta.values() if m.tenant_id == tenant_id)
 
     async def list_users(self) -> list[UserView]:
         """List users by joining memory's authoritative list with admin's

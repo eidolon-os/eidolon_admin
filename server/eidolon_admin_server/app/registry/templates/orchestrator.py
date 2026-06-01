@@ -40,6 +40,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from .._shared import unwrap_detail
 from ..schemas.template import (
     CreateTemplateRequest,
     ForkTemplateRequest,
@@ -102,12 +103,11 @@ class TemplateOrchestrator:
     def _raise_mapped(self, exc: TemplateUpstreamError) -> None:
         """Map an upstream HTTP status to admin's exception hierarchy.
 
-        Unwraps agent's ``{"detail": "..."}`` envelope so admin's eventual
-        ``HTTPException(detail=...)`` doesn't double-wrap into
-        ``{"detail": "{\"detail\": \"...\"}"}`` when the operator hits
-        the endpoint.
+        Uses the shared :func:`unwrap_detail` to strip FastAPI's
+        ``{"detail": "..."}`` envelope so admin's eventual
+        ``HTTPException(detail=...)`` doesn't double-wrap.
         """
-        message = _unwrap_detail(exc.message)
+        message = unwrap_detail(exc.message)
         if exc.status_code == 404:
             raise TemplateNotFound(message)
         if exc.status_code == 409:
@@ -292,25 +292,3 @@ def _parse_dt(s: str) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
-
-
-def _unwrap_detail(message: str) -> str:
-    """Pull the inner ``detail`` string out of agent's
-    ``{"detail": "..."}`` JSON if that's what it looks like.
-
-    Why: FastAPI's HTTPException serializes its message into
-    ``{"detail": "..."}``. When we then catch that response and wrap
-    OUR own HTTPException around the body text, we double-wrap. This
-    helper makes the chain idempotent.
-    """
-    import json
-
-    if not message:
-        return message
-    try:
-        parsed = json.loads(message)
-    except (json.JSONDecodeError, ValueError):
-        return message
-    if isinstance(parsed, dict) and "detail" in parsed and isinstance(parsed["detail"], str):
-        return parsed["detail"]
-    return message

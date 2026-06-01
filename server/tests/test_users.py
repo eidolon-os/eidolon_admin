@@ -492,3 +492,57 @@ async def test_http_503_when_orchestrator_missing() -> None:
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
         r = await c.get("/api/users")
     assert r.status_code == 503
+
+
+# ---- cross-module cascade (29.E.1) -----------------------------------------
+
+
+async def test_count_users_for_tenant_reflects_admin_metadata(
+    orchestrator: UserOrchestrator,
+) -> None:
+    """The cascade hook that TenantOrchestrator wires in. Verifies
+    admin's KV is the authoritative source for tenant↔user mapping."""
+    # Default tenant exists from the orchestrator fixture. Add 2 users
+    # to it + 1 to a different tenant.
+    await orchestrator._meta.put("u1", UserMetadata(tenant_id="default"))
+    await orchestrator._meta.put("u2", UserMetadata(tenant_id="default"))
+    await orchestrator._meta.put("u3", UserMetadata(tenant_id="other"))
+
+    assert await orchestrator.count_users_for_tenant("default") == 2
+    assert await orchestrator.count_users_for_tenant("other") == 1
+    assert await orchestrator.count_users_for_tenant("none") == 0
+
+
+async def test_tenant_delete_through_lifespan_wiring_refuses_when_users_present(
+    orchestrator: UserOrchestrator,
+) -> None:
+    """End-to-end verification of the 29.E.1 wiring: TenantOrchestrator
+    has UserOrchestrator's refcount method installed, so a delete
+    attempt against a tenant with users is refused.
+
+    This is what main.py's lifespan does at startup. We replicate it
+    here so the cross-module contract is pinned in tests too — not just
+    in the manual wiring of the running app.
+    """
+    from eidolon_admin_server.app.registry.tenants.orchestrator import (
+        TenantInUse,
+    )
+
+    tenant_orch = orchestrator._tenants
+    # Wire as main.py does
+    tenant_orch.set_user_refcount_provider(orchestrator.count_users_for_tenant)
+
+    # Add a user to default
+    await orchestrator._meta.put("alice", UserMetadata(tenant_id="default"))
+
+    # Create a second tenant (otherwise last-tenant guard fires first)
+    from eidolon_admin_server.app.registry.schemas.tenant import (
+        CreateTenantRequest,
+    )
+    await tenant_orch.create(
+        CreateTenantRequest(tenant_id="other", display_name="Other")
+    )
+
+    # Now delete should refuse because default has 1 user.
+    with pytest.raises(TenantInUse):
+        await tenant_orch.delete("default")

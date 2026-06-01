@@ -16,6 +16,7 @@ about tenants; the UI hides the selector when only one exists.
 from .orchestrator import (
     LastTenantError,
     TenantAlreadyExists,
+    TenantInUse,
     TenantNotFound,
     TenantOrchestrator,
     seed_default,
@@ -26,6 +27,7 @@ from .router import router
 __all__ = [
     "LastTenantError",
     "TenantAlreadyExists",
+    "TenantInUse",
     "TenantNotFound",
     "TenantOrchestrator",
     "TenantRepository",
