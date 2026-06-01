@@ -113,6 +113,16 @@ class AgentProjectClient(SubProjectHTTPClient):
         r = await self._request("GET", f"{path}?limit={limit}")
         return r.json()
 
+    async def render_template(self, template_id: str) -> dict[str, Any]:
+        """POST /api/admin/personas/templates/{id}/render — returns
+        ``{markdown, template_id, template_revision}``. Used by
+        ``get_agent`` to surface a soul preview the operator can read."""
+        r = await self._request(
+            "POST",
+            f"/api/admin/personas/templates/{template_id}/render",
+        )
+        return r.json()
+
 
 # ===== admin's per-agent metadata KV =======================================
 

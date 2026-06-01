@@ -17,10 +17,16 @@ const isMemoryRoute = computed(() => {
   return route.name === 'feature' && route.params.serviceId === 'memory'
 })
 
+// Catalog routes (Phase 29) share a flat namespace with the legacy
+// pages — each route name maps 1:1 to its menu index.
+const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents', 'devices'] as const
+
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
-  if (route.name === 'devices') return 'devices'
+  if (typeof route.name === 'string' && (CATALOG_KEYS as readonly string[]).includes(route.name)) {
+    return route.name
+  }
   if (route.params.serviceId && route.params.feature) {
     return `${route.params.serviceId}::${route.params.feature}`
   }
@@ -55,10 +61,40 @@ function go(serviceId: string, feature: string) {
           <el-icon><Document /></el-icon>
           <span>Configs</span>
         </el-menu-item>
-        <el-menu-item index="devices" @click="router.push({ name: 'devices' })">
-          <el-icon><Monitor /></el-icon>
-          <span>Devices</span>
-        </el-menu-item>
+
+        <!-- Phase 29 five-entity catalog. Wrapped in el-sub-menu (Phase
+             30.C) so it matches the visual treatment of the service
+             groups below (Agent / Channel / Memory etc.) — they're all
+             "entity groups" in the sidebar's vocabulary. Order matches
+             the dependency chain: Tenant → Template → User → Agent →
+             Device, which is also the order operators must populate
+             them on a fresh install. -->
+        <el-sub-menu index="catalog">
+          <template #title>
+            <el-icon><Files /></el-icon>
+            <span>Catalog</span>
+          </template>
+          <el-menu-item index="tenants" @click="router.push({ name: 'tenants' })">
+            <el-icon><OfficeBuilding /></el-icon>
+            <span>Tenants</span>
+          </el-menu-item>
+          <el-menu-item index="templates" @click="router.push({ name: 'templates' })">
+            <el-icon><Collection /></el-icon>
+            <span>Templates</span>
+          </el-menu-item>
+          <el-menu-item index="users" @click="router.push({ name: 'users' })">
+            <el-icon><User /></el-icon>
+            <span>Users</span>
+          </el-menu-item>
+          <el-menu-item index="agents" @click="router.push({ name: 'agents' })">
+            <el-icon><Avatar /></el-icon>
+            <span>Agents</span>
+          </el-menu-item>
+          <el-menu-item index="devices" @click="router.push({ name: 'devices' })">
+            <el-icon><Monitor /></el-icon>
+            <span>Devices</span>
+          </el-menu-item>
+        </el-sub-menu>
         <el-sub-menu
           v-for="svc in navigableServices"
           :key="svc.id"
@@ -84,7 +120,11 @@ function go(serviceId: string, feature: string) {
         <span class="crumb">
           <template v-if="route.name === 'supervisor'">Supervisor</template>
           <template v-else-if="route.name === 'configs'">Configs</template>
-          <template v-else-if="route.name === 'devices'">Devices</template>
+          <template v-else-if="route.name === 'tenants'">Catalog <span class="sep">/</span> Tenants</template>
+          <template v-else-if="route.name === 'templates'">Catalog <span class="sep">/</span> Templates</template>
+          <template v-else-if="route.name === 'users'">Catalog <span class="sep">/</span> Users</template>
+          <template v-else-if="route.name === 'agents'">Catalog <span class="sep">/</span> Agents</template>
+          <template v-else-if="route.name === 'devices'">Catalog <span class="sep">/</span> Devices</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
             <span class="sep">/</span>

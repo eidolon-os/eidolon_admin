@@ -17,6 +17,29 @@ const routes: RouteRecordRaw[] = [
         name: 'configs',
         component: () => import('@/modules/configs/Overview.vue'),
       },
+      // Phase 29 catalog: Tenant → Template → User → Agent → Device.
+      // Order in the menu matches the dependency chain so operators
+      // build top-down.
+      {
+        path: 'tenants',
+        name: 'tenants',
+        component: () => import('@/modules/tenants/Overview.vue'),
+      },
+      {
+        path: 'templates',
+        name: 'templates',
+        component: () => import('@/modules/templates/Overview.vue'),
+      },
+      {
+        path: 'users',
+        name: 'users',
+        component: () => import('@/modules/users/Overview.vue'),
+      },
+      {
+        path: 'agents',
+        name: 'agents',
+        component: () => import('@/modules/agents/Overview.vue'),
+      },
       {
         path: 'devices',
         name: 'devices',

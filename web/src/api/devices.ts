@@ -1,185 +1,82 @@
 /**
- * Typed client for the unified Devices surface.
+ * Typed client for /api/devices — Phase 29.G surface.
  *
- * Backend endpoints under /api/devices — see
- * server/eidolon_admin_server/app/devices/router.py for the contract.
+ * Replaces the Phase 25 shape. Devices no longer "own" agents; they
+ * point at a pre-existing agent via bind/unbind.
  */
 import client from './client'
 
-export interface AgentEntry {
+export interface DeviceBinding {
   agent_id: string
-  template_id: string
-  template_revision: number
-  owner_user_id: string
-  owner_device_id: string
-  created_at: string
-  updated_at: string
-  is_active: boolean
+  bound_at: string
 }
 
-export interface DeviceBindingView {
-  user_id: string
-  agent_ids: string[]
-  active_agent_id: string | null
-  updated_at: string
-  agents: AgentEntry[]
-}
+export type DeviceKind = 'web' | 'esp32' | 'mobile' | 'unknown'
 
 export interface DeviceView {
   device_id: string
   name: string
+  kind: DeviceKind
   approved: boolean
   approved_at: string | null
-  paired: boolean
-  enabled: boolean
   last_seen: string | null
   status: string
-  binding: DeviceBindingView | null
+  binding: DeviceBinding | null
+  resolved_user_id: string | null
+  resolved_template_id: string | null
 }
 
 export interface DeviceListResponse {
   devices: DeviceView[]
-  nats_available: boolean
+  hub_available: boolean
 }
 
-export interface ApproveResponse {
+export interface UnregisterResponse {
   device_id: string
-  approved: boolean
-  approved_at: string | null
-}
-
-export interface CreateAgentResponse {
-  agent_id: string
-  soul_preview_chars: number
-  is_active: boolean
-}
-
-export interface SwitchActiveResponse {
-  device_id: string
-  active_agent_id: string | null
-}
-
-export type FallbackKind = 'next_newest' | 'cleared' | 'no_change'
-
-export interface DeleteAgentResponse {
-  device_id: string
-  deleted_agent_id: string
-  new_active_agent_id: string | null
-  fallback_kind: FallbackKind
-}
-
-export interface SoulResponse {
-  agent_id: string
-  markdown: string
-  size_bytes: number
-}
-
-export interface UpdateSoulResponse {
-  agent_id: string
-  size_bytes: number
+  existed?: boolean
+  presence_cleared?: boolean
 }
 
 export async function listDevices(): Promise<DeviceListResponse> {
-  // Polled by /devices Overview every 10s. Errors are surfaced by the
-  // component's own banner so the global interceptor toast just
-  // duplicates noise.
   const { data } = await client.get<DeviceListResponse>('/devices', {
     suppressToast: true,
   })
   return data
 }
 
-export async function approveDevice(deviceId: string): Promise<ApproveResponse> {
-  const { data } = await client.post<ApproveResponse>(
-    `/devices/${encodeURIComponent(deviceId)}/approve`,
+export async function getDevice(id: string): Promise<DeviceView> {
+  const { data } = await client.get<DeviceView>(`/devices/${encodeURIComponent(id)}`)
+  return data
+}
+
+export async function approveDevice(id: string): Promise<DeviceView> {
+  const { data } = await client.post<DeviceView>(
+    `/devices/${encodeURIComponent(id)}/approve`,
   )
   return data
 }
 
-export async function createAgent(
-  deviceId: string,
-  body: { template_id: string; user_id: string },
-): Promise<CreateAgentResponse> {
-  const { data } = await client.post<CreateAgentResponse>(
-    `/devices/${encodeURIComponent(deviceId)}/agents`,
-    body,
+export async function bindDevice(id: string, agent_id: string): Promise<DeviceView> {
+  const { data } = await client.post<DeviceView>(
+    `/devices/${encodeURIComponent(id)}/bind`,
+    { agent_id },
   )
   return data
 }
 
-export async function switchActiveAgent(
-  deviceId: string,
-  agentId: string,
-): Promise<SwitchActiveResponse> {
-  const { data } = await client.post<SwitchActiveResponse>(
-    `/devices/${encodeURIComponent(deviceId)}/active-agent`,
-    { agent_id: agentId },
+export async function unbindDevice(id: string): Promise<DeviceView> {
+  const { data } = await client.post<DeviceView>(
+    `/devices/${encodeURIComponent(id)}/unbind`,
   )
   return data
 }
 
-export async function deleteAgent(
-  deviceId: string,
-  agentId: string,
-): Promise<DeleteAgentResponse> {
-  const { data } = await client.delete<DeleteAgentResponse>(
-    `/devices/${encodeURIComponent(deviceId)}/agents/${encodeURIComponent(agentId)}`,
+export async function unregisterDevice(id: string): Promise<UnregisterResponse> {
+  const { data } = await client.delete<UnregisterResponse>(
+    `/devices/${encodeURIComponent(id)}`,
   )
   return data
 }
 
-export async function getSoul(
-  deviceId: string,
-  agentId: string,
-): Promise<SoulResponse> {
-  const { data } = await client.get<SoulResponse>(
-    `/devices/${encodeURIComponent(deviceId)}/agents/${encodeURIComponent(agentId)}/soul`,
-  )
-  return data
-}
-
-export async function updateSoul(
-  deviceId: string,
-  agentId: string,
-  markdown: string,
-): Promise<UpdateSoulResponse> {
-  const { data } = await client.put<UpdateSoulResponse>(
-    `/devices/${encodeURIComponent(deviceId)}/agents/${encodeURIComponent(agentId)}/soul`,
-    { markdown },
-  )
-  return data
-}
-
-/** Format an ISO timestamp as locale "YYYY-MM-DD HH:mm:ss". Returns "—" on null. */
-export function formatTimestamp(ts: string | null | undefined): string {
-  if (!ts) return '—'
-  const d = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-    `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-  )
-}
-
-/** Compose a single status badge label from the multi-dimensional state. */
-export function deriveDeviceStatusLabel(d: DeviceView): {
-  label: string
-  tone: 'success' | 'info' | 'warning' | 'danger'
-} {
-  if (!d.approved) {
-    return { label: 'discovered', tone: 'info' }
-  }
-  const agentCount = d.binding?.agent_ids.length ?? 0
-  if (agentCount === 0) {
-    return { label: 'approved (no agents)', tone: 'warning' }
-  }
-  if (d.binding?.active_agent_id) {
-    const active = d.binding.agents.find((a) => a.is_active)
-    const tpl = active?.template_id ?? '?'
-    return {
-      label: `bound · ${agentCount} agent${agentCount > 1 ? 's' : ''} · ${tpl}`,
-      tone: 'success',
-    }
-  }
-  return { label: `bound · ${agentCount} (no active)`, tone: 'warning' }
-}
+// Note: timestamp formatting lives in @/utils/format — keeping the
+// API client free of presentation concerns.
