@@ -27,11 +27,6 @@ import logging
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
-from .devices import (
-    DeviceBindingRepository,
-    DeviceOrchestrator,
-    router as devices_router,
-)
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.nats_publisher import JetStreamPublisher
@@ -44,6 +39,13 @@ from .registry.agents import (
     AgentProjectClient,
     router as agents_router,
 )
+from .registry.devices import (
+    DeviceBindingRepository,
+    DeviceOrchestrator,
+    HubDeviceClient,
+    router as devices_router,
+)
+from .registry.resolve import ResolveOrchestrator, router as resolve_router
 from .registry.templates import (
     TemplateAgentClient,
     TemplateOrchestrator,
@@ -82,46 +84,23 @@ def create_app(
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
-        # Devices module wiring: bring up NATS + ensure buckets + build the
-        # orchestrator. NATS being down must NOT block admin-api startup —
-        # the devices router checks ``app.state.device_orchestrator`` for None
-        # and returns a clean 503, while every other admin feature keeps
-        # running. This mirrors the same lazy / fault-tolerant philosophy
-        # already used for memory_publisher.
+        # Bring up NATS — required by every registry module that has a
+        # KV-backed store (Tenants, Users metadata, Agents metadata,
+        # Device bindings). NATS being down must NOT block admin
+        # startup: each module's router checks its orchestrator slot
+        # for None and emits a clean 503 individually.
         try:
             await app.state.nats_kv.connect()
-            repo = DeviceBindingRepository(app.state.nats_kv)
-            await repo.ensure_buckets()
-            hub_url = _resolve_service_base_url(cfg, "hub")
-            agent_url = _resolve_service_base_url(cfg, "agent")
-            if hub_url and agent_url:
-                app.state.device_orchestrator = DeviceOrchestrator(
-                    repo=repo,
-                    http_client=app.state.http_client,
-                    hub_base_url=hub_url,
-                    agent_base_url=agent_url,
-                )
-                logger.info("device orchestrator ready (hub=%s, agent=%s)", hub_url, agent_url)
-            else:
-                logger.warning(
-                    "device orchestrator NOT initialized — hub or agent service "
-                    "missing from services.yaml"
-                )
         except ConnectionError as exc:
             logger.warning(
-                "device orchestrator unavailable (%s); /api/devices will return 503. "
-                "Start the full stack with ./deploy/dev/run_all.sh start (includes NATS).",
+                "NATS unavailable (%s); registry routes will return 503. "
+                "Start the full stack with ./deploy/dev/run_all.sh start.",
                 exc,
             )
-        except Exception:  # noqa: BLE001
-            # Any failure (buckets fail to create, etc.) → leave device_orchestrator
-            # unset. Router emits 503; the rest of admin is unaffected.
-            logger.exception("device orchestrator init failed; /api/devices will return 503")
 
         # Phase 29 registry: ensure admin-owned buckets + build tenant
-        # orchestrator + seed the default tenant. Same fault tolerance as
-        # the devices block — if NATS is down, leave the orchestrator None
-        # and /api/tenants returns 503; nothing else cares.
+        # orchestrator + seed the default tenant. Same fault tolerance —
+        # if NATS is down, leave orchestrators None and routes 503.
         try:
             if app.state.nats_kv.is_connected:
                 for spec in REGISTRY_BUCKETS:
@@ -236,6 +215,61 @@ def create_app(
                 "user orchestrator missing"
             )
 
+        # Devices module — Phase 29.G replacement for the old device-
+        # creates-agent flow. Hub HTTP for the device fact, admin's KV
+        # for the device→agent binding pointer.
+        hub_url = _resolve_service_base_url(cfg, "hub")
+        ag_repo_for_devices = (
+            ag_repo if 'ag_repo' in dir() else None
+        )
+        if (
+            hub_url
+            and app.state.nats_kv.is_connected
+            and ag_repo_for_devices is not None
+        ):
+            hub_client = HubDeviceClient(app.state.http_client, hub_url)
+            binding_repo = DeviceBindingRepository(app.state.nats_kv)
+            device_orch = DeviceOrchestrator(
+                hub_client=hub_client,
+                binding_repo=binding_repo,
+                agent_lookup=ag_repo_for_devices.get,
+            )
+            app.state.device_orchestrator = device_orch
+            # Cascade hook: when an agent is deleted, unbind every device
+            # pointing at it (mirrors Tenant→User cascade in 29.E.1 and
+            # Agent→User.active_agent in 29.F).
+            app.state.agent_orchestrator.set_device_cascade_hook(
+                device_orch.unbind_all_referring_to
+            )
+            logger.info("device orchestrator ready (hub=%s)", hub_url)
+        else:
+            logger.warning(
+                "device orchestrator NOT initialized — hub url / NATS / "
+                "agent orchestrator missing"
+            )
+
+        # Resolve aggregator — pure read-only join across all four
+        # entity orchestrators. Built last because it depends on all
+        # of them being ready.
+        if (
+            app.state.template_orchestrator is not None
+            and app.state.user_orchestrator is not None
+            and app.state.agent_orchestrator is not None
+            and app.state.device_orchestrator is not None
+        ):
+            app.state.resolve_orchestrator = ResolveOrchestrator(
+                binding_repo=binding_repo,
+                agent_meta_repo=ag_repo,
+                user_orchestrator=app.state.user_orchestrator,
+                template_orchestrator=app.state.template_orchestrator,
+            )
+            logger.info("resolve orchestrator ready")
+        else:
+            logger.warning(
+                "resolve orchestrator NOT initialized — depends on all of "
+                "templates / users / agents / devices being ready"
+            )
+
         try:
             yield
         finally:
@@ -273,16 +307,15 @@ def create_app(
     # NATS KV client for device-binding storage. ensure_bucket happens in
     # lifespan (NOT here) so test-time app creation doesn't touch NATS.
     app.state.nats_kv = KVClient()
-    # Populated in lifespan iff NATS connects + buckets ensure successfully.
-    # Router checks for None to emit 503.
-    app.state.device_orchestrator = None
-    # Same pattern for the new Phase 29 registry layer. Each entity module
-    # (Tenants/Templates/Users/Agents) gets its own orchestrator slot;
-    # the router checks the slot before serving and emits 503 if absent.
+    # Each entity module (Tenants/Templates/Users/Agents/Devices) +
+    # the Resolve aggregator gets its own orchestrator slot. Routers
+    # check the slot before serving and emit 503 if absent.
     app.state.tenant_orchestrator = None
     app.state.template_orchestrator = None
     app.state.user_orchestrator = None
     app.state.agent_orchestrator = None
+    app.state.device_orchestrator = None
+    app.state.resolve_orchestrator = None
 
     app.add_middleware(
         CORSMiddleware,
@@ -299,11 +332,12 @@ def create_app(
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
-    app.include_router(devices_router, prefix="/api")
     app.include_router(tenants_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
     app.include_router(agents_router, prefix="/api")
+    app.include_router(devices_router, prefix="/api")
+    app.include_router(resolve_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the

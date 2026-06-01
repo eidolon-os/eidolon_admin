@@ -114,6 +114,19 @@ class AgentOrchestrator:
         self._meta = metadata_repo
         self._users = user_orchestrator
         self._template_check = template_exists_check
+        # Devices module installs this so agent-delete unbinds devices.
+        # None when Devices isn't wired yet (e.g. tests of agents in
+        # isolation, or admin booted without hub).
+        self._device_cascade_hook: Callable[[str], Awaitable[list[str]]] | None = None
+
+    def set_device_cascade_hook(
+        self,
+        hook: Callable[[str], Awaitable[list[str]]] | None,
+    ) -> None:
+        """Wire the device-unbind cascade. Called by lifespan after both
+        agent + device orchestrators exist. Setter (not constructor) to
+        avoid circular dependency at module-construction time."""
+        self._device_cascade_hook = hook
 
     # ---- helpers -------------------------------------------------------
 
@@ -366,6 +379,22 @@ class AgentOrchestrator:
                 agent_id,
             )
 
+        # Step 2b — unbind any devices pointing at this agent (29.G cascade).
+        # Best-effort: if Devices isn't wired or fails, we proceed anyway —
+        # the device's binding becomes a stale pointer, but admin's resolve
+        # endpoint will refuse to use it (returns 404 "agent not found in
+        # admin registry") so runtime never gets corrupted state.
+        unbound_devices: list[str] = []
+        if self._device_cascade_hook is not None:
+            try:
+                unbound_devices = await self._device_cascade_hook(agent_id)
+            except Exception:
+                logger.exception(
+                    "agent_delete: device cascade hook failed for %s; "
+                    "proceeding anyway",
+                    agent_id,
+                )
+
         # Step 3 — agent project delete
         try:
             await self._agent.delete_instance(
@@ -390,6 +419,7 @@ class AgentOrchestrator:
             "agent_id": agent_id,
             "deleted": True,
             "active_agent_cleared_for_users": cleared_users,
+            "unbound_devices": unbound_devices,
         }
 
     # ---- evolution history --------------------------------------------
