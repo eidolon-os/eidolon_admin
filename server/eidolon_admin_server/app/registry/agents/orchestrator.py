@@ -46,7 +46,7 @@ from ..schemas.agent import (
     KnobOverlay,
 )
 from ..tenants.orchestrator import TenantNotFound
-from ..users.orchestrator import UserNotFound, UserOrchestrator
+from ..users.orchestrator import UserError, UserMemoryDown, UserNotFound, UserOrchestrator
 from .repository import (
     AgentMetadata,
     AgentMetadataRepository,
@@ -168,10 +168,33 @@ class AgentOrchestrator:
         )
 
     async def _user_active_agent(self, user_id: str) -> str | None:
-        """Return the user's active_agent_id (None if unset / unknown)."""
+        """Return the user's active_agent_id, or None when unknown.
+
+        Phase 29.H: previously this swallowed every exception silently.
+        Now we differentiate three cases:
+
+          - UserNotFound      → None (user genuinely doesn't exist)
+          - UserMemoryDown    → None + log (transient infra; the list
+                                 view should still render — UI shows
+                                 "is_active=False" for the row, which
+                                 is honest because we can't confirm)
+          - any other         → propagate (real bug surfaces loudly)
+
+        The narrower handling avoids the silent-fallback anti-pattern
+        while keeping the LIST view usable under partial-degradation
+        conditions (operator wants to see what agents exist even if
+        memory blips).
+        """
         try:
             view = await self._users.get_user(user_id)
-        except Exception:
+        except UserNotFound:
+            return None
+        except UserMemoryDown as exc:
+            logger.warning(
+                "agent list: memory unreachable resolving active_agent for "
+                "user=%s (%s); rendering with is_active=False",
+                user_id, exc,
+            )
             return None
         return view.active_agent_id
 

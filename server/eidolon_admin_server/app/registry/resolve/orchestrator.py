@@ -21,7 +21,7 @@ from ..agents.repository import AgentMetadataRepository
 from ..devices.repository import DeviceBindingRepository
 from ..schemas.resolve import ResolvedContext
 from ..templates.orchestrator import TemplateOrchestrator
-from ..users.orchestrator import UserNotFound, UserOrchestrator
+from ..users.orchestrator import UserError, UserNotFound, UserOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +113,11 @@ class ResolveOrchestrator:
                 f"agent {agent_id!r} references user "
                 f"{agent_meta.user_id!r} which doesn't exist in memory"
             ) from exc
-        except Exception as exc:
-            # UserMemoryDown lands here too.
+        except UserError as exc:
+            # Phase 29.H: narrowed from bare ``Exception`` — only catch
+            # admin's own UserError subclasses (UserMemoryDown etc.) and
+            # let programming bugs surface. UserMemoryDown is the
+            # expected 503 path.
             raise ResolveUpstreamDown(
                 f"memory unreachable resolving user "
                 f"{agent_meta.user_id!r}: {exc}"

@@ -395,6 +395,68 @@ async def test_delete_missing_returns_404(
         await orchestrator.delete_agent("ghost")
 
 
+# ---- 29.H: no silent fallback on user lookup ------------------------------
+
+
+async def test_list_tolerates_memory_down_with_warning(
+    orchestrator: AgentOrchestrator,
+) -> None:
+    """29.H: list view stays usable when memory is transiently unreachable.
+
+    Differentiation:
+      - UserNotFound (genuine "no user")    → silent is_active=None
+      - UserMemoryDown (transient infra)    → logged + is_active=None
+                                              (list still renders)
+      - other exceptions (real bugs)        → propagate
+
+    This is the narrower-than-original silent-fallback handling: we
+    avoid surprising the operator with errors in the LIST view (which
+    is read-only) but we no longer swallow programming bugs.
+    """
+    base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._meta.put(
+        "ag-1",
+        AgentMetadata(
+            tenant_id="default", user_id="alice", template_id="t",
+            template_revision=1, display_name="A", created_at=base,
+        ),
+    )
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        # ConnectError simulates "memory down" → maps to UserMemoryDown
+        # in the user orchestrator's translation layer.
+        rsx.get("/api/admin/users/alice").mock(
+            side_effect=httpx.ConnectError("memory down")
+        )
+        agents = await orchestrator.list_agents()
+    # List succeeded; the affected agent shows is_active=False
+    assert len(agents) == 1
+    assert agents[0].is_active_for_user is False
+
+
+async def test_list_propagates_real_errors(
+    orchestrator: AgentOrchestrator, monkeypatch,
+) -> None:
+    """If user_orchestrator.get_user raises a *non*-UserError exception
+    (e.g. a real programming bug), list_agents must propagate it. The
+    old `except Exception: return None` masked these."""
+    base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._meta.put(
+        "ag-1",
+        AgentMetadata(
+            tenant_id="default", user_id="alice", template_id="t",
+            template_revision=1, display_name="A", created_at=base,
+        ),
+    )
+
+    async def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated programming bug")
+
+    monkeypatch.setattr(orchestrator._users, "get_user", _boom)
+    with pytest.raises(RuntimeError, match="simulated programming bug"):
+        await orchestrator.list_agents()
+
+
 async def test_delete_treats_agent_project_404_as_already_gone(
     orchestrator: AgentOrchestrator,
 ) -> None:
