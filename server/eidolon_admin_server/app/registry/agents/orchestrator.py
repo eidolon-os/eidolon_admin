@@ -200,6 +200,17 @@ class AgentOrchestrator:
 
     # ---- list / get ----------------------------------------------------
 
+    async def list_agent_ids_for_user(self, user_id: str) -> list[str]:
+        """KV-only lookup of agent_ids by user. No upstream HTTP calls —
+        used by UserOrchestrator to decorate UserView.agent_ids without
+        the cost of the active-flag computation list_agents does.
+
+        Stable order (KV-list order is insertion-ish; we sort to keep the
+        UI dropdown deterministic across refreshes).
+        """
+        pairs = await self._meta.list_by_user(user_id)
+        return sorted(aid for aid, _ in pairs)
+
     async def list_agents(self, *, user_id: str | None = None) -> list[AgentRef]:
         """List all agents (or filter by user_id). Active flag is computed
         per-row by consulting the corresponding user's active_agent_id."""
@@ -242,14 +253,23 @@ class AgentOrchestrator:
         active = await self._user_active_agent(meta.user_id)
         ref = self._build_ref(agent_id, meta, is_active=(active == agent_id))
 
-        # Soul lookup: get the rendered markdown via the render endpoint.
-        # For the operator's "view soul" UI, we want what's actually
-        # active at agent_id; render is idempotent and gives the
-        # current template state. (When 29.G adds operator soul override,
-        # this will switch to reading the stored override first.)
-        # For now we leave the soul empty and surface the persona's
-        # knobs/state. UI can fetch soul on demand via a separate
-        # endpoint if needed.
+        # Render the template against the current persona state to get
+        # the soul markdown (29.I fix — 29.F left this empty as a stub).
+        # Render is idempotent + side-effect-free per the agent project's
+        # contract, so calling it on every get is safe. If render fails
+        # (template gone? broken?) we serve an empty soul + log the
+        # error so the UI still loads.
+        soul_md = ""
+        try:
+            render_result = await self._agent.render_template(meta.template_id)
+            soul_md = render_result.get("markdown", "")
+        except (AgentProjectUnreachable, AgentProjectUpstreamError) as exc:
+            logger.warning(
+                "get_agent: soul render failed for template=%s (agent=%s); "
+                "returning empty soul. cause=%s",
+                meta.template_id, agent_id, exc,
+            )
+
         knobs_raw = persona.get("behavioral_knobs", {})
         # Persona's knob dict has full BehavioralKnob shape; we only
         # need {name: current_value} for the overlay.
@@ -259,8 +279,8 @@ class AgentOrchestrator:
         }
         return AgentDetail(
             ref=ref,
-            soul_md="",  # not yet — operator-override coming in 29.G
-            soul_size_bytes=0,
+            soul_md=soul_md,
+            soul_size_bytes=len(soul_md.encode("utf-8")),
             knob_overlays=KnobOverlay(root=knob_overlays_dict),
             evolution_state=persona.get("evolution_state", {}),
         )

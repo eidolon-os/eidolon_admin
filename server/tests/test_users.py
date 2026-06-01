@@ -191,6 +191,76 @@ async def test_list_joins_memory_with_admin_metadata(
     assert v.health.worker_running is True
 
 
+async def test_list_decorates_agent_ids_when_provider_wired(
+    orchestrator: UserOrchestrator,
+) -> None:
+    """Phase 29.K: ``UserView.agent_ids`` used to always be []. Now,
+    when ``set_agent_ids_provider`` is wired (lifespan does this once
+    AgentOrchestrator exists), each user's agents get listed. Pins the
+    fix — and that the lookup is per-user, not shared across users."""
+    await orchestrator._meta.put(
+        "alice", UserMetadata(tenant_id="default", display_name="A")
+    )
+    await orchestrator._meta.put(
+        "bob", UserMetadata(tenant_id="default", display_name="B")
+    )
+
+    calls: list[str] = []
+
+    async def fake_provider(user_id: str) -> list[str]:
+        calls.append(user_id)
+        return {"alice": ["ag-1", "ag-2"], "bob": []}.get(user_id, [])
+
+    orchestrator.set_agent_ids_provider(fake_provider)
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.get("/api/admin/users").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "users": [
+                        _memory_user_record(user_id="alice"),
+                        _memory_user_record(user_id="bob"),
+                    ],
+                    "memory_available": True,
+                },
+            )
+        )
+        views = await orchestrator.list_users()
+    by_id = {v.spec.user_id: v for v in views}
+    assert by_id["alice"].agent_ids == ["ag-1", "ag-2"]
+    assert by_id["bob"].agent_ids == []
+    # Lookup invoked once per user, with the correct id.
+    assert set(calls) == {"alice", "bob"}
+
+
+async def test_list_agent_ids_failure_falls_back_to_empty(
+    orchestrator: UserOrchestrator,
+) -> None:
+    """If the provider throws (agent service blip during list), the
+    user list still renders — agent_ids drops to [] for the affected
+    user. Mirrors the partial-degradation pattern in list_agents."""
+
+    async def broken_provider(user_id: str) -> list[str]:
+        raise RuntimeError("agent service down")
+
+    orchestrator.set_agent_ids_provider(broken_provider)
+
+    await orchestrator._meta.put(
+        "alice", UserMetadata(tenant_id="default", display_name="A")
+    )
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.get("/api/admin/users").mock(
+            return_value=httpx.Response(
+                200,
+                json={"users": [_memory_user_record(user_id="alice")], "memory_available": True},
+            )
+        )
+        views = await orchestrator.list_users()
+    assert len(views) == 1
+    assert views[0].agent_ids == []
+
+
 async def test_list_omits_memory_users_without_admin_metadata_orphans(
     orchestrator: UserOrchestrator,
 ) -> None:

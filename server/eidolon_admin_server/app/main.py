@@ -207,6 +207,16 @@ def create_app(
                 user_orchestrator=user_orch_ready,
                 template_exists_check=_template_exists,
             )
+
+            # 29.K back-pointer: now that AgentOrchestrator exists, give
+            # UserOrchestrator a way to fetch agent_ids for the UserView
+            # envelope. Until 29.K this field was always [] (silent gap
+            # — the user-edit dropdown rendered no choices). Lambda
+            # extracts just the ids since UserView.agent_ids: list[str].
+            user_orch_ready.set_agent_ids_provider(
+                lambda uid: app.state.agent_orchestrator.list_agent_ids_for_user(uid)
+            )
+
             logger.info(
                 "agent orchestrator ready (agent=%s)", agent_url_for_agents
             )

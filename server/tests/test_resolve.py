@@ -73,6 +73,9 @@ def _memory_user(user_id: str = "alice") -> dict:
             "palace_initialized": True, "note": "",
         },
         "active_agent_id": None, "agent_ids": [],
+        # 29.K: memory now exposes the per-user MCP URL on its view
+        # envelope, so resolve no longer synthesizes from convention.
+        "mcp_http_url": "http://127.0.0.1:8030/mcp",
     }
 
 
@@ -216,8 +219,46 @@ async def test_resolve_device_happy_path(
     assert ctx.agent_id == "ag-1"
     assert ctx.template_id == "caretaker_jiezhi"
     assert ctx.device_id == "esp-1"
-    assert ctx.memory_mcp_url.endswith("/mcp")
+    # 29.K: memory_mcp_url comes from memory's user view, not synth.
+    # The test fixture pins the value memory would return.
+    assert ctx.memory_mcp_url == "http://127.0.0.1:8030/mcp"
     assert ctx.soul_preview.startswith("metadata:")
+
+
+async def test_resolve_propagates_empty_mcp_url_when_memory_omits_it(
+    orchestrator: ResolveOrchestrator,
+) -> None:
+    """If memory's user view doesn't carry ``mcp_http_url`` (e.g.
+    pre-29.K memory build), resolve propagates the empty string rather
+    than fabricating one. Channel will then refuse to dial — preferable
+    to silently pointing at a stale port. Pinned because the old code
+    synthesized; we don't want that to creep back."""
+    base_iso = datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat()
+    base_dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    await orchestrator._agents.put(  # type: ignore[attr-defined]
+        "ag-stale", AgentMetadata(
+            tenant_id="default", user_id="bob",
+            template_id="caretaker_jiezhi", template_revision=1,
+            display_name="for Bob", created_at=base_iso,
+        ),
+    )
+    await orchestrator._bindings.put(  # type: ignore[attr-defined]
+        "esp-stale", DeviceBinding(agent_id="ag-stale", bound_at=base_dt),
+    )
+    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
+        "bob", UserMetadata(tenant_id="default", display_name="Bob")
+    )
+    bare = _memory_user("bob")
+    bare.pop("mcp_http_url")  # simulate old memory
+    with respx.mock() as rsx:
+        rsx.get(f"{MEMORY_URL}/api/admin/users/bob").mock(
+            return_value=httpx.Response(200, json=bare)
+        )
+        rsx.get(
+            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
+        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
+        ctx = await orchestrator.resolve_device("esp-stale")
+    assert ctx.memory_mcp_url == ""
 
 
 # ---- resolve_user ---------------------------------------------------------

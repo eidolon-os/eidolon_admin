@@ -126,6 +126,12 @@ def _parse_dt(value: str | None) -> datetime:
 
 
 class UserOrchestrator:
+    # Type alias for the agent-ids lookup hook. Returns the list of
+    # agent_ids owned by a user. Wired by main.py after both the user
+    # and agent orchestrators exist (setter-injection avoids the
+    # circular import between users/agents).
+    AgentIdsProvider = "Callable[[str], Awaitable[list[str]]]"
+
     def __init__(
         self,
         *,
@@ -136,6 +142,20 @@ class UserOrchestrator:
         self._mem = memory_client
         self._meta = metadata_repo
         self._tenants = tenant_orchestrator
+        # 29.K: ``agent_ids`` was always [] before — UserView dropdown
+        # in the admin UI was silently empty. Setter wired in lifespan
+        # once AgentOrchestrator is built.
+        self._agent_ids_provider = None  # type: ignore[var-annotated]
+
+    def set_agent_ids_provider(
+        self,
+        provider,  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Inject the agent-ids lookup. ``provider(user_id)`` returns
+        the list of agent_ids owned by that user. Setter (not ctor arg)
+        because UserOrchestrator must be built before AgentOrchestrator
+        — agent's ctor takes the user_orchestrator for cross-validation."""
+        self._agent_ids_provider = provider
 
     # ---- internal helpers ----------------------------------------------
 
@@ -174,11 +194,23 @@ class UserOrchestrator:
             palace_initialized=bool(health_block.get("palace_initialized")),
             note=health_block.get("note", ""),
         )
+        # Memory exposes the per-user MCP URL on the view envelope
+        # (added 29.K). Older memory builds may not include it — in
+        # that case we leave the field empty; resolve will then refuse
+        # to dial, which is the correct behavior (better than a
+        # silently-stale synthesized URL).
+        mcp_http_url = memory_record.get("mcp_http_url", "")
+
         return UserView(
             spec=spec,
             health=health,
             active_agent_id=active_agent_id,
-            agent_ids=[],  # populated by 29.F (Agents module) later
+            # agent_ids: empty here; callers that have the provider wired
+            # (list_users / get_user) decorate after _build_view returns.
+            # Direct callers without an agent_orchestrator (tests, edge
+            # paths) get an empty list — accurate, not "TODO later".
+            agent_ids=[],
+            mcp_http_url=mcp_http_url,
         )
 
     def _map_memory_error(self, exc: MemoryUserUpstreamError) -> None:
@@ -253,10 +285,19 @@ class UserOrchestrator:
 
         users = envelope.get("users", [])
         meta_map = await self._meta.list_all()
-        return [
+        views = [
             self._build_view(record, meta_map.get(record["spec"]["user_id"]))
             for record in users
         ]
+        # Decorate with agent_ids if the agent orchestrator is wired.
+        # We fetch once per user — N HTTP calls. For dev-stack scale
+        # (< 50 users) this is fine; if N grows we can switch to a
+        # bulk endpoint. The setter may be unwired when agent service
+        # is down: agent_ids stays empty (caller checks ``status``).
+        if self._agent_ids_provider is not None:
+            for view in views:
+                view.agent_ids = await self._safe_agent_ids(view.spec.user_id)
+        return views
 
     async def get_user(self, user_id: str) -> UserView:
         try:
@@ -266,7 +307,27 @@ class UserOrchestrator:
         except MemoryUserUpstreamError as exc:
             self._map_memory_error(exc)
         meta = await self._meta.get(user_id)
-        return self._build_view(record, meta)
+        view = self._build_view(record, meta)
+        if self._agent_ids_provider is not None:
+            view.agent_ids = await self._safe_agent_ids(user_id)
+        return view
+
+    async def _safe_agent_ids(self, user_id: str) -> list[str]:
+        """Wrap the provider call so a failing agent service doesn't
+        break the user list. Mirrors the resilience policy elsewhere:
+        partial degradation > total failure for read paths."""
+        provider = self._agent_ids_provider
+        if provider is None:
+            return []
+        try:
+            return await provider(user_id)
+        except Exception:  # noqa: BLE001 — read-path resilience
+            logger.warning(
+                "users: agent_ids lookup failed for %r; field will be empty",
+                user_id,
+                exc_info=True,
+            )
+            return []
 
     async def create_user(self, body: CreateUserRequest) -> UserView:
         """Two-step create with compensation:

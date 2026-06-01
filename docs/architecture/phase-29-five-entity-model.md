@@ -380,6 +380,11 @@ agent:
 | **29.J** | admin | Bootstrap seed + first-run onboarding | `rm -rf var/ && start` → 自动 seed → 直接能聊 |
 | **29.K** | 全栈 | 清理 (tenant_id 字面值、alice placeholder) + e2e | grep 干净;e2e 覆盖完整链路 |
 
+> **29.K 已落地决策记录**
+>
+> - **memory_mcp_url 不再 synth**: 之前 admin 内的 `_build_memory_mcp_url` 用 `port = 8030 + 偏移` 拼 URL,只对默认 user 正确。29.K 让 memory 项目在 user view envelope 上直接暴露 `mcp_http_url`(memory 是端口分配权威方),admin 透传。memory 没返回时 admin 留空字符串,channel 拒绝拨号 —— 拒绝 > silent-stale URL。
+> - **UserView.agent_ids 不再永远空**: 早期 schema 里 `agent_ids: list[str] = []` 注释 "29.F 之后再填",但一直没填,UI 切换 active agent 的下拉永远空。29.K 用 setter 注入 (`UserOrchestrator.set_agent_ids_provider`) + main.py lifespan 在 AgentOrchestrator 起来后 wire 进去。partial-degradation: provider 抛异常 → agent_ids=[],list 仍 render。
+
 ### 依赖关系
 
 ```

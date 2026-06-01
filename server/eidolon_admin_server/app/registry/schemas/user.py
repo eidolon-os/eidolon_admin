@@ -107,12 +107,17 @@ class UserView(BaseModel):
         for this user (admin's bookkeeping; can be None if the user has
         zero agents)
       - ``agent_ids``: all agents owned by this user (from agent project)
+      - ``mcp_http_url``: the user-worker's MCP endpoint (memory is
+        authoritative for the port; admin propagates it so channel can
+        dial straight from /api/resolve without a second round-trip).
+        Empty string when memory is unreachable.
     """
 
     spec: UserSpec
     health: UserHealth
     active_agent_id: str | None = None
     agent_ids: list[str] = Field(default_factory=list)
+    mcp_http_url: str = ""
 
 
 class CreateUserRequest(BaseModel):

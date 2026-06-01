@@ -15,7 +15,6 @@ orchestrator references it composes.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from ..agents.repository import AgentMetadataRepository
 from ..devices.repository import DeviceBindingRepository
@@ -123,14 +122,14 @@ class ResolveOrchestrator:
                 f"{agent_meta.user_id!r}: {exc}"
             ) from exc
 
-        # Memory MCP url: memory uses port-per-user; admin doesn't
-        # remember the port directly — we'd need an additional memory
-        # lookup. For 29.G we expose the URL through a known pattern
-        # derived from the user record. memory's MemoryUserClient.get_user
-        # already returns the spec which is what we need, but doesn't
-        # carry the MCP URL explicitly — that's a known gap. For now
-        # we synthesize from the env. Fix in 29.K cleanup.
-        memory_mcp_url = _build_memory_mcp_url(agent_meta.user_id)
+        # Memory MCP url: memory is authoritative for the per-user port
+        # assignment. 29.K extended memory's user view envelope with
+        # ``mcp_http_url`` so we can read it directly from the user we
+        # just fetched — no second round-trip, no synthesis. If memory
+        # returned an empty string (very early in user_admin lifecycle
+        # or some future degraded mode), we propagate it as-is; channel
+        # will see the empty string and refuse to dial.
+        memory_mcp_url = user_view.mcp_http_url
 
         # Soul preview — small, only for log tagging
         try:
@@ -208,37 +207,7 @@ class ResolveOrchestrator:
         )
 
 
-def _build_memory_mcp_url(user_id: str) -> str:
-    """Build the memory MCP URL for ``user_id``.
-
-    Memory's MCP port assignment is per-user; admin doesn't currently
-    cache the port in its own KV (user metadata bucket is light). For
-    the dev stack the user-id → port mapping comes from memory's
-    discovery endpoint. As a near-term placeholder we synthesize from
-    the convention used by ``MemoryUserAdmin``:
-
-      port 8030 = "default", subsequent users get 8031, 8032, ...
-
-    For Phase 29.G this is good enough because the only caller (channel)
-    will issue this URL straight to memory's MCP layer and memory will
-    refuse if there's no listener. 29.K should replace this with a real
-    lookup against memory's GET /api/admin/users/{id} (which carries
-    the port in spec.consolidator? no — port is missing from memory's
-    view envelope; need to add it).
-
-    Marked here so the cleanup phase has a clear pointer.
-    """
-    # TODO(29.K): real lookup. For now: synth.
-    import os
-
-    # The discovery service exposes the MCP URLs at
-    # /api/discovery/agent-routing — but admin already has the user
-    # metadata; we just need user→port. The simplest stub for now is
-    # to read EIDOLON_MEMORY_MCP_PORT for the default user and assume
-    # consecutive ports for other users.
-    base_port = int(os.environ.get("EIDOLON_MEMORY_MCP_PORT", "8030"))
-    # We don't know the user's port without another lookup. Return the
-    # base port — channel will likely fail for non-default users until
-    # 29.K wires the real lookup. This is a deliberate caveat documented
-    # in the design doc.
-    return f"http://127.0.0.1:{base_port}/mcp"
+# NOTE: an earlier 29.G placeholder ``_build_memory_mcp_url`` synthesized
+# the URL from a port range convention. 29.K removed it — memory now
+# exposes the URL on its user view envelope and resolve reads it
+# directly. See ``_compose_context`` above.
