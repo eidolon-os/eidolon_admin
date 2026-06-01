@@ -37,6 +37,13 @@ from .gateway.router import router as gateway_router
 from .memory.nats_publisher import JetStreamPublisher
 from .memory.router import router as memory_router
 from .nats_kv import KVClient
+from .registry import ALL_BUCKETS as REGISTRY_BUCKETS
+from .registry.tenants import (
+    TenantOrchestrator,
+    TenantRepository,
+    router as tenants_router,
+    seed_default as seed_default_tenant,
+)
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
@@ -93,6 +100,27 @@ def create_app(
             # unset. Router emits 503; the rest of admin is unaffected.
             logger.exception("device orchestrator init failed; /api/devices will return 503")
 
+        # Phase 29 registry: ensure admin-owned buckets + build tenant
+        # orchestrator + seed the default tenant. Same fault tolerance as
+        # the devices block — if NATS is down, leave the orchestrator None
+        # and /api/tenants returns 503; nothing else cares.
+        try:
+            if app.state.nats_kv.is_connected:
+                for spec in REGISTRY_BUCKETS:
+                    await app.state.nats_kv.ensure_bucket(spec)
+                tenant_orch = TenantOrchestrator(TenantRepository(app.state.nats_kv))
+                app.state.tenant_orchestrator = tenant_orch
+                created = await seed_default_tenant(tenant_orch)
+                if created:
+                    logger.info("registry: seeded default tenant on first start")
+                else:
+                    logger.debug("registry: default tenant already present")
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "registry init failed; /api/tenants will return 503 until "
+                "NATS / buckets recover",
+            )
+
         try:
             yield
         finally:
@@ -133,6 +161,10 @@ def create_app(
     # Populated in lifespan iff NATS connects + buckets ensure successfully.
     # Router checks for None to emit 503.
     app.state.device_orchestrator = None
+    # Same pattern for the new Phase 29 registry layer. Each entity module
+    # (Tenants/Templates/Users/Agents) gets its own orchestrator slot;
+    # the router checks the slot before serving and emits 503 if absent.
+    app.state.tenant_orchestrator = None
 
     app.add_middleware(
         CORSMiddleware,
@@ -150,6 +182,7 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
+    app.include_router(tenants_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
