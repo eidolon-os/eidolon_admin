@@ -38,11 +38,18 @@ from .memory.nats_publisher import JetStreamPublisher
 from .memory.router import router as memory_router
 from .nats_kv import KVClient
 from .registry import ALL_BUCKETS as REGISTRY_BUCKETS
+from .registry.agents import (
+    AgentMetadataRepository,
+    AgentOrchestrator,
+    AgentProjectClient,
+    router as agents_router,
+)
 from .registry.templates import (
     TemplateAgentClient,
     TemplateOrchestrator,
     router as templates_router,
 )
+from .registry.templates.orchestrator import TemplateNotFound
 from .registry.tenants import (
     TenantOrchestrator,
     TenantRepository,
@@ -178,6 +185,57 @@ def create_app(
                 "url / NATS / tenant orchestrator missing"
             )
 
+        # Agents module — bridges agent project (persona instances) and
+        # admin's own KV (single agent_id → composite key resolver).
+        # Needs both agent service URL AND a working UserOrchestrator
+        # (because every create validates the owning user).
+        agent_url_for_agents = _resolve_service_base_url(cfg, "agent")
+        template_orch = app.state.template_orchestrator
+        user_orch_ready = getattr(app.state, "user_orchestrator", None)
+        if (
+            agent_url_for_agents
+            and app.state.nats_kv.is_connected
+            and template_orch is not None
+            and user_orch_ready is not None
+        ):
+            ag_client = AgentProjectClient(
+                app.state.http_client, agent_url_for_agents
+            )
+            ag_repo = AgentMetadataRepository(app.state.nats_kv)
+
+            # Template-existence checker: an async callable that returns
+            # True iff a template by this id exists in agent. We wrap
+            # TemplateOrchestrator.get() so the agent orchestrator
+            # doesn't import TemplateOrchestrator directly (keeps the
+            # dependency direction clean and easier to fake in tests).
+            async def _template_exists(template_id: str) -> bool:
+                try:
+                    await template_orch.get(template_id)
+                    return True
+                except TemplateNotFound:
+                    return False
+                except Exception:  # noqa: BLE001 - any other error treated as missing
+                    logger.exception(
+                        "agent_orch template-exists check failed for %s",
+                        template_id,
+                    )
+                    return False
+
+            app.state.agent_orchestrator = AgentOrchestrator(
+                agent_client=ag_client,
+                metadata_repo=ag_repo,
+                user_orchestrator=user_orch_ready,
+                template_exists_check=_template_exists,
+            )
+            logger.info(
+                "agent orchestrator ready (agent=%s)", agent_url_for_agents
+            )
+        else:
+            logger.warning(
+                "agent orchestrator NOT initialized — agent url / NATS / "
+                "user orchestrator missing"
+            )
+
         try:
             yield
         finally:
@@ -224,6 +282,7 @@ def create_app(
     app.state.tenant_orchestrator = None
     app.state.template_orchestrator = None
     app.state.user_orchestrator = None
+    app.state.agent_orchestrator = None
 
     app.add_middleware(
         CORSMiddleware,
@@ -244,6 +303,7 @@ def create_app(
     app.include_router(tenants_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
+    app.include_router(agents_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the

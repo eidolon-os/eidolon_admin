@@ -66,10 +66,29 @@ USERS_METADATA_BUCKET = BucketSpec(
 )
 
 
+# Per-agent admin-side metadata (Phase 29.F). Agent project owns the
+# persona instance (SQL row); admin's KV layers on a single-key handle
+# so the wire surface is ``/api/agents/{agent_id}`` rather than
+# ``/api/agents/{tenant}/{user}/{instance}`` (agent's internal composite
+# key). Stored fields:
+#   - tenant_id, user_id, template_id, template_revision: routing info
+#     so admin can resolve agent_id → agent project's composite PK
+#     without scanning persona_instances on every request
+#   - display_name: operator-chosen label
+#   - created_at: stamped by admin
+USERS_METADATA_BUCKET_SIZE_OK = True  # marker; just for the cap docs
+AGENTS_METADATA_BUCKET = BucketSpec(
+    name="eidolon_admin_agents_metadata",
+    max_value_size=MAX_BINDING_SIZE_BYTES,
+    history=HISTORY_DEPTH,
+)
+
+
 # Iterable for the lifespan hook to ``ensure_bucket`` all of these at
 # admin startup. Order doesn't matter (ensure is idempotent + independent).
 ALL_BUCKETS: tuple[BucketSpec, ...] = (
     TENANTS_BUCKET,
     DEVICE_BINDINGS_BUCKET,
     USERS_METADATA_BUCKET,
+    AGENTS_METADATA_BUCKET,
 )

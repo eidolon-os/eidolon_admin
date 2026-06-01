@@ -23,3 +23,8 @@ def device_binding_key(device_id: str) -> str:
 def user_metadata_key(user_id: str) -> str:
     """Key under USERS_METADATA_BUCKET for one user's admin-side metadata."""
     return f"user.{user_id}"
+
+
+def agent_metadata_key(agent_id: str) -> str:
+    """Key under AGENTS_METADATA_BUCKET for one agent's admin-side metadata."""
+    return f"agent.{agent_id}"

@@ -196,6 +196,32 @@ class UserOrchestrator:
 
     # ---- public API ----------------------------------------------------
 
+    async def clear_active_agent_references(self, agent_id: str) -> list[str]:
+        """When an agent is deleted, any user whose active_agent_id
+        points at it must be cleared. Returns the list of affected
+        user_ids so the caller can log / report.
+
+        Wired by Agents orchestrator's delete path (29.F) — same
+        injection-via-setter pattern Tenants uses for refcount.
+        """
+        all_meta = await self._meta.list_all()
+        affected: list[str] = []
+        for user_id, meta in all_meta.items():
+            if meta.active_agent_id == agent_id:
+                new_meta = UserMetadata(
+                    tenant_id=meta.tenant_id,
+                    active_agent_id=None,
+                    display_name=meta.display_name,
+                )
+                await self._meta.put(user_id, new_meta)
+                affected.append(user_id)
+        if affected:
+            logger.info(
+                "cleared active_agent_id=%s on %d user(s): %s",
+                agent_id, len(affected), affected,
+            )
+        return affected
+
     async def count_users_for_tenant(self, tenant_id: str) -> int:
         """How many users currently belong to ``tenant_id``.
 

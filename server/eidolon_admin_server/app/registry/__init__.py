@@ -29,6 +29,7 @@ bucket layout — nothing wired into FastAPI yet.
 See docs/architecture/phase-29-five-entity-model.md for the full design.
 """
 from .buckets import (
+    AGENTS_METADATA_BUCKET,
     ALL_BUCKETS,
     DEVICE_BINDINGS_BUCKET,
     HISTORY_DEPTH,
@@ -37,9 +38,15 @@ from .buckets import (
     TENANTS_BUCKET,
     USERS_METADATA_BUCKET,
 )
-from .keys import device_binding_key, tenant_key, user_metadata_key
+from .keys import (
+    agent_metadata_key,
+    device_binding_key,
+    tenant_key,
+    user_metadata_key,
+)
 
 __all__ = [
+    "AGENTS_METADATA_BUCKET",
     "ALL_BUCKETS",
     "DEVICE_BINDINGS_BUCKET",
     "HISTORY_DEPTH",
@@ -47,6 +54,7 @@ __all__ = [
     "MAX_TENANT_SIZE_BYTES",
     "TENANTS_BUCKET",
     "USERS_METADATA_BUCKET",
+    "agent_metadata_key",
     "device_binding_key",
     "tenant_key",
     "user_metadata_key",
