@@ -38,6 +38,11 @@ from .memory.nats_publisher import JetStreamPublisher
 from .memory.router import router as memory_router
 from .nats_kv import KVClient
 from .registry import ALL_BUCKETS as REGISTRY_BUCKETS
+from .registry.templates import (
+    TemplateAgentClient,
+    TemplateOrchestrator,
+    router as templates_router,
+)
 from .registry.tenants import (
     TenantOrchestrator,
     TenantRepository,
@@ -121,6 +126,23 @@ def create_app(
                 "NATS / buckets recover",
             )
 
+        # Templates module — purely an HTTP proxy to agent. Doesn't need
+        # NATS, only the agent service URL from services.yaml. If agent
+        # is absent (services.yaml misconfigured), leave orchestrator
+        # None and /api/templates 503s; same fault-tolerant pattern.
+        agent_url_for_templates = _resolve_service_base_url(cfg, "agent")
+        if agent_url_for_templates:
+            client = TemplateAgentClient(
+                app.state.http_client, agent_url_for_templates
+            )
+            app.state.template_orchestrator = TemplateOrchestrator(client)
+            logger.info("template orchestrator ready (agent=%s)", agent_url_for_templates)
+        else:
+            logger.warning(
+                "template orchestrator NOT initialized — agent service "
+                "missing from services.yaml"
+            )
+
         try:
             yield
         finally:
@@ -165,6 +187,7 @@ def create_app(
     # (Tenants/Templates/Users/Agents) gets its own orchestrator slot;
     # the router checks the slot before serving and emits 503 if absent.
     app.state.tenant_orchestrator = None
+    app.state.template_orchestrator = None
 
     app.add_middleware(
         CORSMiddleware,
@@ -183,6 +206,7 @@ def create_app(
     app.include_router(configs_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
     app.include_router(tenants_router, prefix="/api")
+    app.include_router(templates_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
