@@ -46,3 +46,8 @@ livekit:
   turn_udp_port: 3478
   rtc_port_start: 50000
   rtc_port_end: 60000
+mementos:
+  sidecar:
+    host: 127.0.0.1
+    port: 18765
+  source_dir: /Users/manson/ai/mementos/opc_memento_s/electron_rebuild

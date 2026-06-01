@@ -270,6 +270,23 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     put("EIDOLON_LIVEKIT_RTC_PORT_START", livekit["rtc_port_start"])
     put("EIDOLON_LIVEKIT_RTC_PORT_END", livekit["rtc_port_end"])
 
+    # Phase 31.A: Mementos (Electron-vite dev). Optional — only present
+    # in ports.yaml when the operator has the mementos checkout. We
+    # treat missing keys as "feature off" rather than KeyError, so
+    # admin still boots on machines without that side project.
+    mementos = p.get("mementos")
+    if mementos:
+        sidecar = mementos.get("sidecar", {})
+        if "port" in sidecar:
+            put("EIDOLON_MEMENTOS_PORT", sidecar["port"])
+        if "host" in sidecar:
+            put("EIDOLON_MEMENTOS_HOST", sidecar["host"])
+        # Source directory — operators override this if their checkout
+        # lives elsewhere. supervisord conf reads it as
+        # %(ENV_EIDOLON_MEMENTOS_DIR)s for the program's working dir.
+        if mementos.get("source_dir"):
+            put("EIDOLON_MEMENTOS_DIR", mementos["source_dir"])
+
     return exported
 
 

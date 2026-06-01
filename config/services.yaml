@@ -190,6 +190,28 @@ services:
         reload_target: channel:channel-worker
         template: $EIDOLON_ROOT/eidolon_channel/config/.env.example
 
+  # Phase 31.A: Mementos (Electron-vite dev). Supervised by admin so
+  # operators can start/stop it from the Supervisor UI like the rest
+  # of the stack. Marked ``integration: process`` (same as channel) —
+  # admin does NOT proxy the Mementos sidecar at :18765; talk to it
+  # directly. health URL is informational so Supervisor's status
+  # column has something to render.
+  - id: mementos
+    name: Mementos
+    integration: process
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    health: http://127.0.0.1:$EIDOLON_MEMENTOS_PORT/health
+    supervisor:
+      config_file: deploy/supervisor/available/mementos.conf
+      group: mementos
+      programs:
+        - mementos
+    ports:
+      declared: [$EIDOLON_MEMENTOS_PORT]
+    features: []
+
   - id: client-web
     name: Eidolon Client Web
     integration: process
