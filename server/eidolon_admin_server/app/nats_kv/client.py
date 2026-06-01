@@ -81,34 +81,75 @@ class KVClient:
 
     # ---- connection lifecycle ----------------------------------------------
 
-    async def connect(self) -> None:
+    async def connect(
+        self,
+        *,
+        max_attempts: int = 1,
+        initial_delay: float = 0.5,
+    ) -> None:
         """Establish the connection. Idempotent.
 
-        Called once at admin startup. If NATS is unreachable, raises quickly
-        (no infinite reconnect loop) — the caller (main.py lifespan) swallows
-        the error so /api/devices returns 503 while the rest of admin keeps
-        running. Use ``./deploy/dev/run_all.sh start`` to bring up NATS via
-        supervisord.
+        Called once at admin startup. The supervisord-level ``wait-tcp``
+        gate (Phase 30.A) makes NATS reachable BEFORE admin's lifespan
+        runs in the normal ``run_all.sh start/restart`` path. This retry
+        is defense-in-depth for the niche case ``sv restart admin:admin-api``
+        catches NATS itself in the middle of a restart:
+
+          - ``max_attempts=1`` (default): single shot, fast-fail. Used by
+            tests and by callers that prefer to react to the error
+            themselves.
+          - ``max_attempts=5`` + ``initial_delay=0.5``: ~15s worst case
+            (0.5s → 1s → 2s → 4s → 8s capped). Lifespan passes this so a
+            transient NATS hiccup doesn't degrade admin to "all registry
+            routes 503" for the rest of the process lifetime.
+
+        If all attempts fail, raises ``ConnectionError`` once — the
+        caller (main.py lifespan) swallows it and leaves orchestrators
+        as None, same as before.
         """
         if self._nc is not None and self._nc.is_connected:
             return
         async with self._connect_lock:
             if self._nc is not None and self._nc.is_connected:
                 return
-            try:
-                self._nc = await asyncio.wait_for(
-                    nats.connect(
-                        self._url,
-                        connect_timeout=2,
-                        allow_reconnect=True,
-                        max_reconnect_attempts=0,
-                    ),
-                    timeout=3.0,
-                )
-            except Exception as exc:
+
+            last_exc: Exception | None = None
+            delay = initial_delay
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    self._nc = await asyncio.wait_for(
+                        nats.connect(
+                            self._url,
+                            connect_timeout=2,
+                            allow_reconnect=True,
+                            max_reconnect_attempts=0,
+                        ),
+                        timeout=3.0,
+                    )
+                    break  # success — exit the retry loop
+                except Exception as exc:  # noqa: BLE001 — broad on purpose
+                    last_exc = exc
+                    if attempt < max_attempts:
+                        logger.info(
+                            "KVClient connect attempt %d/%d to %s failed "
+                            "(%s); retrying in %.1fs",
+                            attempt,
+                            max_attempts,
+                            self._url,
+                            type(exc).__name__,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                        # Exponential backoff, capped at 8s so a long
+                        # outage doesn't push us to multi-minute waits.
+                        delay = min(delay * 2, 8.0)
+            else:
+                # No break = every attempt failed. Raise once, summarized.
                 raise ConnectionError(
-                    f"could not connect to NATS at {self._url!r}"
-                ) from exc
+                    f"could not connect to NATS at {self._url!r} after "
+                    f"{max_attempts} attempt(s)"
+                ) from last_exc
+
             self._js = self._nc.jetstream()
             logger.info("KVClient connected to %s", self._url)
 

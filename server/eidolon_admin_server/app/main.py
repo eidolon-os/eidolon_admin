@@ -90,8 +90,14 @@ def create_app(
         # Device bindings). NATS being down must NOT block admin
         # startup: each module's router checks its orchestrator slot
         # for None and emits a clean 503 individually.
+        #
+        # ``max_attempts=5`` is the Phase 30.B application-layer
+        # complement to the supervisord wait-tcp gate. The gate handles
+        # cold start; this retry tolerates ``sv restart admin:admin-api``
+        # catching NATS itself in a restart window. ~15s worst case
+        # (0.5/1/2/4/8 backoff).
         try:
-            await app.state.nats_kv.connect()
+            await app.state.nats_kv.connect(max_attempts=5)
         except ConnectionError as exc:
             logger.warning(
                 "NATS unavailable (%s); registry routes will return 503. "

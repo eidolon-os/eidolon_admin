@@ -332,6 +332,59 @@ async def test_watch_exits_cleanly_when_caller_breaks(
         await write_task
 
 
+# ---- connect() retry (Phase 30.B) ----------------------------------------
+
+
+async def test_connect_default_single_attempt_fails_fast() -> None:
+    """Single-shot (default ``max_attempts=1``) must fail quickly when
+    NATS is unreachable — tests rely on this for their skip-check.
+    Point at a definitely-dead port so we can measure wall time."""
+    import time
+    client = KVClient(url="nats://127.0.0.1:1")  # port 1 is reserved/unused
+    t0 = time.monotonic()
+    with pytest.raises(ConnectionError) as exc_info:
+        await client.connect()
+    elapsed = time.monotonic() - t0
+    # connect_timeout=2 + wait_for=3.0 inner ceiling. Total must stay
+    # under ~5s — the skip-check would otherwise be unbearably slow.
+    assert elapsed < 5.0, f"single-attempt connect took {elapsed:.2f}s"
+    assert "1 attempt" in str(exc_info.value)
+
+
+async def test_connect_retries_with_max_attempts(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With ``max_attempts=3``, expect 2 "retrying" log lines (attempts
+    1+2 fail), then a single ConnectionError after attempt 3. We use a
+    short ``initial_delay`` so the test runs fast — the production
+    lifespan uses 0.5s but the LOOP STRUCTURE is what we're pinning."""
+    client = KVClient(url="nats://127.0.0.1:1")
+    with caplog.at_level("INFO", logger="eidolon_admin_server.app.nats_kv.client"):
+        with pytest.raises(ConnectionError) as exc_info:
+            await client.connect(max_attempts=3, initial_delay=0.01)
+    retry_logs = [r for r in caplog.records if "retrying in" in r.message]
+    assert len(retry_logs) == 2, f"expected 2 retries, got {len(retry_logs)}"
+    assert "3 attempt" in str(exc_info.value)
+
+
+async def test_connect_succeeds_first_try_when_nats_up() -> None:
+    """When NATS is reachable, ``max_attempts=5`` should not introduce
+    any extra latency — first attempt wins. Pinned because a bug that
+    always slept ``initial_delay`` before connect would be invisible
+    in the happy path otherwise."""
+    if not await _can_reach_nats():
+        pytest.skip("NATS not reachable at 127.0.0.1:4222")
+    import time
+    client = KVClient()
+    t0 = time.monotonic()
+    await client.connect(max_attempts=5, initial_delay=10.0)
+    elapsed = time.monotonic() - t0
+    await client.close()
+    # First-try success: must complete well under initial_delay (10s).
+    # Local NATS connects in <0.1s typically.
+    assert elapsed < 1.0, f"first-try connect took {elapsed:.2f}s"
+
+
 # ---- close() lifecycle ---------------------------------------------------
 
 
