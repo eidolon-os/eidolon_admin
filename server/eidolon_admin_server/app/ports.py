@@ -143,6 +143,7 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
 
     disc = memory_y.get("discovery_http") if isinstance(memory_y.get("discovery_http"), dict) else {}
     mcp = memory_y.get("mcp_http") if isinstance(memory_y.get("mcp_http"), dict) else {}
+    sup = memory_y.get("supervisor") if isinstance(memory_y.get("supervisor"), dict) else {}
     ports["memory"] = {
         "discovery": {
             "host": str(disc.get("host", _deep_get(ports, "memory", "discovery", "host", default="127.0.0.1"))),
@@ -150,6 +151,22 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
         },
         "mcp": {
             "port": int(mcp.get("port", _deep_get(ports, "memory", "mcp", "port", default=8030))),
+        },
+        # Phase 29.B.2 — supervisor's embedded admin HTTP, used by admin
+        # for user CRUD. Defaults align with memory's SupervisorConfig.
+        "supervisor_http": {
+            "host": str(
+                sup.get(
+                    "admin_http_host",
+                    _deep_get(ports, "memory", "supervisor_http", "host", default="127.0.0.1"),
+                )
+            ),
+            "port": int(
+                sup.get(
+                    "admin_http_port",
+                    _deep_get(ports, "memory", "supervisor_http", "port", default=8019),
+                )
+            ),
         },
     }
 
@@ -230,6 +247,9 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     put("EIDOLON_MEMORY_DISCOVERY_HOST", memory["discovery"]["host"])
     put("EIDOLON_MEMORY_DISCOVERY_PORT", memory["discovery"]["port"])
     put("EIDOLON_MEMORY_MCP_PORT", memory["mcp"]["port"])
+    # Memory supervisor's admin HTTP (29.B.2)
+    put("EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST", memory["supervisor_http"]["host"])
+    put("EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT", memory["supervisor_http"]["port"])
 
     eidolon_root = os.environ.get("EIDOLON_ROOT", "").strip() or str(_REPO_ROOT.parent)
     users_yaml = Path(eidolon_root) / "eidolon_memory" / "config" / "users.yaml"

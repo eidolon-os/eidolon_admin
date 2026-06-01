@@ -30,6 +30,9 @@ memory:
     port: 8020
   mcp:
     port: 8030
+  supervisor_http:
+    host: 127.0.0.1
+    port: 8019
 channel:
   worker:
     port: 8766

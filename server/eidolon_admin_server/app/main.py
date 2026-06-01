@@ -49,6 +49,12 @@ from .registry.tenants import (
     router as tenants_router,
     seed_default as seed_default_tenant,
 )
+from .registry.users import (
+    MemoryUserClient,
+    UserMetadataRepository,
+    UserOrchestrator,
+    router as users_router,
+)
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
@@ -143,6 +149,28 @@ def create_app(
                 "missing from services.yaml"
             )
 
+        # Users module — talks to memory's supervisor admin HTTP (29.B.2)
+        # for memory-side CRUD, plus admin's own KV bucket for the
+        # tenant/active_agent metadata. Needs NATS (for the bucket) AND
+        # the memory supervisor URL from env (set by ports.py).
+        memory_admin_url = _resolve_memory_supervisor_url()
+        if memory_admin_url and app.state.nats_kv.is_connected and getattr(
+            app.state, "tenant_orchestrator", None
+        ) is not None:
+            user_client = MemoryUserClient(app.state.http_client, memory_admin_url)
+            user_repo = UserMetadataRepository(app.state.nats_kv)
+            app.state.user_orchestrator = UserOrchestrator(
+                memory_client=user_client,
+                metadata_repo=user_repo,
+                tenant_orchestrator=app.state.tenant_orchestrator,
+            )
+            logger.info("user orchestrator ready (memory=%s)", memory_admin_url)
+        else:
+            logger.warning(
+                "user orchestrator NOT initialized — memory supervisor "
+                "url / NATS / tenant orchestrator missing"
+            )
+
         try:
             yield
         finally:
@@ -188,6 +216,7 @@ def create_app(
     # the router checks the slot before serving and emits 503 if absent.
     app.state.tenant_orchestrator = None
     app.state.template_orchestrator = None
+    app.state.user_orchestrator = None
 
     app.add_middleware(
         CORSMiddleware,
@@ -207,6 +236,7 @@ def create_app(
     app.include_router(devices_router, prefix="/api")
     app.include_router(tenants_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
+    app.include_router(users_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
@@ -226,6 +256,27 @@ def _resolve_service_base_url(cfg: GatewayConfig, service_id: str) -> str | None
     if svc is None or not svc.base_url:
         return None
     return svc.base_url
+
+
+def _resolve_memory_supervisor_url() -> str | None:
+    """Resolve the URL for memory's supervisor-embedded admin HTTP.
+
+    Memory's supervisor process listens on a port NOT exposed via
+    services.yaml (it's internal, not a service users hit). We look at
+    the env vars ports.py sets:
+        EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST  (default 127.0.0.1)
+        EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT  (default 8019)
+
+    Returns ``None`` only if the env vars are explicitly cleared — the
+    defaults always produce a valid URL.
+    """
+    import os
+
+    host = os.environ.get("EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST", "127.0.0.1").strip()
+    port = os.environ.get("EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT", "8019").strip()
+    if not host or not port:
+        return None
+    return f"http://{host}:{port}"
 
 
 app = create_app()

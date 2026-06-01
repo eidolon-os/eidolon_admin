@@ -18,3 +18,8 @@ def tenant_key(tenant_id: str) -> str:
 def device_binding_key(device_id: str) -> str:
     """Key under DEVICE_BINDINGS_BUCKET for one device→agent binding."""
     return f"device.{device_id}"
+
+
+def user_metadata_key(user_id: str) -> str:
+    """Key under USERS_METADATA_BUCKET for one user's admin-side metadata."""
+    return f"user.{user_id}"

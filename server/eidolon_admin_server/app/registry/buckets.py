@@ -52,9 +52,24 @@ DEVICE_BINDINGS_BUCKET = BucketSpec(
 )
 
 
+# Per-user admin-side metadata. Memory owns the user's identity + palace
+# + worker lifecycle; admin layers on what memory doesn't know:
+#   - tenant_id: which tenant this user belongs to (memory has no tenant)
+#   - active_agent_id: which agent this user's runtime should default to
+#                      (agent ownership lives in agent project; admin
+#                      tracks the "active default" per-user)
+# Keyed by user_id (matches memory's PK).
+USERS_METADATA_BUCKET = BucketSpec(
+    name="eidolon_admin_users_metadata",
+    max_value_size=MAX_BINDING_SIZE_BYTES,
+    history=HISTORY_DEPTH,
+)
+
+
 # Iterable for the lifespan hook to ``ensure_bucket`` all of these at
 # admin startup. Order doesn't matter (ensure is idempotent + independent).
 ALL_BUCKETS: tuple[BucketSpec, ...] = (
     TENANTS_BUCKET,
     DEVICE_BINDINGS_BUCKET,
+    USERS_METADATA_BUCKET,
 )

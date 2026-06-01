@@ -1,0 +1,215 @@
+"""Repository layer for Users.
+
+Two stores composed in one module because admin always reads BOTH to
+build a complete view:
+
+  - :class:`MemoryUserClient` — HTTP client to memory's
+    ``/api/admin/users/*`` (added in memory 29.B.2). This is the
+    authoritative source for user existence + worker liveness + palace
+    state.
+
+  - :class:`UserMetadataRepository` — NATS KV adapter over admin's
+    ``USERS_METADATA_BUCKET``. Stores the few fields memory has no
+    concept of: ``tenant_id``, ``active_agent_id``. Keyed by user_id.
+
+Each is its own thin layer (mirrors the Tenants / Templates pattern);
+the orchestrator composes both.
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
+from ..buckets import USERS_METADATA_BUCKET
+from ..keys import user_metadata_key
+
+logger = logging.getLogger(__name__)
+
+
+# ===== memory HTTP client ===================================================
+
+
+class MemoryUserUnreachable(Exception):
+    """Network-level failure (refused, timeout, DNS) talking to memory."""
+
+
+class MemoryUserUpstreamError(Exception):
+    """Memory responded with a 4xx/5xx — the orchestrator preserves the
+    status code so admin can map 404→404, 409→409, etc."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
+
+
+class MemoryUserClient:
+    """HTTP wrapper over memory's user CRUD surface.
+
+    Memory exposes these on its supervisor-embedded HTTP (default
+    ``http://127.0.0.1:8019``, set via ``supervisor.admin_http_port``):
+
+        GET    /api/admin/users
+        GET    /api/admin/users/{user_id}
+        POST   /api/admin/users
+        DELETE /api/admin/users/{user_id}
+
+    There is no PUT — memory's surface from 29.B.2 doesn't update meta.
+    Admin's "update" is therefore limited to admin-owned fields
+    (tenant_id, active_agent_id) — the orchestrator enforces that.
+    """
+
+    def __init__(self, http_client: httpx.AsyncClient, memory_admin_url: str) -> None:
+        self._http = http_client
+        self._base = memory_admin_url.rstrip("/")
+
+    def _url(self, path: str) -> str:
+        return f"{self._base}{path}"
+
+    async def list_users(self) -> dict[str, Any]:
+        """GET /api/admin/users — returns the full envelope (users list +
+        memory_available flag)."""
+        try:
+            r = await self._http.get(self._url("/api/admin/users"))
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise MemoryUserUnreachable(str(exc)) from exc
+        if r.status_code >= 400:
+            raise MemoryUserUpstreamError(r.status_code, r.text)
+        return r.json()
+
+    async def get_user(self, user_id: str) -> dict[str, Any]:
+        try:
+            r = await self._http.get(self._url(f"/api/admin/users/{user_id}"))
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise MemoryUserUnreachable(str(exc)) from exc
+        if r.status_code == 404:
+            raise MemoryUserUpstreamError(404, "user not found in memory")
+        if r.status_code >= 400:
+            raise MemoryUserUpstreamError(r.status_code, r.text)
+        return r.json()
+
+    async def create_user(
+        self,
+        *,
+        user_id: str,
+        display_name: str | None = None,
+        palace_path: str = "",
+        consolidator: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"user_id": user_id, "palace_path": palace_path}
+        if consolidator is not None:
+            body["consolidator"] = consolidator
+        # memory's CreateUserRequest doesn't have a display_name field
+        # — it's an admin-side concept. We send only the fields memory
+        # accepts.
+        try:
+            r = await self._http.post(self._url("/api/admin/users"), json=body)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise MemoryUserUnreachable(str(exc)) from exc
+        if r.status_code >= 400:
+            raise MemoryUserUpstreamError(r.status_code, r.text)
+        return r.json()
+
+    async def delete_user(self, user_id: str) -> dict[str, Any]:
+        """DELETE /api/admin/users/{user_id} — returns memory's response
+        envelope (includes ``palace_trashed_to`` when applicable)."""
+        try:
+            r = await self._http.delete(self._url(f"/api/admin/users/{user_id}"))
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise MemoryUserUnreachable(str(exc)) from exc
+        if r.status_code == 404:
+            raise MemoryUserUpstreamError(404, "user not found in memory")
+        if r.status_code >= 400:
+            raise MemoryUserUpstreamError(r.status_code, r.text)
+        return r.json()
+
+
+# ===== admin's per-user metadata KV =========================================
+
+
+@dataclass
+class UserMetadata:
+    """What admin stores on top of memory's user record.
+
+    Persisted as a small JSON object in NATS KV. Kept tiny so the bucket
+    cap (4 KB) is never an issue.
+    """
+
+    tenant_id: str
+    active_agent_id: str | None = None
+    display_name: str = ""  # admin-side label; memory doesn't have one
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "tenant_id": self.tenant_id,
+            "active_agent_id": self.active_agent_id,
+            "display_name": self.display_name,
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "UserMetadata":
+        return cls(
+            tenant_id=data.get("tenant_id", "default"),
+            active_agent_id=data.get("active_agent_id"),
+            display_name=data.get("display_name", ""),
+        )
+
+
+class UserMetadataRepository:
+    """KV-backed admin metadata store.
+
+    Lives separately from memory's user data — memory is the source of
+    truth for "does user X exist", admin's KV is the source of truth
+    for "is user X in tenant T with active agent A".
+    """
+
+    def __init__(self, kv: KVClient) -> None:
+        self._kv = kv
+
+    async def get(self, user_id: str) -> UserMetadata | None:
+        raw = await self._kv.get(USERS_METADATA_BUCKET.name, user_metadata_key(user_id))
+        if raw is None:
+            return None
+        try:
+            return UserMetadata.from_json(from_json_bytes(raw))
+        except Exception:
+            logger.exception("users: malformed KV entry %s", user_id)
+            return None
+
+    async def put(self, user_id: str, meta: UserMetadata) -> None:
+        await self._kv.put(
+            USERS_METADATA_BUCKET.name,
+            user_metadata_key(user_id),
+            to_json_bytes(meta.to_json()),
+        )
+
+    async def delete(self, user_id: str) -> None:
+        """Idempotent — deleting a non-existent key is a no-op."""
+        await self._kv.delete(USERS_METADATA_BUCKET.name, user_metadata_key(user_id))
+
+    async def list_all(self) -> dict[str, UserMetadata]:
+        """Return the full per-user map (user_id → metadata).
+
+        Returned as a dict for cheap "do I have this user?" lookups in
+        the orchestrator's list path (which joins memory list × admin
+        map by user_id).
+        """
+        keys = await self._kv.list_keys(USERS_METADATA_BUCKET.name, prefix="user.")
+        out: dict[str, UserMetadata] = {}
+        for key in keys:
+            raw = await self._kv.get(USERS_METADATA_BUCKET.name, key)
+            if raw is None:
+                continue
+            try:
+                meta = UserMetadata.from_json(from_json_bytes(raw))
+            except Exception:
+                logger.exception("users: malformed KV entry at key %s", key)
+                continue
+            # Key shape is ``user.<id>``; strip the prefix.
+            user_id = key.removeprefix("user.")
+            out[user_id] = meta
+        return out

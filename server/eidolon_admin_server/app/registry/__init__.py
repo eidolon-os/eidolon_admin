@@ -35,8 +35,9 @@ from .buckets import (
     MAX_BINDING_SIZE_BYTES,
     MAX_TENANT_SIZE_BYTES,
     TENANTS_BUCKET,
+    USERS_METADATA_BUCKET,
 )
-from .keys import device_binding_key, tenant_key
+from .keys import device_binding_key, tenant_key, user_metadata_key
 
 __all__ = [
     "ALL_BUCKETS",
@@ -45,6 +46,8 @@ __all__ = [
     "MAX_BINDING_SIZE_BYTES",
     "MAX_TENANT_SIZE_BYTES",
     "TENANTS_BUCKET",
+    "USERS_METADATA_BUCKET",
     "device_binding_key",
     "tenant_key",
+    "user_metadata_key",
 ]
