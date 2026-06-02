@@ -13,7 +13,9 @@ This test pins that contract end-to-end:
 Why this test lives in admin's suite (and not channel or agent's):
 admin is the orchestrator; cross-project contract verification is its
 natural home. Both target projects are editable-installed in admin's
-venv via dev tooling, so the imports work.
+venv (channel's ``livekit-agents`` transitive is declared in admin's
+``[dev]`` extra), so the imports work without any importlib tricks —
+plain Python ``from eidolon.livekit.agent.runtime import …``.
 
 If this test fails, ONE of these happened:
   1. Someone changed channel's payload field names / algorithm / scopes
@@ -29,69 +31,30 @@ deferred to a unified SDK pass), this is the safety net.
 
 from __future__ import annotations
 
-import os
 import secrets
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
-
-def _eidolon_root() -> Path:
-    """Locate sibling project roots. dev: monorepo with admin/agent/
-    channel side by side; ``EIDOLON_ROOT`` env wins if set."""
-    explicit = os.environ.get("EIDOLON_ROOT", "").strip()
-    if explicit:
-        return Path(explicit).expanduser()
-    admin_root = Path(__file__).resolve().parents[2]
-    return admin_root.parent
-
-
-def _load_module_from_file(module_name: str, file_path: Path):
-    """Load a single .py file as a module without executing its package
-    __init__. Used to import channel's ``token_signer.py`` without
-    pulling in ``eidolon.livekit.agent.runtime.__init__`` (which
-    transitively requires ``livekit.agents`` — not in admin's venv)."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {module_name} from {file_path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_ROOT = _eidolon_root()
-_CHANNEL_TOKEN_SIGNER = (
-    _ROOT / "eidolon_channel/eidolon/livekit/agent/runtime/token_signer.py"
-)
-_AGENT_PROJ = _ROOT / "eidolon_agent"
-
-if not _CHANNEL_TOKEN_SIGNER.is_file() or not _AGENT_PROJ.is_dir():
-    pytest.skip(
-        f"cross-project sources not found (channel signer: "
-        f"{_CHANNEL_TOKEN_SIGNER.is_file()}, agent root: {_AGENT_PROJ.is_dir()})",
-        allow_module_level=True,
-    )
-
-# Add agent root for normal package import (agent has plain Python deps,
-# no livekit chain).
-if str(_AGENT_PROJ) not in sys.path:
-    sys.path.insert(0, str(_AGENT_PROJ))
-
+# Both sibling projects must be editable-installed into admin's venv.
+# Channel pulls livekit-agents (declared in admin's [dev] extra so its
+# eidolon.livekit.agent package can import without ModuleNotFoundError);
+# agent has plain Python deps. If either install is missing we skip at
+# module load with a clear pointer at how to fix.
 try:
-    _channel_signer_mod = _load_module_from_file(
-        "channel_token_signer_contract_test", _CHANNEL_TOKEN_SIGNER
+    from eidolon.livekit.agent.runtime import (  # type: ignore[import-not-found]
+        sign_device_token as channel_sign,
     )
-    channel_sign = _channel_signer_mod.sign_device_token
-
     from eidolon_agent.app.transport.pairing.token import (  # type: ignore[import-not-found]
         PairingTokenVerifier,
     )
-except ImportError as exc:
-    pytest.skip(f"cross-project import failed: {exc}", allow_module_level=True)
+except ImportError as exc:  # pragma: no cover — exercised in CI matrix
+    pytest.skip(
+        f"cross-project import failed ({exc}). "
+        "Run `pip install -e ../eidolon_channel -e ../eidolon_agent` "
+        "in admin's venv to enable this contract test.",
+        allow_module_level=True,
+    )
 
 
 @pytest.fixture

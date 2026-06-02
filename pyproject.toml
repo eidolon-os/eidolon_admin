@@ -21,15 +21,26 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "respx>=0.21",
+    # PyJWT — admin doesn't sign tokens itself, but the cross-project
+    # contract test (server/tests/test_runtime_token_contract.py)
+    # decodes channel-signed JWTs to assert payload field invariants.
+    # Keeping it here instead of base deps because admin's own runtime
+    # never touches JWTs.
+    "pyjwt>=2.8",
+    # Channel's ``eidolon.livekit.agent`` package eagerly imports
+    # streaming/batch/factory at package-load, all of which require
+    # ``livekit.agents``. Declaring it in admin's [dev] extra means the
+    # contract test can do a plain ``from eidolon.livekit.agent.runtime
+    # import sign_device_token`` with zero importlib tricks.
+    "livekit-agents>=1.5",
 ]
-# To enable the cross-repo in-process fullstack test
-# (server/tests/test_devices_fullstack.py), editable-install the sibling
-# repos into this venv:
-#     pip install -e ../eidolon_hub -e ../eidolon_agent
+# To enable the cross-repo in-process fullstack and contract tests,
+# editable-install the sibling repos into this venv:
+#     pip install -e ../eidolon_hub -e ../eidolon_agent -e ../eidolon_channel
 # These are NOT declared as deps here because PEP 508 doesn't have a
 # portable relative-path syntax and we don't want every dev to need
-# both sibling repos checked out. Without them, the fullstack test file
-# skips cleanly via importlib.util.find_spec at module load.
+# all three sibling repos checked out. Without them, the
+# affected test files skip cleanly at module-load.
 
 [project.scripts]
 eidolon-admin = "eidolon_admin_server.app.cli:main"
