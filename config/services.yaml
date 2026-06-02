@@ -201,9 +201,16 @@ services:
   # admin does NOT proxy the Mementos sidecar at :18765; talk to it
   # directly. health URL is informational so Supervisor's status
   # column has something to render.
+  #
+  # ``optional: true`` (Phase 32+) — mementos is a side project that
+  # operators sometimes run as a standalone Electron app outside the
+  # dev stack (开发它本身的时候). Pre-flight port audit treats a
+  # busy :18765 as "fine, just won't supervise" instead of refusing
+  # the whole cold start.
   - id: mementos
     name: Mementos
     integration: process
+    optional: true
     base_url: ""
     upstream_prefix: ""
     auth: { type: none }

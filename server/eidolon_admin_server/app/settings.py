@@ -75,6 +75,19 @@ class ServiceConfig(BaseModel):
     # taxonomy. ``proxy`` is the default for backwards-compat with services
     # that pre-date this field.
     integration: Literal["native", "proxy", "process", "infra"] = "proxy"
+    # ``optional=true`` marks a service the operator may run independently
+    # outside supervisord (e.g. mementos: operator opens the Electron
+    # app manually, supervisord just tries to coordinate). When true:
+    #
+    #   * pre-flight port audit doesn't refuse the cold start if this
+    #     service's declared port is already bound — it logs a notice
+    #     and lets the rest of the stack come up.
+    #   * supervisord's spawn-error for this service is downgraded from
+    #     "stack broken" to "side-project unavailable".
+    #
+    # All other services default to ``optional=false`` — required-by-
+    # default keeps "杜绝 silent skip" honest for the core stack.
+    optional: bool = False
     base_url: str = ""
     upstream_prefix: str = ""
     auth: AuthConfig = Field(default_factory=AuthConfig)

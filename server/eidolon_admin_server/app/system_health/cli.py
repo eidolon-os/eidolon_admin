@@ -70,7 +70,16 @@ async def check(
 
     orphans = _scan_for_orphans(cfg, unmanaged)
 
-    if not orphans:
+    # Phase 32+: split out hits on services flagged ``optional: true``
+    # in services.yaml (e.g. mementos — operator may run it outside
+    # supervisord). Their port-bound state is reported but doesn't
+    # block the cold start; the rest of the stack proceeds.
+    optional_ids = {s.id for s in cfg.services if s.optional}
+    skippable, blocking = _partition_by_optional(orphans, optional_ids)
+
+    if not blocking:
+        if skippable:
+            _print_optional_skip_notice(skippable)
         print(_color(
             "✓ pre-flight passed — declared ports are free (ready for supervisord cold start)",
             _GREEN,
@@ -79,8 +88,10 @@ async def check(
             _print_declared_ports(cfg)
         return 0
 
-    eidolon_like, foreign = _partition_listeners(orphans)
-    _print_listener_table(orphans)
+    eidolon_like, foreign = _partition_listeners(blocking)
+    if skippable:
+        _print_optional_skip_notice(skippable)
+    _print_listener_table(blocking)
 
     if not cleanup:
         _print_preflight_refusal(eidolon_like, foreign)
@@ -159,6 +170,50 @@ def _partition_listeners(
         else:
             foreign.append(o)
     return eidolon_like, foreign
+
+
+def _partition_by_optional(
+    orphans: list[dict], optional_ids: set[str]
+) -> tuple[list[dict], list[dict]]:
+    """Split listeners into (skippable, blocking).
+
+    A listener is *skippable* if its service is marked ``optional`` in
+    services.yaml — pre-flight reports it as informational and the
+    cold start proceeds. Everything else is *blocking*.
+    """
+    skippable: list[dict] = []
+    blocking: list[dict] = []
+    for o in orphans:
+        if o["service_id"] in optional_ids:
+            skippable.append(o)
+        else:
+            blocking.append(o)
+    return skippable, blocking
+
+
+def _print_optional_skip_notice(skippable: list[dict]) -> None:
+    """Tell the operator we noticed a busy optional-service port but
+    won't refuse the start. The message includes the path forward
+    (the existing process keeps serving; supervisord won't try to
+    spawn a duplicate)."""
+    print()
+    print(_color(
+        f"i {len(skippable)} optional service listener(s) — "
+        "kept as-is, cold start continues:",
+        _YELLOW,
+    ))
+    for o in skippable:
+        age = _format_age(probe.process_age_seconds(o["pid"]))
+        print(
+            f"  pid {o['pid']:>6}  :{o['port']:<6}  age {age:>8}  "
+            f"service={o['service_id']}  "
+            f"{_color(o['command'][:100], _DIM)}"
+        )
+    print(_color(
+        "  (services.yaml marks these ``optional: true`` — pre-flight "
+        "doesn't refuse the start when their ports are bound.)",
+        _DIM,
+    ))
 
 
 def _print_listener_table(orphans: list[dict]) -> None:

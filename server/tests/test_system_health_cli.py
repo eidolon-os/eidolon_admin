@@ -134,6 +134,91 @@ async def test_check_skips_unmanaged_ports() -> None:
         proc.wait(timeout=5)
 
 
+@pytest.mark.asyncio
+async def test_check_skips_optional_service_port_in_use(capsys) -> None:
+    """When a service is marked ``optional: true`` in services.yaml,
+    a listener on its declared port is reported as informational but
+    does NOT block the cold start. Mirrors the mementos use case:
+    operator may be running it as a standalone Electron app outside
+    supervisord.
+    """
+    port = _pick_free_port()
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000, cors_origins=[]),
+        services=[
+            ServiceConfig(
+                id="mementos-like",
+                name="Side Project",
+                integration="process",
+                optional=True,
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[port]),
+            ),
+        ],
+    )
+    proc = _spawn_listener(port)
+    try:
+        exit_code = await cli.check(cleanup=False, verbose=False, cfg=cfg)
+        assert exit_code == 0, (
+            "optional-service port-bound must not refuse the cold start"
+        )
+        out = capsys.readouterr().out
+        assert "optional service listener" in out, (
+            "should emit informational notice about the skipped service"
+        )
+        assert "mementos-like" in out
+        assert "pre-flight passed" in out
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_check_mixed_optional_and_required_only_blocks_on_required(
+    capsys,
+) -> None:
+    """If BOTH an optional and a required service have busy ports,
+    the required-one's blocking takes precedence and we exit 1.
+    The optional service is still mentioned in the informational
+    block so the operator sees the full picture."""
+    opt_port = _pick_free_port()
+    req_port = _pick_free_port()
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000, cors_origins=[]),
+        services=[
+            ServiceConfig(
+                id="optional-svc",
+                name="Optional",
+                integration="process",
+                optional=True,
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[opt_port]),
+            ),
+            ServiceConfig(
+                id="required-svc",
+                name="Required",
+                integration="native",
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[req_port]),
+            ),
+        ],
+    )
+    opt_proc = _spawn_listener(opt_port)
+    req_proc = _spawn_listener(req_port)
+    try:
+        exit_code = await cli.check(cleanup=False, verbose=False, cfg=cfg)
+        assert exit_code == 1
+        out = capsys.readouterr().out
+        # both should show up — optional in info block, required in
+        # the blocking-listener table.
+        assert "optional-svc" in out
+        assert "required-svc" in out
+    finally:
+        for p in (opt_proc, req_proc):
+            p.terminate()
+            p.wait(timeout=5)
+
+
 def test_main_unknown_subcommand_returns_two() -> None:
     """argparse error on missing subcommand exits 2 (the default).
 
