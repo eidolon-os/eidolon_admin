@@ -123,6 +123,27 @@ class AgentProjectClient(SubProjectHTTPClient):
         )
         return r.json()
 
+    async def revoke_user_sessions(self, user_id: str) -> dict[str, Any]:
+        """Phase 33.B1: ask agent to write ``revoked.user.<user_id>`` to
+        the DEVICE_REVOCATIONS NATS KV bucket. ``PairingTokenVerifier``
+        rejects every JWT carrying that user_id on next ``verify()``,
+        cutting active LK sessions at their next chat() turn.
+
+        Admin proxies via agent (vs writing the KV directly) to keep
+        the ownership boundary: agent owns the bucket name + key
+        convention. Admin just expresses intent ("revoke this user").
+
+        Returns ``{user_id, revoked}`` on success;
+        raises ``SubProjectUnreachable`` / ``SubProjectUpstreamError``.
+        """
+        from urllib.parse import quote
+
+        r = await self._request(
+            "POST",
+            f"/api/admin/users/{quote(user_id, safe='')}/revoke-sessions",
+        )
+        return r.json()
+
 
 # ===== admin's per-agent metadata KV =======================================
 

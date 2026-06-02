@@ -98,3 +98,57 @@ async def delete_user(user_id: str, request: Request) -> dict:
         return await orch.delete_user(user_id)
     except UserError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/{user_id}/revoke-sessions", status_code=200)
+async def revoke_user_sessions(user_id: str, request: Request) -> dict:
+    """Phase 33.B1: invalidate all active runtime tokens for the user.
+
+    Admin **proxies** to agent's revocation surface — agent owns the
+    NATS ``DEVICE_REVOCATIONS`` bucket. After this call, every JWT
+    carrying this user_id fails verification on the next chat() turn
+    with ``TokenRevokedError`` → LK session aborts. New connections
+    will only succeed if the user record is also re-enabled.
+
+    Returns agent's echo: ``{user_id, revoked: true}``.
+
+    Failure modes:
+      - admin's user_id not found → 404 (validation before proxying)
+      - agent unreachable → 503
+      - agent revocation bucket missing → 503 (agent surfaces this)
+    """
+    # First confirm the user exists in admin's registry. Without this
+    # check we'd happily revoke a typo (writes a stray KV key that
+    # forever blocks the imaginary user).
+    orch = _orchestrator(request)
+    try:
+        await orch.get_user(user_id)
+    except UserError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    agent_orch = getattr(request.app.state, "agent_orchestrator", None)
+    if agent_orch is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "agent orchestrator unavailable — cannot reach the "
+                "revocation surface. Check agent service health."
+            ),
+        )
+    # Reach into the agent's project client. We don't bother going
+    # through an orchestrator method because this is a thin RPC proxy
+    # with no admin-side state mutation.
+    from ..agents.repository import (
+        AgentProjectUnreachable,
+        AgentProjectUpstreamError,
+    )
+
+    try:
+        return await agent_orch._agent.revoke_user_sessions(user_id)
+    except AgentProjectUnreachable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AgentProjectUpstreamError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"agent upstream: {exc.message}",
+        ) from exc
