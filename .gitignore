@@ -27,6 +27,15 @@ web/.vite/
 # Runtime artifacts (supervisord pid/socket/childlogs)
 var/
 
+# Supervisord enabled/ is RUNTIME STATE, not source: the Admin UI's
+# Enable/Disable buttons mutate this directory, and any git operation
+# that touched these symlinks would silently override the user's
+# choices. The set of "default-enabled" services lives in
+# ``config/default-enabled.txt``; run_all.sh's seed_enabled_symlinks
+# materializes the directory on first start (sentinel: ``enabled/.seeded``).
+deploy/supervisor/enabled/*
+!deploy/supervisor/enabled/.gitkeep
+
 # Local override for service registry (if you ever do per-machine tweaks)
 config/services.local.yaml
 

@@ -88,6 +88,79 @@ collect_ports_registry() {
   "${VENV}/bin/python" -m eidolon_admin_server.app.ports collect || true
 }
 
+# First-start materialization of ``deploy/supervisor/enabled/*.conf``.
+# The directory is gitignored — runtime state, not source — so a fresh
+# clone has only ``.gitkeep`` and the Admin UI's Enable/Disable
+# choices need somewhere to live without git stomping on them. We seed
+# from ``config/default-enabled.txt`` exactly ONCE, marked by a
+# sentinel file. After that, the directory belongs to the operator
+# (UI + manual ln).
+#
+# Idempotency contract:
+#   - sentinel exists                 → do nothing, respect whatever
+#                                       symlinks the operator chose.
+#   - sentinel missing                → create symlinks for every name
+#                                       in default-enabled.txt that
+#                                       doesn't already have one;
+#                                       touch sentinel; never re-run.
+# This means: "deleting a symlink to disable" survives ``git pull`` /
+# ``run_all.sh restart`` / anything else, because the sentinel keeps
+# us from re-seeding.
+seed_enabled_symlinks() {
+  local enabled_dir="${ROOT}/deploy/supervisor/enabled"
+  local available_dir="${ROOT}/deploy/supervisor/available"
+  local defaults_file="${ROOT}/config/default-enabled.txt"
+  local sentinel="${enabled_dir}/.seeded"
+
+  if [[ -f "$sentinel" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$defaults_file" ]]; then
+    warn "seed: ${defaults_file} missing — skipping (Admin UI will need manual enable)"
+    return 0
+  fi
+
+  # Migration safety: if the operator already has *any* symlink in
+  # enabled/ but no sentinel yet, they're an existing checkout pulling
+  # the "untrack enabled/" change. Their current state is the truth —
+  # we must not re-seed and resurrect things they had disabled. Just
+  # claim the sentinel and exit, preserving their choices.
+  local existing
+  existing="$(find "$enabled_dir" -maxdepth 1 -type l -name '*.conf' 2>/dev/null | head -n 1)"
+  if [[ -n "$existing" ]]; then
+    info "enabled/ already populated; treating as existing checkout (no re-seed)"
+    touch "$sentinel"
+    return 0
+  fi
+
+  info "first-start seed: materializing enabled/ from $(basename "$defaults_file")"
+  local count=0 skipped=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # strip inline comments + trim whitespace
+    local name="${line%%#*}"
+    name="${name#"${name%%[![:space:]]*}"}"
+    name="${name%"${name##*[![:space:]]}"}"
+    [[ -z "$name" ]] && continue
+
+    local available="${available_dir}/${name}.conf"
+    local link="${enabled_dir}/${name}.conf"
+    if [[ ! -f "$available" ]]; then
+      warn "  - ${name}: available/${name}.conf missing, skip"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    if [[ -e "$link" || -L "$link" ]]; then
+      # Operator already has a symlink (or a file). Don't overwrite.
+      continue
+    fi
+    ln -s "../available/${name}.conf" "$link"
+    count=$((count + 1))
+  done < "$defaults_file"
+
+  touch "$sentinel"
+  info "  seeded ${count} symlink(s) (${skipped} skipped); future enable/disable goes through Admin UI"
+}
+
 VENV="${ROOT}/.venv"
 WEB_DIR="${ROOT}/web"
 VITE_BIN_REL="node_modules/.bin/vite"
@@ -508,6 +581,10 @@ do_stop_busy_optionals() {
 do_start() {
   collect_ports_registry
   load_ports_env
+  # Fresh-clone bootstrap of deploy/supervisor/enabled/. No-op on the
+  # second start onward (sentinel-gated), so the operator's Admin UI
+  # Enable/Disable decisions are never overridden by this script.
+  seed_enabled_symlinks
   header "pre-flight port audit"
   do_preflight
   echo
