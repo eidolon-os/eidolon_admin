@@ -9,7 +9,7 @@ import {
   listPersonaInstances,
   mockMemoryTrigger,
   type PersonaInstance,
-} from '@/api/agent'
+} from '@/api/agentLegacyProxy'
 import JsonViewer from '@/modules/common/JsonViewer.vue'
 
 // ── instance picker (driven by query params for deep-linking) ───────────────

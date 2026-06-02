@@ -1,8 +1,15 @@
 /**
- * Agent admin client — typed wrappers around the gateway proxy.
+ * Legacy agent-service proxy — typed wrappers around the gateway's
+ * raw passthrough to eidolon_agent's own admin endpoints.
  *
- * All requests go through /api/services/agent/* which forwards to
- * eidolon_agent's :8081/api/admin/* endpoints.
+ * All requests go through ``/api/services/agent/*`` which forwards to
+ * eidolon_agent's :8081/api/admin/* surface. This is the "power-user"
+ * path used by the ``/agent`` module pages (PersonasTemplates,
+ * PersonasInstances, PersonaInstanceLab, Pairing, Devices) to drive
+ * agent-side internals directly.
+ *
+ * For the modern catalog CRUD (admin orchestrating agent + memory +
+ * KV) use ``api/agents.ts`` instead — naming is intentional.
  */
 import client from './client'
 

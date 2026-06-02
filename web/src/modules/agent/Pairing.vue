@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { issuePairingCode, pairingQrUrl, type PairingCode } from '@/api/agent'
+import { issuePairingCode, pairingQrUrl, type PairingCode } from '@/api/agentLegacyProxy'
 
 const tenantId = ref('default')
 const userId = ref('')

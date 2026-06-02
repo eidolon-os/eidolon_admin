@@ -16,7 +16,7 @@ import {
   listAgents,
   type AgentDetail,
   type AgentRef,
-} from '@/api/agentsRegistry'
+} from '@/api/agents'
 import { listUsers, type UserView } from '@/api/users'
 import { listTemplates, type TemplateRef } from '@/api/templates'
 import { extractErrorMessage } from '@/utils/format'

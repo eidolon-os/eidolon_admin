@@ -1,11 +1,12 @@
 /**
- * Typed client for /api/agents — Phase 29.F surface.
+ * Typed client for /api/agents — Phase 29.F catalog CRUD.
  *
- * Named ``agentsRegistry`` (not ``agents``) to disambiguate from
- * ``api/agent.ts`` which is the legacy gateway-proxy for the agent
- * service's own admin endpoints (templates render, persona instances
- * raw). This file talks to admin's NEW agent CRUD that orchestrates
- * across agent + memory + admin's KV.
+ * This is the modern surface: agents-as-catalog-entities, owned by
+ * admin, orchestrated across agent + memory + admin's KV. The sibling
+ * file ``api/agentLegacyProxy.ts`` is the older gateway-proxy for the
+ * agent service's own admin endpoints (templates render, persona
+ * instances raw) — kept around because the ``/agent`` power-user
+ * module still uses them. Two files, two surfaces, on purpose.
  */
 import client from './client'
 

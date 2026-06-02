@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { listAgentDevices, revokeAgentDevice, type AgentDevice } from '@/api/agent'
+import { listAgentDevices, revokeAgentDevice, type AgentDevice } from '@/api/agentLegacyProxy'
 import JsonViewer from '@/modules/common/JsonViewer.vue'
 
 const items = ref<AgentDevice[]>([])

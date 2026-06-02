@@ -7,7 +7,7 @@ import {
   listPersonaTemplates,
   reloadPersonaTemplates,
   type PersonaTemplate,
-} from '@/api/agent'
+} from '@/api/agentLegacyProxy'
 
 const items = ref<PersonaTemplate[]>([])
 const loading = ref(false)

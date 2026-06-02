@@ -22,7 +22,7 @@ import {
   unregisterDevice,
   type DeviceView,
 } from '@/api/devices'
-import { listAgents, type AgentRef } from '@/api/agentsRegistry'
+import { listAgents, type AgentRef } from '@/api/agents'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import CatalogPage from '@/modules/common/CatalogPage.vue'
 

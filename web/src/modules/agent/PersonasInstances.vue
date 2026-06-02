@@ -13,7 +13,7 @@ import {
   rollbackPersonaEvolution,
   type PersonaInstance,
   type PersonaTemplate,
-} from '@/api/agent'
+} from '@/api/agentLegacyProxy'
 import JsonViewer from '@/modules/common/JsonViewer.vue'
 
 const router = useRouter()
