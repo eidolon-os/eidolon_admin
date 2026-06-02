@@ -20,6 +20,7 @@ import {
 import { listUsers, type UserView } from '@/api/users'
 import { listTemplates, type TemplateRef } from '@/api/templates'
 import { extractErrorMessage } from '@/utils/format'
+import CatalogPage from '@/modules/common/CatalogPage.vue'
 
 const rows = ref<AgentRef[]>([])
 const users = ref<UserView[]>([])
@@ -149,35 +150,29 @@ onMounted(refresh)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
-      <div>
-        <h2>Agent 管理</h2>
-        <p class="hint">
-          每个 agent = 一个 user + 一个 template + 个性化 overlay。
-          创建 agent 前请确保对应的 user 和 template 已存在。
-        </p>
-      </div>
-      <div class="head-actions">
-        <el-select
-          v-model="filterUser"
-          placeholder="按 user 过滤"
-          clearable
-          size="small"
-          style="width: 200px"
-          @change="refresh"
-        >
-          <el-option
-            v-for="u in users"
-            :key="u.spec.user_id"
-            :label="`${u.spec.display_name} (${u.spec.user_id})`"
-            :value="u.spec.user_id"
-          />
-        </el-select>
-        <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
-        <el-button type="primary" size="small" @click="openCreate">新建 Agent</el-button>
-      </div>
-    </header>
+  <CatalogPage
+    title="Agent 管理"
+    hint="每个 agent = 一个 user + 一个 template + 个性化 overlay。创建 agent 前请确保对应的 user 和 template 已存在。"
+  >
+    <template #head-actions>
+      <el-select
+        v-model="filterUser"
+        placeholder="按 user 过滤"
+        clearable
+        size="small"
+        style="width: 200px"
+        @change="refresh"
+      >
+        <el-option
+          v-for="u in users"
+          :key="u.spec.user_id"
+          :label="`${u.spec.display_name} (${u.spec.user_id})`"
+          :value="u.spec.user_id"
+        />
+      </el-select>
+      <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
+      <el-button type="primary" size="small" @click="openCreate">新建 Agent</el-button>
+    </template>
 
     <el-alert
       v-if="!upstreamAvailable"
@@ -294,15 +289,14 @@ onMounted(refresh)
         <el-button type="primary" :loading="submitting" @click="submit">创建</el-button>
       </template>
     </el-dialog>
-  </div>
+  </CatalogPage>
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.page-head h2 { margin: 0; font-size: 18px; color: var(--eid-text-primary); }
-.hint { margin: 6px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 720px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
+/* Layout chrome lives in <CatalogPage>. ``head-actions`` here adds
+   ``align-items: center`` because we mix a <el-select> with buttons
+   in the header — the base ``head-actions`` keeps default alignment. */
+:deep(.head-actions) { align-items: center; }
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 .split { display: grid; grid-template-columns: minmax(420px, 1fr) 2fr; gap: 16px; }
 .left, .right { background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; min-height: 480px; }

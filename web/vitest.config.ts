@@ -8,9 +8,15 @@
  * red builds, but also no green-on-fakes.
  */
 import { fileURLToPath, URL } from 'node:url'
+import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
+  // ``@vitejs/plugin-vue`` is required for tests that import ``.vue``
+  // SFCs (e.g. the CatalogPage layout-shell unit test). Existing axios-
+  // based tests work fine either way; adding the plugin is a no-op for
+  // them.
+  plugins: [vue()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

@@ -16,6 +16,7 @@ import {
   type TenantSpec,
 } from '@/api/tenants'
 import { extractErrorMessage } from '@/utils/format'
+import CatalogPage from '@/modules/common/CatalogPage.vue'
 
 const rows = ref<TenantSpec[]>([])
 const loading = ref(false)
@@ -104,20 +105,15 @@ onMounted(refresh)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
-      <div>
-        <h2>租户管理</h2>
-        <p class="hint">
-          租户用于在同一 admin 实例上隔离不同环境的数据。默认 <code>default</code> 已自动创建,
-          一般无需新增。
-        </p>
-      </div>
-      <div class="head-actions">
-        <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
-        <el-button type="primary" size="small" @click="openCreate">新建租户</el-button>
-      </div>
-    </header>
+  <CatalogPage title="租户管理">
+    <template #hint-html>
+      租户用于在同一 admin 实例上隔离不同环境的数据。默认 <code>default</code>
+      已自动创建,一般无需新增。
+    </template>
+    <template #head-actions>
+      <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
+      <el-button type="primary" size="small" @click="openCreate">新建租户</el-button>
+    </template>
 
     <el-table v-loading="loading" :data="rows" stripe>
       <el-table-column prop="tenant_id" label="Tenant ID" width="220" />
@@ -161,14 +157,5 @@ onMounted(refresh)
         <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
       </template>
     </el-dialog>
-  </div>
+  </CatalogPage>
 </template>
-
-<style scoped>
-.page { display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.page-head h2 { margin: 0; font-size: 18px; color: var(--eid-text-primary); }
-.hint { margin: 6px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 720px; }
-.head-actions { display: flex; gap: 8px; }
-code { font-family: var(--eid-font-mono); padding: 1px 6px; background: var(--eid-bg-panel); border-radius: 3px; }
-</style>

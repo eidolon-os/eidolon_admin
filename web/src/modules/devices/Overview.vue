@@ -24,6 +24,7 @@ import {
 } from '@/api/devices'
 import { listAgents, type AgentRef } from '@/api/agentsRegistry'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
+import CatalogPage from '@/modules/common/CatalogPage.vue'
 
 const devices = ref<DeviceView[]>([])
 const agents = ref<AgentRef[]>([])
@@ -146,25 +147,20 @@ function agentLabel(agent_id: string): string {
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
-      <div>
-        <h2>设备管理</h2>
-        <p class="hint">
-          设备通过 mDNS 发现 hub 后自动出现。操作员先【批准】, 再【绑定 Agent】
-          将该设备指向一个已存在的 agent (在 /agents 中创建)。
-          <span v-if="!hubAvailable" class="warn">⚠ Hub 不可达, 状态可能过期</span>
-        </p>
-      </div>
-      <div class="head-actions">
-        <el-tag v-if="pendingCount > 0" size="small" type="warning" effect="dark">
-          {{ pendingCount }} 待批准
-        </el-tag>
-        <el-button :icon="Refresh" :loading="loading" size="small" @click="refresh">
-          刷新
-        </el-button>
-      </div>
-    </header>
+  <CatalogPage title="设备管理">
+    <template #hint-html>
+      设备通过 mDNS 发现 hub 后自动出现。操作员先【批准】, 再【绑定 Agent】
+      将该设备指向一个已存在的 agent (在 /agents 中创建)。
+      <span v-if="!hubAvailable" class="warn">⚠ Hub 不可达, 状态可能过期</span>
+    </template>
+    <template #head-actions>
+      <el-tag v-if="pendingCount > 0" size="small" type="warning" effect="dark">
+        {{ pendingCount }} 待批准
+      </el-tag>
+      <el-button :icon="Refresh" :loading="loading" size="small" @click="refresh">
+        刷新
+      </el-button>
+    </template>
 
     <el-table v-loading="loading && devices.length === 0" :data="devices" size="small" stripe>
       <el-table-column label="device_id" min-width="160">
@@ -237,16 +233,13 @@ function agentLabel(agent_id: string): string {
         <el-button type="primary" :loading="submitting" @click="submitBind">绑定</el-button>
       </template>
     </el-dialog>
-  </div>
+  </CatalogPage>
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-.page-head h2 { margin: 0; font-size: 18px; color: var(--eid-text-primary); }
-.hint { margin: 6px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 720px; line-height: 1.6; }
+/* Layout chrome lives in <CatalogPage>. */
 .warn { color: var(--eid-warning); margin-left: 8px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
+:deep(.head-actions) { align-items: center; }
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 .mono { font-family: var(--eid-font-mono); font-size: 12px; padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
 .empty { padding: 32px; text-align: center; color: var(--eid-text-muted); font-size: 12px; background: var(--eid-bg-panel); border: 1px dashed var(--eid-border); border-radius: var(--eid-radius); }

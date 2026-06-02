@@ -21,6 +21,7 @@ import {
   type TemplateRef,
 } from '@/api/templates'
 import { extractErrorMessage } from '@/utils/format'
+import CatalogPage from '@/modules/common/CatalogPage.vue'
 
 const rows = ref<TemplateRef[]>([])
 const upstreamAvailable = ref(true)
@@ -166,20 +167,14 @@ onMounted(refresh)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
-      <div>
-        <h2>Persona 模板</h2>
-        <p class="hint">
-          模板是 agent 的"灵魂"来源。一个模板可以被多个 agent 引用,
-          删除前需先删除所有引用该模板的 agent。
-        </p>
-      </div>
-      <div class="head-actions">
-        <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
-        <el-button type="primary" size="small" @click="openCreate">新建模板</el-button>
-      </div>
-    </header>
+  <CatalogPage
+    title="Persona 模板"
+    hint='模板是 agent 的"灵魂"来源。一个模板可以被多个 agent 引用,删除前需先删除所有引用该模板的 agent。'
+  >
+    <template #head-actions>
+      <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
+      <el-button type="primary" size="small" @click="openCreate">新建模板</el-button>
+    </template>
 
     <el-alert
       v-if="!upstreamAvailable"
@@ -287,15 +282,12 @@ onMounted(refresh)
         <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
       </template>
     </el-dialog>
-  </div>
+  </CatalogPage>
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.page-head h2 { margin: 0; font-size: 18px; color: var(--eid-text-primary); }
-.hint { margin: 6px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 720px; }
-.head-actions { display: flex; gap: 8px; }
+/* Layout chrome (page / page-head / hint / head-actions) lives in
+   <CatalogPage>. Page-local styles only here. */
 .split { display: grid; grid-template-columns: minmax(360px, 1fr) 2fr; gap: 16px; }
 .left, .right { background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; min-height: 480px; }
 .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--eid-text-muted); }

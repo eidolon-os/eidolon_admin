@@ -18,6 +18,7 @@ import {
 } from '@/api/users'
 import { listTenants, type TenantSpec } from '@/api/tenants'
 import { extractErrorMessage } from '@/utils/format'
+import CatalogPage from '@/modules/common/CatalogPage.vue'
 
 const rows = ref<UserView[]>([])
 const tenants = ref<TenantSpec[]>([])
@@ -146,20 +147,14 @@ onMounted(refresh)
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
-      <div>
-        <h2>用户管理</h2>
-        <p class="hint">
-          每个用户对应 memory 服务里的一个独立 palace 进程, 创建可能耗时 10-30s。
-          用户必须先存在,才能为其创建 agent。
-        </p>
-      </div>
-      <div class="head-actions">
-        <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
-        <el-button type="primary" size="small" @click="openCreate">新建用户</el-button>
-      </div>
-    </header>
+  <CatalogPage
+    title="用户管理"
+    hint="每个用户对应 memory 服务里的一个独立 palace 进程, 创建可能耗时 10-30s。用户必须先存在,才能为其创建 agent。"
+  >
+    <template #head-actions>
+      <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
+      <el-button type="primary" size="small" @click="openCreate">新建用户</el-button>
+    </template>
 
     <el-alert
       v-if="!memoryAvailable"
@@ -242,15 +237,11 @@ onMounted(refresh)
         <el-button type="primary" :loading="submitting" @click="submit">提交</el-button>
       </template>
     </el-dialog>
-  </div>
+  </CatalogPage>
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: 16px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; }
-.page-head h2 { margin: 0; font-size: 18px; color: var(--eid-text-primary); }
-.hint { margin: 6px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 720px; }
-.head-actions { display: flex; gap: 8px; }
+/* Layout chrome lives in <CatalogPage>. Page-local styles only. */
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 .dialog-hint { margin: 8px 0 0 100px; font-size: 12px; color: var(--eid-text-muted); }
 </style>
