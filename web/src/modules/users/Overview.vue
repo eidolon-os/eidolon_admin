@@ -124,7 +124,20 @@ async function remove(row: UserView) {
 async function setActive(row: UserView, agent_id: string) {
   try {
     await setActiveAgent(row.spec.user_id, agent_id)
-    ElMessage.success('已设置 active agent')
+    // Phase 33.B4: surface the "future sessions only" semantic. Channel
+    // resolves device JWTs once per LK session (see resolver.py's
+    // docstring) — switching active_agent does NOT hot-rotate the
+    // currently-running conversation. Operators have repeatedly
+    // mistaken the green "成功" toast for "the user is now talking to
+    // the new agent right now"; this longer hint corrects that.
+    ElMessage({
+      type: 'success',
+      message:
+        '已设置 active agent — 仅对该用户的下一次新会话生效。' +
+        '当前正在进行的会话仍走旧 agent,如需立即切换请走"撤销会话"。',
+      duration: 6000,
+      showClose: true,
+    })
     await refresh()
   } catch (e: any) {
     ElMessage.error(`设置失败: ${extractErrorMessage(e)}`)

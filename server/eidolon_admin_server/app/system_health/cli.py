@@ -48,6 +48,7 @@ async def check(
     verbose: bool,
     cfg: GatewayConfig | None = None,
     unmanaged: dict[str, frozenset[int] | set[int]] | None = None,
+    emit_skip_list: str | None = None,
 ) -> int:
     """Return process exit code: 0 = clean, 1 = orphans found / unfixable.
 
@@ -76,6 +77,18 @@ async def check(
     # block the cold start; the rest of the stack proceeds.
     optional_ids = {s.id for s in cfg.services if s.optional}
     skippable, blocking = _partition_by_optional(orphans, optional_ids)
+
+    # Phase 33.A10: emit the busy-optional service IDs so run_all.sh can
+    # stop their supervisord programs *after* startup, closing the
+    # "autostart-vs-already-running" race. We write the list whether we
+    # end up passing or failing — even if we refuse the start because of
+    # blocking orphans, the operator may want the skip list when
+    # diagnosing the next attempt.
+    if emit_skip_list:
+        skip_ids = sorted({o["service_id"] for o in skippable})
+        with open(emit_skip_list, "w", encoding="utf-8") as f:
+            for sid in skip_ids:
+                f.write(f"{sid}\n")
 
     if not blocking:
         if skippable:
@@ -193,9 +206,14 @@ def _partition_by_optional(
 
 def _print_optional_skip_notice(skippable: list[dict]) -> None:
     """Tell the operator we noticed a busy optional-service port but
-    won't refuse the start. The message includes the path forward
-    (the existing process keeps serving; supervisord won't try to
-    spawn a duplicate)."""
+    won't refuse the start.
+
+    Note: in earlier docs this said "supervisord won't try to spawn a
+    duplicate" — that was wishful. supervisord with ``autostart=true``
+    WILL fire the program on startup; what stops the duplicate spawn
+    is run_all.sh consuming ``--emit-skip-list`` and issuing
+    ``supervisorctl stop <id>`` after start (Phase 33.A10). The notice
+    here is just to make the chain visible to the operator."""
     print()
     print(_color(
         f"i {len(skippable)} optional service listener(s) — "
@@ -376,10 +394,26 @@ def main(argv: list[str] | None = None) -> int:
         "-v", "--verbose", action="store_true",
         help="also print the declared-ports list on success",
     )
+    check_p.add_argument(
+        "--emit-skip-list",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Phase 33.A10: write busy-but-optional service IDs (one per "
+            "line) to PATH. run_all.sh consumes this so it can stop the "
+            "corresponding supervisord programs *after* startup, "
+            "preventing the autostart-vs-already-running race on "
+            "services like mementos."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.cmd == "check":
-        return asyncio.run(check(cleanup=args.cleanup, verbose=args.verbose))
+        return asyncio.run(check(
+            cleanup=args.cleanup,
+            verbose=args.verbose,
+            emit_skip_list=args.emit_skip_list,
+        ))
     parser.print_help()
     return 2
 

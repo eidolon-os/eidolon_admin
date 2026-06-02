@@ -219,6 +219,82 @@ async def test_check_mixed_optional_and_required_only_blocks_on_required(
             p.wait(timeout=5)
 
 
+@pytest.mark.asyncio
+async def test_check_emit_skip_list_writes_busy_optional_ids(
+    tmp_path,
+) -> None:
+    """Phase 33.A10: --emit-skip-list writes one service_id per line
+    for every busy-but-optional listener. run_all.sh consumes this so
+    it can ``supervisorctl stop`` the corresponding programs after
+    startup, closing the autostart-vs-already-running race.
+    """
+    opt_port = _pick_free_port()
+    other_port = _pick_free_port()  # free → should NOT appear in list
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000, cors_origins=[]),
+        services=[
+            ServiceConfig(
+                id="busy-optional",
+                name="Busy Optional",
+                integration="process",
+                optional=True,
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[opt_port]),
+            ),
+            ServiceConfig(
+                id="free-optional",
+                name="Free Optional",
+                integration="process",
+                optional=True,
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[other_port]),
+            ),
+        ],
+    )
+    proc = _spawn_listener(opt_port)
+    skip_file = tmp_path / "skip.txt"
+    try:
+        exit_code = await cli.check(
+            cleanup=False,
+            verbose=False,
+            cfg=cfg,
+            emit_skip_list=str(skip_file),
+        )
+        assert exit_code == 0
+        contents = skip_file.read_text(encoding="utf-8").splitlines()
+        assert contents == ["busy-optional"], (
+            "only the busy-optional id should appear in the skip list; "
+            "free-optional has no listener so nothing to stop"
+        )
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_check_emit_skip_list_is_empty_when_no_optional_busy(
+    tmp_path,
+) -> None:
+    """If no optional services have busy ports, --emit-skip-list still
+    writes an empty file. run_all.sh's loop short-circuits on empty so
+    this is the contract we want.
+    """
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000, cors_origins=[]),
+        services=[],
+    )
+    skip_file = tmp_path / "skip.txt"
+    exit_code = await cli.check(
+        cleanup=False,
+        verbose=False,
+        cfg=cfg,
+        emit_skip_list=str(skip_file),
+    )
+    assert exit_code == 0
+    assert skip_file.exists()
+    assert skip_file.read_text(encoding="utf-8") == ""
+
+
 def test_main_unknown_subcommand_returns_two() -> None:
     """argparse error on missing subcommand exits 2 (the default).
 

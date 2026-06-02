@@ -465,7 +465,14 @@ do_sv_passthrough() {
 # something is deeply wrong and silent failure would be worse.
 do_preflight() {
   ensure_api_deps
-  local cli="${VENV}/bin/python -m eidolon_admin_server.app.system_health.cli check"
+  # Phase 33.A10: pass --emit-skip-list so the CLI writes any
+  # busy-but-optional service IDs (mementos when operator runs it
+  # standalone) to a temp file. do_start consumes that list after
+  # supervisord boots and stops the corresponding programs, closing the
+  # "autostart fires duplicate that crashes on bind" race.
+  SKIP_LIST_FILE="$(mktemp -t eidolon-skip-list.XXXXXX)"
+  export SKIP_LIST_FILE
+  local cli="${VENV}/bin/python -m eidolon_admin_server.app.system_health.cli check --emit-skip-list ${SKIP_LIST_FILE}"
   if [[ "${PREFLIGHT_CLEANUP:-0}" == "1" ]]; then
     cli="$cli --cleanup"
     info "pre-flight: will SIGTERM Eidolon-looking listeners on declared ports, then continue"
@@ -473,8 +480,29 @@ do_preflight() {
     info "pre-flight: checking declared ports are free (required for cold start)"
   fi
   if ! $cli; then
+    rm -f "$SKIP_LIST_FILE"
     exit 1
   fi
+}
+
+# Phase 33.A10: stop supervisord programs that correspond to optional
+# services whose ports were already bound at pre-flight. Without this,
+# supervisord's autostart fires a second copy that crashes on bind and
+# loops until autorestart gives up. The skip-list file is whatever
+# do_preflight wrote.
+do_stop_busy_optionals() {
+  local skip_file="${SKIP_LIST_FILE:-}"
+  if [[ -z "$skip_file" || ! -s "$skip_file" ]]; then
+    return 0
+  fi
+  info "stopping supervisord programs for already-running optional services"
+  while IFS= read -r sid; do
+    [[ -z "$sid" ]] && continue
+    info "  - $sid (port held by pre-existing process)"
+    "${VENV}/bin/supervisorctl" -c "$SV_CONF" stop "$sid" >/dev/null 2>&1 || true
+  done < "$skip_file"
+  rm -f "$skip_file"
+  unset SKIP_LIST_FILE
 }
 
 do_start() {
@@ -485,6 +513,7 @@ do_start() {
   echo
   header "supervisord (incl. admin-api)"
   do_sv_start
+  do_stop_busy_optionals
   echo
   header "admin web"
   do_web_start
