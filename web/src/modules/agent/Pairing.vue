@@ -2,16 +2,20 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { issuePairingCode, pairingQrUrl, type PairingCode } from '@/api/agentLegacyProxy'
+import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
 
 const tenantId = ref('default')
-const userId = ref('')
+// 2026-06-03: was a free-text input — same "type a user that has no
+// memory palace" footgun as ChatTest. RegisteredUserPicker constrains
+// to admin-known users.
+const userId = ref<string | null>(null)
 const templateId = ref('')
 const issuing = ref(false)
 const code = ref<PairingCode | null>(null)
 
 async function issue() {
   if (!userId.value) {
-    ElMessage.warning('请填写 user_id')
+    ElMessage.warning('请选择 user')
     return
   }
   issuing.value = true
@@ -42,7 +46,7 @@ async function issue() {
             <el-input v-model="tenantId" />
           </el-form-item>
           <el-form-item label="User ID" required>
-            <el-input v-model="userId" placeholder="如：alice" />
+            <RegisteredUserPicker v-model="userId" width="100%" />
           </el-form-item>
           <el-form-item label="Default template (可选)">
             <el-input v-model="templateId" placeholder="如：companion-base" />

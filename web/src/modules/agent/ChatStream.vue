@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowUp, Promotion, Refresh } from '@element-plus/icons-vue'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
+import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
 
 // Conversation-style view over the agent /chat/test SSE endpoint.
 //
@@ -40,9 +41,14 @@ interface Message {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+// 2026-06-03: user_id used to default to "tester" and was a free
+// text input. That caused every "chat doesn't recall my memory"
+// support ticket — memory had no palace for ``tester``. Now backed by
+// RegisteredUserPicker so only admin-registered users (which have
+// real memory palaces) are selectable.
 const settings = ref({
   tenant_id: 'default',
-  user_id: 'tester',
+  user_id: '' as string | null,
   template_id: '',
 })
 const settingsCollapsed = ref(false)
@@ -64,7 +70,7 @@ async function send() {
   const text = input.value.trim()
   if (!text) return
   if (!settings.value.user_id) {
-    ElMessage.warning('请填写 user_id')
+    ElMessage.warning('请选择 user')
     return
   }
 
@@ -287,7 +293,7 @@ function onKeyDown(e: KeyboardEvent) {
           <el-input v-model="settings.tenant_id" size="small" style="width: 160px" />
         </el-form-item>
         <el-form-item label="User" required>
-          <el-input v-model="settings.user_id" size="small" placeholder="tester" style="width: 160px" />
+          <RegisteredUserPicker v-model="settings.user_id" width="220px" />
         </el-form-item>
         <el-form-item label="Template">
           <el-input v-model="settings.template_id" size="small" placeholder="(可选)" style="width: 200px" />

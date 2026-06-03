@@ -3,13 +3,18 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Promotion, ChatLineRound } from '@element-plus/icons-vue'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
+import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
 
 // Chat test uses SSE over POST — fetch-with-stream-reader rather than
 // EventSource (which only supports GET).
 
+// 2026-06-03: user_id used to be a free-text input defaulting to
+// "tester". That made it trivially easy to test against a user memory
+// had no palace for → recall always missed → "AI forgot my data" bug
+// reports. We now require picking from the registered-users dropdown.
 const form = ref({
   tenant_id: 'default',
-  user_id: 'tester',
+  user_id: '' as string | null,
   template_id: '',
   text: '',
 })
@@ -23,6 +28,10 @@ let abortCtrl: AbortController | null = null
 async function send() {
   if (!form.value.text.trim()) {
     ElMessage.warning('请输入要测试的话')
+    return
+  }
+  if (!form.value.user_id) {
+    ElMessage.warning('请选择 user')
     return
   }
   cancel()
@@ -117,7 +126,9 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
       <el-form>
         <div class="form-grid">
           <el-form-item label="Tenant"><el-input v-model="form.tenant_id" /></el-form-item>
-          <el-form-item label="User"><el-input v-model="form.user_id" /></el-form-item>
+          <el-form-item label="User">
+            <RegisteredUserPicker v-model="form.user_id" width="100%" />
+          </el-form-item>
           <el-form-item label="Template (可选)"><el-input v-model="form.template_id" /></el-form-item>
         </div>
         <el-form-item label="用户消息">
