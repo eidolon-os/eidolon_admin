@@ -45,6 +45,15 @@ const routes: RouteRecordRaw[] = [
         name: 'devices',
         component: () => import('@/modules/devices/Overview.vue'),
       },
+      // Phase 34.B: read-only browse over agent's SQLite turn log.
+      // Lives outside the catalog (it's a "what happened" surface,
+      // not a "what exists" surface) but sits next to it in the menu
+      // for now until we add a dedicated "Activity" section.
+      {
+        path: 'conversations',
+        name: 'conversations',
+        component: () => import('@/modules/conversations/Overview.vue'),
+      },
       // Old /deploy and /health surfaces have been merged into /supervisor.
       // Keep redirects so bookmarked URLs still land somewhere useful.
       { path: 'deploy', redirect: { name: 'supervisor' } },

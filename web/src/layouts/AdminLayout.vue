@@ -95,6 +95,13 @@ function go(serviceId: string, feature: string) {
             <span>Devices</span>
           </el-menu-item>
         </el-sub-menu>
+        <!-- Phase 34.B: read-only browse of agent's chat history. Lives
+             as a top-level entry rather than under Catalog because it's
+             an "activity" view, not a "what exists" view. -->
+        <el-menu-item index="conversations" @click="router.push({ name: 'conversations' })">
+          <el-icon><ChatLineRound /></el-icon>
+          <span>Conversations</span>
+        </el-menu-item>
         <el-sub-menu
           v-for="svc in navigableServices"
           :key="svc.id"
@@ -125,6 +132,7 @@ function go(serviceId: string, feature: string) {
           <template v-else-if="route.name === 'users'">Catalog <span class="sep">/</span> Users</template>
           <template v-else-if="route.name === 'agents'">Catalog <span class="sep">/</span> Agents</template>
           <template v-else-if="route.name === 'devices'">Catalog <span class="sep">/</span> Devices</template>
+          <template v-else-if="route.name === 'conversations'">Conversations</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
             <span class="sep">/</span>
