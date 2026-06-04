@@ -207,6 +207,19 @@ function contextLabel(row: TurnSummary): string {
   return `${ctx.segment_kinds.join('>') || 'empty'}${dropped}${degraded}`
 }
 
+function guardLabel(row: TurnSummary): string {
+  const guards = row.observability_summary?.development_guards
+  if (!guards) return '—'
+  const context = guards.context_budget
+  const memory = guards.memory_write_policy
+  const tool = guards.tool_policy
+  return [
+    `ctx:${context.mode || '—'}${context.applied ? '' : '/shadow'}`,
+    `mem:${memory.mode || '—'}${memory.fanout_allowed ? '' : '/blocked'}`,
+    `tool:${tool.schema_strict ? 'strict' : 'compat'}`,
+  ].join(' ')
+}
+
 function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | 'info' {
   if (!row.fanout_allowed) return row.skipped_reason === 'requires_consent' ? 'danger' : 'warning'
   if (row.disposition === 'ignore') return 'info'
@@ -280,6 +293,11 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
           <el-table-column label="context" min-width="180">
             <template #default="{ row }">
               <span class="muted mono">{{ contextLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="guards" min-width="190">
+            <template #default="{ row }">
+              <span class="muted mono">{{ guardLabel(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="latency" width="100">
@@ -371,6 +389,21 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
             <div class="obs-item">
               <span class="lbl">fingerprint</span>
               <span class="val mono">{{ detail.observability_summary.prompt_fingerprint }}</span>
+            </div>
+            <div class="obs-item full">
+              <span class="lbl">guards</span>
+              <span class="val mono">
+                context {{ detail.observability_summary.development_guards.context_budget.mode || '—' }}
+                <template v-if="detail.observability_summary.development_guards.context_budget.shadow_dropped_count">
+                  · shadow drops {{ detail.observability_summary.development_guards.context_budget.shadow_dropped_count }}
+                </template>
+                · memory {{ detail.observability_summary.development_guards.memory_write_policy.mode || '—' }}
+                <template v-if="!detail.observability_summary.development_guards.memory_write_policy.fanout_allowed">
+                  / {{ detail.observability_summary.development_guards.memory_write_policy.skipped_reason || 'blocked' }}
+                </template>
+                · tools {{ detail.observability_summary.development_guards.tool_policy.schema_strict ? 'strict' : 'compat' }}
+                / max {{ detail.observability_summary.development_guards.tool_policy.max_tool_iters || '—' }}
+              </span>
             </div>
           </div>
 
@@ -519,6 +552,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
 
 .observability { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 4px; border-bottom: 1px solid var(--eid-border); font-size: 12px; }
 .obs-item { min-width: 0; display: flex; gap: 8px; align-items: baseline; }
+.obs-item.full { grid-column: 1 / -1; }
 .obs-item .lbl { color: var(--eid-text-muted); min-width: 92px; flex: 0 0 auto; }
 .obs-item .val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

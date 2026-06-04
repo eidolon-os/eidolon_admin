@@ -143,6 +143,28 @@ describe('api/conversations.ts', () => {
             tool_ms: null,
             total_ms: 150,
           },
+          development_guards: {
+            context_budget: {
+              mode: 'enabled',
+              applied: true,
+              max_tokens: 6000,
+              dropped_count: 0,
+              shadow_dropped_count: 0,
+              shadow_dropped_kinds: [],
+            },
+            memory_write_policy: {
+              mode: 'enabled',
+              shadow_only: false,
+              fanout_allowed: true,
+              skipped_reason: null,
+              disposition: 'semantic_upsert',
+            },
+            tool_policy: {
+              schema_strict: true,
+              require_idempotency_for_side_effect_tools: false,
+              max_tool_iters: 4,
+            },
+          },
         },
         messages: [],
         turn_trace: null,
@@ -155,5 +177,6 @@ describe('api/conversations.ts', () => {
     expect(getMock).toHaveBeenCalledWith('/services/agent/conversations/turns/turn%2Fwith%20space')
     expect(result.observability_summary?.context.segment_kinds).toContain('memory')
     expect(result.observability_summary?.memory_write.disposition).toBe('semantic_upsert')
+    expect(result.observability_summary?.development_guards.tool_policy.schema_strict).toBe(true)
   })
 })

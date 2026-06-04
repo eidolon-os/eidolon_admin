@@ -48,6 +48,29 @@ export interface LatencyObservabilitySummary {
   total_ms: number | null
 }
 
+export interface DevelopmentGuardSummary {
+  context_budget: {
+    mode: string | null
+    applied: boolean
+    max_tokens: number | null
+    dropped_count: number
+    shadow_dropped_count: number
+    shadow_dropped_kinds: string[]
+  }
+  memory_write_policy: {
+    mode: string | null
+    shadow_only: boolean
+    fanout_allowed: boolean
+    skipped_reason: string | null
+    disposition: string | null
+  }
+  tool_policy: {
+    schema_strict: boolean
+    require_idempotency_for_side_effect_tools: boolean
+    max_tool_iters: number | null
+  }
+}
+
 export interface TurnObservabilitySummary {
   schema_version: string | null
   privacy_mode: string | null
@@ -57,6 +80,7 @@ export interface TurnObservabilitySummary {
   memory_write: MemoryWriteSummary
   tools: ToolObservabilitySummary
   latency: LatencyObservabilitySummary
+  development_guards: DevelopmentGuardSummary
 }
 
 export interface TurnSummary {
