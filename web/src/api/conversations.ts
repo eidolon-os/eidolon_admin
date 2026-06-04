@@ -1,15 +1,63 @@
 /**
  * Typed client for the read-only conversations browse endpoints.
  *
- * Flows through admin's gateway proxy: ``/api/services/agent/...`` is
- * stripped to ``/api/admin/...`` on the agent side. So the URLs we
- * post here mirror the agent's router exactly with the
- * ``services/agent`` prefix on top.
- *
- * Phase 34.A added these two endpoints on the agent side; this file
- * is the matching surface for the Vue page in Phase 34.B.
+ * Flows through admin's gateway proxy: /api/services/agent/... is
+ * stripped to /api/admin/... on the agent side.
  */
 import client from './client'
+
+export interface ContextObservabilitySummary {
+  total_token_estimate: number
+  segment_kinds: string[]
+  dropped_count: number
+  dropped_kinds: string[]
+  degraded_sources: string[]
+}
+
+export interface MemoryRecallSummary {
+  attempted: boolean
+  degraded: boolean
+  skipped_reason: string | null
+  hit_count: number
+  context_injected: boolean
+}
+
+export interface MemoryWriteSummary {
+  disposition: string | null
+  reason: string | null
+  fanout_allowed: boolean
+  skipped_reason: string | null
+  policy_version: string | null
+}
+
+export interface ToolObservabilitySummary {
+  count: number
+  names: string[]
+  error_count: number
+  cached_count: number
+  total_latency_ms: number
+}
+
+export interface LatencyObservabilitySummary {
+  guard_ms: number | null
+  triage_ms: number | null
+  compile_ms: number | null
+  first_delta_ms: number | null
+  output_ms: number | null
+  tool_ms: number | null
+  total_ms: number | null
+}
+
+export interface TurnObservabilitySummary {
+  schema_version: string | null
+  privacy_mode: string | null
+  prompt_fingerprint: string
+  context: ContextObservabilitySummary
+  memory: MemoryRecallSummary
+  memory_write: MemoryWriteSummary
+  tools: ToolObservabilitySummary
+  latency: LatencyObservabilitySummary
+}
 
 export interface TurnSummary {
   turn_id: string
@@ -21,7 +69,7 @@ export interface TurnSummary {
   trigger: string
   caller_kind: string | null
   device_id: string | null
-  started_at: string  // ISO
+  started_at: string
   finished_at: string | null
   status: string
   triage_kind: string | null
@@ -31,16 +79,37 @@ export interface TurnSummary {
   tokens_out: number
   model: string | null
   error_code: string | null
+  observability_summary: TurnObservabilitySummary | null
 }
 
 export interface ListTurnsResponse {
   turns: TurnSummary[]
-  next_before: string | null  // ISO cursor, null when last page reached
+  next_before: string | null
+}
+
+export interface MemoryAuditRow {
+  turn_id: string
+  conversation_id: string
+  seq: number
+  tenant_id: string
+  user_id: string
+  started_at: string
+  disposition: string | null
+  reason: string | null
+  policy_version: string | null
+  fanout_allowed: boolean
+  skipped_reason: string | null
+  privacy_mode: string | null
+}
+
+export interface MemoryAuditResponse {
+  rows: MemoryAuditRow[]
+  next_before: string | null
 }
 
 export interface ChatMessageView {
   id: string
-  role: string  // 'user' | 'assistant' | 'tool' | ...
+  role: string
   content: string
   content_type: string
   tokens: number | null
@@ -56,6 +125,7 @@ export interface TurnDetail extends TurnSummary {
   cost_usd_micro: number
   trace_id: string | null
   metadata: Record<string, unknown> | null
+  turn_trace: Record<string, unknown> | null
   messages: ChatMessageView[]
 }
 
@@ -63,12 +133,20 @@ export interface ListTurnsParams {
   user_id?: string
   tenant_id?: string
   limit?: number
-  before?: string  // ISO cursor
+  before?: string
 }
 
 export async function listTurns(params: ListTurnsParams = {}): Promise<ListTurnsResponse> {
   const { data } = await client.get<ListTurnsResponse>(
     '/services/agent/conversations/turns',
+    { params },
+  )
+  return data
+}
+
+export async function listMemoryAudit(params: ListTurnsParams = {}): Promise<MemoryAuditResponse> {
+  const { data } = await client.get<MemoryAuditResponse>(
+    '/services/agent/conversations/memory-audit',
     { params },
   )
   return data

@@ -18,8 +18,10 @@ import { ElMessage } from 'element-plus'
 import { Refresh, ChatLineRound, ArrowDown, ArrowRight } from '@element-plus/icons-vue'
 import {
   getTurn,
+  listMemoryAudit,
   listTurns,
   type ListTurnsParams,
+  type MemoryAuditRow,
   type TurnDetail,
   type TurnSummary,
 } from '@/api/conversations'
@@ -30,6 +32,8 @@ const turns = ref<TurnSummary[]>([])
 const loading = ref(false)
 const detail = ref<TurnDetail | null>(null)
 const detailLoading = ref(false)
+const auditRows = ref<MemoryAuditRow[]>([])
+const auditLoading = ref(false)
 const selectedId = ref<string | null>(null)
 const filterUserId = ref<string | null>(null)
 const cursor = ref<string | null>(null)
@@ -47,10 +51,25 @@ async function refresh() {
     const r = await listTurns(params)
     turns.value = r.turns
     cursor.value = r.next_before
+    void refreshMemoryAudit()
   } catch (e: any) {
     ElMessage.error(`加载对话记录失败: ${extractErrorMessage(e)}`)
   } finally {
     loading.value = false
+  }
+}
+
+async function refreshMemoryAudit() {
+  auditLoading.value = true
+  try {
+    const params: ListTurnsParams = { limit: 50 }
+    if (filterUserId.value) params.user_id = filterUserId.value
+    const r = await listMemoryAudit(params)
+    auditRows.value = r.rows
+  } catch (e: any) {
+    ElMessage.error(`加载 memory audit 失败: ${extractErrorMessage(e)}`)
+  } finally {
+    auditLoading.value = false
   }
 }
 
@@ -71,6 +90,19 @@ async function loadMore() {
 }
 
 async function select(row: TurnSummary) {
+  selectedId.value = row.turn_id
+  detailLoading.value = true
+  detail.value = null
+  try {
+    detail.value = await getTurn(row.turn_id)
+  } catch (e: any) {
+    ElMessage.error(`加载详情失败: ${extractErrorMessage(e)}`)
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function selectAudit(row: MemoryAuditRow) {
   selectedId.value = row.turn_id
   detailLoading.value = true
   detail.value = null
@@ -150,6 +182,36 @@ function fmtCost(micro: number | null | undefined): string {
 function rowClass({ row }: { row: TurnSummary }): string {
   return row.turn_id === selectedId.value ? 'is-selected' : ''
 }
+
+function memoryWriteLabel(row: TurnSummary): string {
+  const write = row.observability_summary?.memory_write
+  if (!write?.disposition) return '—'
+  if (!write.fanout_allowed) return `${write.disposition} / ${write.skipped_reason || 'blocked'}`
+  return write.disposition
+}
+
+function memoryWriteTagType(row: TurnSummary): 'success' | 'warning' | 'danger' | 'info' {
+  const write = row.observability_summary?.memory_write
+  if (!write?.disposition) return 'info'
+  if (!write.fanout_allowed) return 'warning'
+  if (write.disposition === 'ignore') return 'info'
+  if (write.disposition === 'sensitive_requires_consent') return 'danger'
+  return 'success'
+}
+
+function contextLabel(row: TurnSummary): string {
+  const ctx = row.observability_summary?.context
+  if (!ctx) return '—'
+  const dropped = ctx.dropped_count ? ` drop ${ctx.dropped_count}` : ''
+  const degraded = ctx.degraded_sources.length ? ` deg ${ctx.degraded_sources.join(',')}` : ''
+  return `${ctx.segment_kinds.join('>') || 'empty'}${dropped}${degraded}`
+}
+
+function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | 'info' {
+  if (!row.fanout_allowed) return row.skipped_reason === 'requires_consent' ? 'danger' : 'warning'
+  if (row.disposition === 'ignore') return 'info'
+  return 'success'
+}
 </script>
 
 <template>
@@ -208,6 +270,18 @@ function rowClass({ row }: { row: TurnSummary }): string {
               <span class="muted">{{ previewLine(row) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="memory" width="170">
+            <template #default="{ row }">
+              <el-tag :type="memoryWriteTagType(row)" size="small">
+                {{ memoryWriteLabel(row) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="context" min-width="180">
+            <template #default="{ row }">
+              <span class="muted mono">{{ contextLabel(row) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="latency" width="100">
             <template #default="{ row }">
               <span class="muted mono">{{ fmtDuration(row.total_latency_ms) }}</span>
@@ -253,6 +327,51 @@ function rowClass({ row }: { row: TurnSummary }): string {
               </p>
             </div>
             <el-button size="small" link @click="clearSelection">关闭</el-button>
+          </div>
+
+          <div v-if="detail.observability_summary" class="observability">
+            <div class="obs-item">
+              <span class="lbl">privacy</span>
+              <span class="val mono">{{ detail.observability_summary.privacy_mode || '—' }}</span>
+            </div>
+            <div class="obs-item">
+              <span class="lbl">context</span>
+              <span class="val mono">
+                {{ detail.observability_summary.context.segment_kinds.join(' > ') || '—' }}
+                <template v-if="detail.observability_summary.context.dropped_count">
+                  · dropped {{ detail.observability_summary.context.dropped_count }}
+                </template>
+              </span>
+            </div>
+            <div class="obs-item">
+              <span class="lbl">memory recall</span>
+              <span class="val mono">
+                hits {{ detail.observability_summary.memory.hit_count }}
+                <template v-if="detail.observability_summary.memory.degraded"> · degraded</template>
+              </span>
+            </div>
+            <div class="obs-item">
+              <span class="lbl">memory write</span>
+              <span class="val mono">
+                {{ detail.observability_summary.memory_write.disposition || '—' }}
+                <template v-if="!detail.observability_summary.memory_write.fanout_allowed">
+                  · {{ detail.observability_summary.memory_write.skipped_reason || 'blocked' }}
+                </template>
+              </span>
+            </div>
+            <div class="obs-item">
+              <span class="lbl">tools</span>
+              <span class="val mono">
+                {{ detail.observability_summary.tools.names.join(', ') || 'none' }}
+                <template v-if="detail.observability_summary.tools.error_count">
+                  · errors {{ detail.observability_summary.tools.error_count }}
+                </template>
+              </span>
+            </div>
+            <div class="obs-item">
+              <span class="lbl">fingerprint</span>
+              <span class="val mono">{{ detail.observability_summary.prompt_fingerprint }}</span>
+            </div>
           </div>
 
           <div class="messages">
@@ -310,6 +429,71 @@ function rowClass({ row }: { row: TurnSummary }): string {
         </template>
       </div>
     </div>
+
+    <section class="audit">
+      <div class="audit-head">
+        <div>
+          <h3>Memory audit</h3>
+          <p class="muted">
+            本地 turn trace 中的 memory 写入候选，只展示 disposition / reason，不展示消息正文。
+          </p>
+        </div>
+        <el-button :icon="Refresh" :loading="auditLoading" size="small" @click="refreshMemoryAudit">
+          刷新
+        </el-button>
+      </div>
+      <el-table
+        v-loading="auditLoading"
+        :data="auditRows"
+        size="small"
+        stripe
+      >
+        <el-table-column label="time" width="160">
+          <template #default="{ row }">
+            <span class="muted mono">{{ formatTimestamp(row.started_at) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="user" width="120">
+          <template #default="{ row }">
+            <span class="mono">{{ row.user_id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="disposition" width="190">
+          <template #default="{ row }">
+            <el-tag :type="auditTagType(row)" size="small">
+              {{ row.disposition || '—' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="reason" min-width="220">
+          <template #default="{ row }">
+            <span class="muted mono">{{ row.reason || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="fanout" width="130">
+          <template #default="{ row }">
+            <span class="muted mono">
+              {{ row.fanout_allowed ? 'allowed' : (row.skipped_reason || 'blocked') }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="privacy" width="100">
+          <template #default="{ row }">
+            <span class="muted mono">{{ row.privacy_mode || '—' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="turn" width="120">
+          <template #default="{ row }">
+            <button class="link-button" @click="selectAudit(row)">
+              {{ row.turn_id.slice(0, 10) }}
+            </button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div v-if="!auditLoading && auditRows.length === 0" class="empty audit-empty">
+        当前过滤条件下没有 memory 写入候选。
+      </div>
+    </section>
   </div>
 </template>
 
@@ -333,6 +517,11 @@ function rowClass({ row }: { row: TurnSummary }): string {
 .meta { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .meta .mono { padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
 
+.observability { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 4px; border-bottom: 1px solid var(--eid-border); font-size: 12px; }
+.obs-item { min-width: 0; display: flex; gap: 8px; align-items: baseline; }
+.obs-item .lbl { color: var(--eid-text-muted); min-width: 92px; flex: 0 0 auto; }
+.obs-item .val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .messages { display: flex; flex-direction: column; gap: 12px; padding: 12px 4px; max-height: 480px; overflow: auto; }
 .msg { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); border: 1px solid var(--eid-border); }
 .msg.role-user { border-left: 3px solid var(--eid-accent); }
@@ -352,4 +541,11 @@ function rowClass({ row }: { row: TurnSummary }): string {
 .debug-grid .lbl { color: var(--eid-text-muted); min-width: 90px; display: inline-block; }
 .debug-grid .val { font-family: var(--eid-font-mono); }
 .debug-grid pre.val { margin: 4px 0 0; padding: 8px; background: var(--eid-bg-canvas); border-radius: 3px; max-height: 200px; overflow: auto; }
+.audit { margin-top: 16px; background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; }
+.audit-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
+.audit-head h3 { margin: 0; font-size: 14px; }
+.audit-head p { margin: 4px 0 0; }
+.audit-empty { margin-top: 8px; }
+.link-button { padding: 0; border: 0; background: transparent; color: var(--eid-accent); font-family: var(--eid-font-mono); font-size: 12px; cursor: pointer; }
+.link-button:hover { text-decoration: underline; }
 </style>
