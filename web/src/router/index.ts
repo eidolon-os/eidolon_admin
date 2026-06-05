@@ -54,6 +54,11 @@ const routes: RouteRecordRaw[] = [
         name: 'conversations',
         component: () => import('@/modules/conversations/Overview.vue'),
       },
+      {
+        path: 'replay-reports',
+        name: 'replay-reports',
+        component: () => import('@/modules/reports/ReplayReports.vue'),
+      },
       // Old /deploy and /health surfaces have been merged into /supervisor.
       // Keep redirects so bookmarked URLs still land somewhere useful.
       { path: 'deploy', redirect: { name: 'supervisor' } },

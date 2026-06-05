@@ -20,11 +20,15 @@ const isMemoryRoute = computed(() => {
 // Catalog routes (Phase 29) share a flat namespace with the legacy
 // pages — each route name maps 1:1 to its menu index.
 const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents', 'devices'] as const
+const ACTIVITY_KEYS = ['conversations', 'replay-reports'] as const
 
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
   if (typeof route.name === 'string' && (CATALOG_KEYS as readonly string[]).includes(route.name)) {
+    return route.name
+  }
+  if (typeof route.name === 'string' && (ACTIVITY_KEYS as readonly string[]).includes(route.name)) {
     return route.name
   }
   if (route.params.serviceId && route.params.feature) {
@@ -102,6 +106,10 @@ function go(serviceId: string, feature: string) {
           <el-icon><ChatLineRound /></el-icon>
           <span>Conversations</span>
         </el-menu-item>
+        <el-menu-item index="replay-reports" @click="router.push({ name: 'replay-reports' })">
+          <el-icon><TrendCharts /></el-icon>
+          <span>Replay Reports</span>
+        </el-menu-item>
         <el-sub-menu
           v-for="svc in navigableServices"
           :key="svc.id"
@@ -133,6 +141,7 @@ function go(serviceId: string, feature: string) {
           <template v-else-if="route.name === 'agents'">Catalog <span class="sep">/</span> Agents</template>
           <template v-else-if="route.name === 'devices'">Catalog <span class="sep">/</span> Devices</template>
           <template v-else-if="route.name === 'conversations'">Conversations</template>
+          <template v-else-if="route.name === 'replay-reports'">Replay Reports</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
             <span class="sep">/</span>
