@@ -23,6 +23,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listUsers, type UserView } from '@/api/users'
 import { extractErrorMessage } from '@/utils/format'
+import { userHealthSuffix } from '@/utils/userHealth'
 
 const props = withDefaults(
   defineProps<{
@@ -100,10 +101,7 @@ watch(
 )
 
 function healthBadge(u: UserView): string {
-  const h = u.health
-  if (h.worker_running && h.mcp_reachable && h.palace_initialized) return ''
-  if (!h.worker_running) return ' · down'
-  return ' · degraded'
+  return userHealthSuffix(u.health)
 }
 </script>
 

@@ -6,7 +6,7 @@
  * and the agent-id set. Create is gated by tenant existence; we keep
  * the form simple — palace_path defaults to memory's own derivation.
  */
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createUser,
@@ -18,12 +18,14 @@ import {
 } from '@/api/users'
 import { listTenants, type TenantSpec } from '@/api/tenants'
 import { extractErrorMessage } from '@/utils/format'
+import { userHealthDetail, userHealthLabel, userHealthType } from '@/utils/userHealth'
 import CatalogPage from '@/modules/common/CatalogPage.vue'
 
 const rows = ref<UserView[]>([])
 const tenants = ref<TenantSpec[]>([])
 const memoryAvailable = ref(true)
 const loading = ref(false)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const dialogOpen = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
@@ -144,19 +146,16 @@ async function setActive(row: UserView, agent_id: string) {
   }
 }
 
-function healthType(h: UserView['health']): 'success' | 'warning' | 'danger' {
-  if (h.worker_running && h.mcp_reachable && h.palace_initialized) return 'success'
-  if (h.worker_running) return 'warning'
-  return 'danger'
-}
+onMounted(async () => {
+  await refresh()
+  refreshTimer = setInterval(() => {
+    if (!loading.value) void refresh()
+  }, 10_000)
+})
 
-function healthLabel(h: UserView['health']): string {
-  if (h.worker_running && h.mcp_reachable && h.palace_initialized) return 'healthy'
-  if (h.worker_running) return 'partial'
-  return 'down'
-}
-
-onMounted(refresh)
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+})
 </script>
 
 <template>
@@ -181,9 +180,16 @@ onMounted(refresh)
       <el-table-column prop="spec.user_id" label="User ID" width="180" />
       <el-table-column prop="spec.display_name" label="显示名" />
       <el-table-column prop="spec.tenant_id" label="Tenant" width="120" />
-      <el-table-column label="健康" width="100">
+      <el-table-column label="健康" width="150">
         <template #default="{ row }">
-          <el-tag size="small" :type="healthType(row.health)">{{ healthLabel(row.health) }}</el-tag>
+          <el-tag
+            size="small"
+            :type="userHealthType(row.health)"
+            :title="userHealthDetail(row.health)"
+          >
+            {{ userHealthLabel(row.health) }}
+          </el-tag>
+          <div v-if="row.health.note" class="health-note">{{ row.health.note }}</div>
         </template>
       </el-table-column>
       <el-table-column label="Active Agent" min-width="200">
@@ -256,5 +262,11 @@ onMounted(refresh)
 <style scoped>
 /* Layout chrome lives in <CatalogPage>. Page-local styles only. */
 .muted { color: var(--eid-text-muted); font-size: 12px; }
+.health-note {
+  margin-top: 3px;
+  color: var(--eid-text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
 .dialog-hint { margin: 8px 0 0 100px; font-size: 12px; color: var(--eid-text-muted); }
 </style>

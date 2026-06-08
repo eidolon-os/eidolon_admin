@@ -1,16 +1,27 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useMemoryUserStore } from '@/stores/memoryUser'
+import { memoryAgentStatus } from '@/utils/memoryRuntime'
 
 const store = useMemoryUserStore()
-onMounted(() => store.load())
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+onMounted(async () => {
+  await store.load(true)
+  refreshTimer = setInterval(() => {
+    if (!store.loading) void store.load(true)
+  }, 10_000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+})
 
 const options = computed(() =>
   store.users.map((u) => ({
     label: `${u.user_id}${u.enabled ? '' : ' (disabled)'} · :${u.port}`,
+    status: memoryAgentStatus(u),
     value: u.user_id,
-    enabled: u.enabled,
-    reachable: u.agent_reachable,
   })),
 )
 
@@ -36,8 +47,11 @@ const current = computed({
         :label="opt.label"
         :value="opt.value"
       >
-        <span :class="['dot', opt.reachable ? 'dot-on' : opt.enabled ? 'dot-warn' : 'dot-off']" />
+        <span :class="['dot', `dot-${opt.status.type}`]" :title="opt.status.hint" />
         {{ opt.label }}
+        <span v-if="opt.status.label !== 'RUNNING'" class="status-note">
+          {{ opt.status.label.toLowerCase() }}
+        </span>
       </el-option>
     </el-select>
     <el-button size="small" link @click="store.load(true)" :loading="store.loading">↻</el-button>
@@ -64,7 +78,13 @@ const current = computed({
   border-radius: 50%;
   margin-right: 8px;
 }
-.dot-on  { background: var(--eid-success); }
-.dot-warn{ background: var(--eid-warning); }
-.dot-off { background: var(--eid-text-muted); }
+.dot-success { background: var(--eid-success); }
+.dot-warning { background: var(--eid-warning); }
+.dot-danger { background: var(--eid-danger); }
+.dot-info { background: var(--eid-text-muted); }
+.status-note {
+  margin-left: 6px;
+  color: var(--eid-text-muted);
+  font-size: 12px;
+}
 </style>

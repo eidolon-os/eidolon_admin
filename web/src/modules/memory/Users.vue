@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import {
@@ -14,9 +14,11 @@ import {
   type ConsolidatorUpdateBody,
 } from '@/api/memory'
 import { useMemoryUserStore } from '@/stores/memoryUser'
+import { memoryAgentStatus } from '@/utils/memoryRuntime'
 
 const store = useMemoryUserStore()
 const busy = ref<Record<string, boolean>>({})
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 const dialogOpen = ref(false)
 const submitting = ref(false)
 const form = ref({ id: '', port: 8030, enabled: true, palace_path: '' })
@@ -32,7 +34,16 @@ const consForm = ref<ConsolidatorUpdateBody>({
   min_confidence: 0.6,
 })
 
-onMounted(() => store.load())
+onMounted(async () => {
+  await store.load(true)
+  refreshTimer = setInterval(() => {
+    if (!store.loading) void store.load(true)
+  }, 5_000)
+})
+
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+})
 
 async function refresh() {
   await store.load(true)
@@ -200,17 +211,17 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
           />
         </template>
       </el-table-column>
-      <el-table-column label="Agent" width="140">
+      <el-table-column label="Agent" width="190">
         <template #default="{ row }">
           <el-tag
-            v-if="row.enabled && row.agent_reachable"
-            type="success" effect="dark" size="small"
-          >RUNNING</el-tag>
-          <el-tag
-            v-else-if="row.enabled && !row.agent_reachable"
-            type="warning" effect="dark" size="small"
-          >STARTING / DOWN</el-tag>
-          <el-tag v-else type="info" effect="plain" size="small">disabled</el-tag>
+            :type="memoryAgentStatus(row).type"
+            :effect="row.enabled ? 'dark' : 'plain'"
+            :title="memoryAgentStatus(row).hint"
+            size="small"
+          >
+            {{ memoryAgentStatus(row).label }}
+          </el-tag>
+          <span v-if="row.pid" class="pid-hint mono">pid {{ row.pid }}</span>
         </template>
       </el-table-column>
       <el-table-column label="Consolidator" width="150">
@@ -334,5 +345,11 @@ const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/use
 .user-id { font-weight: 600; }
 .mono { font-family: var(--eid-font-mono); font-size: 12px; }
 .path { color: var(--eid-text-secondary); }
+.pid-hint {
+  display: block;
+  margin-top: 3px;
+  color: var(--eid-text-muted);
+  font-size: 11px;
+}
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 </style>
