@@ -128,10 +128,38 @@ class GatewayConfig(BaseModel):
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def default_voiceprint_root() -> Path:
+    """Default location for local enrollment audio and voiceprint profiles."""
+    env = os.environ.get("EIDOLON_VOICEPRINT_ROOT", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return Path.home() / "eidolon" / "voiceprints"
+
+
+def default_3dspeaker_model_dir() -> Path:
+    """Default repository-managed 3D-Speaker model bundle path."""
+    env = os.environ.get("EIDOLON_3DSPEAKER_MODEL_DIR", "").strip()
+    if env:
+        return Path(env).expanduser()
+    return (
+        _REPO_ROOT.parent
+        / "eidolon_channel"
+        / "eidolon"
+        / "livekit"
+        / "plugins"
+        / "speaker_verification"
+        / "resources"
+        / "3dspeaker"
+        / "campplus_zh_16k_common"
+    )
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EIDOLON_ADMIN_", extra="ignore")
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
+    voiceprint_root: Path = Field(default_factory=default_voiceprint_root)
+    speaker_model_dir: Path = Field(default_factory=default_3dspeaker_model_dir)
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf
     # writes when run from the project root.
     supervisor_socket: Path = _REPO_ROOT / "var" / "supervisor.sock"

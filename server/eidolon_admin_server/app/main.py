@@ -64,6 +64,10 @@ from .registry.users import (
     UserOrchestrator,
     router as users_router,
 )
+from .registry.voiceprints import (
+    VoiceprintStore,
+    router as voiceprints_router,
+)
 from .routers.bootstrap import router as bootstrap_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
@@ -279,6 +283,7 @@ def create_app(
                 agent_meta_repo=ag_repo,
                 user_orchestrator=app.state.user_orchestrator,
                 template_orchestrator=app.state.template_orchestrator,
+                voiceprint_store=app.state.voiceprint_store,
             )
             logger.info("resolve orchestrator ready")
         else:
@@ -333,6 +338,8 @@ def create_app(
     app.state.agent_orchestrator = None
     app.state.device_orchestrator = None
     app.state.resolve_orchestrator = None
+    app.state.voiceprint_store = VoiceprintStore(settings.voiceprint_root)
+    app.state.voiceprint_model_dir = settings.speaker_model_dir
 
     app.add_middleware(
         CORSMiddleware,
@@ -352,6 +359,7 @@ def create_app(
     app.include_router(tenants_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
     app.include_router(users_router, prefix="/api")
+    app.include_router(voiceprints_router, prefix="/api")
     app.include_router(agents_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
     app.include_router(resolve_router, prefix="/api")

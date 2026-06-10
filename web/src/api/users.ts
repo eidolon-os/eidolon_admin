@@ -62,6 +62,75 @@ export interface DeleteUserResponse {
   palace_trashed_to: string | null
 }
 
+export interface VoiceprintProfile {
+  profile_id: string
+  tenant_id: string
+  user_id: string
+  provider: string
+  model: string
+  sample_refs: string[]
+  sample_rate: number
+  duration_ms: number
+  threshold: number | null
+  quality: Record<string, any>
+  created_at: string
+  updated_at: string
+  metadata: Record<string, any>
+}
+
+export interface VoiceprintStatusResponse {
+  status: 'empty' | 'ready'
+  user_id: string
+  tenant_id: string | null
+  profile: VoiceprintProfile | null
+}
+
+export interface VoiceprintEnrollmentResponse {
+  enrollment_id: string
+  user_id: string
+  tenant_id: string
+  provider: string
+  model: string
+  sample_rate: number
+  sample_count: number
+  created_at: string
+}
+
+export interface VoiceprintSampleResponse {
+  enrollment_id: string
+  sample_id: string
+  bytes: number
+  duration_ms: number
+  sample_rate: number
+  channels: number
+}
+
+export interface VoiceprintTestComparison {
+  sample_ref: string
+  score: number
+  prediction: 'yes' | 'no' | 'unknown'
+  latency_ms: number
+}
+
+export interface VoiceprintTestResponse {
+  profile_id: string
+  provider: string
+  model: string
+  threshold: number
+  matched: boolean
+  verdict: 'pass' | 'uncertain' | 'fail'
+  best_score: number
+  average_score: number
+  latency_ms: number
+  test_audio: {
+    bytes: number
+    duration_ms: number
+    sample_rate: number
+    channels: number
+  }
+  comparisons: VoiceprintTestComparison[]
+}
+
 export async function listUsers(): Promise<UserListResponse> {
   // memory service may blip during dev restart; page renders inline.
   const { data } = await client.get<UserListResponse>('/users', {
@@ -112,6 +181,88 @@ export async function deleteUser(id: string): Promise<DeleteUserResponse> {
   const { data } = await client.delete<DeleteUserResponse>(
     `/users/${encodeURIComponent(id)}`,
     { timeout: 60_000 },
+  )
+  return data
+}
+
+export async function getVoiceprint(
+  userId: string,
+  suppressToast = false,
+): Promise<VoiceprintStatusResponse> {
+  const { data } = await client.get<VoiceprintStatusResponse>(
+    `/users/${encodeURIComponent(userId)}/voiceprint`,
+    { suppressToast },
+  )
+  return data
+}
+
+export async function createVoiceprintEnrollment(
+  userId: string,
+): Promise<VoiceprintEnrollmentResponse> {
+  const { data } = await client.post<VoiceprintEnrollmentResponse>(
+    `/users/${encodeURIComponent(userId)}/voiceprint/enrollments`,
+    {
+      provider: '3d_speaker',
+      model: 'campplus_zh_16k_common',
+      sample_rate: 16000,
+    },
+  )
+  return data
+}
+
+export async function uploadVoiceprintSample(
+  userId: string,
+  enrollmentId: string,
+  wav: Blob,
+): Promise<VoiceprintSampleResponse> {
+  const { data } = await client.post<VoiceprintSampleResponse>(
+    `/users/${encodeURIComponent(userId)}/voiceprint/enrollments/${encodeURIComponent(enrollmentId)}/samples`,
+    wav,
+    {
+      headers: { 'content-type': 'audio/wav' },
+      timeout: 60_000,
+    },
+  )
+  return data
+}
+
+export async function completeVoiceprintEnrollment(
+  userId: string,
+  enrollmentId: string,
+): Promise<VoiceprintProfile> {
+  const { data } = await client.post<{ profile: VoiceprintProfile }>(
+    `/users/${encodeURIComponent(userId)}/voiceprint/enrollments/${encodeURIComponent(enrollmentId)}/complete`,
+    {},
+    { timeout: 60_000 },
+  )
+  return data.profile
+}
+
+export async function cancelVoiceprintEnrollment(
+  userId: string,
+  enrollmentId: string,
+): Promise<void> {
+  await client.delete(
+    `/users/${encodeURIComponent(userId)}/voiceprint/enrollments/${encodeURIComponent(enrollmentId)}`,
+    { suppressToast: true },
+  )
+}
+
+export async function deleteVoiceprint(userId: string): Promise<void> {
+  await client.delete(`/users/${encodeURIComponent(userId)}/voiceprint`)
+}
+
+export async function testVoiceprint(
+  userId: string,
+  wav: Blob,
+): Promise<VoiceprintTestResponse> {
+  const { data } = await client.post<VoiceprintTestResponse>(
+    `/users/${encodeURIComponent(userId)}/voiceprint/test`,
+    wav,
+    {
+      headers: { 'content-type': 'audio/wav' },
+      timeout: 120_000,
+    },
   )
   return data
 }

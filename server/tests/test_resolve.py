@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import AsyncIterator
+import wave
 
 import httpx
 import pytest
@@ -51,6 +53,7 @@ from eidolon_admin_server.app.registry.users import (
     UserOrchestrator,
 )
 from eidolon_admin_server.app.registry.users.repository import UserMetadata
+from eidolon_admin_server.app.registry.voiceprints import VoiceprintStore
 
 
 MEMORY_URL = "http://memory.test"
@@ -82,6 +85,16 @@ def _memory_user(user_id: str = "alice") -> dict:
 _TEMPLATE_YAML = (
     "metadata:\n  template_id: caretaker_jiezhi\n  name: J\n  archetype: c"
 )
+
+
+def _wav_bytes() -> bytes:
+    buf = BytesIO()
+    with wave.open(buf, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(b"\x00\x00" * 1600)
+    return buf.getvalue()
 
 
 # ---- fixtures ---------------------------------------------------------------
@@ -134,6 +147,7 @@ async def orchestrator(
     kv_client: KVClient,
     buckets_setup: None,
     http_client: httpx.AsyncClient,
+    tmp_path,
 ) -> AsyncIterator[ResolveOrchestrator]:
     # Tenants → Users → Agents → Templates → Devices wiring (subset).
     tenant_orch = TenantOrchestrator(TenantRepository(kv_client))
@@ -156,6 +170,7 @@ async def orchestrator(
         agent_meta_repo=agent_meta_repo,
         user_orchestrator=user_orch,
         template_orchestrator=template_orch,
+        voiceprint_store=VoiceprintStore(tmp_path),
     )
 
 
@@ -223,6 +238,61 @@ async def test_resolve_device_happy_path(
     # The test fixture pins the value memory would return.
     assert ctx.memory_mcp_url == "http://127.0.0.1:8030/mcp"
     assert ctx.soul_preview.startswith("metadata:")
+    assert ctx.voiceprint.enabled is False
+
+
+async def test_resolve_device_includes_voiceprint_summary(
+    orchestrator: ResolveOrchestrator,
+) -> None:
+    base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._bindings.put(
+        "esp-voice",
+        DeviceBinding(agent_id="ag-voice", bound_at=datetime.now(timezone.utc)),
+    )
+    await orchestrator._agents.put(
+        "ag-voice",
+        AgentMetadata(
+            tenant_id="default", user_id="alice",
+            template_id="caretaker_jiezhi", template_revision=1,
+            display_name="Caretaker for Alice", created_at=base,
+        ),
+    )
+    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
+        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+    )
+
+    store = orchestrator._voiceprints  # type: ignore[attr-defined]
+    enrollment = store.create_enrollment(
+        tenant_id="default",
+        user_id="alice",
+        provider="noop",
+        model="noop",
+        sample_rate=16000,
+    )
+    store.add_sample(
+        enrollment_id=enrollment.enrollment_id,
+        tenant_id="default",
+        user_id="alice",
+        wav_bytes=_wav_bytes(),
+    )
+    profile = store.complete_enrollment(
+        enrollment_id=enrollment.enrollment_id,
+        tenant_id="default",
+        user_id="alice",
+    )
+
+    with respx.mock() as rsx:
+        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user("alice"))
+        )
+        rsx.get(
+            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
+        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
+        ctx = await orchestrator.resolve_device("esp-voice")
+
+    assert ctx.voiceprint.enabled is True
+    assert ctx.voiceprint.profile_id == profile.profile_id
+    assert ctx.voiceprint.provider == "noop"
 
 
 async def test_resolve_propagates_empty_mcp_url_when_memory_omits_it(

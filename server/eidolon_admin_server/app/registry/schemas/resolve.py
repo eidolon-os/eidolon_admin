@@ -21,7 +21,15 @@ Failure handling:
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class VoiceprintResolveSummary(BaseModel):
+    enabled: bool = False
+    profile_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    threshold: float | None = None
 
 
 class ResolvedContext(BaseModel):
@@ -50,6 +58,9 @@ class ResolvedContext(BaseModel):
     # device_id is present only on the /resolve/device path. /resolve/user
     # paths omit it (the user might be talking via web client, no device).
     device_id: str | None = None
+    voiceprint: VoiceprintResolveSummary = Field(
+        default_factory=VoiceprintResolveSummary
+    )
 
 
 class ResolveDeviceResponse(BaseModel):

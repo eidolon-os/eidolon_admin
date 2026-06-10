@@ -18,9 +18,10 @@ import logging
 
 from ..agents.repository import AgentMetadataRepository
 from ..devices.repository import DeviceBindingRepository
-from ..schemas.resolve import ResolvedContext
+from ..schemas.resolve import ResolvedContext, VoiceprintResolveSummary
 from ..templates.orchestrator import TemplateOrchestrator
 from ..users.orchestrator import UserError, UserNotFound, UserOrchestrator
+from ..voiceprints.repository import VoiceprintStore
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +79,13 @@ class ResolveOrchestrator:
         agent_meta_repo: AgentMetadataRepository,
         user_orchestrator: UserOrchestrator,
         template_orchestrator: TemplateOrchestrator,
+        voiceprint_store: VoiceprintStore | None = None,
     ) -> None:
         self._bindings = binding_repo
         self._agents = agent_meta_repo
         self._users = user_orchestrator
         self._templates = template_orchestrator
+        self._voiceprints = voiceprint_store
 
     # ---- private helpers ----------------------------------------------
 
@@ -147,6 +150,21 @@ class ResolveOrchestrator:
             )
             soul_preview = ""
 
+        voiceprint = VoiceprintResolveSummary()
+        if self._voiceprints is not None:
+            profile = self._voiceprints.get_profile(
+                tenant_id=agent_meta.tenant_id,
+                user_id=agent_meta.user_id,
+            )
+            if profile is not None:
+                voiceprint = VoiceprintResolveSummary(
+                    enabled=True,
+                    profile_id=profile.profile_id,
+                    provider=profile.provider,
+                    model=profile.model,
+                    threshold=profile.threshold,
+                )
+
         return ResolvedContext(
             tenant_id=agent_meta.tenant_id,
             user_id=agent_meta.user_id,
@@ -157,6 +175,7 @@ class ResolveOrchestrator:
             memory_mcp_url=memory_mcp_url,
             soul_preview=soul_preview,
             device_id=device_id,
+            voiceprint=voiceprint,
         )
 
     # ---- public API ----------------------------------------------------
