@@ -40,7 +40,9 @@ from .buckets import (
 )
 from .keys import (
     agent_metadata_key,
+    decode_device_binding_key,
     device_binding_key,
+    legacy_device_binding_key,
     tenant_key,
     user_metadata_key,
 )
@@ -55,7 +57,9 @@ __all__ = [
     "TENANTS_BUCKET",
     "USERS_METADATA_BUCKET",
     "agent_metadata_key",
+    "decode_device_binding_key",
     "device_binding_key",
+    "legacy_device_binding_key",
     "tenant_key",
     "user_metadata_key",
 ]

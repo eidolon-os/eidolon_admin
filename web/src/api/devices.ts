@@ -21,6 +21,8 @@ export interface DeviceView {
   approved_at: string | null
   last_seen: string | null
   status: string
+  room_name?: string
+  missed_probes?: number
   binding: DeviceBinding | null
   resolved_user_id: string | null
   resolved_template_id: string | null
@@ -67,6 +69,13 @@ export async function bindDevice(id: string, agent_id: string): Promise<DeviceVi
 export async function unbindDevice(id: string): Promise<DeviceView> {
   const { data } = await client.post<DeviceView>(
     `/devices/${encodeURIComponent(id)}/unbind`,
+  )
+  return data
+}
+
+export async function wakeDevice(id: string): Promise<Record<string, any>> {
+  const { data } = await client.post<Record<string, any>>(
+    `/devices/${encodeURIComponent(id)}/wake`,
   )
   return data
 }

@@ -24,7 +24,9 @@ from eidolon_admin_server.app.registry import (
     ALL_BUCKETS,
     DEVICE_BINDINGS_BUCKET,
     TENANTS_BUCKET,
+    decode_device_binding_key,
     device_binding_key,
+    legacy_device_binding_key,
     tenant_key,
 )
 from eidolon_admin_server.app.registry.schemas import (
@@ -58,7 +60,11 @@ def test_buckets_have_distinct_names() -> None:
 def test_key_helpers_use_dot_prefix() -> None:
     """NATS list_keys(prefix=...) relies on the dot delimiter."""
     assert tenant_key("default") == "tenant.default"
-    assert device_binding_key("esp32-foo") == "device.esp32-foo"
+    key = device_binding_key("1c:db:d4:7a:ef:0c")
+    assert key.startswith("device.v1.")
+    assert ":" not in key
+    assert decode_device_binding_key(key) == "1c:db:d4:7a:ef:0c"
+    assert legacy_device_binding_key("1c:db:d4:7a:ef:0c") is None
 
 
 # ---- ID validation (shared regex across entities) ---------------------------

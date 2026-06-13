@@ -100,7 +100,19 @@ class DeviceOrchestrator:
         message = unwrap_detail(exc.message)
         if exc.status_code == 404:
             raise DeviceNotFound(message)
+        if exc.status_code == 409:
+            raise DeviceBadRequest(message)
         raise DeviceError(f"hub returned {exc.status_code}: {message}")
+
+    async def _notify_config_refresh(self, device_id: str) -> None:
+        try:
+            await self._hub.send_config_refresh(device_id)
+        except Exception as exc:
+            logger.info(
+                "device_config_refresh_not_sent device_id=%s error=%s",
+                device_id,
+                exc,
+            )
 
     @staticmethod
     def _hub_record_to_view(
@@ -120,6 +132,8 @@ class DeviceOrchestrator:
             approved_at=_parse_dt_optional(record.get("approved_at")),
             last_seen=_parse_dt_optional(record.get("last_seen")),
             status=record.get("status", "unknown"),
+            room_name=record.get("room_name", ""),
+            missed_probes=int(record.get("missed_probes") or 0),
             binding=binding,
             resolved_user_id=resolved_user_id,
             resolved_template_id=resolved_template_id,
@@ -189,6 +203,7 @@ class DeviceOrchestrator:
             raise DeviceHubDown(str(exc)) from exc
         except DeviceHubUpstreamError as exc:
             self._map_hub_error(exc)
+        await self._notify_config_refresh(device_id)
         return await self.get_device(device_id)
 
     async def bind_device(
@@ -230,6 +245,7 @@ class DeviceOrchestrator:
         )
         await self._bindings.put(device_id, binding)
         logger.info("device_bound device_id=%s agent_id=%s", device_id, body.agent_id)
+        await self._notify_config_refresh(device_id)
         return await self.get_device(device_id)
 
     async def unbind_device(self, device_id: str) -> DeviceView:
@@ -237,7 +253,22 @@ class DeviceOrchestrator:
         device record (the device is still approved, just not configured)."""
         await self._bindings.delete(device_id)
         logger.info("device_unbound device_id=%s", device_id)
+        await self._notify_config_refresh(device_id)
         return await self.get_device(device_id)
+
+    async def wake_device(self, device_id: str) -> dict[str, Any]:
+        """Ask a standby device to join its voice room via control channel."""
+        view = await self.get_device(device_id)
+        if not view.approved:
+            raise DeviceNotApproved(f"device {device_id!r} is not approved")
+        if view.binding is None:
+            raise DeviceBadRequest(f"device {device_id!r} is not bound to an agent")
+        try:
+            return await self._hub.send_room_join(device_id)
+        except DeviceHubUnreachable as exc:
+            raise DeviceHubDown(str(exc)) from exc
+        except DeviceHubUpstreamError as exc:
+            self._map_hub_error(exc)
 
     async def unregister_device(self, device_id: str) -> dict[str, Any]:
         """Cascade: clean admin's binding + tell hub to forget the device.

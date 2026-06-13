@@ -18,8 +18,9 @@ const isMemoryRoute = computed(() => {
 })
 
 // Catalog routes (Phase 29) share a flat namespace with the legacy
-// pages — each route name maps 1:1 to its menu index.
-const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents', 'devices'] as const
+// pages — each route name maps 1:1 to its menu index. Devices live under
+// Hub because approval, binding and command delivery are hub operations.
+const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents'] as const
 const ACTIVITY_KEYS = ['conversations', 'replay-reports'] as const
 
 const activeKey = computed(() => {
@@ -66,13 +67,11 @@ function go(serviceId: string, feature: string) {
           <span>Configs</span>
         </el-menu-item>
 
-        <!-- Phase 29 five-entity catalog. Wrapped in el-sub-menu (Phase
+        <!-- Phase 29 catalog. Wrapped in el-sub-menu (Phase
              30.C) so it matches the visual treatment of the service
              groups below (Agent / Channel / Memory etc.) — they're all
              "entity groups" in the sidebar's vocabulary. Order matches
-             the dependency chain: Tenant → Template → User → Agent →
-             Device, which is also the order operators must populate
-             them on a fresh install. -->
+             the dependency chain: Tenant → Template → User → Agent. -->
         <el-sub-menu index="catalog">
           <template #title>
             <el-icon><Files /></el-icon>
@@ -93,10 +92,6 @@ function go(serviceId: string, feature: string) {
           <el-menu-item index="agents" @click="router.push({ name: 'agents' })">
             <el-icon><Avatar /></el-icon>
             <span>Agents</span>
-          </el-menu-item>
-          <el-menu-item index="devices" @click="router.push({ name: 'devices' })">
-            <el-icon><Monitor /></el-icon>
-            <span>Devices</span>
           </el-menu-item>
         </el-sub-menu>
         <!-- Phase 34.B: read-only browse of agent's chat history. Lives
@@ -139,7 +134,6 @@ function go(serviceId: string, feature: string) {
           <template v-else-if="route.name === 'templates'">Catalog <span class="sep">/</span> Templates</template>
           <template v-else-if="route.name === 'users'">Catalog <span class="sep">/</span> Users</template>
           <template v-else-if="route.name === 'agents'">Catalog <span class="sep">/</span> Agents</template>
-          <template v-else-if="route.name === 'devices'">Catalog <span class="sep">/</span> Devices</template>
           <template v-else-if="route.name === 'conversations'">Conversations</template>
           <template v-else-if="route.name === 'replay-reports'">Replay Reports</template>
           <template v-else-if="route.params.serviceId">

@@ -55,6 +55,23 @@ def _hub_device_record(
     }
 
 
+def _hub_command_response(device_id: str) -> dict:
+    return {
+        "command_id": str(uuid.uuid4()),
+        "device_id": device_id,
+        "topic": "eidolon.control",
+        "op": "config.refresh",
+        "status": "sent",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "payload": {"reason": "admin_state_changed"},
+        "ttl_ms": 30000,
+        "qos": "ack",
+        "priority": "normal",
+        "error": "",
+    }
+
+
 # ---- fixtures ---------------------------------------------------------------
 
 
@@ -152,6 +169,25 @@ async def test_list_resolves_bound_devices_with_agent_metadata(
     assert d.resolved_template_id == "caretaker_jiezhi"
 
 
+async def test_binding_repository_accepts_mac_address_device_id(
+    orchestrator: DeviceOrchestrator,
+) -> None:
+    from eidolon_admin_server.app.registry.schemas.device import DeviceBinding
+
+    device_id = "1c:db:d4:7a:ef:0c"
+    binding = DeviceBinding(agent_id="ag-1", bound_at=datetime.now(timezone.utc))
+
+    await orchestrator._bindings.put(device_id, binding)
+
+    stored = await orchestrator._bindings.get(device_id)
+    assert stored is not None
+    assert stored.agent_id == "ag-1"
+
+    all_bindings = await orchestrator._bindings.list_all()
+    assert device_id in all_bindings
+    assert all_bindings[device_id].agent_id == "ag-1"
+
+
 async def test_list_unbound_devices_have_no_resolved_fields(
     orchestrator: DeviceOrchestrator,
 ) -> None:
@@ -190,6 +226,9 @@ async def test_bind_happy_path(orchestrator: DeviceOrchestrator) -> None:
         rsx.get("/api/admin/devices/esp-1").mock(
             return_value=httpx.Response(200, json=_hub_device_record("esp-1"))
         )
+        refresh = rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(200, json=_hub_command_response("esp-1"))
+        )
         view = await orchestrator.bind_device(
             "esp-1", BindDeviceRequest(agent_id="ag-1")
         )
@@ -201,6 +240,7 @@ async def test_bind_happy_path(orchestrator: DeviceOrchestrator) -> None:
     stored = await orchestrator._bindings.get("esp-1")
     assert stored is not None
     assert stored.agent_id == "ag-1"
+    assert refresh.called
 
 
 async def test_bind_unapproved_device_rejects(
@@ -261,9 +301,13 @@ async def test_unbind_clears_binding(orchestrator: DeviceOrchestrator) -> None:
         rsx.get("/api/admin/devices/esp-1").mock(
             return_value=httpx.Response(200, json=_hub_device_record("esp-1"))
         )
+        refresh = rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(200, json=_hub_command_response("esp-1"))
+        )
         view = await orchestrator.unbind_device("esp-1")
     assert view.binding is None
     assert await orchestrator._bindings.get("esp-1") is None
+    assert refresh.called
 
 
 async def test_unbind_idempotent_when_not_bound(

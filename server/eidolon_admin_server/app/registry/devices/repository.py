@@ -24,7 +24,7 @@ from .._shared import (
     SubProjectUpstreamError,
 )
 from ..buckets import DEVICE_BINDINGS_BUCKET
-from ..keys import device_binding_key
+from ..keys import decode_device_binding_key, device_binding_key, legacy_device_binding_key
 from ..schemas.device import DeviceBinding
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,35 @@ class HubDeviceClient(SubProjectHTTPClient):
         )
         return r.json()
 
+    async def send_config_refresh(self, device_id: str) -> dict[str, Any]:
+        r = await self._request(
+            "POST",
+            f"/api/admin/devices/{device_id}/commands",
+            json={
+                "topic": "eidolon.control",
+                "op": "config.refresh",
+                "payload": {"reason": "admin_state_changed"},
+                "ttl_ms": 30000,
+                "qos": "ack",
+            },
+        )
+        return r.json()
+
+    async def send_room_join(self, device_id: str) -> dict[str, Any]:
+        r = await self._request(
+            "POST",
+            f"/api/admin/devices/{device_id}/commands",
+            json={
+                "topic": "eidolon.control",
+                "op": "room.join",
+                "payload": {"reason": "admin_wake"},
+                "ttl_ms": 30000,
+                "qos": "ack",
+                "priority": "high",
+            },
+        )
+        return r.json()
+
     async def unregister_device(self, device_id: str) -> dict[str, Any]:
         """Returns hub's envelope (existed + presence_cleared flags)."""
         r = await self._request("DELETE", f"/api/admin/devices/{device_id}")
@@ -83,9 +112,11 @@ class DeviceBindingRepository:
         self._kv = kv
 
     async def get(self, device_id: str) -> DeviceBinding | None:
-        raw = await self._kv.get(
-            DEVICE_BINDINGS_BUCKET.name, device_binding_key(device_id)
-        )
+        raw = await self._kv.get(DEVICE_BINDINGS_BUCKET.name, device_binding_key(device_id))
+        if raw is None:
+            legacy_key = legacy_device_binding_key(device_id)
+            if legacy_key and legacy_key != device_binding_key(device_id):
+                raw = await self._kv.get(DEVICE_BINDINGS_BUCKET.name, legacy_key)
         if raw is None:
             return None
         try:
@@ -103,9 +134,10 @@ class DeviceBindingRepository:
 
     async def delete(self, device_id: str) -> None:
         """Idempotent."""
-        await self._kv.delete(
-            DEVICE_BINDINGS_BUCKET.name, device_binding_key(device_id)
-        )
+        await self._kv.delete(DEVICE_BINDINGS_BUCKET.name, device_binding_key(device_id))
+        legacy_key = legacy_device_binding_key(device_id)
+        if legacy_key and legacy_key != device_binding_key(device_id):
+            await self._kv.delete(DEVICE_BINDINGS_BUCKET.name, legacy_key)
 
     async def list_all(self) -> dict[str, DeviceBinding]:
         """Return the full device_id → DeviceBinding map.
@@ -121,10 +153,12 @@ class DeviceBindingRepository:
             raw = await self._kv.get(DEVICE_BINDINGS_BUCKET.name, key)
             if raw is None:
                 continue
+            device_id = decode_device_binding_key(key)
+            if not device_id:
+                logger.warning("devices: ignoring malformed binding key %s", key)
+                continue
             try:
-                out[key.removeprefix("device.")] = DeviceBinding.model_validate(
-                    from_json_bytes(raw)
-                )
+                out[device_id] = DeviceBinding.model_validate(from_json_bytes(raw))
             except Exception:
                 logger.exception("devices: malformed KV entry at key %s", key)
         return out

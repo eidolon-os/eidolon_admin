@@ -63,6 +63,8 @@ class DeviceView(BaseModel):
     last_seen: datetime | None
     # hub-derived status ("online" / "offline" / "degraded" / "unknown").
     status: str
+    room_name: str = ""
+    missed_probes: int = 0
     binding: DeviceBinding | None = None
     # Resolved fields, filled in if binding is set AND the upstream agent
     # was reachable when this view was constructed. Useful for the list

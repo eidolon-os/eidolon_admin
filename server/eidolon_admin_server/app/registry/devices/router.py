@@ -86,6 +86,16 @@ async def unbind_device(device_id: str, request: Request) -> DeviceView:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.post("/{device_id}/wake", status_code=200)
+async def wake_device(device_id: str, request: Request) -> dict:
+    """Send a control command asking the device to join its voice room."""
+    orch = _orchestrator(request)
+    try:
+        return await orch.wake_device(device_id)
+    except DeviceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 @router.delete("/{device_id}", status_code=200)
 async def unregister_device(device_id: str, request: Request) -> dict:
     """Cascade: drop admin's binding + tell hub to forget the device.

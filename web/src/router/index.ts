@@ -17,7 +17,7 @@ const routes: RouteRecordRaw[] = [
         name: 'configs',
         component: () => import('@/modules/configs/Overview.vue'),
       },
-      // Phase 29 catalog: Tenant → Template → User → Agent → Device.
+      // Phase 29 catalog: Tenant → Template → User → Agent.
       // Order in the menu matches the dependency chain so operators
       // build top-down.
       {
@@ -43,7 +43,10 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'devices',
         name: 'devices',
-        component: () => import('@/modules/devices/Overview.vue'),
+        redirect: {
+          name: 'feature',
+          params: { serviceId: 'hub', feature: 'devices' },
+        },
       },
       // Phase 34.B: read-only browse over agent's SQLite turn log.
       // Lives outside the catalog (it's a "what happened" surface,
