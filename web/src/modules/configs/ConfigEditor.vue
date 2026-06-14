@@ -354,8 +354,8 @@ const parsedJson = computed(() => {
   border-radius: 5px;
   color: var(--eid-text-primary);
   font-family: var(--eid-font-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.62;
   padding: 12px;
   outline: none;
   tab-size: 2;
@@ -376,11 +376,12 @@ const parsedJson = computed(() => {
   border-radius: 5px;
   padding: 12px;
   font-family: var(--eid-font-mono);
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--eid-text-primary);
   overflow: auto;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .parse-error {
   background: rgba(239, 68, 68, 0.1);

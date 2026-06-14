@@ -76,9 +76,10 @@ async function copyText() {
   margin: 0;
   overflow: auto;
   font-family: var(--eid-font-mono);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 12.5px;
+  line-height: 1.62;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 </style>

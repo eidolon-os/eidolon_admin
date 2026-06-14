@@ -294,6 +294,6 @@ onMounted(refresh)
 .detail-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 4px 12px; border-bottom: 1px solid var(--eid-border); }
 .detail-head h3 { margin: 0; font-size: 15px; color: var(--eid-text-primary); }
 .meta { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); display: flex; gap: 8px; align-items: center; }
-.yaml { margin: 12px 0 0; padding: 12px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); font-family: var(--eid-font-mono); font-size: 12px; max-height: 600px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.yaml { margin: 12px 0 0; padding: 12px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); font-family: var(--eid-font-mono); font-size: 12.5px; line-height: 1.62; max-height: 600px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 code { font-family: var(--eid-font-mono); padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
 </style>

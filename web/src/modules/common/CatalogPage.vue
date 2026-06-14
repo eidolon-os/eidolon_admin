@@ -60,22 +60,27 @@ defineProps<{
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 16px;
 }
 .page-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 19px;
+  font-weight: 760;
   color: var(--eid-text-primary);
+  line-height: 1.25;
 }
 .hint {
   margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--eid-text-muted);
+  font-size: 13px;
+  color: var(--eid-text-secondary);
   max-width: 720px;
-  line-height: 1.55;
+  line-height: 1.65;
 }
 .head-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 /* Inline ``<code>`` inside hints is used by several pages — keep
    the style here so they don't each re-declare it. */

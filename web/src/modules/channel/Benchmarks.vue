@@ -236,7 +236,7 @@ onMounted(loadRuns)
 .card-header { display: flex; flex-direction: column; gap: 4px; }
 .run-row { border: 1px solid var(--eid-border); border-radius: var(--eid-radius); padding: 10px; margin-bottom: 8px; cursor: pointer; background: var(--eid-bg-panel); }
 .run-row.active { border-color: var(--eid-accent); box-shadow: 0 0 0 1px var(--eid-accent); }
-.run-id { font-weight: 600; margin-bottom: 4px; word-break: break-all; }
+.run-id { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; word-break: break-word; }
 .runner-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
 .detail { min-width: 0; }
 .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }

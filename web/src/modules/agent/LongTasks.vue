@@ -351,7 +351,7 @@ function jsonText(value: unknown): string {
 .kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; font-size: 12px; }
 .kv-grid div { min-width: 0; display: flex; gap: 8px; align-items: baseline; }
 .kv-grid .lbl { color: var(--eid-text-muted); flex: 0 0 92px; }
-.kv-grid span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-grid span:last-child { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .json-blocks { margin-top: 8px; border-top: 0; }
 .json-blocks pre { margin: 0; padding: 10px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); max-height: 260px; overflow: auto; font-family: var(--eid-font-mono); font-size: 12px; line-height: 1.45; }
 </style>

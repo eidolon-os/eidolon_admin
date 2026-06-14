@@ -116,6 +116,7 @@ html.dark .el-card__header {
 
 html.dark .el-table {
   background: transparent;
+  font-size: 13px;
   --el-table-border-color: var(--eid-border);
   --el-table-header-bg-color: rgba(34, 211, 238, 0.035);
   --el-table-row-hover-bg-color: var(--eid-bg-elev);
@@ -126,12 +127,22 @@ html.dark .el-table th.el-table__cell {
   background: rgba(34, 211, 238, 0.035);
   color: var(--eid-text-secondary);
   font-weight: 700;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 11.5px;
+  letter-spacing: 0.035em;
+}
+html.dark .el-table .cell {
+  line-height: 1.45;
+  word-break: break-word;
+}
+html.dark .el-table th.el-table__cell .cell {
+  line-height: 1.3;
+  white-space: normal;
 }
 html.dark .el-table td.el-table__cell {
   border-bottom-color: color-mix(in srgb, var(--eid-border) 76%, transparent);
+}
+html.dark .el-table--small .el-table__cell {
+  padding: 8px 0;
 }
 html.dark .el-table tr {
   transition: background 0.12s ease, box-shadow 0.12s ease;
@@ -182,6 +193,14 @@ html.dark .el-tag {
   border-radius: 3px;
   font-weight: 650;
   letter-spacing: 0.02em;
+  max-width: 100%;
+  vertical-align: middle;
+}
+html.dark .el-tag .el-tag__content {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 html.dark .el-menu {
@@ -212,6 +231,22 @@ html.dark .el-textarea__inner {
   background: var(--eid-bg-inset);
   border-radius: 4px;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--eid-accent) 12%, var(--eid-border-strong)) inset;
+}
+
+html.dark .el-form-item__label {
+  color: var(--eid-text-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+html.dark .el-descriptions__label,
+html.dark .el-descriptions__content {
+  line-height: 1.5;
+}
+
+html.dark .el-collapse-item__header {
+  color: var(--eid-text-primary);
+  font-weight: 650;
 }
 html.dark .el-input__wrapper.is-focus,
 html.dark .el-textarea__inner:focus {

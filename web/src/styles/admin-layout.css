@@ -179,6 +179,39 @@
   border-radius: 5px;
 }
 
+.hint,
+.muted {
+  line-height: 1.55;
+}
+
+.mono,
+code,
+kbd,
+pre {
+  font-variant-ligatures: none;
+}
+
+.mono,
+code {
+  overflow-wrap: anywhere;
+}
+
+pre {
+  tab-size: 2;
+}
+
+.eid-readable-id {
+  display: inline;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.eid-soft-wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @media (max-width: 1180px) {
   .eid-split,
   .eid-split--wide-left {

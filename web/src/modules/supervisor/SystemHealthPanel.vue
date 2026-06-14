@@ -286,9 +286,11 @@ function rowKey(svc: ServiceHealth, port: PortStatus): string {
 .port-num { font-weight: 600; min-width: 64px; }
 .port-pid { font-size: 11px; }
 .port-cmd {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.45;
   color: var(--eid-text-muted);
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   padding-left: 64px;
 }
 .mono { font-family: var(--eid-font-mono); }

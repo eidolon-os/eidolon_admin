@@ -402,7 +402,7 @@ function onKeyDown(e: KeyboardEvent) {
 }
 .settings.collapsed :deep(.el-card__body) { padding: 0; }
 .mono { font-family: var(--eid-font-mono); }
-.small { font-size: 11px; color: var(--eid-text-muted); }
+.small { font-size: 12px; line-height: 1.45; color: var(--eid-text-muted); }
 
 .conv {
   flex: 1;
@@ -449,7 +449,7 @@ function onKeyDown(e: KeyboardEvent) {
 }
 .bubble.streaming { border-color: var(--eid-accent); }
 .bubble-meta-top {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   color: var(--eid-text-muted);
@@ -460,12 +460,12 @@ function onKeyDown(e: KeyboardEvent) {
 .bubble-text {
   white-space: pre-wrap;
   word-break: break-word;
-  line-height: 1.55;
-  font-size: 13.5px;
+  line-height: 1.62;
+  font-size: 14px;
   color: var(--eid-text-primary);
 }
 .bubble-meta-bottom {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--eid-text-muted);
   margin-top: 6px;
   text-align: right;
@@ -518,7 +518,8 @@ function onKeyDown(e: KeyboardEvent) {
   background: var(--eid-bg-canvas);
   border-radius: 4px;
   font-family: var(--eid-font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 200px;
@@ -540,7 +541,7 @@ function onKeyDown(e: KeyboardEvent) {
   flex: 0 0 auto;
 }
 .events :deep(.el-card__header) { padding: 8px 14px; }
-.events .hint { color: var(--eid-text-muted); font-size: 11px; }
+.events .hint { color: var(--eid-text-muted); font-size: 12px; line-height: 1.5; }
 .events-log {
   background: var(--eid-bg-inset);
   color: var(--eid-text-secondary);
@@ -548,7 +549,8 @@ function onKeyDown(e: KeyboardEvent) {
   padding: 10px 12px;
   margin: 0;
   font-family: var(--eid-font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.55;
   max-height: 180px;
   overflow: auto;
   white-space: pre-wrap;
