@@ -61,7 +61,9 @@ services:
       - { key: pairing,            label: "Pairing" }
       - { key: chat-stream,        label: "Chat", stream: true }
       - { key: chat-test,          label: "Chat (events)", stream: true }
+      - { key: conversations,      label: "Conversations" }
       - { key: long-tasks,         label: "Long Tasks" }
+      - { key: replay-reports,     label: "Replay Reports" }
       - { key: console,            label: "API Console" }
     configs:
       - id: settings

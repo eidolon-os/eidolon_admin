@@ -16,7 +16,9 @@ const moduleMap: Record<string, Record<string, Component>> = {
     pairing: defineAsyncComponent(() => import('./agent/Pairing.vue')),
     'chat-stream': defineAsyncComponent(() => import('./agent/ChatStream.vue')),
     'chat-test': defineAsyncComponent(() => import('./agent/ChatTest.vue')),
+    conversations: defineAsyncComponent(() => import('./agent/Conversations.vue')),
     'long-tasks': defineAsyncComponent(() => import('./agent/LongTasks.vue')),
+    'replay-reports': defineAsyncComponent(() => import('./agent/ReplayReports.vue')),
   },
   hub: {
     devices: defineAsyncComponent(() => import('./hub/Devices.vue')),

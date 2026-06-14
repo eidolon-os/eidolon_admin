@@ -21,15 +21,10 @@ const isMemoryRoute = computed(() => {
 // pages — each route name maps 1:1 to its menu index. Devices live under
 // Hub because approval, binding and command delivery are hub operations.
 const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents'] as const
-const ACTIVITY_KEYS = ['conversations', 'replay-reports'] as const
-
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
   if (typeof route.name === 'string' && (CATALOG_KEYS as readonly string[]).includes(route.name)) {
-    return route.name
-  }
-  if (typeof route.name === 'string' && (ACTIVITY_KEYS as readonly string[]).includes(route.name)) {
     return route.name
   }
   if (route.params.serviceId && route.params.feature) {
@@ -94,17 +89,6 @@ function go(serviceId: string, feature: string) {
             <span>Agents</span>
           </el-menu-item>
         </el-sub-menu>
-        <!-- Phase 34.B: read-only browse of agent's chat history. Lives
-             as a top-level entry rather than under Catalog because it's
-             an "activity" view, not a "what exists" view. -->
-        <el-menu-item index="conversations" @click="router.push({ name: 'conversations' })">
-          <el-icon><ChatLineRound /></el-icon>
-          <span>Conversations</span>
-        </el-menu-item>
-        <el-menu-item index="replay-reports" @click="router.push({ name: 'replay-reports' })">
-          <el-icon><TrendCharts /></el-icon>
-          <span>Replay Reports</span>
-        </el-menu-item>
         <el-sub-menu
           v-for="svc in navigableServices"
           :key="svc.id"
@@ -134,8 +118,6 @@ function go(serviceId: string, feature: string) {
           <template v-else-if="route.name === 'templates'">Catalog <span class="sep">/</span> Templates</template>
           <template v-else-if="route.name === 'users'">Catalog <span class="sep">/</span> Users</template>
           <template v-else-if="route.name === 'agents'">Catalog <span class="sep">/</span> Agents</template>
-          <template v-else-if="route.name === 'conversations'">Conversations</template>
-          <template v-else-if="route.name === 'replay-reports'">Replay Reports</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
             <span class="sep">/</span>
