@@ -472,6 +472,75 @@ async def test_delete_user_calls_memory_then_cleans_metadata(
     assert await orchestrator._meta.get("alice") is None
 
 
+async def test_delete_user_deletes_owned_agents_before_memory(
+    orchestrator: UserOrchestrator,
+) -> None:
+    """User delete cascades through agent delete first. The fake agent
+    delete result mirrors AgentOrchestrator.delete_agent's envelope."""
+    await orchestrator._meta.put(
+        "alice", UserMetadata(tenant_id="default", display_name="A")
+    )
+    calls: list[str] = []
+
+    async def fake_agent_ids(user_id: str) -> list[str]:
+        calls.append(f"list:{user_id}")
+        return ["ag-1", "ag-2"]
+
+    async def fake_delete_agent(agent_id: str) -> dict:
+        calls.append(f"delete-agent:{agent_id}")
+        return {
+            "agent_id": agent_id,
+            "deleted": True,
+            "active_agent_cleared_for_users": ["alice"],
+            "unbound_devices": [],
+        }
+
+    orchestrator.set_agent_ids_provider(fake_agent_ids)
+    orchestrator.set_agent_delete_provider(fake_delete_agent)
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.delete("/api/admin/users/alice").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "user_id": "alice",
+                    "deleted": True,
+                    "palace_trashed_to": "/tmp/trash/alice_xxx",
+                },
+            )
+        )
+        result = await orchestrator.delete_user("alice")
+
+    assert calls == ["list:alice", "delete-agent:ag-1", "delete-agent:ag-2"]
+    assert result["deleted_agents"] == ["ag-1", "ag-2"]
+    assert await orchestrator._meta.get("alice") is None
+
+
+async def test_delete_user_aborts_if_owned_agent_delete_fails(
+    orchestrator: UserOrchestrator,
+) -> None:
+    """If related data cannot be removed, user delete must not proceed
+    to memory. That prevents orphaning agents behind a deleted user."""
+    await orchestrator._meta.put(
+        "alice", UserMetadata(tenant_id="default", display_name="A")
+    )
+
+    async def fake_agent_ids(user_id: str) -> list[str]:
+        return ["ag-1"]
+
+    async def broken_delete_agent(agent_id: str) -> dict:
+        raise RuntimeError("agent project down")
+
+    orchestrator.set_agent_ids_provider(fake_agent_ids)
+    orchestrator.set_agent_delete_provider(broken_delete_agent)
+
+    with respx.mock(base_url=MEMORY_URL):
+        with pytest.raises(UserError, match="failed to delete owned agent"):
+            await orchestrator.delete_user("alice")
+
+    assert await orchestrator._meta.get("alice") is not None
+
+
 async def test_delete_user_propagates_memory_404(
     orchestrator: UserOrchestrator,
 ) -> None:

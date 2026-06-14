@@ -26,6 +26,7 @@ const form = ref({ id: '', port: 8030, enabled: true, palace_path: '' })
 const consDialogOpen = ref(false)
 const consSubmitting = ref(false)
 const consUserId = ref('')
+const consOriginalEnabled = ref(false)
 const consForm = ref<ConsolidatorUpdateBody>({
   enabled: false,
   interval_hours: 6,
@@ -60,6 +61,18 @@ async function withBusy(id: string, fn: () => Promise<unknown>) {
 }
 
 async function onEnable(userId: string, enabled: boolean) {
+  if (!enabled) {
+    try {
+      await ElMessageBox.confirm(
+        `停用 ${userId} 的 memory user？这会停止该用户的 agent_runner。`,
+        '停用 Memory User',
+        { type: 'warning' },
+      )
+    } catch {
+      await refresh()
+      return
+    }
+  }
   await withBusy(userId, async () => {
     try {
       await setMemoryUserEnabled(userId, enabled)
@@ -120,6 +133,7 @@ async function onCreate() {
 
 function openConsolidator(userId: string, c: ConsolidatorStatus | null | undefined) {
   consUserId.value = userId
+  consOriginalEnabled.value = c?.enabled ?? false
   consForm.value = {
     enabled: c?.enabled ?? false,
     interval_hours: c?.interval_hours ?? 6,
@@ -131,6 +145,17 @@ function openConsolidator(userId: string, c: ConsolidatorStatus | null | undefin
 }
 
 async function onSaveConsolidator() {
+  if (consOriginalEnabled.value && !consForm.value.enabled) {
+    try {
+      await ElMessageBox.confirm(
+        `停用 ${consUserId.value} 的 consolidator？后台主题整理 worker 会停止运行。`,
+        '停用 Consolidator',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
   consSubmitting.value = true
   try {
     const r = await updateMemoryUserConsolidator(consUserId.value, { ...consForm.value })

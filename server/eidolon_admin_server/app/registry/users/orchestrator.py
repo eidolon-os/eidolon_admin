@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .._shared import unwrap_detail
 from ..schemas.user import (
@@ -130,7 +130,8 @@ class UserOrchestrator:
     # agent_ids owned by a user. Wired by main.py after both the user
     # and agent orchestrators exist (setter-injection avoids the
     # circular import between users/agents).
-    AgentIdsProvider = "Callable[[str], Awaitable[list[str]]]"
+    AgentIdsProvider = Callable[[str], Awaitable[list[str]]]
+    AgentDeleteProvider = Callable[[str], Awaitable[dict[str, Any]]]
 
     def __init__(
         self,
@@ -145,17 +146,29 @@ class UserOrchestrator:
         # 29.K: ``agent_ids`` was always [] before — UserView dropdown
         # in the admin UI was silently empty. Setter wired in lifespan
         # once AgentOrchestrator is built.
-        self._agent_ids_provider = None  # type: ignore[var-annotated]
+        self._agent_ids_provider: UserOrchestrator.AgentIdsProvider | None = None
+        self._agent_delete_provider: UserOrchestrator.AgentDeleteProvider | None = None
 
     def set_agent_ids_provider(
-        self,
-        provider,  # type: ignore[no-untyped-def]
+        self, provider: AgentIdsProvider
     ) -> None:
         """Inject the agent-ids lookup. ``provider(user_id)`` returns
         the list of agent_ids owned by that user. Setter (not ctor arg)
         because UserOrchestrator must be built before AgentOrchestrator
         — agent's ctor takes the user_orchestrator for cross-validation."""
         self._agent_ids_provider = provider
+
+    def set_agent_delete_provider(
+        self, provider: AgentDeleteProvider
+    ) -> None:
+        """Inject agent deletion for user-delete cascade.
+
+        User deletion must not leave persona instances, user.active_agent
+        references, or device bindings behind. The actual cleanup belongs
+        to AgentOrchestrator.delete_agent(), so Users receives a thin
+        callback instead of importing Agents directly.
+        """
+        self._agent_delete_provider = provider
 
     # ---- internal helpers ----------------------------------------------
 
@@ -465,17 +478,42 @@ class UserOrchestrator:
     async def delete_user(self, user_id: str) -> dict[str, Any]:
         """Delete a user. Cascade order:
 
-          1. (Future) delete all agents owned by this user — Phase 29.F.
-             Until that module lands, this step is a no-op.
-          2. (Future) unbind any devices pointing at those agents —
-             Phase 29.G. Same status.
-          3. DELETE memory user (terminates worker, trashes palace).
-          4. DELETE admin metadata (cleanup).
+          1. Delete all agents owned by this user via AgentOrchestrator.
+             That existing path clears user.active_agent references and
+             unbinds devices pointing at those agents.
+          2. DELETE memory user (terminates worker, trashes palace).
+          3. DELETE admin metadata (cleanup).
 
         Returns memory's response envelope (includes ``palace_trashed_to``
         so admin UI can show "moved to ~/.eidolon-trash/...").
         """
-        # Step 3 — memory delete. Atomicity-wise, doing this AFTER the
+        deleted_agents: list[dict[str, Any]] = []
+        if self._agent_ids_provider is not None:
+            try:
+                agent_ids = await self._agent_ids_provider(user_id)
+            except Exception as exc:  # noqa: BLE001 - aborts destructive delete
+                raise UserError(
+                    f"failed to enumerate agents for user {user_id!r}; "
+                    "aborting user delete"
+                ) from exc
+            if agent_ids and self._agent_delete_provider is None:
+                raise UserError(
+                    f"user {user_id!r} owns agents but agent delete cascade "
+                    "is not wired; aborting user delete"
+                )
+            agent_delete_provider = self._agent_delete_provider
+            for agent_id in agent_ids:
+                try:
+                    if agent_delete_provider is None:
+                        continue
+                    deleted_agents.append(await agent_delete_provider(agent_id))
+                except Exception as exc:  # noqa: BLE001 - abort before memory delete
+                    raise UserError(
+                        f"failed to delete owned agent {agent_id!r} before "
+                        f"deleting user {user_id!r}; aborting user delete"
+                    ) from exc
+
+        # Step 2 — memory delete. Atomicity-wise, doing this AFTER the
         # admin-side cleanup would mean a failure leaves a user in memory
         # with no admin metadata. Doing it BEFORE means a failure leaves
         # an orphan admin metadata key (harmless, idempotent retry of
@@ -487,7 +525,7 @@ class UserOrchestrator:
         except MemoryUserUpstreamError as exc:
             self._map_memory_error(exc)
 
-        # Step 4 — admin metadata cleanup. Best-effort; idempotent.
+        # Step 3 — admin metadata cleanup. Best-effort; idempotent.
         try:
             await self._meta.delete(user_id)
         except Exception:
@@ -497,4 +535,8 @@ class UserOrchestrator:
                 "the orphan metadata",
                 user_id,
             )
+        memory_result["deleted_agents"] = [
+            r.get("agent_id") for r in deleted_agents if r.get("agent_id")
+        ]
+        memory_result["agent_delete_results"] = deleted_agents
         return memory_result

@@ -226,6 +226,9 @@ def create_app(
             user_orch_ready.set_agent_ids_provider(
                 lambda uid: app.state.agent_orchestrator.list_agent_ids_for_user(uid)
             )
+            user_orch_ready.set_agent_delete_provider(
+                lambda aid: app.state.agent_orchestrator.delete_agent(aid)
+            )
 
             logger.info(
                 "agent orchestrator ready (agent=%s)", agent_url_for_agents

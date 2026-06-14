@@ -175,7 +175,7 @@ async function submit() {
 async function remove(row: UserView) {
   try {
     await ElMessageBox.confirm(
-      `确认删除用户 "${row.spec.user_id}"? 所有该用户的 agent 也会被级联删除, palace 会移入回收。`,
+      `确认删除用户 "${row.spec.user_id}"? 系统会先删除该用户的 Agent 并解绑相关设备, 再删除 memory 用户并归档 palace。`,
       '删除用户',
       { type: 'warning' },
     )
@@ -184,10 +184,12 @@ async function remove(row: UserView) {
   }
   try {
     const res = await deleteUser(row.spec.user_id)
+    const deletedAgents = res.deleted_agents?.length ?? 0
+    const agentSuffix = deletedAgents ? `, 已清理 ${deletedAgents} 个 Agent` : ''
     ElMessage.success(
       res.palace_trashed_to
-        ? `已删除, palace 已归档至 ${res.palace_trashed_to}`
-        : '已删除',
+        ? `已删除${agentSuffix}, palace 已归档至 ${res.palace_trashed_to}`
+        : `已删除${agentSuffix}`,
     )
     await refresh()
   } catch (e: any) {

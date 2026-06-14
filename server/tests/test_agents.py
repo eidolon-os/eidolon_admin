@@ -217,10 +217,21 @@ async def test_list_filters_by_user(orchestrator: AgentOrchestrator) -> None:
             template_revision=1, display_name="B1", created_at=base,
         ),
     )
-    all_agents = await orchestrator.list_agents()
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.get("/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user_record("alice"))
+        )
+        rsx.get("/api/admin/users/bob").mock(
+            return_value=httpx.Response(200, json=_memory_user_record("bob"))
+        )
+        all_agents = await orchestrator.list_agents()
     assert {a.agent_id for a in all_agents} == {"ag-1", "ag-2", "ag-3"}
 
-    alice_agents = await orchestrator.list_agents(user_id="alice")
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.get("/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user_record("alice"))
+        )
+        alice_agents = await orchestrator.list_agents(user_id="alice")
     assert {a.agent_id for a in alice_agents} == {"ag-1", "ag-2"}
 
 
