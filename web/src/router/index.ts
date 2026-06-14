@@ -58,6 +58,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/conversations/Overview.vue'),
       },
       {
+        path: 'long-tasks',
+        name: 'long-tasks',
+        component: () => import('@/modules/long-tasks/Overview.vue'),
+      },
+      {
         path: 'replay-reports',
         name: 'replay-reports',
         component: () => import('@/modules/reports/ReplayReports.vue'),

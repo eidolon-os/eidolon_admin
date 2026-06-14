@@ -21,7 +21,7 @@ const isMemoryRoute = computed(() => {
 // pages — each route name maps 1:1 to its menu index. Devices live under
 // Hub because approval, binding and command delivery are hub operations.
 const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents'] as const
-const ACTIVITY_KEYS = ['conversations', 'replay-reports'] as const
+const ACTIVITY_KEYS = ['conversations', 'long-tasks', 'replay-reports'] as const
 
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
@@ -101,6 +101,10 @@ function go(serviceId: string, feature: string) {
           <el-icon><ChatLineRound /></el-icon>
           <span>Conversations</span>
         </el-menu-item>
+        <el-menu-item index="long-tasks" @click="router.push({ name: 'long-tasks' })">
+          <el-icon><Tickets /></el-icon>
+          <span>Long Tasks</span>
+        </el-menu-item>
         <el-menu-item index="replay-reports" @click="router.push({ name: 'replay-reports' })">
           <el-icon><TrendCharts /></el-icon>
           <span>Replay Reports</span>
@@ -135,6 +139,7 @@ function go(serviceId: string, feature: string) {
           <template v-else-if="route.name === 'users'">Catalog <span class="sep">/</span> Users</template>
           <template v-else-if="route.name === 'agents'">Catalog <span class="sep">/</span> Agents</template>
           <template v-else-if="route.name === 'conversations'">Conversations</template>
+          <template v-else-if="route.name === 'long-tasks'">Long Tasks</template>
           <template v-else-if="route.name === 'replay-reports'">Replay Reports</template>
           <template v-else-if="route.params.serviceId">
             {{ store.findService(route.params.serviceId as string)?.name || route.params.serviceId }}
