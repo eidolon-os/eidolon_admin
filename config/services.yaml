@@ -61,6 +61,7 @@ services:
       - { key: pairing,            label: "Pairing" }
       - { key: chat-stream,        label: "Chat", stream: true }
       - { key: chat-test,          label: "Chat (events)", stream: true }
+      - { key: long-tasks,         label: "Long Tasks" }
       - { key: console,            label: "API Console" }
     configs:
       - id: settings
