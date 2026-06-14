@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { ElMessage } from 'element-plus'
+import { CopyDocument } from '@element-plus/icons-vue'
 
 // Consistent dark-themed `<pre>` for showing JSON / YAML / arbitrary data.
 // Keeps formatting + scrolling decisions in one place.
@@ -26,18 +28,51 @@ const text = computed(() => {
   if (typeof value === 'string') return value
   return JSON.stringify(value, null, 2)
 })
+
+async function copyText() {
+  try {
+    await navigator.clipboard.writeText(text.value)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
 </script>
 
 <template>
-  <pre class="json" :style="{ maxHeight: maxHeight }">{{ text }}</pre>
+  <div class="json-wrap">
+    <el-button
+      class="copy-button"
+      :icon="CopyDocument"
+      circle
+      size="small"
+      title="复制内容"
+      @click="copyText"
+    />
+    <pre class="json eid-code-surface" :style="{ maxHeight: maxHeight }">{{ text }}</pre>
+  </div>
 </template>
 
 <style scoped>
+.json-wrap {
+  position: relative;
+  min-width: 0;
+}
+.copy-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.json-wrap:hover .copy-button,
+.copy-button:focus-visible {
+  opacity: 1;
+}
 .json {
-  background: var(--eid-bg-inset);
   color: var(--eid-text-primary);
   padding: 14px 16px;
-  border-radius: 6px;
   margin: 0;
   overflow: auto;
   font-family: var(--eid-font-mono);

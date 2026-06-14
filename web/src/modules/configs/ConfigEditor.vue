@@ -345,9 +345,13 @@ const parsedJson = computed(() => {
   flex: 1;
   width: 100%;
   resize: none;
-  background: var(--eid-bg-inset);
-  border: 1px solid var(--eid-border);
-  border-radius: var(--eid-radius-sm);
+  background:
+    linear-gradient(rgba(34, 211, 238, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.022) 1px, transparent 1px),
+    var(--eid-bg-inset);
+  background-size: 22px 22px;
+  border: 1px solid color-mix(in srgb, var(--eid-accent) 16%, var(--eid-border));
+  border-radius: 5px;
   color: var(--eid-text-primary);
   font-family: var(--eid-font-mono);
   font-size: 12.5px;
@@ -363,9 +367,13 @@ const parsedJson = computed(() => {
 .parsed {
   flex: 1;
   margin: 0;
-  background: var(--eid-bg-inset);
-  border: 1px solid var(--eid-border);
-  border-radius: var(--eid-radius-sm);
+  background:
+    linear-gradient(rgba(34, 211, 238, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.022) 1px, transparent 1px),
+    var(--eid-bg-inset);
+  background-size: 22px 22px;
+  border: 1px solid color-mix(in srgb, var(--eid-accent) 16%, var(--eid-border));
+  border-radius: 5px;
   padding: 12px;
   font-family: var(--eid-font-mono);
   font-size: 12px;

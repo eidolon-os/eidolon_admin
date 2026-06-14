@@ -228,16 +228,16 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
+  <div class="page conversations-page">
+    <header class="page-head eid-page-head">
       <div>
         <h2>对话记录</h2>
-        <p class="hint">
+        <p class="hint eid-page-hint">
           只读视图：浏览 agent SQLite 里的 turn 日志。按 user 过滤；
           点击一行展开看消息正文 + 调试信息（latency / tokens / trace）。
         </p>
       </div>
-      <div class="head-actions">
+      <div class="head-actions eid-head-actions">
         <RegisteredUserPicker
           v-model="filterUserId"
           width="240px"
@@ -250,8 +250,8 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
       </div>
     </header>
 
-    <div class="split">
-      <div class="left">
+    <div class="split eid-split">
+      <div class="left eid-panel eid-panel-pad eid-panel-scroll">
         <el-table
           v-loading="loading && turns.length === 0"
           :data="turns"
@@ -324,17 +324,17 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
         </div>
       </div>
 
-      <div class="right">
+      <div class="right eid-panel eid-panel-scroll">
         <div v-if="!detail && !detailLoading" class="placeholder">
           <el-icon><ChatLineRound /></el-icon>
           <span>选择左侧一行查看详情</span>
         </div>
         <div v-else-if="detailLoading" class="placeholder">加载中…</div>
         <template v-else-if="detail">
-          <div class="detail-head">
+          <div class="detail-head eid-detail-head">
             <div>
               <h3>{{ detail.user_id }} · turn {{ detail.seq }}</h3>
-              <p class="meta">
+              <p class="meta eid-meta-row">
                 <code class="mono">{{ detail.turn_id.slice(0, 12) }}…</code>
                 <span>•</span>
                 <span>{{ formatTimestamp(detail.started_at) }}</span>
@@ -463,7 +463,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
       </div>
     </div>
 
-    <section class="audit">
+    <section class="audit eid-panel eid-panel-pad">
       <div class="audit-head">
         <div>
           <h3>Memory audit</h3>
@@ -531,13 +531,12 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-.page-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.hint { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 580px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
-.split { display: grid; grid-template-columns: minmax(420px, 1fr) 1.4fr; gap: 16px; }
-.left, .right { background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; min-height: 560px; }
+.page { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.conversations-page { height: 100%; overflow: hidden; }
+.page-head { margin-bottom: 0; }
+.hint { max-width: 620px; }
+.split { min-height: 0; }
+.left, .right { min-height: 0; }
 .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--eid-text-muted); }
 .empty { padding: 32px; text-align: center; color: var(--eid-text-muted); font-size: 12px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); margin-top: 8px; }
 .pager { display: flex; justify-content: center; padding: 12px; }
@@ -545,9 +544,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 .mono { font-family: var(--eid-font-mono); font-size: 12px; }
 
-.detail-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 4px 12px; border-bottom: 1px solid var(--eid-border); }
-.detail-head h3 { margin: 0; font-size: 14px; }
-.meta { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.detail-head { position: sticky; top: 0; z-index: 1; }
 .meta .mono { padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
 
 .observability { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; padding: 10px 4px; border-bottom: 1px solid var(--eid-border); font-size: 12px; }
@@ -556,7 +553,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
 .obs-item .lbl { color: var(--eid-text-muted); min-width: 92px; flex: 0 0 auto; }
 .obs-item .val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.messages { display: flex; flex-direction: column; gap: 12px; padding: 12px 4px; max-height: 480px; overflow: auto; }
+.messages { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .msg { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); border: 1px solid var(--eid-border); }
 .msg.role-user { border-left: 3px solid var(--eid-accent); }
 .msg.role-assistant { border-left: 3px solid var(--eid-success, #67c23a); }
@@ -575,11 +572,14 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
 .debug-grid .lbl { color: var(--eid-text-muted); min-width: 90px; display: inline-block; }
 .debug-grid .val { font-family: var(--eid-font-mono); }
 .debug-grid pre.val { margin: 4px 0 0; padding: 8px; background: var(--eid-bg-canvas); border-radius: 3px; max-height: 200px; overflow: auto; }
-.audit { margin-top: 16px; background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; }
+.audit { flex: 0 0 230px; margin-top: 0; overflow: auto; min-height: 0; }
 .audit-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 8px; }
 .audit-head h3 { margin: 0; font-size: 14px; }
 .audit-head p { margin: 4px 0 0; }
 .audit-empty { margin-top: 8px; }
 .link-button { padding: 0; border: 0; background: transparent; color: var(--eid-accent); font-family: var(--eid-font-mono); font-size: 12px; cursor: pointer; }
 .link-button:hover { text-decoration: underline; }
+@media (max-height: 760px) {
+  .audit { flex-basis: 190px; }
+}
 </style>

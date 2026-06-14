@@ -61,15 +61,15 @@ function statusType(value: boolean | null): 'success' | 'danger' | 'info' {
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
+  <div class="page eid-page">
+    <header class="page-head eid-page-head">
       <div>
         <h2>Replay Reports</h2>
-        <p class="hint">
+        <p class="hint eid-page-hint">
           只读视图：浏览 agent 生成的 experience replay 与 realtime guard JSON 报告。
         </p>
       </div>
-      <div class="head-actions">
+      <div class="head-actions eid-head-actions">
         <el-radio-group v-model="kindFilter" size="small" @change="refresh">
           <el-radio-button label="all">all</el-radio-button>
           <el-radio-button label="replay">replay</el-radio-button>
@@ -81,8 +81,8 @@ function statusType(value: boolean | null): 'success' | 'danger' | 'info' {
       </div>
     </header>
 
-    <div class="split">
-      <section class="left">
+    <div class="split eid-split">
+      <section class="left eid-panel eid-panel-pad eid-panel-scroll">
         <el-table
           v-loading="loading"
           :data="filteredReports"
@@ -119,14 +119,14 @@ function statusType(value: boolean | null): 'success' | 'danger' | 'info' {
         </div>
       </section>
 
-      <section class="right">
+      <section class="right eid-panel eid-panel-scroll">
         <div v-if="detailLoading" class="placeholder">加载中...</div>
         <div v-else-if="!selected" class="placeholder">选择左侧 report</div>
         <template v-else>
-          <div class="detail-head">
+          <div class="detail-head eid-detail-head">
             <div>
               <h3>{{ selected.summary.id }}</h3>
-              <p class="meta">
+              <p class="meta eid-meta-row">
                 <el-tag :type="statusType(selected.summary.passed)" size="small" effect="dark">
                   {{ selected.summary.passed === null ? 'unknown' : (selected.summary.passed ? 'pass' : 'fail') }}
                 </el-tag>
@@ -158,20 +158,17 @@ function statusType(value: boolean | null): 'success' | 'danger' | 'info' {
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 16px; }
-.page-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.hint { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 620px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
-.split { display: grid; grid-template-columns: minmax(420px, 1fr) 1.4fr; gap: 16px; min-height: 620px; }
-.left, .right { background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; }
+.page { min-height: 0; }
+.page-head { margin-bottom: 0; }
+.hint { max-width: 620px; }
 .empty, .placeholder { padding: 32px; text-align: center; color: var(--eid-text-muted); font-size: 12px; }
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 .mono { font-family: var(--eid-font-mono); font-size: 12px; }
-.detail-head { padding: 8px 4px 12px; border-bottom: 1px solid var(--eid-border); }
-.detail-head h3 { margin: 0; font-size: 14px; }
-.meta { margin: 6px 0 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; color: var(--eid-text-muted); font-size: 12px; }
-.summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 4px; }
-.payload { padding: 0 4px 4px; }
+.detail-head { position: sticky; top: 0; z-index: 1; }
+.summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; }
+.payload { padding: 0 12px 12px; }
 .lbl { display: block; margin: 0 0 6px; color: var(--eid-text-muted); font-size: 12px; }
+@media (max-width: 760px) {
+  .summary-grid { grid-template-columns: 1fr; }
+}
 </style>

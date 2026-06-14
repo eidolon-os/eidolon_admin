@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Eidolon">
+  <defs>
+    <radialGradient id="core" cx="50%" cy="45%" r="62%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="42%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#06090b"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="8" y1="8" x2="56" y2="56">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="58%" stop-color="#0d1114"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#06090b"/>
+  <path d="M13 21V13h38v8M51 43v8H13v-8" fill="none" stroke="url(#edge)" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="18" fill="url(#core)" opacity=".22"/>
+  <path d="M22 19h23v7H30v5h13v6H30v7h16v7H22V19Z" fill="#eef7f8"/>
+  <path d="M22 19h23v7H30v5h13v6H30v7h16v7H22V19Z" fill="none" stroke="#22d3ee" stroke-opacity=".42" stroke-width="1"/>
+</svg>

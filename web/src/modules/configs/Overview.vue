@@ -66,11 +66,11 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
+  <div class="page eid-page">
+    <header class="page-head eid-page-head">
       <div>
         <h2>配置管理</h2>
-        <p class="hint">
+        <p class="hint eid-page-hint">
           所有子项目的配置文件统一在此查看和编辑。保存前会自动备份（最多保留 10 份），
           编辑器以原文显示，解析视图会自动脱敏 secret/key/token/password 等字段。
         </p>
@@ -78,8 +78,8 @@ onMounted(() => {
       <el-button :loading="loading" size="small" @click="refresh">刷新</el-button>
     </header>
 
-    <div class="layout">
-      <aside class="tree" v-loading="loading">
+    <div class="layout eid-split configs-split">
+      <aside class="tree eid-panel eid-panel-pad eid-panel-scroll" v-loading="loading">
         <div v-if="!loading && groups.length === 0" class="empty">
           services.yaml 中尚未声明任何 configs:
         </div>
@@ -102,7 +102,7 @@ onMounted(() => {
         </section>
       </aside>
 
-      <section class="editor">
+      <section class="editor eid-panel">
         <ConfigEditor
           v-if="selected"
           :key="`${selected.service_id}::${selected.config_id}`"
@@ -119,43 +119,18 @@ onMounted(() => {
 
 <style scoped>
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  height: calc(100vh - var(--eid-header-h) - 48px);
+  min-height: 0;
 }
 .page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.page-head h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--eid-text-primary);
+  margin-bottom: 0;
 }
 .hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--eid-text-secondary);
   max-width: 720px;
-  line-height: 1.6;
 }
 .layout {
-  display: grid;
+  --eid-split-left: 280px;
+  --eid-split-right: minmax(0, 1fr);
   grid-template-columns: 280px 1fr;
-  gap: 16px;
-  min-height: 0;
-  flex: 1;
-}
-.tree {
-  background: var(--eid-bg-panel);
-  border: 1px solid var(--eid-border);
-  border-radius: var(--eid-radius);
-  padding: 8px;
-  overflow-y: auto;
 }
 .empty {
   padding: 16px;
@@ -212,14 +187,7 @@ onMounted(() => {
   color: var(--eid-warning);
 }
 .editor {
-  background: var(--eid-bg-panel);
-  border: 1px solid var(--eid-border);
-  border-radius: var(--eid-radius);
   padding: 16px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
 }
 .placeholder {
   display: flex;

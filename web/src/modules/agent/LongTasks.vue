@@ -139,13 +139,13 @@ function jsonText(value: unknown): string {
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
+  <div class="page eid-page">
+    <header class="page-head eid-page-head">
       <div>
         <h2>Long Tasks</h2>
-        <p class="hint">通过 agent admin API 查看 mementos 长任务，不直接读取 agent SQLite。</p>
+        <p class="hint eid-page-hint">通过 agent admin API 查看 mementos 长任务，不直接读取 agent SQLite。</p>
       </div>
-      <div class="head-actions">
+      <div class="head-actions eid-head-actions">
         <RegisteredUserPicker
           v-model="filterUserId"
           width="220px"
@@ -172,8 +172,8 @@ function jsonText(value: unknown): string {
       </div>
     </header>
 
-    <div class="split">
-      <div class="left">
+    <div class="split eid-split eid-split--wide-left">
+      <div class="left eid-panel eid-panel-pad eid-panel-scroll">
         <el-table
           v-loading="loading && tasks.length === 0"
           :data="tasks"
@@ -242,17 +242,17 @@ function jsonText(value: unknown): string {
         </div>
       </div>
 
-      <div class="right">
+      <div class="right eid-panel eid-panel-scroll">
         <div v-if="!detail && !detailLoading" class="placeholder">
           <el-icon><Tickets /></el-icon>
           <span>选择左侧任务查看详情</span>
         </div>
         <div v-else-if="detailLoading" class="placeholder">加载中…</div>
         <template v-else-if="detail">
-          <div class="detail-head">
+          <div class="detail-head eid-detail-head">
             <div>
               <h3>{{ detail.user_id }} · {{ detail.task_type }}</h3>
-              <p class="meta">
+              <p class="meta eid-meta-row">
                 <code class="mono">{{ shortId(detail.task_id) }}</code>
                 <span>•</span>
                 <span>{{ formatTimestamp(detail.created_at) }}</span>
@@ -330,13 +330,9 @@ function jsonText(value: unknown): string {
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 16px; }
-.page-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.hint { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); max-width: 560px; }
-.head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-.split { display: grid; grid-template-columns: minmax(480px, 1.15fr) minmax(420px, 0.85fr); gap: 16px; }
-.left, .right { background: var(--eid-bg-panel); border: 1px solid var(--eid-border); border-radius: var(--eid-radius-sm); padding: 8px; min-height: 620px; }
+.page { min-height: 0; }
+.page-head { margin-bottom: 0; }
+.hint { max-width: 560px; }
 .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--eid-text-muted); }
 .empty { padding: 32px; text-align: center; color: var(--eid-text-muted); font-size: 12px; background: var(--eid-bg-canvas); border-radius: var(--eid-radius-sm); margin-top: 8px; }
 .pager { display: flex; justify-content: center; padding: 12px; }
@@ -346,11 +342,9 @@ function jsonText(value: unknown): string {
 .task-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .task-cell span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.detail-head { display: flex; justify-content: space-between; align-items: flex-start; padding: 8px 4px 12px; border-bottom: 1px solid var(--eid-border); }
-.detail-head h3 { margin: 0; font-size: 14px; }
-.meta { margin: 4px 0 0; font-size: 12px; color: var(--eid-text-muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.detail-head { position: sticky; top: 0; z-index: 1; }
 .meta .mono { padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
-.detail-section { padding: 12px 4px; border-bottom: 1px solid var(--eid-border); }
+.detail-section { padding: 12px; border-bottom: 1px solid var(--eid-border); }
 .detail-section h4 { margin: 0 0 8px; font-size: 12px; color: var(--eid-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .task-text, .outcome { margin: 0 0 10px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .outcome.error { color: var(--eid-danger, #f56c6c); }

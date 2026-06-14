@@ -12,6 +12,7 @@ import router from './router'
 // remaps Element Plus dark vars to those tokens.
 import './styles/theme.css'
 import './styles/element-overrides.css'
+import './styles/admin-layout.css'
 
 // Activate Element Plus dark mode by tagging the root element.
 document.documentElement.classList.add('dark')

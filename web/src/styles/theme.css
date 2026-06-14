@@ -4,37 +4,39 @@
  */
 :root {
   /* Surfaces */
-  --eid-bg-canvas:     #0b1020;   /* page background, behind everything */
-  --eid-bg-panel:      #111827;   /* cards, drawers, menus */
-  --eid-bg-elev:       #1f2937;   /* hover/active surfaces, table stripe */
-  --eid-bg-inset:      #0f172a;   /* code blocks, console output */
-  --eid-bg-overlay:    #0b1020e0; /* modal scrim */
+  --eid-bg-canvas:     #06090b;   /* page background, behind everything */
+  --eid-bg-panel:      #0d1114;   /* cards, drawers, menus */
+  --eid-bg-elev:       #151b1f;   /* hover/active surfaces, table stripe */
+  --eid-bg-inset:      #080d10;   /* code blocks, console output */
+  --eid-bg-overlay:    #06090be6; /* modal scrim */
 
   /* Borders */
-  --eid-border:        #1f2937;
-  --eid-border-strong: #374151;
-  --eid-border-focus:  #6366f1;
+  --eid-border:        #1b2429;
+  --eid-border-strong: #2b3a41;
+  --eid-border-focus:  #22d3ee;
 
   /* Text */
-  --eid-text-primary:   #f3f4f6;
-  --eid-text-secondary: #9ca3af;
-  --eid-text-muted:     #6b7280;
-  --eid-text-inverse:   #0b1020;
+  --eid-text-primary:   #eef7f8;
+  --eid-text-secondary: #9fb0b7;
+  --eid-text-muted:     #64747c;
+  --eid-text-inverse:   #041013;
 
-  /* Accent — indigo/violet, Linear-ish */
-  --eid-accent:         #6366f1;
-  --eid-accent-soft:    rgba(99, 102, 241, 0.16);
-  --eid-accent-hover:   #818cf8;
+  /* Accent — cyan system light */
+  --eid-accent:         #22d3ee;
+  --eid-accent-soft:    rgba(34, 211, 238, 0.14);
+  --eid-accent-hover:   #67e8f9;
+  --eid-accent-warm:    #fbbf24;
+  --eid-accent-warm-soft: rgba(251, 191, 36, 0.14);
 
   /* Semantic */
-  --eid-success:        #10b981;
-  --eid-success-soft:   rgba(16, 185, 129, 0.18);
-  --eid-warning:        #f59e0b;
-  --eid-warning-soft:   rgba(245, 158, 11, 0.18);
-  --eid-danger:         #ef4444;
-  --eid-danger-soft:    rgba(239, 68, 68, 0.18);
-  --eid-info:           #60a5fa;
-  --eid-info-soft:      rgba(96, 165, 250, 0.18);
+  --eid-success:        #34d399;
+  --eid-success-soft:   rgba(52, 211, 153, 0.16);
+  --eid-warning:        #fbbf24;
+  --eid-warning-soft:   rgba(251, 191, 36, 0.16);
+  --eid-danger:         #fb7185;
+  --eid-danger-soft:    rgba(251, 113, 133, 0.16);
+  --eid-info:           #38bdf8;
+  --eid-info-soft:      rgba(56, 189, 248, 0.16);
 
   /* Layout */
   --eid-aside-w:    240px;
@@ -44,9 +46,9 @@
   --eid-radius-lg:  12px;
 
   /* Shadows (subtle in dark) */
-  --eid-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --eid-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --eid-shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  --eid-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.48);
+  --eid-shadow-md: 0 14px 30px rgba(0, 0, 0, 0.38);
+  --eid-shadow-lg: 0 24px 70px rgba(0, 0, 0, 0.58);
 
   /* Typography */
   --eid-font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter",
