@@ -21,23 +21,21 @@ from eidolon_sdk.registry.models import (
     UserRegistryRecord,
 )
 
-from .._shared import (
-    SubProjectHTTPClient,
-    SubProjectUnreachable,
-    SubProjectUpstreamError,
+from eidolon_sdk.http import (
+    ServiceHTTPClient,
+    ServiceUnavailable,
+    ServiceUpstreamError,
 )
 
 # ===== memory HTTP client ===================================================
 #
-# Backwards-compatible aliases so the orchestrator + tests keep
-# importing the old names. The shared base classes ARE these classes —
-# we're just giving them domain-specific names.
+# Domain-specific names for SDK transport errors.
 
-MemoryUserUnreachable = SubProjectUnreachable
-MemoryUserUpstreamError = SubProjectUpstreamError
+MemoryUserUnreachable = ServiceUnavailable
+MemoryUserUpstreamError = ServiceUpstreamError
 
 
-class MemoryUserClient(SubProjectHTTPClient):
+class MemoryUserClient(ServiceHTTPClient):
     """HTTP wrapper over memory's user CRUD surface.
 
     Memory exposes these on its supervisor-embedded HTTP (default

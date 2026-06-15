@@ -10,8 +10,8 @@ to admin's wire shapes (``TemplateRef`` / ``TemplateDetail``) happens
 in the orchestrator. This keeps the HTTP layer dumb and the schema
 layer testable in isolation.
 
-Errors are inherited from the shared ``SubProjectHTTPClient`` base
-(``SubProjectUnreachable`` / ``SubProjectUpstreamError``); the module
+Errors are inherited from the SDK ``ServiceHTTPClient`` base
+(``ServiceUnavailable`` / ``ServiceUpstreamError``); the module
 re-exports them under template-specific names so existing imports
 keep working.
 """
@@ -20,22 +20,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .._shared import (
-    SubProjectHTTPClient,
-    SubProjectUnreachable,
-    SubProjectUpstreamError,
+from eidolon_sdk.http import (
+    ServiceHTTPClient,
+    ServiceUnavailable,
+    ServiceUpstreamError,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# Backwards-compatible aliases — preserve the old exception names so
-# the orchestrator + tests keep importing what they always did.
-TemplateAgentUnreachable = SubProjectUnreachable
-TemplateUpstreamError = SubProjectUpstreamError
+# Domain-specific names for SDK transport errors.
+TemplateAgentUnreachable = ServiceUnavailable
+TemplateUpstreamError = ServiceUpstreamError
 
 
-class TemplateAgentClient(SubProjectHTTPClient):
+class TemplateAgentClient(ServiceHTTPClient):
     """Thin client for agent's ``/api/admin/personas/templates*``."""
 
     async def list_templates(self) -> list[dict[str, Any]]:

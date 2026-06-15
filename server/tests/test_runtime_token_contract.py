@@ -1,26 +1,18 @@
-"""Phase 33.A1: cross-project token contract test.
+"""Runtime token contract test.
 
 The Phase 32 plan-D runtime path has channel signing a device JWT that
-agent's ``PairingTokenVerifier`` consumes. The canonical implementation
-now lives in ``eidolon_sdk.runtime``; channel and agent keep thin wrappers
-so their public APIs stay stable.
+agent's verifier consumes. The canonical implementation now lives in
+``eidolon_sdk.runtime`` and runtime callers import it directly.
 
 This test pins that contract end-to-end:
-  - Use channel's ``sign_device_token`` to mint a JWT with known fields
-  - Hand it to agent's ``PairingTokenVerifier.verify``
+  - Use SDK ``sign_device_token`` to mint a JWT with known fields
+  - Hand it to SDK ``PairingTokenVerifier.verify``
   - Assert every field round-trips intact
-
-Why this test lives in admin's suite (and not channel or agent's):
-admin is the orchestrator; cross-project contract verification is its
-natural home. Both target projects are editable-installed in admin's
-venv (channel's ``livekit-agents`` transitive is declared in admin's
-``[dev]`` extra), so the imports work without any importlib tricks —
-plain Python ``from eidolon.livekit.agent.runtime import …``.
 
 If this test fails, ONE of these happened:
   1. Someone changed the SDK payload field names / algorithm / scopes.
-  2. Someone changed the agent/channel compatibility wrapper behavior.
-  3. The secret resolution diverged.
+  2. The verifier allowlist changed without updating token signing.
+  3. The secret resolution contract diverged.
 Any of those would silently break ALL web/esp32 voice conversations until
 the next deploy actually used a session — this test catches it at CI.
 """
@@ -32,25 +24,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-# Both sibling projects must be editable-installed into admin's venv.
-# Channel pulls livekit-agents (declared in admin's [dev] extra so its
-# eidolon.livekit.agent package can import without ModuleNotFoundError);
-# agent has plain Python deps. If either install is missing we skip at
-# module load with a clear pointer at how to fix.
-try:
-    from eidolon.livekit.agent.runtime import (  # type: ignore[import-not-found]
-        sign_device_token as channel_sign,
-    )
-    from eidolon_agent.app.transport.pairing.token import (  # type: ignore[import-not-found]
-        PairingTokenVerifier,
-    )
-except ImportError as exc:  # pragma: no cover — exercised in CI matrix
-    pytest.skip(
-        f"cross-project import failed ({exc}). "
-        "Run `pip install -e ../eidolon_channel -e ../eidolon_agent` "
-        "in admin's venv to enable this contract test.",
-        allow_module_level=True,
-    )
+from eidolon_sdk.runtime import (
+    PairingTokenVerifier,
+    RuntimeUnauthenticatedError,
+    sign_device_token,
+)
 
 
 @pytest.fixture
@@ -64,13 +42,13 @@ def shared_secret() -> str:
 
 
 @pytest.mark.asyncio
-async def test_channel_signed_token_verifies_with_agent_schema(
+async def test_sdk_signed_token_verifies_with_runtime_schema(
     shared_secret: str,
 ) -> None:
-    """**The contract**: a JWT minted by channel's signer with a given
+    """**The contract**: a JWT minted by SDK signer with a given
     set of fields must decode into a VerifiedDevice with those exact
     fields preserved. Any drift here breaks Phase 32 runtime."""
-    token, exp_returned = channel_sign(
+    token, exp_returned = sign_device_token(
         secret=shared_secret,
         device_id="contract-test-abc",
         tenant_id="default",
@@ -99,7 +77,7 @@ async def test_template_id_null_round_trips(shared_secret: str) -> None:
     when the resolver couldn't pin a template (e.g. resolve_user 时
     user 没 active_agent_id 但 hub 仍签了 token,边缘场景)。Verifier
     must decode it back to None, not to empty string or 'null'."""
-    token, _exp = channel_sign(
+    token, _exp = sign_device_token(
         secret=shared_secret,
         device_id="null-tpl-test",
         tenant_id="default",
@@ -118,7 +96,7 @@ async def test_wrong_secret_rejected(shared_secret: str) -> None:
     """Sanity: a token signed with one secret must NOT verify under a
     different secret. If this test stops failing, the verifier's HMAC
     check is bypassed."""
-    token, _ = channel_sign(
+    token, _ = sign_device_token(
         secret=shared_secret,
         device_id="wrong-secret-test",
         tenant_id="default",
@@ -126,11 +104,8 @@ async def test_wrong_secret_rejected(shared_secret: str) -> None:
         template_id=None,
     )
 
-    # Late import to keep error path inside the test
-    from eidolon_agent.core.errors import UnauthenticatedError  # type: ignore
-
     verifier = PairingTokenVerifier(secret=secrets.token_urlsafe(32))
-    with pytest.raises(UnauthenticatedError):
+    with pytest.raises(RuntimeUnauthenticatedError):
         await verifier.verify(token)
 
 
@@ -138,9 +113,7 @@ async def test_wrong_secret_rejected(shared_secret: str) -> None:
 async def test_expired_token_rejected(shared_secret: str) -> None:
     """``exp`` claim must be enforced. ttl_seconds=-1 mints an already-
     expired token; verifier should reject."""
-    from eidolon_agent.core.errors import UnauthenticatedError  # type: ignore
-
-    token, exp = channel_sign(
+    token, exp = sign_device_token(
         secret=shared_secret,
         device_id="expired-test",
         tenant_id="default",
@@ -151,7 +124,7 @@ async def test_expired_token_rejected(shared_secret: str) -> None:
     assert exp < datetime.now(timezone.utc)
 
     verifier = PairingTokenVerifier(secret=shared_secret)
-    with pytest.raises(UnauthenticatedError):
+    with pytest.raises(RuntimeUnauthenticatedError):
         await verifier.verify(token)
 
 
@@ -169,7 +142,7 @@ async def test_algorithm_must_be_HS256(shared_secret: str) -> None:
 
     # Sign with a deliberately-different alg under the same secret
     payload = jwt.decode(
-        channel_sign(
+        sign_device_token(
             secret=shared_secret,
             device_id="alg-test",
             tenant_id="default",
@@ -201,7 +174,7 @@ def test_payload_field_names_are_locked() -> None:
     import jwt
 
     secret = secrets.token_urlsafe(32)
-    token, _ = channel_sign(
+    token, _ = sign_device_token(
         secret=secret,
         device_id="schema-lock",
         tenant_id="default",
@@ -212,7 +185,7 @@ def test_payload_field_names_are_locked() -> None:
     required = {"device_id", "tenant_id", "user_id", "template_id", "scopes", "exp", "iat"}
     missing = required - set(payload.keys())
     assert not missing, (
-        f"channel's sign_device_token dropped required fields {missing}. "
-        "Agent's PairingTokenVerifier reads these — if you intentionally "
+        f"SDK sign_device_token dropped required fields {missing}. "
+        "SDK PairingTokenVerifier reads these — if you intentionally "
         "removed any, update agent's verifier + this contract test together."
     )

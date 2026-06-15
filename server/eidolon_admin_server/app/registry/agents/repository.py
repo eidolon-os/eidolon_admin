@@ -4,8 +4,8 @@ Two stores composed in one module (same pattern as Users):
 
   - :class:`AgentProjectClient` — HTTP client for agent's
     ``/api/admin/personas/instances*`` (existing endpoints — created
-    well before Phase 29). Sub-classes
-    :class:`SubProjectHTTPClient` for shared transport.
+    well before Phase 29). Sub-classes SDK
+    :class:`ServiceHTTPClient` for shared transport.
 
   - :class:`AgentMetadataRepository` — NATS KV adapter over
     ``AGENTS_METADATA_BUCKET``. Stores the routing info admin needs
@@ -22,14 +22,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
-from .._shared import (
-    SubProjectHTTPClient,
-    SubProjectUnreachable,
-    SubProjectUpstreamError,
+from eidolon_sdk.http import (
+    ServiceHTTPClient,
+    ServiceUnavailable,
+    ServiceUpstreamError,
 )
 from ..buckets import AGENTS_METADATA_BUCKET
 from ..keys import agent_metadata_key
@@ -37,16 +36,15 @@ from ..keys import agent_metadata_key
 logger = logging.getLogger(__name__)
 
 
-# Backwards-compatible names so the orchestrator can speak in domain
-# terms while the underlying classes are the shared ones.
-AgentProjectUnreachable = SubProjectUnreachable
-AgentProjectUpstreamError = SubProjectUpstreamError
+# Domain-specific names for SDK transport errors.
+AgentProjectUnreachable = ServiceUnavailable
+AgentProjectUpstreamError = ServiceUpstreamError
 
 
 # ===== HTTP client to agent project =========================================
 
 
-class AgentProjectClient(SubProjectHTTPClient):
+class AgentProjectClient(ServiceHTTPClient):
     """HTTP wrapper over agent's persona-instance endpoints.
 
     Agent's keys are composite (tenant, user, instance) — the
@@ -134,7 +132,7 @@ class AgentProjectClient(SubProjectHTTPClient):
         convention. Admin just expresses intent ("revoke this user").
 
         Returns ``{user_id, revoked}`` on success;
-        raises ``SubProjectUnreachable`` / ``SubProjectUpstreamError``.
+        raises ``ServiceUnavailable`` / ``ServiceUpstreamError``.
         """
         from urllib.parse import quote
 

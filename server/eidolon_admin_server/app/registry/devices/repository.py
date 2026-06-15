@@ -14,15 +14,14 @@ Two stores (same pattern as Users / Agents):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
-from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
-from .._shared import (
-    SubProjectHTTPClient,
-    SubProjectUnreachable,
-    SubProjectUpstreamError,
+from eidolon_sdk.http import (
+    ServiceHTTPClient,
+    ServiceUnavailable,
+    ServiceUpstreamError,
 )
+from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
 from ..buckets import DEVICE_BINDINGS_BUCKET
 from ..keys import decode_device_binding_key, device_binding_key, legacy_device_binding_key
 from ..schemas.device import DeviceBinding
@@ -30,16 +29,15 @@ from ..schemas.device import DeviceBinding
 logger = logging.getLogger(__name__)
 
 
-# Backwards-compatible aliases for clearer in-module names; the shared
-# exceptions ARE these classes.
-DeviceHubUnreachable = SubProjectUnreachable
-DeviceHubUpstreamError = SubProjectUpstreamError
+# Domain-specific names for SDK transport errors.
+DeviceHubUnreachable = ServiceUnavailable
+DeviceHubUpstreamError = ServiceUpstreamError
 
 
 # ===== HTTP client to hub ===================================================
 
 
-class HubDeviceClient(SubProjectHTTPClient):
+class HubDeviceClient(ServiceHTTPClient):
     """Hub's ``/api/admin/devices*`` (read + approve + unregister)."""
 
     async def list_devices(self) -> list[dict[str, Any]]:
