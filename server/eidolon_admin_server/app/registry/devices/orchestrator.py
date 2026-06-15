@@ -55,6 +55,12 @@ class DeviceNotApproved(DeviceError):
     status_code = 409
 
 
+class DeviceDisabled(DeviceError):
+    """Trying to use a device that has been administratively disabled."""
+
+    status_code = 409
+
+
 class DeviceBadRequest(DeviceError):
     """Caller's request references something that doesn't exist
     (e.g. binding to a non-existent agent)."""
@@ -207,6 +213,41 @@ class DeviceOrchestrator:
         await self._notify_config_refresh(device_id)
         return await self.get_device(device_id)
 
+    async def set_device_enabled(
+        self, device_id: str, *, enabled: bool
+    ) -> DeviceView:
+        """Enable/disable the hub device record and refresh device config.
+
+        This does not delete the device or clear its binding. Disable is a
+        reversible operational stop: the device stays visible, but runtime
+        actions are rejected until re-enabled.
+        """
+        try:
+            record = await self._hub.set_device_enabled(device_id, enabled=enabled)
+        except DeviceHubUnreachable as exc:
+            raise DeviceHubDown(str(exc)) from exc
+        except DeviceHubUpstreamError as exc:
+            self._map_hub_error(exc)
+        if not enabled:
+            logger.info("device_disabled device_id=%s", device_id)
+        else:
+            logger.info("device_enabled device_id=%s", device_id)
+        await self._notify_config_refresh(device_id)
+        binding = await self._bindings.get(device_id)
+        resolved_user = None
+        resolved_template = None
+        if binding is not None:
+            agent_meta = await self._agent_lookup(binding.agent_id)
+            if agent_meta is not None:
+                resolved_user = agent_meta.user_id
+                resolved_template = agent_meta.template_id
+        return self._hub_record_to_view(
+            record,
+            binding=binding,
+            resolved_user_id=resolved_user,
+            resolved_template_id=resolved_template,
+        )
+
     async def bind_device(
         self, device_id: str, body: BindDeviceRequest
     ) -> DeviceView:
@@ -225,6 +266,10 @@ class DeviceOrchestrator:
             raise DeviceHubDown(str(exc)) from exc
         except DeviceHubUpstreamError as exc:
             self._map_hub_error(exc)
+        if not record.get("enabled", True):
+            raise DeviceDisabled(
+                f"device {device_id!r} is disabled. Enable it before binding."
+            )
         if not record.get("approved"):
             raise DeviceNotApproved(
                 f"device {device_id!r} not approved yet. Call POST "
@@ -260,6 +305,8 @@ class DeviceOrchestrator:
     async def wake_device(self, device_id: str) -> dict[str, Any]:
         """Ask a standby device to join its voice room via control channel."""
         view = await self.get_device(device_id)
+        if not view.enabled:
+            raise DeviceDisabled(f"device {device_id!r} is disabled")
         if not view.approved:
             raise DeviceNotApproved(f"device {device_id!r} is not approved")
         if view.binding is None:

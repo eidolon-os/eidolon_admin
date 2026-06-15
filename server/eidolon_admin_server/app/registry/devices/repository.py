@@ -59,6 +59,16 @@ class HubDeviceClient(SubProjectHTTPClient):
         )
         return r.json()
 
+    async def set_device_enabled(
+        self, device_id: str, *, enabled: bool
+    ) -> dict[str, Any]:
+        r = await self._request(
+            "POST",
+            f"/api/admin/devices/{device_id}/enable",
+            params={"enabled": enabled},
+        )
+        return r.json()
+
     async def send_config_refresh(self, device_id: str) -> dict[str, Any]:
         r = await self._request(
             "POST",

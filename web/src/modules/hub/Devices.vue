@@ -6,6 +6,7 @@ import {
   approveDevice,
   bindDevice,
   listDevices,
+  setDeviceEnabled,
   unbindDevice,
   unregisterDevice,
   wakeDevice,
@@ -30,6 +31,7 @@ const bindDialogOpen = ref(false)
 const bindTarget = ref<DeviceView | null>(null)
 const bindAgentId = ref('')
 const submitting = ref(false)
+const togglingDeviceId = ref('')
 
 const filteredDevices = computed(() => {
   if (status.value === 'all') return devices.value
@@ -116,6 +118,34 @@ async function onApprove(d: DeviceView) {
   } catch (e: any) {
     ElMessage.error(`批准失败: ${extractErrorMessage(e)}`)
   }
+}
+
+async function onToggleEnabled(d: DeviceView, enabled: boolean | string | number) {
+  const nextEnabled = Boolean(enabled)
+  if (nextEnabled === d.enabled) return
+  const title = nextEnabled ? '启用设备' : '停用设备'
+  const message = nextEnabled
+    ? `确认启用 ${d.device_id}? 启用后可批准、绑定并参与运行时调度。`
+    : `确认停用 ${d.device_id}? 设备记录和绑定会保留，但不会参与运行时使用。`
+  try {
+    await ElMessageBox.confirm(message, title, { type: nextEnabled ? 'info' : 'warning' })
+  } catch {
+    return
+  }
+  togglingDeviceId.value = d.device_id
+  try {
+    await setDeviceEnabled(d.device_id, nextEnabled)
+    ElMessage.success(nextEnabled ? '已启用' : '已停用')
+    await refresh()
+  } catch (e: any) {
+    ElMessage.error(`${nextEnabled ? '启用' : '停用'}失败: ${extractErrorMessage(e)}`)
+  } finally {
+    togglingDeviceId.value = ''
+  }
+}
+
+function onEnabledSwitchChange(d: DeviceView, value: boolean | string | number) {
+  void onToggleEnabled(d, value)
 }
 
 function openBind(d: DeviceView) {
@@ -223,6 +253,15 @@ async function onUnregister(d: DeviceView) {
           <StatusBadge :state="productState(row).state" :label="productState(row).label" />
         </template>
       </el-table-column>
+      <el-table-column label="启用" width="86" align="center">
+        <template #default="{ row }">
+          <el-switch
+            :model-value="row.enabled"
+            :loading="togglingDeviceId === row.device_id"
+            @change="onEnabledSwitchChange(row, $event)"
+          />
+        </template>
+      </el-table-column>
       <el-table-column label="实时通道" width="130">
         <template #default="{ row }">
           <StatusBadge :state="badgeState(row.status)" :label="row.status || 'unknown'" />
@@ -239,7 +278,7 @@ async function onUnregister(d: DeviceView) {
           <span class="muted">{{ formatTimestamp(row.last_seen) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="340" align="right">
+      <el-table-column label="操作" width="320" align="right">
         <template #default="{ row }">
           <el-button v-if="row.enabled && !row.approved" size="small" type="primary" @click="onApprove(row)">
             批准

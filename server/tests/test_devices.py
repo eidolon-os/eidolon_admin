@@ -25,6 +25,7 @@ from eidolon_admin_server.app.registry.agents.repository import AgentMetadata
 from eidolon_admin_server.app.registry.devices import (
     DeviceBadRequest,
     DeviceBindingRepository,
+    DeviceDisabled,
     DeviceError,
     DeviceHubDown,
     DeviceNotApproved,
@@ -40,12 +41,17 @@ HUB_URL = "http://hub.test"
 
 
 def _hub_device_record(
-    device_id: str, *, approved: bool = True, name: str = "Device"
+    device_id: str,
+    *,
+    approved: bool = True,
+    enabled: bool = True,
+    name: str = "Device",
 ) -> dict:
     return {
         "device_id": device_id,
         "name": name,
         "kind": "esp32",
+        "enabled": enabled,
         "approved": approved,
         "approved_at": (
             datetime.now(timezone.utc).isoformat() if approved else None
@@ -259,6 +265,22 @@ async def test_bind_unapproved_device_rejects(
             )
 
 
+async def test_bind_disabled_device_rejects(
+    orchestrator: DeviceOrchestrator,
+) -> None:
+    """Disabled devices keep their record, but cannot be bound into runtime."""
+    with respx.mock(base_url=HUB_URL) as rsx:
+        rsx.get("/api/admin/devices/esp-off").mock(
+            return_value=httpx.Response(
+                200, json=_hub_device_record("esp-off", enabled=False),
+            )
+        )
+        with pytest.raises(DeviceDisabled):
+            await orchestrator.bind_device(
+                "esp-off", BindDeviceRequest(agent_id="ag-1")
+            )
+
+
 async def test_bind_to_missing_agent_returns_bad_request(
     orchestrator: DeviceOrchestrator,
 ) -> None:
@@ -320,6 +342,49 @@ async def test_unbind_idempotent_when_not_bound(
         )
         view = await orchestrator.unbind_device("esp-1")
     assert view.binding is None  # no exception
+
+
+# ---- enable / disable ----------------------------------------------------
+
+
+async def test_set_enabled_calls_hub_and_refreshes_config(
+    orchestrator: DeviceOrchestrator,
+) -> None:
+    with respx.mock(base_url=HUB_URL) as rsx:
+        enable = rsx.post(
+            "/api/admin/devices/esp-1/enable",
+            params={"enabled": "false"},
+        ).mock(
+            return_value=httpx.Response(
+                200, json=_hub_device_record("esp-1", enabled=False),
+            )
+        )
+        refresh = rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(200, json=_hub_command_response("esp-1"))
+        )
+        view = await orchestrator.set_device_enabled("esp-1", enabled=False)
+    assert enable.called
+    assert refresh.called
+    assert view.enabled is False
+
+
+async def test_wake_disabled_device_rejects(
+    orchestrator: DeviceOrchestrator,
+) -> None:
+    from eidolon_admin_server.app.registry.schemas.device import DeviceBinding
+
+    await orchestrator._bindings.put(
+        "esp-1",
+        DeviceBinding(agent_id="ag-1", bound_at=datetime.now(timezone.utc)),
+    )
+    with respx.mock(base_url=HUB_URL) as rsx:
+        rsx.get("/api/admin/devices/esp-1").mock(
+            return_value=httpx.Response(
+                200, json=_hub_device_record("esp-1", enabled=False),
+            )
+        )
+        with pytest.raises(DeviceDisabled):
+            await orchestrator.wake_device("esp-1")
 
 
 # ---- unregister (cross-project cleanup) -----------------------------------
@@ -429,6 +494,24 @@ async def test_http_bind_400_for_missing_agent(
         )
     assert r.status_code == 400
     assert "agent 'ag-nonexistent'" in r.json()["detail"]
+
+
+async def test_http_set_enabled(client: httpx.AsyncClient) -> None:
+    with respx.mock(base_url=HUB_URL) as rsx:
+        rsx.post(
+            "/api/admin/devices/esp-1/enable",
+            params={"enabled": "false"},
+        ).mock(
+            return_value=httpx.Response(
+                200, json=_hub_device_record("esp-1", enabled=False),
+            )
+        )
+        rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(200, json=_hub_command_response("esp-1"))
+        )
+        r = await client.post("/api/devices/esp-1/enable", params={"enabled": False})
+    assert r.status_code == 200
+    assert r.json()["enabled"] is False
 
 
 async def test_http_503_when_orchestrator_missing() -> None:

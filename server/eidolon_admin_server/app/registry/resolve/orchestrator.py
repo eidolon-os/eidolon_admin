@@ -16,8 +16,14 @@ from __future__ import annotations
 
 import logging
 
+from .._shared import unwrap_detail
 from ..agents.repository import AgentMetadataRepository
-from ..devices.repository import DeviceBindingRepository
+from ..devices.repository import (
+    DeviceBindingRepository,
+    DeviceHubUnreachable,
+    DeviceHubUpstreamError,
+    HubDeviceClient,
+)
 from ..schemas.resolve import ResolvedContext, VoiceprintResolveSummary
 from ..templates.orchestrator import TemplateOrchestrator
 from ..users.orchestrator import UserError, UserNotFound, UserOrchestrator
@@ -38,6 +44,12 @@ class ResolveError(Exception):
 class ResolveDeviceNotBound(ResolveError):
     """Device exists in hub but has no binding row in admin's KV.
     Returns 412 — caller must POST to /api/devices/{id}/bind first."""
+
+    status_code = 412
+
+
+class ResolveDeviceUnavailable(ResolveError):
+    """Device exists but is disabled or not approved."""
 
     status_code = 412
 
@@ -76,12 +88,14 @@ class ResolveOrchestrator:
         self,
         *,
         binding_repo: DeviceBindingRepository,
+        hub_client: HubDeviceClient | None = None,
         agent_meta_repo: AgentMetadataRepository,
         user_orchestrator: UserOrchestrator,
         template_orchestrator: TemplateOrchestrator,
         voiceprint_store: VoiceprintStore | None = None,
     ) -> None:
         self._bindings = binding_repo
+        self._hub = hub_client
         self._agents = agent_meta_repo
         self._users = user_orchestrator
         self._templates = template_orchestrator
@@ -180,6 +194,30 @@ class ResolveOrchestrator:
 
     # ---- public API ----------------------------------------------------
 
+    async def _assert_device_available(self, device_id: str) -> None:
+        if self._hub is None:
+            return
+        try:
+            record = await self._hub.get_device(device_id)
+        except DeviceHubUnreachable as exc:
+            raise ResolveUpstreamDown(
+                f"hub unreachable resolving device {device_id!r}: {exc}"
+            ) from exc
+        except DeviceHubUpstreamError as exc:
+            detail = unwrap_detail(exc.message)
+            if exc.status_code == 404:
+                raise ResolveError404(detail) from exc
+            raise ResolveUpstreamDown(
+                f"hub returned {exc.status_code} resolving device "
+                f"{device_id!r}: {detail}"
+            ) from exc
+        if not record.get("enabled", True):
+            raise ResolveDeviceUnavailable(f"device {device_id!r} is disabled")
+        if not record.get("approved", False):
+            raise ResolveDeviceUnavailable(
+                f"device {device_id!r} is not approved"
+            )
+
     async def resolve_device(self, device_id: str) -> ResolvedContext:
         """Resolve a device through to its full runtime context.
 
@@ -194,6 +232,7 @@ class ResolveOrchestrator:
                 f"device {device_id!r} is not bound to an agent. "
                 "POST /api/devices/{id}/bind to configure."
             )
+        await self._assert_device_available(device_id)
         return await self._compose_context(
             agent_id=binding.agent_id, device_id=device_id,
         )

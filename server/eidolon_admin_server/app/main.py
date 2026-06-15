@@ -283,6 +283,7 @@ def create_app(
         ):
             app.state.resolve_orchestrator = ResolveOrchestrator(
                 binding_repo=binding_repo,
+                hub_client=hub_client,
                 agent_meta_repo=ag_repo,
                 user_orchestrator=app.state.user_orchestrator,
                 template_orchestrator=app.state.template_orchestrator,

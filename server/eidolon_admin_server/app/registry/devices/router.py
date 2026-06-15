@@ -64,6 +64,17 @@ async def approve_device(device_id: str, request: Request) -> DeviceView:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.post("/{device_id}/enable", response_model=DeviceView)
+async def set_device_enabled(
+    device_id: str, enabled: bool, request: Request
+) -> DeviceView:
+    orch = _orchestrator(request)
+    try:
+        return await orch.set_device_enabled(device_id, enabled=enabled)
+    except DeviceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 @router.post("/{device_id}/bind", response_model=DeviceView)
 async def bind_device(
     device_id: str, body: BindDeviceRequest, request: Request

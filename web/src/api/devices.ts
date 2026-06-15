@@ -59,6 +59,15 @@ export async function approveDevice(id: string): Promise<DeviceView> {
   return data
 }
 
+export async function setDeviceEnabled(id: string, enabled: boolean): Promise<DeviceView> {
+  const { data } = await client.post<DeviceView>(
+    `/devices/${encodeURIComponent(id)}/enable`,
+    null,
+    { params: { enabled } },
+  )
+  return data
+}
+
 export async function bindDevice(id: string, agent_id: string): Promise<DeviceView> {
   const { data } = await client.post<DeviceView>(
     `/devices/${encodeURIComponent(id)}/bind`,

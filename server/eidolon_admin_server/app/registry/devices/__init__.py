@@ -23,6 +23,7 @@ through hub's REST surface (extended in 29.B.3 with DELETE).
 from .orchestrator import (
     DeviceAgentMismatch,
     DeviceBadRequest,
+    DeviceDisabled,
     DeviceError,
     DeviceHubDown,
     DeviceNotApproved,
@@ -38,6 +39,7 @@ from .router import router
 __all__ = [
     "DeviceAgentMismatch",
     "DeviceBadRequest",
+    "DeviceDisabled",
     "DeviceBindingRepository",
     "DeviceError",
     "DeviceHubDown",

@@ -19,6 +19,7 @@ anti-pattern this whole Phase 29 is correcting.
 """
 from .orchestrator import (
     ResolveDeviceNotBound,
+    ResolveDeviceUnavailable,
     ResolveError,
     ResolveOrchestrator,
     ResolveUpstreamDown,
@@ -28,6 +29,7 @@ from .router import router
 
 __all__ = [
     "ResolveDeviceNotBound",
+    "ResolveDeviceUnavailable",
     "ResolveError",
     "ResolveOrchestrator",
     "ResolveUpstreamDown",

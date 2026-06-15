@@ -26,9 +26,11 @@ from eidolon_admin_server.app.registry.agents.repository import (
 )
 from eidolon_admin_server.app.registry.devices.repository import (
     DeviceBindingRepository,
+    HubDeviceClient,
 )
 from eidolon_admin_server.app.registry.resolve import (
     ResolveDeviceNotBound,
+    ResolveDeviceUnavailable,
     ResolveOrchestrator,
     ResolveUserNoActiveAgent,
     router as resolve_router,
@@ -58,6 +60,20 @@ from eidolon_admin_server.app.registry.voiceprints import VoiceprintStore
 
 MEMORY_URL = "http://memory.test"
 AGENT_URL = "http://agent.test"
+HUB_URL = "http://hub.test"
+
+
+def _hub_device(device_id: str, *, enabled: bool = True, approved: bool = True) -> dict:
+    return {
+        "device_id": device_id,
+        "name": device_id,
+        "kind": "esp32",
+        "enabled": enabled,
+        "approved": approved,
+        "approved_at": datetime.now(timezone.utc).isoformat() if approved else None,
+        "last_seen": datetime.now(timezone.utc).isoformat(),
+        "status": "online",
+    }
 
 
 def _memory_user(user_id: str = "alice") -> dict:
@@ -167,6 +183,7 @@ async def orchestrator(
 
     yield ResolveOrchestrator(
         binding_repo=binding_repo,
+        hub_client=HubDeviceClient(http_client, HUB_URL),
         agent_meta_repo=agent_meta_repo,
         user_orchestrator=user_orch,
         template_orchestrator=template_orch,
@@ -194,9 +211,31 @@ async def test_resolve_device_drift_agent_gone_returns_404(
         "esp-drift",
         DeviceBinding(agent_id="ag-deleted", bound_at=datetime.now(timezone.utc)),
     )
-    with pytest.raises(ResolveError404, match="ag-deleted") as exc_info:
-        await orchestrator.resolve_device("esp-drift")
+    with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-drift").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-drift"))
+        )
+        with pytest.raises(ResolveError404, match="ag-deleted") as exc_info:
+            await orchestrator.resolve_device("esp-drift")
     assert exc_info.value.status_code == 404
+
+
+async def test_resolve_device_disabled_returns_412(
+    orchestrator: ResolveOrchestrator,
+) -> None:
+    await orchestrator._bindings.put(
+        "esp-disabled",
+        DeviceBinding(agent_id="ag-1", bound_at=datetime.now(timezone.utc)),
+    )
+    with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-disabled").mock(
+            return_value=httpx.Response(
+                200, json=_hub_device("esp-disabled", enabled=False),
+            )
+        )
+        with pytest.raises(ResolveDeviceUnavailable) as exc_info:
+            await orchestrator.resolve_device("esp-disabled")
+    assert exc_info.value.status_code == 412
 
 
 async def test_resolve_device_happy_path(
@@ -222,6 +261,9 @@ async def test_resolve_device_happy_path(
     )
 
     with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-1").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-1"))
+        )
         rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
             return_value=httpx.Response(200, json=_memory_user("alice"))
         )
@@ -282,6 +324,9 @@ async def test_resolve_device_includes_voiceprint_summary(
     )
 
     with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-voice").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-voice"))
+        )
         rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
             return_value=httpx.Response(200, json=_memory_user("alice"))
         )
@@ -321,6 +366,9 @@ async def test_resolve_propagates_empty_mcp_url_when_memory_omits_it(
     bare = _memory_user("bob")
     bare.pop("mcp_http_url")  # simulate old memory
     with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-stale").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-stale"))
+        )
         rsx.get(f"{MEMORY_URL}/api/admin/users/bob").mock(
             return_value=httpx.Response(200, json=bare)
         )

@@ -99,6 +99,7 @@ class SubProjectHTTPClient:
         path: str,
         *,
         json: Any = None,
+        params: dict[str, Any] | None = None,
         ok_statuses: tuple[int, ...] | None = None,
         timeout: httpx.Timeout | float | None = None,
     ) -> httpx.Response:
@@ -108,6 +109,7 @@ class SubProjectHTTPClient:
             method: HTTP verb.
             path: path part (with leading ``/``). Prepended with base_url.
             json: optional JSON body.
+            params: optional query parameters.
             ok_statuses: explicit success statuses. ``None`` means
                 "anything < 400 is OK", which covers the common GET/POST
                 cases. Use a tuple like ``(204,)`` for endpoints that
@@ -126,6 +128,7 @@ class SubProjectHTTPClient:
                 method,
                 self._url(path),
                 json=json,
+                params=params,
                 timeout=timeout,
             )
         except self.UNREACHABLE_EXCEPTIONS as exc:
