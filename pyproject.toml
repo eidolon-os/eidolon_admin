@@ -10,7 +10,7 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.5",
     "pyyaml>=6.0",
-    "eidolon-sdk[db]",
+    "eidolon-sdk[db,http]",
     "supervisor>=4.2.5",
     "psutil>=6.0",
     "mcp>=1.2.0",
