@@ -232,6 +232,11 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     admin = p["admin"]
     put("EIDOLON_ADMIN_API_HOST", admin["api"]["host"])
     put("EIDOLON_ADMIN_API_PORT", admin["api"]["port"])
+    put(
+        "EIDOLON_ADMIN_API_URL",
+        f"http://{admin['api']['host']}:{admin['api']['port']}",
+    )
+    put("EIDOLON_ADMIN_REGISTRY_DB_PATH", _REPO_ROOT / "var" / "registry.sqlite3")
     put("EIDOLON_ADMIN_WEB_PORT", admin["web"]["port"])
 
     hub = p["hub"]
@@ -250,10 +255,6 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     # Memory supervisor's admin HTTP (29.B.2)
     put("EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST", memory["supervisor_http"]["host"])
     put("EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT", memory["supervisor_http"]["port"])
-
-    eidolon_root = os.environ.get("EIDOLON_ROOT", "").strip() or str(_REPO_ROOT.parent)
-    users_yaml = Path(eidolon_root) / "eidolon_memory" / "config" / "users.yaml"
-    put("EIDOLON_MEMORY_USERS_YAML", users_yaml.resolve())
 
     channel = p["channel"]
     put("EIDOLON_CHANNEL_WORKER_PORT", channel["worker"]["port"])

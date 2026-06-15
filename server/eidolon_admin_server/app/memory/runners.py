@@ -1,10 +1,10 @@
 """Per-user agent_runner and consolidator discovery.
 
 memory-supervisor spawns ``eidolon-memory-agent`` and (opt-in)
-``eidolon-memory-consolidator`` per enabled user in ``users.yaml``. supervisord
-cannot see those grandchildren, so we surface them here by:
+``eidolon-memory-consolidator`` per enabled user in admin's registry DB.
+supervisord cannot see those grandchildren, so we surface them here by:
 
-1. Reading users.yaml (``$EIDOLON_MEMORY_USERS_YAML``).
+1. Reading admin's local user registry.
 2. Scanning processes via psutil for each CLI, binding ``--user-id``.
 3. TCP-probing each user's agent port.
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,7 @@ import yaml
 
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"
-_ADMIN_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ADMIN_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _default_users_yaml() -> Path:
@@ -37,6 +38,13 @@ def users_yaml_path() -> Path:
     if raw:
         return Path(raw).expanduser().resolve()
     return _default_users_yaml()
+
+
+def users_source_path() -> Path:
+    raw = os.environ.get("EIDOLON_ADMIN_REGISTRY_DB_PATH", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (_ADMIN_REPO_ROOT / "var" / "registry.sqlite3").resolve()
 
 
 def memory_log_dir() -> Path:
@@ -126,6 +134,8 @@ def user_entry_to_dict(u: UserEntry) -> dict[str, Any]:
 
 
 def load_users(path: Path | None = None) -> list[UserEntry]:
+    if path is None:
+        return _load_users_from_registry(users_source_path())
     target = path or users_yaml_path()
     if not target.exists():
         return []
@@ -138,6 +148,44 @@ def load_users(path: Path | None = None) -> list[UserEntry]:
         if entry:
             out.append(entry)
     return out
+
+
+def _load_users_from_registry(db_path: Path) -> list[UserEntry]:
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        with conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, enabled, palace_path, memory_port,
+                       consolidator_enabled, consolidator_interval_hours,
+                       consolidator_window_days, consolidator_min_drawers,
+                       consolidator_min_confidence
+                FROM users
+                ORDER BY user_id
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [
+        UserEntry(
+            id=row["user_id"],
+            port=int(row["memory_port"] or 0),
+            enabled=bool(row["enabled"]),
+            palace_path=row["palace_path"] or "",
+            consolidator=ConsolidatorConfig(
+                enabled=bool(row["consolidator_enabled"]),
+                interval_hours=float(row["consolidator_interval_hours"] or 6.0),
+                window_days=int(row["consolidator_window_days"] or 30),
+                min_drawers=int(row["consolidator_min_drawers"] or 3),
+                min_confidence=float(row["consolidator_min_confidence"] or 0.6),
+            ),
+        )
+        for row in rows
+        if int(row["memory_port"] or 0) > 0
+    ]
 
 
 def serialize_users(users: list[UserEntry]) -> str:
@@ -246,8 +294,8 @@ def _consolidator_row(
 
 
 async def list_runners() -> dict[str, Any]:
-    yaml_path = users_yaml_path()
-    users = load_users(yaml_path)
+    source_path = users_source_path()
+    users = load_users()
     pid_map = find_agent_processes()
     cons_map = find_consolidator_processes()
 
@@ -284,8 +332,11 @@ async def list_runners() -> dict[str, Any]:
         cons_orphans.append({"user_id": uid, "role": "consolidator", **_proc_meta(proc)})
 
     return {
-        "users_yaml": str(yaml_path),
-        "users_yaml_exists": yaml_path.exists(),
+        "users_yaml": str(source_path),
+        "users_yaml_exists": source_path.exists(),
+        "users_source": str(source_path),
+        "users_source_type": "admin_registry",
+        "users_source_exists": source_path.exists(),
         "runners": results,
         "orphans": orphans,
         "consolidator_orphans": cons_orphans,

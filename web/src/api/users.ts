@@ -20,6 +20,7 @@ export interface UserSpec {
   tenant_id: string
   display_name: string
   enabled: boolean
+  memory_port: number
   palace_path: string
   consolidator: ConsolidatorConfig
   created_at: string
@@ -164,7 +165,7 @@ export async function setUserEnabled(
   enabled: boolean,
 ): Promise<void> {
   await client.post(
-    `/memory/users/${encodeURIComponent(userId)}/enable`,
+    `/users/${encodeURIComponent(userId)}/enable`,
     null,
     { params: { enabled } },
   )

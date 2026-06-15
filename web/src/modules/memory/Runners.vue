@@ -96,15 +96,15 @@ function consolidatorTag(c: {
       style="margin-bottom: 16px"
     >
       <template #title>
-        users.yaml 不存在：<code>{{ data.users_yaml }}</code>
+        用户注册表不可用：<code>{{ data.users_source || data.users_yaml }}</code>
         ——
-        设置环境变量 <code>EIDOLON_MEMORY_USERS_YAML</code> 或确保 memory 项目已初始化
+        确认 admin registry DB 和 admin-api 正常
       </template>
     </el-alert>
 
     <el-card>
       <template #header>
-        <span>声明的用户（{{ data?.users_yaml || '...' }}）</span>
+        <span>声明的用户（{{ data?.users_source || data?.users_yaml || '...' }}）</span>
       </template>
 
       <el-table :data="data?.runners || []" stripe v-loading="loading">
@@ -178,7 +178,7 @@ function consolidatorTag(c: {
       <template #header>
         <span style="color: var(--eid-warning)">⚠ 孤儿进程</span>
         <span class="hint">
-          进程在运行但 users.yaml 无对应条目（通常需 SIGHUP memory-supervisor）
+          进程在运行但 admin registry 无对应条目（通常需触发 memory-supervisor reconcile）
         </span>
       </template>
       <el-table

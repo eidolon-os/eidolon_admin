@@ -44,6 +44,9 @@ export interface OrphanInfo {
 export interface RunnersResponse {
   users_yaml: string
   users_yaml_exists: boolean
+  users_source?: string
+  users_source_type?: string
+  users_source_exists?: boolean
   runners: RunnerInfo[]
   orphans: OrphanInfo[]
   consolidator_orphans: OrphanInfo[]
@@ -76,6 +79,8 @@ export interface MemoryUserDetail {
   palace_path: string
   mcp_http_url: string
   agent_reachable: boolean
+  worker_running: boolean
+  runtime_state: 'disabled' | 'initializing' | 'starting' | 'running' | 'stopped' | string
   palace_initialized: boolean
   managed_by_admin: boolean
   pid: number | null

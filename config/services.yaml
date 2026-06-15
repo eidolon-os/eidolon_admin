@@ -158,13 +158,6 @@ services:
         reload: restart_group
         reload_target: memory
         template: $EIDOLON_ROOT/eidolon_memory/config/.env.example
-      - id: users
-        label: "users.yaml"
-        path: $EIDOLON_ROOT/eidolon_memory/config/users.yaml
-        format: yaml
-        reload: sighup_program
-        reload_target: memory:memory-supervisor
-
   - id: channel
     name: Eidolon Channel
     integration: process

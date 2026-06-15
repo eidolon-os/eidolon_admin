@@ -43,6 +43,8 @@ class UserDetail(BaseModel):
     palace_path: str = ""
     mcp_http_url: str = ""
     agent_reachable: bool = False
+    worker_running: bool = False
+    runtime_state: str = "disabled"
     palace_initialized: bool = False
     managed_by_admin: bool = False
     pid: int | None = None

@@ -44,3 +44,21 @@ def consolidator_status(
 
 def agent_log_path_for(entry: UserEntry) -> str:
     return child_log_path(entry.id, "agent")
+
+
+def memory_runtime_state(
+    entry: UserEntry,
+    *,
+    worker_running: bool,
+    agent_reachable: bool,
+    palace_initialized: bool,
+) -> str:
+    if not entry.enabled:
+        return "disabled"
+    if agent_reachable:
+        return "running"
+    if worker_running:
+        return "starting"
+    if not palace_initialized:
+        return "initializing"
+    return "stopped"

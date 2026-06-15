@@ -195,7 +195,7 @@ function consolidatorTagType(c: ConsolidatorStatus | null | undefined) {
   return 'warning'
 }
 
-const usersFile = computed(() => store.users.length ? 'eidolon_memory/config/users.yaml' : '')
+const usersFile = computed(() => store.users.length ? 'eidolon_admin/var/registry.sqlite3' : '')
 </script>
 
 <template>

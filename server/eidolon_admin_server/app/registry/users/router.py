@@ -13,6 +13,7 @@ from ..schemas.user import (
     SetActiveAgentRequest,
     UpdateUserRequest,
     UserListResponse,
+    UserSpec,
     UserView,
 )
 from .orchestrator import UserError, UserMemoryDown, UserOrchestrator
@@ -49,6 +50,19 @@ async def list_users(request: Request) -> UserListResponse:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.get("/registry")
+async def list_user_registry(request: Request) -> dict[str, list[UserSpec]]:
+    """Pure admin user registry for execution projects.
+
+    No memory health enrichment here; memory consumes this endpoint.
+    """
+    orch = _orchestrator(request)
+    try:
+        return {"users": await orch.list_registry_specs()}
+    except UserError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 @router.get("/{user_id}", response_model=UserView)
 async def get_user(user_id: str, request: Request) -> UserView:
     orch = _orchestrator(request)
@@ -74,6 +88,21 @@ async def update_user(
     orch = _orchestrator(request)
     try:
         return await orch.update_user(user_id, body)
+    except UserError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/{user_id}/enable", response_model=UserView)
+async def set_user_enabled(
+    user_id: str, request: Request, enabled: bool = True
+) -> UserView:
+    """Project-wide user switch.
+
+    Admin persists the flag in the registry DB; memory only reconciles to it.
+    """
+    orch = _orchestrator(request)
+    try:
+        return await orch.set_user_enabled(user_id, enabled)
     except UserError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 

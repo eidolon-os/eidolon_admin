@@ -13,7 +13,24 @@ export function memoryAgentStatus(row: MemoryUserDetail): RuntimeStatus {
     return {
       type: 'info',
       label: 'disabled',
-      hint: 'User is disabled in memory users.yaml.',
+      hint: 'User is disabled in admin registry.',
+    }
+  }
+
+  if (row.runtime_state === 'initializing') {
+    return {
+      type: 'warning',
+      label: 'INITIALIZING',
+      hint: `Palace initialization is still in progress for ${row.mcp_http_url}.`,
+    }
+  }
+
+  if (row.runtime_state === 'starting') {
+    const pidHint = row.pid ? `pid ${row.pid}; ` : ''
+    return {
+      type: 'warning',
+      label: 'STARTING',
+      hint: `${pidHint}Worker exists but MCP is not reachable at ${row.mcp_http_url}.`,
     }
   }
 
@@ -26,7 +43,7 @@ export function memoryAgentStatus(row: MemoryUserDetail): RuntimeStatus {
     }
   }
 
-  if (row.pid) {
+  if (row.worker_running || row.pid) {
     return {
       type: 'warning',
       label: 'PROCESS UP / MCP DOWN',

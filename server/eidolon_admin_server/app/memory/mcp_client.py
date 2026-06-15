@@ -1,7 +1,7 @@
 """Per-request MCP HTTP session manager.
 
 Each call opens a fresh Streamable-HTTP MCP session against the user's
-agent_runner port (looked up in users.yaml), invokes a tool, then closes.
+agent_runner port (looked up in admin's user registry), invokes a tool, then closes.
 Matches eidolon_memory's mcp_client.py:59-89 pattern — no caching, no
 long-lived sessions, intentionally simple.
 
@@ -22,7 +22,7 @@ from fastapi import HTTPException
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-from .runners import UserEntry, load_users, users_yaml_path
+from .runners import UserEntry, load_users
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ _DEFAULT_BACKOFF_SECONDS = 0.4
 
 class MemoryUserNotFound(HTTPException):
     def __init__(self, user_id: str) -> None:
-        super().__init__(404, f"user not found in users.yaml: {user_id!r}")
+        super().__init__(404, f"user not found in admin registry: {user_id!r}")
 
 
 class MemoryUserDisabled(HTTPException):
