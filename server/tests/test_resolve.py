@@ -139,20 +139,16 @@ async def kv_client() -> AsyncIterator[KVClient]:
 async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
     suffix = uuid.uuid4().hex[:10]
     orig = {
-        "t": buckets_module.TENANTS_BUCKET.name,
         "a": buckets_module.AGENTS_METADATA_BUCKET.name,
         "d": buckets_module.DEVICE_BINDINGS_BUCKET.name,
     }
-    object.__setattr__(buckets_module.TENANTS_BUCKET, "name", f"test_t_{suffix}")
     object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", f"test_a_{suffix}")
     object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", f"test_d_{suffix}")
     for b in (
-        buckets_module.TENANTS_BUCKET,
         buckets_module.AGENTS_METADATA_BUCKET, buckets_module.DEVICE_BINDINGS_BUCKET,
     ):
         await kv_client.ensure_bucket(b)
     yield
-    object.__setattr__(buckets_module.TENANTS_BUCKET, "name", orig["t"])
     object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", orig["a"])
     object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", orig["d"])
 
@@ -171,13 +167,14 @@ async def orchestrator(
     tmp_path,
 ) -> AsyncIterator[ResolveOrchestrator]:
     # Tenants → Users → Agents → Templates → Devices wiring (subset).
-    tenant_orch = TenantOrchestrator(TenantRepository(kv_client))
+    registry_db = tmp_path / "registry.sqlite3"
+    tenant_orch = TenantOrchestrator(TenantRepository(registry_db))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     user_orch = UserOrchestrator(
         memory_client=MemoryUserClient(http_client, MEMORY_URL),
-        metadata_repo=UserMetadataRepository(tmp_path / "registry.sqlite3"),
+        metadata_repo=UserMetadataRepository(registry_db),
         tenant_orchestrator=tenant_orch,
     )
     template_orch = TemplateOrchestrator(

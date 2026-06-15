@@ -1,8 +1,8 @@
 """Tests for the Tenants module (Phase 29.C).
 
-Real NATS KV; per-test bucket so parallel runs don't collide. We test:
+Per-test SQLite database so parallel runs don't collide. We test:
 
-  - repository: KV round-trip, list/count, missing-key returns None
+  - repository: SQLite round-trip, list/count, missing-key returns None
   - orchestrator: create / get / update / delete + the three business
     rules (immutable id, can't delete last, 404 vs 409 ordering)
   - seed_default: idempotent, races safely
@@ -12,15 +12,12 @@ Each test name reads as the contract it pins down.
 """
 from __future__ import annotations
 
-import uuid
 from typing import AsyncIterator
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
-from eidolon_admin_server.app.nats_kv import BucketSpec, KVClient
-from eidolon_admin_server.app.registry import buckets as buckets_module
 from eidolon_admin_server.app.registry.schemas.tenant import (
     CreateTenantRequest,
     TenantSpec,
@@ -42,33 +39,10 @@ from eidolon_admin_server.app.registry.tenants import (
 
 
 @pytest.fixture
-async def kv_client() -> KVClient:
-    client = KVClient()
-    try:
-        await client.connect()
-    except Exception:
-        pytest.skip("NATS not reachable at 127.0.0.1:4222")
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-async def repo(kv_client: KVClient) -> TenantRepository:
-    """Repo backed by a per-test bucket name so parallel runs / re-runs
-    never see leaked state from prior tests.
-
-    Same trick as test_devices_orchestrator: swap the frozen dataclass'
-    ``name`` for the duration of the test, restore on teardown.
-    """
-    suffix = uuid.uuid4().hex[:10]
-    original = buckets_module.TENANTS_BUCKET.name
-    object.__setattr__(
-        buckets_module.TENANTS_BUCKET, "name", f"test_tenants_{suffix}"
-    )
-    await kv_client.ensure_bucket(buckets_module.TENANTS_BUCKET)
-    r = TenantRepository(kv_client)
-    yield r
-    object.__setattr__(buckets_module.TENANTS_BUCKET, "name", original)
+async def repo(tmp_path) -> TenantRepository:
+    """Repo backed by a per-test registry DB so parallel runs / re-runs
+    never see leaked state from prior tests."""
+    return TenantRepository(tmp_path / "registry.sqlite3")
 
 
 @pytest.fixture
@@ -411,8 +385,8 @@ async def test_http_delete_last_tenant_returns_409(
 
 
 async def test_http_503_when_orchestrator_missing() -> None:
-    """If admin booted without NATS, the orchestrator slot is None — the
-    router returns a clean 503 rather than crashing."""
+    """If registry init failed, the orchestrator slot is None — the router
+    returns a clean 503 rather than crashing."""
     app = FastAPI()
     app.state.tenant_orchestrator = None
     app.include_router(tenants_router, prefix="/api")

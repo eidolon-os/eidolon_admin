@@ -24,13 +24,12 @@ def _orchestrator(request: Request) -> TenantOrchestrator:
         request.app.state, "tenant_orchestrator", None
     )
     if orch is None:
-        # Same envelope shape devices/router.py uses when NATS is down:
-        # admin booted but the registry layer isn't initialized.
+        # Admin booted but the local registry layer isn't initialized.
         raise HTTPException(
             status_code=503,
             detail=(
-                "tenant orchestrator unavailable (admin booted without NATS "
-                "or registry init failed) — check admin startup log"
+                "tenant orchestrator unavailable (registry init failed) — "
+                "check admin startup log"
             ),
         )
     return orch

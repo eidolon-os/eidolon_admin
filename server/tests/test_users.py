@@ -13,7 +13,6 @@ Three layers under test, matching the templates pattern:
 """
 from __future__ import annotations
 
-import uuid
 import json
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -23,8 +22,6 @@ import pytest
 import respx
 from fastapi import FastAPI
 
-from eidolon_admin_server.app.nats_kv import KVClient
-from eidolon_admin_server.app.registry import buckets as buckets_module
 from eidolon_admin_server.app.registry.schemas.tenant import (
     CreateTenantRequest,
     TenantSpec,
@@ -65,29 +62,6 @@ MEMORY_URL = "http://memory.test"
 
 
 @pytest.fixture
-async def kv_client() -> AsyncIterator[KVClient]:
-    client = KVClient()
-    try:
-        await client.connect()
-    except Exception:
-        pytest.skip("NATS not reachable at 127.0.0.1:4222")
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
-    """Per-test bucket names for tenants. User metadata no longer uses
-    NATS; each orchestrator fixture gets its own SQLite file."""
-    suffix = uuid.uuid4().hex[:10]
-    orig_t = buckets_module.TENANTS_BUCKET.name
-    object.__setattr__(buckets_module.TENANTS_BUCKET, "name", f"test_t_{suffix}")
-    await kv_client.ensure_bucket(buckets_module.TENANTS_BUCKET)
-    yield
-    object.__setattr__(buckets_module.TENANTS_BUCKET, "name", orig_t)
-
-
-@pytest.fixture
 async def http_client() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient() as c:
         yield c
@@ -95,20 +69,19 @@ async def http_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def orchestrator(
-    kv_client: KVClient,
-    buckets_setup: None,
     http_client: httpx.AsyncClient,
     tmp_path,
 ) -> AsyncIterator[UserOrchestrator]:
     """Real tenant repository + SQLite user metadata + respx-mockable
     memory client. The default tenant is seeded so create-user happy path
     doesn't need extra setup."""
-    tenant_orch = TenantOrchestrator(TenantRepository(kv_client))
+    registry_db = tmp_path / "registry.sqlite3"
+    tenant_orch = TenantOrchestrator(TenantRepository(registry_db))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    metadata_repo = UserMetadataRepository(tmp_path / "registry.sqlite3")
+    metadata_repo = UserMetadataRepository(registry_db)
     yield UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=metadata_repo,

@@ -5,7 +5,7 @@ inline. If we ever need to rename a key prefix (or add a namespace),
 this is the only file to touch.
 
 Per the NATS KV spec, keys are dot-separated tokens. We use a single-level
-prefix (``tenant.`` / ``device.``) so list_keys(prefix=...) works cleanly.
+prefix (``device.`` / ``agent.``) so list_keys(prefix=...) works cleanly.
 """
 from __future__ import annotations
 
@@ -23,11 +23,6 @@ def _key_token(value: str) -> str:
 def _decode_key_token(value: str) -> str:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode((value + padding).encode("ascii")).decode("utf-8")
-
-
-def tenant_key(tenant_id: str) -> str:
-    """Key under TENANTS_BUCKET for a single tenant record."""
-    return f"tenant.{tenant_id}"
 
 
 def device_binding_key(device_id: str) -> str:

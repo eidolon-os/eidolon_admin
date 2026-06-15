@@ -138,9 +138,9 @@ class TenantOrchestrator:
     async def update(self, tenant_id: str, body: UpdateTenantRequest) -> TenantSpec:
         """Update ``display_name`` only. ``tenant_id`` is immutable (it's the PK).
 
-        We re-read, mutate, write — atomicity-wise NATS KV's history makes
-        this safe even under concurrent writes: each PUT bumps the
-        revision; a lost-update race surfaces in the history.
+        We re-read, mutate, write. The SQLite repository serializes the
+        actual write; if we later need compare-and-swap semantics, this is
+        the method boundary where version checks belong.
         """
         spec = await self.get(tenant_id)
         updated = spec.model_copy(update={"display_name": body.display_name})

@@ -23,11 +23,9 @@ from pydantic import ValidationError
 from eidolon_admin_server.app.registry import (
     ALL_BUCKETS,
     DEVICE_BINDINGS_BUCKET,
-    TENANTS_BUCKET,
     decode_device_binding_key,
     device_binding_key,
     legacy_device_binding_key,
-    tenant_key,
 )
 from eidolon_admin_server.app.registry.schemas import (
     AgentRef,
@@ -53,13 +51,11 @@ def test_buckets_have_distinct_names() -> None:
     """Buckets have distinct names — would silently overwrite otherwise."""
     names = [b.name for b in ALL_BUCKETS]
     assert len(names) == len(set(names)), f"duplicate bucket names: {names}"
-    assert TENANTS_BUCKET.name == "eidolon_admin_tenants"
     assert DEVICE_BINDINGS_BUCKET.name == "eidolon_admin_device_bindings"
 
 
 def test_key_helpers_use_dot_prefix() -> None:
     """NATS list_keys(prefix=...) relies on the dot delimiter."""
-    assert tenant_key("default") == "tenant.default"
     key = device_binding_key("1c:db:d4:7a:ef:0c")
     assert key.startswith("device.v1.")
     assert ":" not in key

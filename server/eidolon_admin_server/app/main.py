@@ -89,9 +89,9 @@ def create_app(
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
-        # Bring up NATS — required by every registry module that still has
-        # a KV-backed store (Tenants, Agents metadata, Device bindings).
-        # User metadata is local SQLite. NATS being down must NOT block admin
+        # Bring up NATS — required by registry modules that still have a
+        # KV-backed store (Agents metadata, Device bindings). Tenants and
+        # user metadata are local SQLite. NATS being down must NOT block admin
         # startup: each module's router checks its orchestrator slot
         # for None and emits a clean 503 individually.
         #
@@ -104,29 +104,39 @@ def create_app(
             await app.state.nats_kv.connect(max_attempts=5)
         except ConnectionError as exc:
             logger.warning(
-                "NATS unavailable (%s); registry routes will return 503. "
+                "NATS unavailable (%s); NATS-backed registry routes will return 503. "
                 "Start the full stack with ./deploy/dev/run_all.sh start.",
                 exc,
             )
 
-        # Phase 29 registry: ensure admin-owned buckets + build tenant
-        # orchestrator + seed the default tenant. Same fault tolerance —
-        # if NATS is down, leave orchestrators None and routes 503.
+        # Tenants are admin-owned control-plane data and live in the local
+        # registry DB. Seed the default tenant regardless of NATS state so
+        # user CRUD can still validate tenant ownership when the bus is down.
+        try:
+            tenant_orch = TenantOrchestrator(TenantRepository(settings.registry_db_path))
+            app.state.tenant_orchestrator = tenant_orch
+            created = await seed_default_tenant(tenant_orch)
+            if created:
+                logger.info("registry: seeded default tenant on first start")
+            else:
+                logger.debug("registry: default tenant already present")
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "tenant registry init failed; /api/tenants will return 503 "
+                "until the local registry DB is available",
+            )
+
+        # Phase 29 registry: ensure remaining admin-owned NATS buckets.
+        # Same fault tolerance — if NATS is down, leave the NATS-backed
+        # orchestrators None and routes 503.
         try:
             if app.state.nats_kv.is_connected:
                 for spec in REGISTRY_BUCKETS:
                     await app.state.nats_kv.ensure_bucket(spec)
-                tenant_orch = TenantOrchestrator(TenantRepository(app.state.nats_kv))
-                app.state.tenant_orchestrator = tenant_orch
-                created = await seed_default_tenant(tenant_orch)
-                if created:
-                    logger.info("registry: seeded default tenant on first start")
-                else:
-                    logger.debug("registry: default tenant already present")
         except Exception:  # noqa: BLE001
             logger.exception(
-                "registry init failed; /api/tenants will return 503 until "
-                "NATS / buckets recover",
+                "NATS registry bucket init failed; NATS-backed registry routes "
+                "will return 503 until NATS / buckets recover",
             )
 
         # Templates module — purely an HTTP proxy to agent. Doesn't need

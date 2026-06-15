@@ -1,81 +1,131 @@
-"""NATS KV persistence for tenants.
+"""SQLite persistence for tenants.
 
 Thin adapter between the orchestrator (which speaks Pydantic ``TenantSpec``)
-and the KV client (which speaks bytes). Only this layer knows the bucket
-name and key naming; everything above is implementation-agnostic about
-where tenants live.
-
-If we ever move tenants to a different backing store (e.g. SQLite), only
-this file changes.
+and admin's local registry database. Only this layer knows the table shape;
+everything above is implementation-agnostic about where tenants live.
 """
 from __future__ import annotations
 
-import logging
-from typing import Iterable
+import asyncio
+import sqlite3
+from pathlib import Path
 
-from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
-from ..buckets import TENANTS_BUCKET
-from ..keys import tenant_key
 from ..schemas.tenant import TenantSpec
-
-logger = logging.getLogger(__name__)
 
 
 class TenantRepository:
-    """KV-backed store for tenants.
+    """SQLite-backed store for tenants."""
 
-    Construction is cheap (just captures the client); ``ensure_bucket`` is
-    called once at lifespan startup by admin's main() — not here — so this
-    class never blocks on broker handshakes at import time.
-    """
+    def __init__(self, db_path: str | Path) -> None:
+        self._db_path = Path(db_path).expanduser()
+        self._init_db()
 
-    def __init__(self, kv: KVClient) -> None:
-        self._kv = kv
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            self._db_path,
+            timeout=10.0,
+            isolation_level=None,
+        )
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tenants (
+                    tenant_id TEXT PRIMARY KEY,
+                    display_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
+    async def _run(self, func):
+        return await asyncio.to_thread(func)
 
     async def get(self, tenant_id: str) -> TenantSpec | None:
         """Return the tenant, or ``None`` if no key exists."""
-        raw = await self._kv.get(TENANTS_BUCKET.name, tenant_key(tenant_id))
-        if raw is None:
-            return None
-        try:
-            return TenantSpec.model_validate(from_json_bytes(raw))
-        except Exception:
-            # A bucket entry that doesn't parse means someone (or an
-            # older admin version) wrote a stale shape. Log loudly and
-            # treat as absent — re-creating fixes it cleanly.
-            logger.exception("tenants: malformed KV entry %s", tenant_id)
-            return None
+        def _get() -> TenantSpec | None:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT tenant_id, display_name, created_at
+                    FROM tenants
+                    WHERE tenant_id = ?
+                    """,
+                    (tenant_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return TenantSpec.model_validate(dict(row))
+
+        return await self._run(_get)
 
     async def put(self, spec: TenantSpec) -> None:
         """Persist (create or overwrite). Caller has already enforced
         uniqueness / mutability rules; this is a flat write."""
-        await self._kv.put(
-            TENANTS_BUCKET.name,
-            tenant_key(spec.tenant_id),
-            to_json_bytes(spec.model_dump(mode="json")),
-        )
+        data = spec.model_dump(mode="json")
+
+        def _put() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO tenants (tenant_id, display_name, created_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(tenant_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        created_at = excluded.created_at
+                    """,
+                    (
+                        data["tenant_id"],
+                        data["display_name"],
+                        data["created_at"],
+                    ),
+                )
+
+        await self._run(_put)
 
     async def delete(self, tenant_id: str) -> None:
         """Remove the key. Idempotent — deleting a non-existent key is fine."""
-        await self._kv.delete(TENANTS_BUCKET.name, tenant_key(tenant_id))
+        def _delete() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    "DELETE FROM tenants WHERE tenant_id = ?",
+                    (tenant_id,),
+                )
+
+        await self._run(_delete)
 
     async def list_all(self) -> list[TenantSpec]:
-        """Return every tenant. Order is bucket-natural (no sort applied);
+        """Return every tenant. Order is database-natural (no sort applied);
         the router/orchestrator sorts by display_name if it cares."""
-        keys = await self._kv.list_keys(TENANTS_BUCKET.name, prefix="tenant.")
-        out: list[TenantSpec] = []
-        for key in keys:
-            raw = await self._kv.get(TENANTS_BUCKET.name, key)
-            if raw is None:
-                continue
-            try:
-                out.append(TenantSpec.model_validate(from_json_bytes(raw)))
-            except Exception:
-                logger.exception("tenants: malformed KV entry at key %s", key)
-        return out
+        def _list_all() -> list[TenantSpec]:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT tenant_id, display_name, created_at
+                    FROM tenants
+                    ORDER BY tenant_id
+                    """
+                ).fetchall()
+            return [TenantSpec.model_validate(dict(row)) for row in rows]
+
+        return await self._run(_list_all)
 
     async def count(self) -> int:
         """Number of tenants. Used by the "can't delete last tenant" guard
         and by the seed-default-on-empty bootstrap helper."""
-        keys = await self._kv.list_keys(TENANTS_BUCKET.name, prefix="tenant.")
-        return len(keys)
+        def _count() -> int:
+            with self._connect() as conn:
+                row = conn.execute("SELECT COUNT(*) AS n FROM tenants").fetchone()
+            return int(row["n"])
+
+        return await self._run(_count)

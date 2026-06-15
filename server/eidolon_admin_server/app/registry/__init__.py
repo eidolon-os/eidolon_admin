@@ -19,7 +19,7 @@ Admin DOES own:
 
 Submodules:
     schemas/   Pydantic wire shapes for each entity (admin's REST contract).
-    buckets    NATS KV bucket specs admin owns (tenants, agents, device bindings).
+    buckets    NATS KV bucket specs admin owns (agents, device bindings).
     keys       Key naming conventions for admin's KV (kept private).
 
 The actual routers / orchestrators / repositories per entity arrive in
@@ -34,15 +34,12 @@ from .buckets import (
     DEVICE_BINDINGS_BUCKET,
     HISTORY_DEPTH,
     MAX_BINDING_SIZE_BYTES,
-    MAX_TENANT_SIZE_BYTES,
-    TENANTS_BUCKET,
 )
 from .keys import (
     agent_metadata_key,
     decode_device_binding_key,
     device_binding_key,
     legacy_device_binding_key,
-    tenant_key,
 )
 
 __all__ = [
@@ -51,11 +48,8 @@ __all__ = [
     "DEVICE_BINDINGS_BUCKET",
     "HISTORY_DEPTH",
     "MAX_BINDING_SIZE_BYTES",
-    "MAX_TENANT_SIZE_BYTES",
-    "TENANTS_BUCKET",
     "agent_metadata_key",
     "decode_device_binding_key",
     "device_binding_key",
     "legacy_device_binding_key",
-    "tenant_key",
 ]

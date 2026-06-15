@@ -10,7 +10,7 @@ the tenant selector until more than one exists (single-tenant mode is
 the common case and shouldn't pay for multi-tenant UI complexity).
 
 Persistence:
-    NATS KV bucket ``eidolon_admin_tenants``, key ``tenant.<id>``.
+    Admin's local registry SQLite database.
 
 Cascade rule (enforced by orchestrator):
     Deleting a tenant deletes its users (which in turn cascade to
@@ -25,7 +25,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 # Same character class admin already uses for tenant_id / user_id / template_id:
-# letters, digits, underscore, hyphen — NATS KV key charset minus dot.
+# letters, digits, underscore, hyphen — safe across URLs, files, and keys.
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
@@ -33,7 +33,7 @@ def _validate_id(value: str, *, field_name: str) -> str:
     if not _ID_RE.match(value):
         raise ValueError(
             f"{field_name} must be 1-64 chars of [A-Za-z0-9_-] "
-            f"(NATS KV key charset); got {value!r}"
+            f"(portable id charset); got {value!r}"
         )
     return value
 
@@ -41,9 +41,8 @@ def _validate_id(value: str, *, field_name: str) -> str:
 class TenantSpec(BaseModel):
     """The canonical persisted shape of a tenant.
 
-    Written to NATS KV as JSON; round-trips losslessly. ``created_at``
-    is stamped by the orchestrator on creation and never updated
-    afterwards (renames go through display_name, never through id).
+    ``created_at`` is stamped by the orchestrator on creation and never
+    updated afterwards (renames go through display_name, never through id).
     """
 
     tenant_id: str = Field(..., min_length=1, max_length=64)
