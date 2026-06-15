@@ -1,17 +1,12 @@
 """User — identity / data subject with memory palace.
 
-Business implementation lives in eidolon_memory. Admin's role is:
-    - Issue create / update / delete calls against memory's
-      ``/api/admin/users`` REST surface (added in Phase 29.B).
-    - Track tenant↔user mapping (admin-side, since memory has no tenant
-      concept).
-    - Expose a composed view for the UI: spec + memory health +
-      currently-active agent reference (from agent project).
+Admin owns the user registry in local SQLite: existence, tenant scope,
+enabled state, memory port, consolidator config, and active agent. Memory
+consumes that registry and owns runtime execution: user-worker lifecycle,
+palace data, and health probes.
 
-The orchestrator coordinates the cross-project parts. Memory itself
-owns ``users.yaml``, palace directories, and the user-worker lifecycle
-(it spawns a worker per user, responds to SIGHUP on yaml changes).
-Admin DOES NOT touch ``users.yaml`` or palace files directly anymore.
+The API exposes a composed view for the UI: registry spec + memory health +
+currently-active agent reference.
 
 Cascade:
     Deleting a user → memory deletes palace + terminates worker;
@@ -20,66 +15,10 @@ Cascade:
 """
 from __future__ import annotations
 
-import re
-from datetime import datetime
-
 from pydantic import BaseModel, Field, field_validator
 
-_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
-def _validate_id(value: str, *, field_name: str) -> str:
-    if not _ID_RE.match(value):
-        raise ValueError(
-            f"{field_name} must be 1-64 chars of [A-Za-z0-9_-]; got {value!r}"
-        )
-    return value
-
-
-class ConsolidatorConfig(BaseModel):
-    """Memory consolidator settings (per-user).
-
-    Memory's consolidator runs in the user-worker process and periodically
-    promotes drawer-level details into wing-level summaries. Exposing it
-    here lets the operator tune it without editing yaml by hand.
-
-    Defaults match memory's own DefaultConsolidatorConfig — keep in sync
-    when memory changes them.
-    """
-
-    enabled: bool = True
-    interval_hours: float = Field(6.0, gt=0)
-    window_days: int = Field(30, gt=0)
-    min_drawers: int = Field(3, ge=1)
-    min_confidence: float = Field(0.6, ge=0.0, le=1.0)
-
-
-class UserSpec(BaseModel):
-    """The persisted contract for a user.
-
-    Stored in memory's users.yaml (memory writes); admin's tenant↔user
-    mapping is layered on top via the orchestrator. ``palace_path`` is
-    optional — empty string means "let memory pick the default location
-    under ~/eidolon/memory/mempalaces/<user_id>".
-    """
-
-    user_id: str = Field(..., min_length=1, max_length=64)
-    tenant_id: str = Field("default", min_length=1, max_length=64)
-    display_name: str = Field(..., min_length=1, max_length=128)
-    enabled: bool = True
-    palace_path: str = ""  # empty = use memory's default
-    consolidator: ConsolidatorConfig = Field(default_factory=ConsolidatorConfig)
-    created_at: datetime
-
-    @field_validator("user_id")
-    @classmethod
-    def _check_user_id(cls, v: str) -> str:
-        return _validate_id(v, field_name="user_id")
-
-    @field_validator("tenant_id")
-    @classmethod
-    def _check_tenant_id(cls, v: str) -> str:
-        return _validate_id(v, field_name="tenant_id")
+from eidolon_sdk.registry.ids import validate_registry_id
+from eidolon_sdk.registry.models import ConsolidatorConfig, UserSpec
 
 
 class UserHealth(BaseModel):
@@ -102,7 +41,7 @@ class UserView(BaseModel):
     """Composed view returned by GET /api/users/{id}.
 
     Combines:
-      - ``spec``: the persistent record (from memory + admin's tenant tag)
+      - ``spec``: the persistent record from admin's registry
       - ``health``: liveness probe (admin → memory)
       - ``active_agent_id``: which agent web-client should use by default
         for this user (admin's bookkeeping; can be None if the user has
@@ -132,12 +71,12 @@ class CreateUserRequest(BaseModel):
     @field_validator("user_id")
     @classmethod
     def _check_user_id(cls, v: str) -> str:
-        return _validate_id(v, field_name="user_id")
+        return validate_registry_id(v, field_name="user_id")
 
     @field_validator("tenant_id")
     @classmethod
     def _check_tenant_id(cls, v: str) -> str:
-        return _validate_id(v, field_name="tenant_id")
+        return validate_registry_id(v, field_name="tenant_id")
 
 
 class UpdateUserRequest(BaseModel):

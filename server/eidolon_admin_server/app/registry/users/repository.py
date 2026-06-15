@@ -1,37 +1,31 @@
 """Repository layer for Users.
 
-Two stores composed in one module because admin always reads BOTH to
-build a complete view:
-
-  - :class:`MemoryUserClient` — HTTP client to memory's
-    ``/api/admin/users/*`` (added in memory 29.B.2). This is the
-    authoritative source for user existence + worker liveness + palace
-    state.
-
-  - :class:`UserMetadataRepository` — local SQLite storage for the few
-    fields memory has no concept of: ``tenant_id``, ``active_agent_id``,
-    ``display_name``. Keyed by user_id.
-
-Each is its own thin layer (mirrors the Tenants / Templates pattern);
-the orchestrator composes both.
+Admin's SQLite registry is the only source of truth for user existence and
+the project-wide enabled flag. The memory project consumes this table and
+executes the resulting runtime state; it no longer owns a separate user
+catalog.
 """
 from __future__ import annotations
 
-import asyncio
-import logging
-import sqlite3
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from eidolon_sdk.adapters.registry_sqlite import (
+    RegistrySqliteStore,
+    UserRepository as SdkUserRepository,
+)
+from eidolon_sdk.registry.models import (
+    ConsolidatorConfig as SdkConsolidatorConfig,
+    UserRegistryRecord,
+)
 
 from .._shared import (
     SubProjectHTTPClient,
     SubProjectUnreachable,
     SubProjectUpstreamError,
 )
-
-logger = logging.getLogger(__name__)
-
 
 # ===== memory HTTP client ===================================================
 #
@@ -108,26 +102,46 @@ class MemoryUserClient(SubProjectHTTPClient):
         )
         return r.json()
 
+    async def reconcile(self) -> dict[str, Any]:
+        """Ask memory-supervisor to re-read the admin registry DB."""
+        r = await self._request("POST", "/api/admin/reconcile", timeout=120.0)
+        return r.json()
+
 
 # ===== admin's per-user metadata store ======================================
 
 
 @dataclass
 class UserMetadata:
-    """What admin stores on top of memory's user record.
-
-    Persisted in admin's local registry SQLite database.
-    """
+    """Admin-owned user registry row."""
 
     tenant_id: str
     active_agent_id: str | None = None
     display_name: str = ""  # admin-side label; memory doesn't have one
+    enabled: bool = True
+    palace_path: str = ""
+    memory_port: int = 0
+    consolidator_enabled: bool = True
+    consolidator_interval_hours: float = 6.0
+    consolidator_window_days: int = 30
+    consolidator_min_drawers: int = 3
+    consolidator_min_confidence: float = 0.6
+    created_at: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
             "tenant_id": self.tenant_id,
             "active_agent_id": self.active_agent_id,
             "display_name": self.display_name,
+            "enabled": self.enabled,
+            "palace_path": self.palace_path,
+            "memory_port": self.memory_port,
+            "consolidator_enabled": self.consolidator_enabled,
+            "consolidator_interval_hours": self.consolidator_interval_hours,
+            "consolidator_window_days": self.consolidator_window_days,
+            "consolidator_min_drawers": self.consolidator_min_drawers,
+            "consolidator_min_confidence": self.consolidator_min_confidence,
+            "created_at": self.created_at,
         }
 
     @classmethod
@@ -136,108 +150,48 @@ class UserMetadata:
             tenant_id=data.get("tenant_id", "default"),
             active_agent_id=data.get("active_agent_id"),
             display_name=data.get("display_name", ""),
+            enabled=bool(data.get("enabled", True)),
+            palace_path=data.get("palace_path", "") or "",
+            memory_port=int(data.get("memory_port", 0) or 0),
+            consolidator_enabled=bool(data.get("consolidator_enabled", True)),
+            consolidator_interval_hours=float(
+                data.get("consolidator_interval_hours", 6.0) or 6.0
+            ),
+            consolidator_window_days=int(data.get("consolidator_window_days", 30) or 30),
+            consolidator_min_drawers=int(data.get("consolidator_min_drawers", 3) or 3),
+            consolidator_min_confidence=float(
+                data.get("consolidator_min_confidence", 0.6) or 0.6
+            ),
+            created_at=data.get("created_at", "") or "",
         )
 
 
 class UserMetadataRepository:
-    """SQLite-backed admin metadata store.
-
-    Lives separately from memory's user data — memory is still the source
-    of truth for "does user X exist", while admin's local registry DB is
-    the source of truth for "is user X in tenant T with active agent A".
-    """
+    """Admin-facing thin wrapper over the SDK user registry store."""
 
     def __init__(self, db_path: str | Path) -> None:
-        self._db_path = Path(db_path).expanduser()
-        self._init_db()
+        self._store = RegistrySqliteStore(
+            db_path,
+            legacy_users_yaml_path=_legacy_users_yaml_path(),
+        )
+        self._repo = SdkUserRepository(self._store)
 
     @property
     def db_path(self) -> Path:
-        return self._db_path
-
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(
-            self._db_path,
-            timeout=10.0,
-            isolation_level=None,
-        )
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _init_db(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=10000")
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS user_metadata (
-                    user_id TEXT PRIMARY KEY,
-                    tenant_id TEXT NOT NULL,
-                    active_agent_id TEXT,
-                    display_name TEXT NOT NULL DEFAULT ''
-                )
-                """
-            )
-
-    async def _run(self, func):
-        return await asyncio.to_thread(func)
+        return self._store.db_path
 
     async def get(self, user_id: str) -> UserMetadata | None:
-        def _get() -> UserMetadata | None:
-            with self._connect() as conn:
-                row = conn.execute(
-                    """
-                    SELECT tenant_id, active_agent_id, display_name
-                    FROM user_metadata
-                    WHERE user_id = ?
-                    """,
-                    (user_id,),
-                ).fetchone()
-            if row is None:
-                return None
-            return UserMetadata(
-                tenant_id=row["tenant_id"],
-                active_agent_id=row["active_agent_id"],
-                display_name=row["display_name"] or "",
-            )
-
-        return await self._run(_get)
+        record = await self._repo.get(user_id)
+        if record is None:
+            return None
+        return _record_to_meta(record)
 
     async def put(self, user_id: str, meta: UserMetadata) -> None:
-        def _put() -> None:
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO user_metadata (
-                        user_id, tenant_id, active_agent_id, display_name
-                    )
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(user_id) DO UPDATE SET
-                        tenant_id = excluded.tenant_id,
-                        active_agent_id = excluded.active_agent_id,
-                        display_name = excluded.display_name
-                    """,
-                    (
-                        user_id,
-                        meta.tenant_id,
-                        meta.active_agent_id,
-                        meta.display_name,
-                    ),
-                )
-
-        await self._run(_put)
+        await self._repo.put(_meta_to_record(user_id, meta))
 
     async def delete(self, user_id: str) -> None:
         """Idempotent — deleting a non-existent key is a no-op."""
-        def _delete() -> None:
-            with self._connect() as conn:
-                conn.execute(
-                    "DELETE FROM user_metadata WHERE user_id = ?",
-                    (user_id,),
-                )
-
-        await self._run(_delete)
+        await self._repo.delete(user_id)
 
     async def list_all(self) -> dict[str, UserMetadata]:
         """Return the full per-user map (user_id -> metadata).
@@ -246,22 +200,57 @@ class UserMetadataRepository:
         the orchestrator's list path (which joins memory list × admin
         map by user_id).
         """
-        def _list_all() -> dict[str, UserMetadata]:
-            with self._connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT user_id, tenant_id, active_agent_id, display_name
-                    FROM user_metadata
-                    ORDER BY user_id
-                    """
-                ).fetchall()
-            return {
-                row["user_id"]: UserMetadata(
-                    tenant_id=row["tenant_id"],
-                    active_agent_id=row["active_agent_id"],
-                    display_name=row["display_name"] or "",
-                )
-                for row in rows
-            }
+        records = await self._repo.list_all()
+        return {user_id: _record_to_meta(record) for user_id, record in records.items()}
 
-        return await self._run(_list_all)
+    async def allocate_memory_port(self) -> int:
+        return await self._repo.allocate_memory_port()
+
+
+def _record_to_meta(record: UserRegistryRecord) -> UserMetadata:
+    return UserMetadata(
+        tenant_id=record.tenant_id,
+        active_agent_id=record.active_agent_id,
+        display_name=record.display_name,
+        enabled=record.enabled,
+        palace_path=record.palace_path,
+        memory_port=record.memory_port,
+        consolidator_enabled=record.consolidator.enabled,
+        consolidator_interval_hours=record.consolidator.interval_hours,
+        consolidator_window_days=record.consolidator.window_days,
+        consolidator_min_drawers=record.consolidator.min_drawers,
+        consolidator_min_confidence=record.consolidator.min_confidence,
+        created_at=record.created_at,
+    )
+
+
+def _meta_to_record(user_id: str, meta: UserMetadata) -> UserRegistryRecord:
+    return UserRegistryRecord(
+        user_id=user_id,
+        tenant_id=meta.tenant_id,
+        active_agent_id=meta.active_agent_id,
+        display_name=meta.display_name,
+        enabled=meta.enabled,
+        palace_path=meta.palace_path,
+        memory_port=meta.memory_port,
+        consolidator=SdkConsolidatorConfig(
+            enabled=meta.consolidator_enabled,
+            interval_hours=meta.consolidator_interval_hours,
+            window_days=meta.consolidator_window_days,
+            min_drawers=meta.consolidator_min_drawers,
+            min_confidence=meta.consolidator_min_confidence,
+        ),
+        created_at=meta.created_at,
+    )
+
+
+def _legacy_users_yaml_path() -> Path:
+    raw = os.environ.get("EIDOLON_MEMORY_USERS_YAML", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    root = os.environ.get("EIDOLON_ROOT", "").strip()
+    if root:
+        base = Path(root).expanduser()
+    else:
+        base = Path(__file__).resolve().parents[6]
+    return (base / "eidolon_memory" / "config" / "users.yaml").resolve()

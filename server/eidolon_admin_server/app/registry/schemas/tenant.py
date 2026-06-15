@@ -19,40 +19,10 @@ Cascade rule (enforced by orchestrator):
 """
 from __future__ import annotations
 
-import re
-from datetime import datetime
-
 from pydantic import BaseModel, Field, field_validator
 
-# Same character class admin already uses for tenant_id / user_id / template_id:
-# letters, digits, underscore, hyphen — safe across URLs, files, and keys.
-_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
-def _validate_id(value: str, *, field_name: str) -> str:
-    if not _ID_RE.match(value):
-        raise ValueError(
-            f"{field_name} must be 1-64 chars of [A-Za-z0-9_-] "
-            f"(portable id charset); got {value!r}"
-        )
-    return value
-
-
-class TenantSpec(BaseModel):
-    """The canonical persisted shape of a tenant.
-
-    ``created_at`` is stamped by the orchestrator on creation and never
-    updated afterwards (renames go through display_name, never through id).
-    """
-
-    tenant_id: str = Field(..., min_length=1, max_length=64)
-    display_name: str = Field(..., min_length=1, max_length=128)
-    created_at: datetime
-
-    @field_validator("tenant_id")
-    @classmethod
-    def _check_id(cls, v: str) -> str:
-        return _validate_id(v, field_name="tenant_id")
+from eidolon_sdk.registry.ids import validate_registry_id
+from eidolon_sdk.registry.models import TenantSpec
 
 
 class CreateTenantRequest(BaseModel):
@@ -62,7 +32,7 @@ class CreateTenantRequest(BaseModel):
     @field_validator("tenant_id")
     @classmethod
     def _check_id(cls, v: str) -> str:
-        return _validate_id(v, field_name="tenant_id")
+        return validate_registry_id(v, field_name="tenant_id")
 
 
 class UpdateTenantRequest(BaseModel):
