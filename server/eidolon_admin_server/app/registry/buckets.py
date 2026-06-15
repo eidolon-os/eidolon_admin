@@ -8,6 +8,8 @@ What goes here vs not:
     - NOT here: templates (agent project owns), users (memory project owns),
       agents (agent project owns), device fact (hub project owns). Admin
       reads those by calling the respective sub-project's REST API.
+    - User metadata also does not live here anymore; admin persists it in
+      local SQLite so user CRUD is not coupled to NATS KV.
 
 Bucket naming:
     All admin-owned buckets are prefixed ``eidolon_admin_`` so a NATS-side
@@ -52,20 +54,6 @@ DEVICE_BINDINGS_BUCKET = BucketSpec(
 )
 
 
-# Per-user admin-side metadata. Memory owns the user's identity + palace
-# + worker lifecycle; admin layers on what memory doesn't know:
-#   - tenant_id: which tenant this user belongs to (memory has no tenant)
-#   - active_agent_id: which agent this user's runtime should default to
-#                      (agent ownership lives in agent project; admin
-#                      tracks the "active default" per-user)
-# Keyed by user_id (matches memory's PK).
-USERS_METADATA_BUCKET = BucketSpec(
-    name="eidolon_admin_users_metadata",
-    max_value_size=MAX_BINDING_SIZE_BYTES,
-    history=HISTORY_DEPTH,
-)
-
-
 # Per-agent admin-side metadata (Phase 29.F). Agent project owns the
 # persona instance (SQL row); admin's KV layers on a single-key handle
 # so the wire surface is ``/api/agents/{agent_id}`` rather than
@@ -76,7 +64,6 @@ USERS_METADATA_BUCKET = BucketSpec(
 #     without scanning persona_instances on every request
 #   - display_name: operator-chosen label
 #   - created_at: stamped by admin
-USERS_METADATA_BUCKET_SIZE_OK = True  # marker; just for the cap docs
 AGENTS_METADATA_BUCKET = BucketSpec(
     name="eidolon_admin_agents_metadata",
     max_value_size=MAX_BINDING_SIZE_BYTES,
@@ -89,6 +76,5 @@ AGENTS_METADATA_BUCKET = BucketSpec(
 ALL_BUCKETS: tuple[BucketSpec, ...] = (
     TENANTS_BUCKET,
     DEVICE_BINDINGS_BUCKET,
-    USERS_METADATA_BUCKET,
     AGENTS_METADATA_BUCKET,
 )

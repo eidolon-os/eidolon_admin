@@ -50,7 +50,7 @@ from eidolon_admin_server.app.registry.schemas import (
 
 
 def test_buckets_have_distinct_names() -> None:
-    """Two buckets, different names — would silently overwrite otherwise."""
+    """Buckets have distinct names — would silently overwrite otherwise."""
     names = [b.name for b in ALL_BUCKETS]
     assert len(names) == len(set(names)), f"duplicate bucket names: {names}"
     assert TENANTS_BUCKET.name == "eidolon_admin_tenants"

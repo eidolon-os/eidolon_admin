@@ -140,22 +140,19 @@ async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
     suffix = uuid.uuid4().hex[:10]
     orig = {
         "t": buckets_module.TENANTS_BUCKET.name,
-        "u": buckets_module.USERS_METADATA_BUCKET.name,
         "a": buckets_module.AGENTS_METADATA_BUCKET.name,
         "d": buckets_module.DEVICE_BINDINGS_BUCKET.name,
     }
     object.__setattr__(buckets_module.TENANTS_BUCKET, "name", f"test_t_{suffix}")
-    object.__setattr__(buckets_module.USERS_METADATA_BUCKET, "name", f"test_u_{suffix}")
     object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", f"test_a_{suffix}")
     object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", f"test_d_{suffix}")
     for b in (
-        buckets_module.TENANTS_BUCKET, buckets_module.USERS_METADATA_BUCKET,
+        buckets_module.TENANTS_BUCKET,
         buckets_module.AGENTS_METADATA_BUCKET, buckets_module.DEVICE_BINDINGS_BUCKET,
     ):
         await kv_client.ensure_bucket(b)
     yield
     object.__setattr__(buckets_module.TENANTS_BUCKET, "name", orig["t"])
-    object.__setattr__(buckets_module.USERS_METADATA_BUCKET, "name", orig["u"])
     object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", orig["a"])
     object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", orig["d"])
 
@@ -180,7 +177,7 @@ async def orchestrator(
     )
     user_orch = UserOrchestrator(
         memory_client=MemoryUserClient(http_client, MEMORY_URL),
-        metadata_repo=UserMetadataRepository(kv_client),
+        metadata_repo=UserMetadataRepository(tmp_path / "registry.sqlite3"),
         tenant_orchestrator=tenant_orch,
     )
     template_orch = TemplateOrchestrator(
@@ -250,7 +247,7 @@ async def test_resolve_device_happy_path(
     orchestrator: ResolveOrchestrator,
 ) -> None:
     """All the pieces are in place — channel gets one envelope."""
-    # Set up KV: binding → agent → user metadata
+    # Set up registry state: binding -> agent -> user metadata
     base = datetime.now(timezone.utc).isoformat()
     await orchestrator._bindings.put(
         "esp-1",

@@ -8,27 +8,27 @@ build a complete view:
     authoritative source for user existence + worker liveness + palace
     state.
 
-  - :class:`UserMetadataRepository` — NATS KV adapter over admin's
-    ``USERS_METADATA_BUCKET``. Stores the few fields memory has no
-    concept of: ``tenant_id``, ``active_agent_id``. Keyed by user_id.
+  - :class:`UserMetadataRepository` — local SQLite storage for the few
+    fields memory has no concept of: ``tenant_id``, ``active_agent_id``,
+    ``display_name``. Keyed by user_id.
 
 Each is its own thin layer (mirrors the Tenants / Templates pattern);
 the orchestrator composes both.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
 from .._shared import (
     SubProjectHTTPClient,
     SubProjectUnreachable,
     SubProjectUpstreamError,
 )
-from ..buckets import USERS_METADATA_BUCKET
-from ..keys import user_metadata_key
 
 logger = logging.getLogger(__name__)
 
@@ -109,15 +109,14 @@ class MemoryUserClient(SubProjectHTTPClient):
         return r.json()
 
 
-# ===== admin's per-user metadata KV =========================================
+# ===== admin's per-user metadata store ======================================
 
 
 @dataclass
 class UserMetadata:
     """What admin stores on top of memory's user record.
 
-    Persisted as a small JSON object in NATS KV. Kept tiny so the bucket
-    cap (4 KB) is never an issue.
+    Persisted in admin's local registry SQLite database.
     """
 
     tenant_id: str
@@ -141,56 +140,128 @@ class UserMetadata:
 
 
 class UserMetadataRepository:
-    """KV-backed admin metadata store.
+    """SQLite-backed admin metadata store.
 
-    Lives separately from memory's user data — memory is the source of
-    truth for "does user X exist", admin's KV is the source of truth
-    for "is user X in tenant T with active agent A".
+    Lives separately from memory's user data — memory is still the source
+    of truth for "does user X exist", while admin's local registry DB is
+    the source of truth for "is user X in tenant T with active agent A".
     """
 
-    def __init__(self, kv: KVClient) -> None:
-        self._kv = kv
+    def __init__(self, db_path: str | Path) -> None:
+        self._db_path = Path(db_path).expanduser()
+        self._init_db()
+
+    @property
+    def db_path(self) -> Path:
+        return self._db_path
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(
+            self._db_path,
+            timeout=10.0,
+            isolation_level=None,
+        )
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self) -> None:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=10000")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_metadata (
+                    user_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    active_agent_id TEXT,
+                    display_name TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+
+    async def _run(self, func):
+        return await asyncio.to_thread(func)
 
     async def get(self, user_id: str) -> UserMetadata | None:
-        raw = await self._kv.get(USERS_METADATA_BUCKET.name, user_metadata_key(user_id))
-        if raw is None:
-            return None
-        try:
-            return UserMetadata.from_json(from_json_bytes(raw))
-        except Exception:
-            logger.exception("users: malformed KV entry %s", user_id)
-            return None
+        def _get() -> UserMetadata | None:
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT tenant_id, active_agent_id, display_name
+                    FROM user_metadata
+                    WHERE user_id = ?
+                    """,
+                    (user_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return UserMetadata(
+                tenant_id=row["tenant_id"],
+                active_agent_id=row["active_agent_id"],
+                display_name=row["display_name"] or "",
+            )
+
+        return await self._run(_get)
 
     async def put(self, user_id: str, meta: UserMetadata) -> None:
-        await self._kv.put(
-            USERS_METADATA_BUCKET.name,
-            user_metadata_key(user_id),
-            to_json_bytes(meta.to_json()),
-        )
+        def _put() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_metadata (
+                        user_id, tenant_id, active_agent_id, display_name
+                    )
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        tenant_id = excluded.tenant_id,
+                        active_agent_id = excluded.active_agent_id,
+                        display_name = excluded.display_name
+                    """,
+                    (
+                        user_id,
+                        meta.tenant_id,
+                        meta.active_agent_id,
+                        meta.display_name,
+                    ),
+                )
+
+        await self._run(_put)
 
     async def delete(self, user_id: str) -> None:
         """Idempotent — deleting a non-existent key is a no-op."""
-        await self._kv.delete(USERS_METADATA_BUCKET.name, user_metadata_key(user_id))
+        def _delete() -> None:
+            with self._connect() as conn:
+                conn.execute(
+                    "DELETE FROM user_metadata WHERE user_id = ?",
+                    (user_id,),
+                )
+
+        await self._run(_delete)
 
     async def list_all(self) -> dict[str, UserMetadata]:
-        """Return the full per-user map (user_id → metadata).
+        """Return the full per-user map (user_id -> metadata).
 
         Returned as a dict for cheap "do I have this user?" lookups in
         the orchestrator's list path (which joins memory list × admin
         map by user_id).
         """
-        keys = await self._kv.list_keys(USERS_METADATA_BUCKET.name, prefix="user.")
-        out: dict[str, UserMetadata] = {}
-        for key in keys:
-            raw = await self._kv.get(USERS_METADATA_BUCKET.name, key)
-            if raw is None:
-                continue
-            try:
-                meta = UserMetadata.from_json(from_json_bytes(raw))
-            except Exception:
-                logger.exception("users: malformed KV entry at key %s", key)
-                continue
-            # Key shape is ``user.<id>``; strip the prefix.
-            user_id = key.removeprefix("user.")
-            out[user_id] = meta
-        return out
+        def _list_all() -> dict[str, UserMetadata]:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT user_id, tenant_id, active_agent_id, display_name
+                    FROM user_metadata
+                    ORDER BY user_id
+                    """
+                ).fetchall()
+            return {
+                row["user_id"]: UserMetadata(
+                    tenant_id=row["tenant_id"],
+                    active_agent_id=row["active_agent_id"],
+                    display_name=row["display_name"] or "",
+                )
+                for row in rows
+            }
+
+        return await self._run(_list_all)

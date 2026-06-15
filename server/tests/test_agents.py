@@ -73,18 +73,14 @@ async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
     suffix = uuid.uuid4().hex[:10]
     orig = {
         "tenants": buckets_module.TENANTS_BUCKET.name,
-        "users": buckets_module.USERS_METADATA_BUCKET.name,
         "agents": buckets_module.AGENTS_METADATA_BUCKET.name,
     }
     object.__setattr__(buckets_module.TENANTS_BUCKET, "name", f"test_t_{suffix}")
-    object.__setattr__(buckets_module.USERS_METADATA_BUCKET, "name", f"test_u_{suffix}")
     object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", f"test_a_{suffix}")
     await kv_client.ensure_bucket(buckets_module.TENANTS_BUCKET)
-    await kv_client.ensure_bucket(buckets_module.USERS_METADATA_BUCKET)
     await kv_client.ensure_bucket(buckets_module.AGENTS_METADATA_BUCKET)
     yield
     object.__setattr__(buckets_module.TENANTS_BUCKET, "name", orig["tenants"])
-    object.__setattr__(buckets_module.USERS_METADATA_BUCKET, "name", orig["users"])
     object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", orig["agents"])
 
 
@@ -150,6 +146,7 @@ async def orchestrator(
     kv_client: KVClient,
     buckets_setup: None,
     http_client: httpx.AsyncClient,
+    tmp_path,
 ) -> AsyncIterator[AgentOrchestrator]:
     # Build all the underpinnings the agent orchestrator depends on.
     tenant_orch = TenantOrchestrator(TenantRepository(kv_client))
@@ -157,7 +154,7 @@ async def orchestrator(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    user_repo = UserMetadataRepository(kv_client)
+    user_repo = UserMetadataRepository(tmp_path / "registry.sqlite3")
     user_orch = UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=user_repo,

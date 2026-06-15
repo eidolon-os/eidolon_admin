@@ -158,6 +158,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EIDOLON_ADMIN_", extra="ignore")
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
+    registry_db_path: Path = _REPO_ROOT / "var" / "registry.sqlite3"
     voiceprint_root: Path = Field(default_factory=default_voiceprint_root)
     speaker_model_dir: Path = Field(default_factory=default_3dspeaker_model_dir)
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf

@@ -12,13 +12,13 @@ Admin's role mirrors the Templates module's relationship to agent:
 The four files mirror Tenants/Templates:
 
     repository.py       HTTP client to memory's /api/admin/users/*
-                        AND KV adapter for admin's per-user metadata
-                        bucket. Two stores, one repository module —
+                        AND SQLite adapter for admin's per-user metadata.
+                        Two stores, one repository module —
                         because admin always reads BOTH sources to build
                         a complete UserView.
 
     orchestrator.py     CRUD + cross-project orchestration. Atomicity:
-                        a memory create followed by a KV metadata write
+                        a memory create followed by a SQLite metadata write
                         is two operations; the orchestrator compensates
                         if step 2 fails (deletes the memory user that
                         step 1 created).

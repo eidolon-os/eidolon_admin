@@ -280,7 +280,7 @@ class UserOrchestrator:
         ``set_user_refcount_provider`` so deleting a tenant is refused
         while users still reference it.
 
-        Implementation note: reads admin's own metadata KV (the
+        Implementation note: reads admin's own metadata store (the
         authoritative source for tenant↔user mapping). Doesn't hit
         memory — if memory has a user without an admin metadata entry,
         that user is by definition in the default tenant fallback and
@@ -292,9 +292,9 @@ class UserOrchestrator:
     async def list_users(self) -> list[UserView]:
         """List users by joining memory's authoritative list with admin's
         metadata map. Memory's view is the spine — users that exist in
-        admin's KV but NOT in memory are silently dropped (memory is
-        authoritative; an admin KV entry without a memory user is dead
-        config the operator should clean up via DELETE)."""
+        admin's metadata store but NOT in memory are silently dropped
+        (memory is authoritative; an admin metadata entry without a memory
+        user is dead config the operator should clean up via DELETE)."""
         try:
             envelope = await self._mem.list_users()
         except MemoryUserUnreachable as exc:

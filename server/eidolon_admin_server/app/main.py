@@ -89,9 +89,9 @@ def create_app(
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
-        # Bring up NATS — required by every registry module that has a
-        # KV-backed store (Tenants, Users metadata, Agents metadata,
-        # Device bindings). NATS being down must NOT block admin
+        # Bring up NATS — required by every registry module that still has
+        # a KV-backed store (Tenants, Agents metadata, Device bindings).
+        # User metadata is local SQLite. NATS being down must NOT block admin
         # startup: each module's router checks its orchestrator slot
         # for None and emits a clean 503 individually.
         #
@@ -147,15 +147,16 @@ def create_app(
             )
 
         # Users module — talks to memory's supervisor admin HTTP (29.B.2)
-        # for memory-side CRUD, plus admin's own KV bucket for the
-        # tenant/active_agent metadata. Needs NATS (for the bucket) AND
-        # the memory supervisor URL from env (set by ports.py).
+        # for memory-side CRUD, plus admin's local registry DB for the
+        # tenant/active_agent metadata. It no longer stores user metadata
+        # in NATS; NATS is only indirectly required here if tenants are
+        # still backed by the tenant orchestrator.
         memory_admin_url = _resolve_memory_supervisor_url()
-        if memory_admin_url and app.state.nats_kv.is_connected and getattr(
+        if memory_admin_url and getattr(
             app.state, "tenant_orchestrator", None
         ) is not None:
             user_client = MemoryUserClient(app.state.http_client, memory_admin_url)
-            user_repo = UserMetadataRepository(app.state.nats_kv)
+            user_repo = UserMetadataRepository(settings.registry_db_path)
             user_orch = UserOrchestrator(
                 memory_client=user_client,
                 metadata_repo=user_repo,
@@ -172,7 +173,7 @@ def create_app(
         else:
             logger.warning(
                 "user orchestrator NOT initialized — memory supervisor "
-                "url / NATS / tenant orchestrator missing"
+                "url / tenant orchestrator missing"
             )
 
         # Agents module — bridges agent project (persona instances) and

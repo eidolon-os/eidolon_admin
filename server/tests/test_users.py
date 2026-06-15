@@ -3,8 +3,8 @@
 Three layers under test, matching the templates pattern:
 
   - **MemoryUserClient + UserMetadataRepository**: the two repos.
-    MemoryUserClient covered by respx; metadata repo covered by real
-    NATS (per-test bucket).
+    MemoryUserClient covered by respx; metadata repo covered by a
+    per-test SQLite file.
 
   - **UserOrchestrator**: status-code translation, compose-from-two-sources,
     create-with-compensation, cascade-on-delete.
@@ -77,18 +77,14 @@ async def kv_client() -> AsyncIterator[KVClient]:
 
 @pytest.fixture
 async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
-    """Per-test bucket names for both tenants + users-metadata. Restores
-    on teardown so parallel tests don't see each other's state."""
+    """Per-test bucket names for tenants. User metadata no longer uses
+    NATS; each orchestrator fixture gets its own SQLite file."""
     suffix = uuid.uuid4().hex[:10]
     orig_t = buckets_module.TENANTS_BUCKET.name
-    orig_u = buckets_module.USERS_METADATA_BUCKET.name
     object.__setattr__(buckets_module.TENANTS_BUCKET, "name", f"test_t_{suffix}")
-    object.__setattr__(buckets_module.USERS_METADATA_BUCKET, "name", f"test_u_{suffix}")
     await kv_client.ensure_bucket(buckets_module.TENANTS_BUCKET)
-    await kv_client.ensure_bucket(buckets_module.USERS_METADATA_BUCKET)
     yield
     object.__setattr__(buckets_module.TENANTS_BUCKET, "name", orig_t)
-    object.__setattr__(buckets_module.USERS_METADATA_BUCKET, "name", orig_u)
 
 
 @pytest.fixture
@@ -102,21 +98,50 @@ async def orchestrator(
     kv_client: KVClient,
     buckets_setup: None,
     http_client: httpx.AsyncClient,
+    tmp_path,
 ) -> AsyncIterator[UserOrchestrator]:
-    """Real KV repos + real tenant orchestrator + respx-mockable memory
-    client. The default tenant is seeded so create-user happy path
+    """Real tenant repository + SQLite user metadata + respx-mockable
+    memory client. The default tenant is seeded so create-user happy path
     doesn't need extra setup."""
     tenant_orch = TenantOrchestrator(TenantRepository(kv_client))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    metadata_repo = UserMetadataRepository(kv_client)
+    metadata_repo = UserMetadataRepository(tmp_path / "registry.sqlite3")
     yield UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=metadata_repo,
         tenant_orchestrator=tenant_orch,
     )
+
+
+# ---- metadata repository ----------------------------------------------------
+
+
+async def test_user_metadata_repository_uses_local_sqlite(tmp_path) -> None:
+    repo = UserMetadataRepository(tmp_path / "registry.sqlite3")
+
+    assert await repo.get("alice") is None
+    await repo.put(
+        "alice",
+        UserMetadata(
+            tenant_id="default",
+            active_agent_id="ag-1",
+            display_name="Alice",
+        ),
+    )
+
+    stored = await repo.get("alice")
+    assert stored == UserMetadata(
+        tenant_id="default",
+        active_agent_id="ag-1",
+        display_name="Alice",
+    )
+    assert await repo.list_all() == {"alice": stored}
+
+    await repo.delete("alice")
+    assert await repo.get("alice") is None
 
 
 # ---- memory wire shape helper ----------------------------------------------
@@ -168,8 +193,8 @@ def _memory_user_record(
 async def test_list_joins_memory_with_admin_metadata(
     orchestrator: UserOrchestrator,
 ) -> None:
-    """Memory says "user alice exists"; admin's KV says "she's in tenant t1
-    with active_agent ag-1". The view must combine both."""
+    """Memory says "user alice exists"; admin's metadata store says she's
+    in tenant default with active_agent ag-1. The view must combine both."""
     # Pre-populate admin metadata
     await orchestrator._meta.put(
         "alice",
@@ -648,7 +673,7 @@ async def test_count_users_for_tenant_reflects_admin_metadata(
     orchestrator: UserOrchestrator,
 ) -> None:
     """The cascade hook that TenantOrchestrator wires in. Verifies
-    admin's KV is the authoritative source for tenant↔user mapping."""
+    admin's metadata store is the authoritative source for tenant↔user mapping."""
     # Default tenant exists from the orchestrator fixture. Add 2 users
     # to it + 1 to a different tenant.
     await orchestrator._meta.put("u1", UserMetadata(tenant_id="default"))
