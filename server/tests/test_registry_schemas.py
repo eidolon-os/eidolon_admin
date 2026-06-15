@@ -147,12 +147,16 @@ def test_knob_overlay_rejects_out_of_range(bad: float) -> None:
 # ---- CreateAgentRequest set_active default ---------------------------------
 
 
-def test_create_agent_set_active_defaults_true() -> None:
-    """Newly-created agent should become the user's active default by default —
-    operator can opt out, but the common case is "I created it, use it".
-    """
+def test_create_agent_set_active_defaults_false() -> None:
+    """Creating an agent is separate from routing future sessions to it."""
     req = CreateAgentRequest(user_id="default", template_id="caretaker_jiezhi")
-    assert req.set_active is True
+    assert req.set_active is False
+
+
+def test_create_user_enabled_defaults_false() -> None:
+    """Creating a catalog user should not start dynamic memory resources."""
+    req = CreateUserRequest(user_id="default", display_name="Default")
+    assert req.enabled is False
 
 
 # ---- ForkTemplateRequest validation -----------------------------------------

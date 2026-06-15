@@ -192,11 +192,17 @@ class UserOrchestrator:
             else spec_block.get("display_name") or spec_block.get("user_id", "")
         )
         active_agent_id = admin_meta.active_agent_id if admin_meta else None
+        enabled = bool(spec_block.get("enabled", True))
+        if "enabled" not in spec_block and str(health_block.get("note", "")).startswith(
+            "user disabled"
+        ):
+            enabled = False
 
         spec = UserSpec(
             user_id=spec_block["user_id"],
             tenant_id=tenant_id,
             display_name=display_name,
+            enabled=enabled,
             palace_path=spec_block.get("palace_path", ""),
             consolidator=_memory_to_consolidator(spec_block.get("consolidator")),
             created_at=_parse_dt(spec_block.get("created_at")),
@@ -365,6 +371,7 @@ class UserOrchestrator:
         try:
             memory_record = await self._mem.create_user(
                 user_id=body.user_id,
+                enabled=body.enabled,
                 palace_path=body.palace_path,
                 consolidator=_consolidator_to_memory_dict(body.consolidator),
             )

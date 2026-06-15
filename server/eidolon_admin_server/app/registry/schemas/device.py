@@ -58,6 +58,7 @@ class DeviceView(BaseModel):
     device_id: str
     name: str
     kind: DeviceKind = "unknown"
+    enabled: bool = True
     approved: bool
     approved_at: datetime | None
     last_seen: datetime | None

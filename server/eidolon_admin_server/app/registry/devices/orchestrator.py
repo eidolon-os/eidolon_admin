@@ -128,6 +128,7 @@ class DeviceOrchestrator:
             device_id=record["device_id"],
             name=record.get("name", ""),
             kind=record.get("kind", "unknown"),
+            enabled=bool(record.get("enabled", True)),
             approved=bool(record.get("approved")),
             approved_at=_parse_dt_optional(record.get("approved_at")),
             last_seen=_parse_dt_optional(record.get("last_seen")),

@@ -17,6 +17,7 @@ export interface DeviceView {
   device_id: string
   name: string
   kind: DeviceKind
+  enabled: boolean
   approved: boolean
   approved_at: string | null
   last_seen: string | null

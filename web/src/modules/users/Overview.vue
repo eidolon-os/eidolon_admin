@@ -18,6 +18,7 @@ import {
   getVoiceprint,
   listUsers,
   setActiveAgent,
+  setUserEnabled,
   testVoiceprint,
   updateUser,
   uploadVoiceprintSample,
@@ -45,8 +46,10 @@ const form = reactive({
   user_id: '',
   tenant_id: 'default',
   display_name: '',
+  enabled: false,
 })
 const submitting = ref(false)
+const userBusy = ref<Record<string, boolean>>({})
 
 const voiceprintDialogOpen = ref(false)
 const selectedUser = ref<UserView | null>(null)
@@ -110,6 +113,19 @@ async function refresh() {
   }
 }
 
+async function refreshAndFindUser(userId: string): Promise<UserView | null> {
+  try {
+    const [u, t] = await Promise.all([listUsers(), listTenants()])
+    rows.value = u.users
+    memoryAvailable.value = u.memory_available
+    tenants.value = t
+    await loadVoiceprints(u.users)
+    return u.users.find((row) => row.spec.user_id === userId) ?? null
+  } catch {
+    return null
+  }
+}
+
 async function loadVoiceprints(users: UserView[]) {
   const next: Record<string, VoiceprintStatusResponse | null> = {}
   await Promise.all(users.map(async (row) => {
@@ -128,6 +144,7 @@ function openCreate() {
   form.user_id = ''
   form.tenant_id = tenants.value[0]?.tenant_id || 'default'
   form.display_name = ''
+  form.enabled = false
   dialogOpen.value = true
 }
 
@@ -136,6 +153,7 @@ function openEdit(row: UserView) {
   form.user_id = row.spec.user_id
   form.tenant_id = row.spec.tenant_id
   form.display_name = row.spec.display_name
+  form.enabled = row.spec.enabled
   dialogOpen.value = true
 }
 
@@ -151,11 +169,15 @@ async function submit() {
         ElMessage.warning('请输入 user_id')
         return
       }
-      await createUser({
+      const created = await createUser({
         user_id: form.user_id.trim(),
         tenant_id: form.tenant_id,
         display_name: form.display_name.trim(),
+        enabled: form.enabled,
       })
+      if (!form.enabled && created.spec.enabled) {
+        await setUserEnabled(form.user_id.trim(), false)
+      }
       ElMessage.success('用户已创建')
     } else {
       await updateUser(form.user_id, {
@@ -166,9 +188,53 @@ async function submit() {
     dialogOpen.value = false
     await refresh()
   } catch (e: any) {
+    if (dialogMode.value === 'create') {
+      const created = await refreshAndFindUser(form.user_id.trim())
+      if (created) {
+        if (!form.enabled && created.spec.enabled) {
+          try {
+            await setUserEnabled(form.user_id.trim(), false)
+            await refresh()
+          } catch (disableError: any) {
+            ElMessage.error(`用户已创建，但停用 worker 失败: ${extractErrorMessage(disableError)}`)
+            return
+          }
+        }
+        dialogOpen.value = false
+        ElMessage.warning('用户已创建，但 worker 初始化较慢；请稍后观察健康状态')
+        return
+      }
+    }
     ElMessage.error(`提交失败: ${extractErrorMessage(e)}`)
   } finally {
     submitting.value = false
+  }
+}
+
+async function toggleUserEnabled(row: UserView, enabled: boolean) {
+  const userId = row.spec.user_id
+  try {
+    await ElMessageBox.confirm(
+      enabled
+        ? `启用用户 "${userId}" 的 memory worker？这会启动该用户的动态运行资源。`
+        : `停用用户 "${userId}" 的 memory worker？该用户的记忆服务会停止运行，但数据会保留。`,
+      enabled ? '启用用户' : '停用用户',
+      { type: enabled ? 'info' : 'warning' },
+    )
+  } catch {
+    await refresh()
+    return
+  }
+  userBusy.value[userId] = true
+  try {
+    await setUserEnabled(userId, enabled)
+    ElMessage.success(enabled ? '已启用' : '已停用')
+    await refresh()
+  } catch (e: any) {
+    ElMessage.error(`${enabled ? '启用' : '停用'}失败: ${extractErrorMessage(e)}`)
+    await refresh()
+  } finally {
+    userBusy.value[userId] = false
   }
 }
 
@@ -567,9 +633,21 @@ onBeforeUnmount(() => {
       <el-table-column prop="spec.user_id" label="User ID" width="180" />
       <el-table-column prop="spec.display_name" label="显示名" />
       <el-table-column prop="spec.tenant_id" label="Tenant" width="120" />
+      <el-table-column label="运行态" width="110">
+        <template #default="{ row }">
+          <el-switch
+            :model-value="row.spec.enabled"
+            size="small"
+            :loading="userBusy[row.spec.user_id]"
+            @change="(v: boolean) => toggleUserEnabled(row, v)"
+          />
+        </template>
+      </el-table-column>
       <el-table-column label="健康" width="150">
         <template #default="{ row }">
+          <el-tag v-if="!row.spec.enabled" size="small" type="info">disabled</el-tag>
           <el-tag
+            v-else
             size="small"
             :type="userHealthType(row.health)"
             :title="userHealthDetail(row.health)"
@@ -642,9 +720,12 @@ onBeforeUnmount(() => {
         <el-form-item label="显示名">
           <el-input v-model="form.display_name" />
         </el-form-item>
+        <el-form-item v-if="dialogMode === 'create'" label="立即启用">
+          <el-switch v-model="form.enabled" />
+        </el-form-item>
       </el-form>
       <p v-if="dialogMode === 'create'" class="dialog-hint">
-        创建会启动 memory 子进程,可能耗时 10-30 秒,请耐心等待。
+        默认只登记用户和配置；开启“立即启用”后才启动 memory worker。
       </p>
       <template #footer>
         <el-button @click="dialogOpen = false">取消</el-button>

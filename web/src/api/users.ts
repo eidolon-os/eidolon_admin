@@ -19,6 +19,7 @@ export interface UserSpec {
   user_id: string
   tenant_id: string
   display_name: string
+  enabled: boolean
   palace_path: string
   consolidator: ConsolidatorConfig
   created_at: string
@@ -47,6 +48,7 @@ export interface CreateUserRequest {
   user_id: string
   tenant_id?: string
   display_name: string
+  enabled?: boolean
   palace_path?: string
   consolidator?: ConsolidatorConfig
 }
@@ -151,9 +153,21 @@ export async function createUser(body: CreateUserRequest): Promise<UserView> {
   // Caller (the page form) shows a spinner — give axios time enough to
   // wait without timing out before memory's wait_for_worker finishes.
   const { data } = await client.post<UserView>('/users', body, {
-    timeout: 60_000,
+    timeout: 120_000,
+    suppressToast: true,
   })
   return data
+}
+
+export async function setUserEnabled(
+  userId: string,
+  enabled: boolean,
+): Promise<void> {
+  await client.post(
+    `/memory/users/${encodeURIComponent(userId)}/enable`,
+    null,
+    { params: { enabled } },
+  )
 }
 
 export async function updateUser(
@@ -182,7 +196,7 @@ export async function deleteUser(id: string): Promise<DeleteUserResponse> {
   // Same slow-path concern as create.
   const { data } = await client.delete<DeleteUserResponse>(
     `/users/${encodeURIComponent(id)}`,
-    { timeout: 60_000 },
+    { timeout: 120_000 },
   )
   return data
 }

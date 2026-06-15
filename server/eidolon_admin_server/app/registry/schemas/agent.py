@@ -84,9 +84,10 @@ class CreateAgentRequest(BaseModel):
     # Optional human-friendly name; if absent the orchestrator names it
     # "<user_id>'s <template_id>".
     display_name: str | None = Field(None, min_length=1, max_length=128)
-    # If True (default), the newly-created agent becomes the user's active
-    # default. The previous active agent is demoted but not deleted.
-    set_active: bool = True
+    # If True, the newly-created agent becomes the user's active default.
+    # Default is False so "create instance" stays separate from "route
+    # future sessions to this instance".
+    set_active: bool = False
 
 
 class UpdateAgentKnobsRequest(BaseModel):

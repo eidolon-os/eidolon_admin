@@ -37,7 +37,7 @@ const form = reactive({
   user_id: '',
   template_id: '',
   display_name: '',
-  set_active: true,
+  set_active: false,
 })
 const submitting = ref(false)
 
@@ -86,7 +86,7 @@ function openCreate() {
   form.user_id = users.value[0]?.spec.user_id || ''
   form.template_id = templates.value[0]?.template_id || ''
   form.display_name = ''
-  form.set_active = true
+  form.set_active = false
   dialogOpen.value = true
 }
 
@@ -277,12 +277,12 @@ onMounted(refresh)
         <el-form-item label="显示名">
           <el-input v-model="form.display_name" placeholder="可选, 默认用模板的显示名" />
         </el-form-item>
-        <el-form-item label="设为 active">
+        <el-form-item label="设为 Active">
           <el-switch v-model="form.set_active" />
         </el-form-item>
       </el-form>
       <p class="dialog-hint">
-        创建会渲染模板 + 写入 agent/memory/admin KV,可能耗时几秒。
+        创建只登记 Agent 实例；开启 Active 后才会成为该用户未来新会话的默认 Agent。
       </p>
       <template #footer>
         <el-button @click="dialogOpen = false">取消</el-button>

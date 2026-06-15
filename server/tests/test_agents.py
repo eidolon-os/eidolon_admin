@@ -275,7 +275,7 @@ async def test_create_with_missing_template_returns_bad_request(
 
 async def test_create_happy_path(orchestrator: AgentOrchestrator) -> None:
     """End-to-end: user check OK, template check OK, agent project responds,
-    admin metadata is written, user.active_agent gets set."""
+    admin metadata is written. By default it does not become active."""
     with respx.mock() as rsx:
         rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
@@ -284,10 +284,6 @@ async def test_create_happy_path(orchestrator: AgentOrchestrator) -> None:
         # against the path pattern by passing a regex via respx.
         rsx.post(f"{AGENT_URL}/api/admin/personas/instances").mock(
             return_value=httpx.Response(201, json=_persona_instance(user_id="alice"))
-        )
-        # set_active_agent does GET memory then put metadata; mock the GET.
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
-            return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         ref = await orchestrator.create_agent(
             CreateAgentRequest(
@@ -299,7 +295,7 @@ async def test_create_happy_path(orchestrator: AgentOrchestrator) -> None:
     assert ref.user_id == "alice"
     assert ref.template_id == "caretaker_jiezhi"
     assert ref.display_name == "My First"
-    assert ref.is_active_for_user is True
+    assert ref.is_active_for_user is False
 
     # admin metadata persisted
     stored = await orchestrator._meta.get(ref.agent_id)
@@ -307,7 +303,33 @@ async def test_create_happy_path(orchestrator: AgentOrchestrator) -> None:
     assert stored.user_id == "alice"
     assert stored.template_id == "caretaker_jiezhi"
 
-    # user.active_agent_id set
+    # user.active_agent_id stays untouched
+    user_meta = await orchestrator._test_user_orch._meta.get("alice")
+    assert user_meta is None or user_meta.active_agent_id is None
+
+
+async def test_create_can_explicitly_set_active(
+    orchestrator: AgentOrchestrator,
+) -> None:
+    with respx.mock() as rsx:
+        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user_record("alice"))
+        )
+        rsx.post(f"{AGENT_URL}/api/admin/personas/instances").mock(
+            return_value=httpx.Response(201, json=_persona_instance(user_id="alice"))
+        )
+        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user_record("alice"))
+        )
+        ref = await orchestrator.create_agent(
+            CreateAgentRequest(
+                user_id="alice",
+                template_id="caretaker_jiezhi",
+                set_active=True,
+            )
+        )
+
+    assert ref.is_active_for_user is True
     user_meta = await orchestrator._test_user_orch._meta.get("alice")
     assert user_meta is not None
     assert user_meta.active_agent_id == ref.agent_id

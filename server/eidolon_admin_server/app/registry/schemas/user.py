@@ -66,6 +66,7 @@ class UserSpec(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=64)
     tenant_id: str = Field("default", min_length=1, max_length=64)
     display_name: str = Field(..., min_length=1, max_length=128)
+    enabled: bool = True
     palace_path: str = ""  # empty = use memory's default
     consolidator: ConsolidatorConfig = Field(default_factory=ConsolidatorConfig)
     created_at: datetime
@@ -124,6 +125,7 @@ class CreateUserRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=64)
     tenant_id: str = Field("default", min_length=1, max_length=64)
     display_name: str = Field(..., min_length=1, max_length=128)
+    enabled: bool = False
     palace_path: str = ""
     consolidator: ConsolidatorConfig = Field(default_factory=ConsolidatorConfig)
 

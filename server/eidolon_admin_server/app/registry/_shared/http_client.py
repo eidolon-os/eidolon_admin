@@ -100,6 +100,7 @@ class SubProjectHTTPClient:
         *,
         json: Any = None,
         ok_statuses: tuple[int, ...] | None = None,
+        timeout: httpx.Timeout | float | None = None,
     ) -> httpx.Response:
         """Send a request; raise on network / status errors.
 
@@ -121,7 +122,12 @@ class SubProjectHTTPClient:
                 accepted.
         """
         try:
-            r = await self._http.request(method, self._url(path), json=json)
+            r = await self._http.request(
+                method,
+                self._url(path),
+                json=json,
+                timeout=timeout,
+            )
         except self.UNREACHABLE_EXCEPTIONS as exc:
             raise self.UNREACHABLE_EXC(str(exc)) from exc
         if ok_statuses is not None:

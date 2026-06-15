@@ -14,6 +14,7 @@ Three layers under test, matching the templates pattern:
 from __future__ import annotations
 
 import uuid
+import json
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
@@ -124,6 +125,7 @@ async def orchestrator(
 def _memory_user_record(
     *,
     user_id: str = "alice",
+    enabled: bool = True,
     worker_running: bool = True,
     mcp_reachable: bool = True,
     palace_initialized: bool = True,
@@ -144,6 +146,7 @@ def _memory_user_record(
             "user_id": user_id,
             "tenant_id": "default",
             "display_name": user_id,
+            "enabled": enabled,
             "palace_path": "",
             "consolidator": consolidator,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -152,7 +155,7 @@ def _memory_user_record(
             "worker_running": worker_running,
             "mcp_reachable": mcp_reachable,
             "palace_initialized": palace_initialized,
-            "note": "",
+            "note": "" if enabled else "user disabled (yaml enabled=false)",
         },
         "active_agent_id": None,
         "agent_ids": [],
@@ -306,8 +309,11 @@ async def test_get_404_translates_to_user_not_found(
 async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
     """Memory create + admin metadata write both succeed → view is composed."""
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(201, json=_memory_user_record(user_id="alice"))
+        route = rsx.post("/api/admin/users").mock(
+            return_value=httpx.Response(
+                201,
+                json=_memory_user_record(user_id="alice", enabled=False),
+            )
         )
         view = await orchestrator.create_user(
             CreateUserRequest(
@@ -315,6 +321,7 @@ async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
             )
         )
     assert view.spec.user_id == "alice"
+    assert view.spec.enabled is False
     assert view.spec.tenant_id == "default"
     assert view.spec.display_name == "Alice"
     # Admin metadata persisted
@@ -322,6 +329,7 @@ async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
     assert meta is not None
     assert meta.tenant_id == "default"
     assert meta.display_name == "Alice"
+    assert json.loads(route.calls.last.request.content)["enabled"] is False
 
 
 async def test_create_user_with_missing_tenant_returns_409(

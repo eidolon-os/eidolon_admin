@@ -75,6 +75,7 @@ function inVoiceRoom(d: DeviceView): boolean {
 }
 
 function productState(d: DeviceView): { label: string; state: 'online' | 'offline' | 'warning' | 'unknown' } {
+  if (!d.enabled) return { label: '已停用', state: 'offline' }
   if (!d.approved) return { label: '待批准', state: 'warning' }
   if (!d.binding) return { label: '待绑定', state: 'warning' }
   if (inVoiceRoom(d)) return { label: '通话中', state: 'online' }
@@ -85,6 +86,7 @@ function productState(d: DeviceView): { label: string; state: 'online' | 'offlin
 }
 
 function pairingTag(d: DeviceView): { label: string; type: 'success' | 'warning' | 'info' | 'danger' } {
+  if (!d.enabled) return { label: 'disabled', type: 'info' }
   if (!d.approved) return { label: 'pending', type: 'warning' }
   if (d.binding) return { label: 'bound', type: 'success' }
   return { label: 'unbound', type: 'info' }
@@ -158,8 +160,8 @@ async function onUnbind(d: DeviceView) {
 async function onUnregister(d: DeviceView) {
   try {
     await ElMessageBox.confirm(
-      `确认从 hub 注销 ${d.device_id}? 设备重新发现后会再次进入待批准状态。`,
-      '注销设备',
+      `确认注销 ${d.device_id}? 这会清除 hub 记录和 admin 绑定；设备重新发现后会回到待批准状态。`,
+      '注销 / 撤销设备',
       { type: 'warning' },
     )
   } catch {
@@ -167,7 +169,7 @@ async function onUnregister(d: DeviceView) {
   }
   try {
     await unregisterDevice(d.device_id)
-    ElMessage.success('已注销')
+    ElMessage.success('已注销，设备重新发现后需重新批准')
     await refresh()
   } catch (e: any) {
     ElMessage.error(`注销失败: ${extractErrorMessage(e)}`)
@@ -239,11 +241,11 @@ async function onUnregister(d: DeviceView) {
       </el-table-column>
       <el-table-column label="操作" width="340" align="right">
         <template #default="{ row }">
-          <el-button v-if="!row.approved" size="small" type="primary" @click="onApprove(row)">
+          <el-button v-if="row.enabled && !row.approved" size="small" type="primary" @click="onApprove(row)">
             批准
           </el-button>
           <el-button
-            v-if="row.approved && row.binding"
+            v-if="row.enabled && row.approved && row.binding"
             size="small"
             type="primary"
             :icon="VideoPlay"
@@ -252,7 +254,7 @@ async function onUnregister(d: DeviceView) {
           >
             唤醒
           </el-button>
-          <el-button v-if="row.approved" size="small" @click="openBind(row)">
+          <el-button v-if="row.enabled && row.approved" size="small" @click="openBind(row)">
             {{ row.binding ? '改绑' : '绑定 Agent' }}
           </el-button>
           <el-button
@@ -266,7 +268,7 @@ async function onUnregister(d: DeviceView) {
           </el-button>
           <el-button size="small" link @click="detail = row">详情</el-button>
           <el-button size="small" type="danger" link @click="onUnregister(row)">
-            注销
+            注销/撤销
           </el-button>
         </template>
       </el-table-column>

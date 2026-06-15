@@ -72,22 +72,40 @@ class MemoryUserClient(SubProjectHTTPClient):
         self,
         *,
         user_id: str,
+        enabled: bool = False,
         display_name: str | None = None,
         palace_path: str = "",
         consolidator: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        body: dict[str, Any] = {"user_id": user_id, "palace_path": palace_path}
+        body: dict[str, Any] = {
+            "user_id": user_id,
+            "enabled": enabled,
+            "palace_path": palace_path,
+        }
         if consolidator is not None:
             body["consolidator"] = consolidator
         # memory's CreateUserRequest has no display_name field — that's
         # an admin-side concept. We send only the fields memory accepts.
-        r = await self._request("POST", "/api/admin/users", json=body)
+        # Create can block on memory's reconcile/palace init path
+        # (60s palace init + worker wait). Keep this longer than the
+        # normal control-plane timeout so admin doesn't report failure
+        # after memory already wrote users.yaml.
+        r = await self._request(
+            "POST",
+            "/api/admin/users",
+            json=body,
+            timeout=120.0,
+        )
         return r.json()
 
     async def delete_user(self, user_id: str) -> dict[str, Any]:
         """Returns memory's response envelope (includes
         ``palace_trashed_to`` when applicable)."""
-        r = await self._request("DELETE", f"/api/admin/users/{user_id}")
+        r = await self._request(
+            "DELETE",
+            f"/api/admin/users/{user_id}",
+            timeout=120.0,
+        )
         return r.json()
 
 
