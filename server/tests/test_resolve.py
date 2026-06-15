@@ -32,6 +32,7 @@ from eidolon_admin_server.app.registry.resolve import (
     ResolveDeviceNotBound,
     ResolveDeviceUnavailable,
     ResolveOrchestrator,
+    ResolveUserUnavailable,
     ResolveUserNoActiveAgent,
     router as resolve_router,
 )
@@ -76,10 +77,17 @@ def _hub_device(device_id: str, *, enabled: bool = True, approved: bool = True) 
     }
 
 
-def _memory_user(user_id: str = "alice") -> dict:
+def _memory_user(
+    user_id: str = "alice",
+    *,
+    enabled: bool = True,
+    worker_running: bool = True,
+    mcp_reachable: bool = True,
+) -> dict:
     return {
         "spec": {
             "user_id": user_id, "tenant_id": "default", "display_name": user_id,
+            "enabled": enabled,
             "palace_path": "",
             "consolidator": {
                 "enabled": True, "interval_hours": 6.0, "window_days": 30,
@@ -88,7 +96,7 @@ def _memory_user(user_id: str = "alice") -> dict:
             "created_at": datetime.now(timezone.utc).isoformat(),
         },
         "health": {
-            "worker_running": True, "mcp_reachable": True,
+            "worker_running": worker_running, "mcp_reachable": mcp_reachable,
             "palace_initialized": True, "note": "",
         },
         "active_agent_id": None, "agent_ids": [],
@@ -281,6 +289,75 @@ async def test_resolve_device_happy_path(
     assert ctx.memory_mcp_url == "http://127.0.0.1:8030/mcp"
     assert ctx.soul_preview.startswith("metadata:")
     assert ctx.voiceprint.enabled is False
+
+
+async def test_resolve_device_rejects_disabled_user(
+    orchestrator: ResolveOrchestrator,
+) -> None:
+    base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._bindings.put(
+        "esp-disabled-user",
+        DeviceBinding(agent_id="ag-disabled-user", bound_at=datetime.now(timezone.utc)),
+    )
+    await orchestrator._agents.put(
+        "ag-disabled-user",
+        AgentMetadata(
+            tenant_id="default", user_id="alice",
+            template_id="caretaker_jiezhi", template_revision=1,
+            display_name="Caretaker for Alice", created_at=base,
+        ),
+    )
+    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
+        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+    )
+
+    with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-disabled-user").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-disabled-user"))
+        )
+        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+            return_value=httpx.Response(
+                200, json=_memory_user("alice", enabled=False),
+            )
+        )
+        with pytest.raises(ResolveUserUnavailable):
+            await orchestrator.resolve_device("esp-disabled-user")
+
+
+async def test_resolve_device_rejects_worker_down_user(
+    orchestrator: ResolveOrchestrator,
+) -> None:
+    base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._bindings.put(
+        "esp-worker-down",
+        DeviceBinding(agent_id="ag-worker-down", bound_at=datetime.now(timezone.utc)),
+    )
+    await orchestrator._agents.put(
+        "ag-worker-down",
+        AgentMetadata(
+            tenant_id="default", user_id="alice",
+            template_id="caretaker_jiezhi", template_revision=1,
+            display_name="Caretaker for Alice", created_at=base,
+        ),
+    )
+    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
+        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+    )
+
+    with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-worker-down").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-worker-down"))
+        )
+        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+            return_value=httpx.Response(
+                200,
+                json=_memory_user(
+                    "alice", worker_running=False, mcp_reachable=False,
+                ),
+            )
+        )
+        with pytest.raises(ResolveUpstreamDown):
+            await orchestrator.resolve_device("esp-worker-down")
 
 
 async def test_resolve_device_includes_voiceprint_summary(

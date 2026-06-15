@@ -62,6 +62,12 @@ class ResolveUserNoActiveAgent(ResolveError):
     status_code = 412
 
 
+class ResolveUserUnavailable(ResolveError):
+    """User is disabled; runtime callers must not route to it."""
+
+    status_code = 412
+
+
 class ResolveError404(ResolveError):
     """Device or user doesn't exist."""
 
@@ -146,6 +152,17 @@ class ResolveOrchestrator:
         # returned an empty string (very early in user_admin lifecycle
         # or some future degraded mode), we propagate it as-is; channel
         # will see the empty string and refuse to dial.
+        if not user_view.spec.enabled:
+            raise ResolveUserUnavailable(
+                f"user {agent_meta.user_id!r} is disabled"
+            )
+        if (
+            not user_view.health.worker_running
+            or not user_view.health.mcp_reachable
+        ):
+            raise ResolveUpstreamDown(
+                f"memory worker for user {agent_meta.user_id!r} is not reachable"
+            )
         memory_mcp_url = user_view.mcp_http_url
 
         # Soul preview — small, only for log tagging

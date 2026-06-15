@@ -24,6 +24,7 @@ from .orchestrator import (
     ResolveOrchestrator,
     ResolveUpstreamDown,
     ResolveUserNoActiveAgent,
+    ResolveUserUnavailable,
 )
 from .router import router
 
@@ -34,5 +35,6 @@ __all__ = [
     "ResolveOrchestrator",
     "ResolveUpstreamDown",
     "ResolveUserNoActiveAgent",
+    "ResolveUserUnavailable",
     "router",
 ]
