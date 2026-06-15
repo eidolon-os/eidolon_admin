@@ -6,8 +6,8 @@ argument shaping + response un-wrapping which is what we actually want to test.
 """
 from __future__ import annotations
 
+import sqlite3
 import textwrap
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -42,8 +42,44 @@ def users_yaml(tmp_path):
 
 
 @pytest.fixture
-def app(tmp_path, users_yaml, monkeypatch):
+def registry_db(tmp_path):
+    db_path = tmp_path / "registry.sqlite3"
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE users (
+                user_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL,
+                palace_path TEXT NOT NULL DEFAULT '',
+                memory_port INTEGER NOT NULL DEFAULT 0,
+                consolidator_enabled INTEGER NOT NULL DEFAULT 1,
+                consolidator_interval_hours REAL NOT NULL DEFAULT 6.0,
+                consolidator_window_days INTEGER NOT NULL DEFAULT 30,
+                consolidator_min_drawers INTEGER NOT NULL DEFAULT 3,
+                consolidator_min_confidence REAL NOT NULL DEFAULT 0.6
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO users (
+                user_id, enabled, palace_path, memory_port,
+                consolidator_enabled, consolidator_interval_hours,
+                consolidator_window_days, consolidator_min_drawers,
+                consolidator_min_confidence
+            ) VALUES (?, ?, '', ?, 1, 6.0, 30, 3, 0.6)
+            """,
+            [("alice", 1, 8030), ("bob", 0, 8031)],
+        )
+    conn.close()
+    return db_path
+
+
+@pytest.fixture
+def app(tmp_path, users_yaml, registry_db, monkeypatch):
     monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(users_yaml))
+    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
     settings = Settings(
         services_file=tmp_path / "svc.yaml",
         supervisor_socket=tmp_path / "missing.sock",
@@ -77,7 +113,7 @@ async def test_users_list(app, users_yaml):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["users_file"].endswith("users.yaml")
+    assert data["users_file"].endswith("registry.sqlite3")
     assert [u["user_id"] for u in data["users"]] == ["alice", "bob"]
     alice = data["users"][0]
     assert alice["enabled"] is True

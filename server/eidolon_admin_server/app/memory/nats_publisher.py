@@ -10,10 +10,11 @@ import asyncio
 import json
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+
+from eidolon_sdk.memory import ConversationTurnPayload, conversation_turn_subject
 
 import nats
 from nats.errors import TimeoutError as NatsTimeoutError
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
-_SUBJECT_BASE = "agent.memory.conversation.turn"
 
 
 def nats_url() -> str:
@@ -31,7 +31,7 @@ def nats_url() -> str:
 
 
 def turn_subject(user_id: str) -> str:
-    return f"{_SUBJECT_BASE}.{user_id}"
+    return conversation_turn_subject(user_id)
 
 
 def _now_iso() -> str:
@@ -75,16 +75,18 @@ class JetStreamPublisher:
         await self._ensure_connected()
         assert self._js is not None
         turn_id = uuid.uuid4().hex
-        payload = {
-            "turn_id": turn_id,
-            "user_text": user_text,
-            "assistant_text": assistant_text,
-            "timestamp": _now_iso(),
-            "session_id": session_id,
-            "user_id": user_id,
-            "metadata": metadata or {},
-        }
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        payload = ConversationTurnPayload(
+            turn_id=turn_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            timestamp=_now_iso(),
+            session_id=session_id,
+            user_id=user_id,
+            metadata=metadata or {},
+        )
+        body = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False).encode(
+            "utf-8"
+        )
         subject = turn_subject(user_id)
         try:
             await asyncio.wait_for(

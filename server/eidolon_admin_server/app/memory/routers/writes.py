@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from eidolon_sdk.memory import conversation_turn_subject
+
 from ..mcp_client import call_tool
 from ..schemas import (
     KgInvalidateRequest,
@@ -48,7 +50,7 @@ async def create_memory(body: MemoryCreateRequest, request: Request) -> MemoryWr
         )
     except Exception as exc:  # noqa: BLE001 — wrap any NATS failure
         raise HTTPException(502, f"NATS publish failed: {exc}") from exc
-    subject = f"agent.memory.conversation.turn.{body.user_id}"
+    subject = conversation_turn_subject(body.user_id)
     return MemoryWriteAccepted(
         detail=f"Published to {subject}; turn_id={turn_id}",
     )

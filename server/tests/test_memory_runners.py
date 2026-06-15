@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import textwrap
+import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,6 +41,46 @@ def _write_users(tmp_path: Path) -> Path:
     return p
 
 
+def _write_registry(tmp_path: Path, *, missing: bool = False) -> Path:
+    db_path = tmp_path / "registry.sqlite3"
+    if missing:
+        return db_path
+    conn = sqlite3.connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE users (
+                user_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL,
+                palace_path TEXT NOT NULL DEFAULT '',
+                memory_port INTEGER NOT NULL DEFAULT 0,
+                consolidator_enabled INTEGER NOT NULL DEFAULT 1,
+                consolidator_interval_hours REAL NOT NULL DEFAULT 6.0,
+                consolidator_window_days INTEGER NOT NULL DEFAULT 30,
+                consolidator_min_drawers INTEGER NOT NULL DEFAULT 3,
+                consolidator_min_confidence REAL NOT NULL DEFAULT 0.6
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO users (
+                user_id, enabled, palace_path, memory_port,
+                consolidator_enabled, consolidator_interval_hours,
+                consolidator_window_days, consolidator_min_drawers,
+                consolidator_min_confidence
+            ) VALUES (?, ?, '', ?, 1, 6.0, 30, 3, 0.6)
+            """,
+            [
+                ("alice", 1, 8030),
+                ("bob", 1, 8031),
+                ("disabled-carol", 0, 8032),
+            ],
+        )
+    conn.close()
+    return db_path
+
+
 def test_load_users(tmp_path):
     p = _write_users(tmp_path)
     users = runners_mod.load_users(p)
@@ -76,9 +117,9 @@ def _app(tmp_path, users_yaml: Path):
 
 
 async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
-    p = _write_users(tmp_path)
-    monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(p))
-    app = _app(tmp_path, p)
+    registry_db = _write_registry(tmp_path)
+    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+    app = _app(tmp_path, registry_db)
 
     with (
         patch.object(runners_mod, "find_agent_processes", return_value={}),
@@ -103,9 +144,9 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
 
 
 async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
-    p = _write_users(tmp_path)
-    monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(p))
-    app = _app(tmp_path, p)
+    registry_db = _write_registry(tmp_path)
+    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+    app = _app(tmp_path, registry_db)
 
     class FakeProc:
         def __init__(self, pid: int, create_time: float):
@@ -114,15 +155,21 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
 
         def oneshot(self):
             class _C:
-                def __enter__(self_): return None
-                def __exit__(self_, *a): return False
+                def __enter__(self_):
+                    return None
+
+                def __exit__(self_, *a):
+                    return False
+
             return _C()
 
         def create_time(self):
             return self._create
 
         def memory_info(self):
-            class _M: rss = 50 * 1024 * 1024
+            class _M:
+                rss = 50 * 1024 * 1024
+
             return _M()
 
         def cpu_percent(self, interval=None):
@@ -147,8 +194,9 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
 
 
 async def test_endpoint_when_users_yaml_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(tmp_path / "missing.yaml"))
-    app = _app(tmp_path, tmp_path / "missing.yaml")
+    registry_db = _write_registry(tmp_path, missing=True)
+    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+    app = _app(tmp_path, registry_db)
 
     with (
         patch.object(runners_mod, "find_agent_processes", return_value={}),
