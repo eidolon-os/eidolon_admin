@@ -65,6 +65,50 @@ export interface PersonaInstance {
   [k: string]: any
 }
 
+export interface PersonaObservation {
+  id: string
+  tenant_id: string
+  user_id: string
+  instance_id: string
+  kind: string
+  source?: string
+  status?: string
+  strength?: number
+  confidence?: number
+  summary?: string
+  evidence?: Record<string, any>
+  memory_ids?: string[]
+  created_at?: string
+  [k: string]: any
+}
+
+export interface PersonaProposalPatch {
+  type: 'knob_delta' | 'memory_policy_hint' | 'style_preference_hint'
+  target: string
+  delta?: number | null
+  value?: string | null
+  rationale?: string
+  [k: string]: any
+}
+
+export interface PersonaEvolutionProposal {
+  id: string
+  tenant_id: string
+  user_id: string
+  instance_id: string
+  status: 'pending' | 'applied' | 'rejected' | string
+  patches?: PersonaProposalPatch[]
+  confidence?: number
+  rationale?: string
+  evidence_ids?: string[]
+  created_at?: string
+  updated_at?: string
+  decided_by?: string | null
+  decided_at?: string | null
+  decision_reason?: string | null
+  [k: string]: any
+}
+
 function instancePath(t: string, u: string, i: string): string {
   return `/services/agent/personas/instances/${encodeURIComponent(t)}/${encodeURIComponent(u)}/${encodeURIComponent(i)}`
 }
@@ -98,6 +142,74 @@ export async function getPersonaSnapshot(t: string, u: string, i: string): Promi
 
 export async function getPersonaEvolution(t: string, u: string, i: string, limit = 50): Promise<any> {
   const { data } = await client.get(`${instancePath(t, u, i)}/evolution`, { params: { limit } })
+  return data
+}
+
+export async function listPersonaObservations(
+  t: string,
+  u: string,
+  i: string,
+  params: { status?: string; limit?: number } = {},
+): Promise<PersonaObservation[]> {
+  const { data } = await client.get<PersonaObservation[]>(
+    `${instancePath(t, u, i)}/observations`,
+    { params },
+  )
+  return Array.isArray(data) ? data : []
+}
+
+export async function listPersonaEvolutionProposals(
+  t: string,
+  u: string,
+  i: string,
+  params: { status?: string; limit?: number } = {},
+): Promise<PersonaEvolutionProposal[]> {
+  const { data } = await client.get<PersonaEvolutionProposal[]>(
+    `${instancePath(t, u, i)}/proposals`,
+    { params },
+  )
+  return Array.isArray(data) ? data : []
+}
+
+export async function runPersonaReflection(
+  t: string,
+  u: string,
+  i: string,
+  body: { dry_run?: boolean; limit?: number } = {},
+): Promise<PersonaEvolutionProposal[]> {
+  const { data } = await client.post<PersonaEvolutionProposal[]>(
+    `${instancePath(t, u, i)}/reflect`,
+    body,
+  )
+  return Array.isArray(data) ? data : []
+}
+
+export async function getPersonaEvolutionProposal(id: string): Promise<PersonaEvolutionProposal> {
+  const { data } = await client.get<PersonaEvolutionProposal>(
+    `/services/agent/personas/evolution-proposals/${encodeURIComponent(id)}`,
+  )
+  return data
+}
+
+export async function approvePersonaEvolutionProposal(
+  id: string,
+  body: { actor?: string; reason?: string | null } = {},
+): Promise<any> {
+  const { data } = await client.post(
+    `/services/agent/personas/evolution-proposals/${encodeURIComponent(id)}/approve`,
+    body,
+  )
+  return data
+}
+
+export async function rejectPersonaEvolutionProposal(
+  id: string,
+  body: { actor?: string; reason?: string | null } = {},
+): Promise<PersonaEvolutionProposal> {
+  const { data } = await client.post<PersonaEvolutionProposal>(
+    `/services/agent/personas/evolution-proposals/${encodeURIComponent(id)}/reject`,
+    body,
+  )
   return data
 }
 
