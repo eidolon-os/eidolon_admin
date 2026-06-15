@@ -1,31 +1,17 @@
-"""Users orchestration — cross-project lifecycle with compensation.
+"""Users orchestration.
 
-Responsibilities:
-  1. Compose admin's :class:`UserView` from memory's user record + admin's
-     per-user metadata (tenant_id, active_agent_id).
-  2. Validate cross-project invariants before mutating:
-        - referenced tenant exists in admin's TenantRepository
-        - user_id charset matches memory's regex (Pydantic does this at
-          the request layer; we re-check here as defense-in-depth)
-  3. **Atomicity** on create: memory's POST + admin's metadata PUT are
-     two steps. If step 2 fails, roll back step 1 (delete the memory
-     user we just created) so admin and memory don't drift.
-  4. **Cascade** on delete: when 29.F (Agents) and 29.G (Devices) land,
-     this orchestrator will also delete this user's agents and unbind
-     any devices pointing at them. For 29.E those entities don't exist
-     in admin yet, so the cascade reduces to "delete memory user +
-     delete admin metadata".
-
-What this layer DOES NOT do: it never touches memory's ``users.yaml``
-or palace files directly. All persistence on memory's side goes through
-``MemoryUserClient`` (HTTP), which talks to memory's supervisor admin
-API (29.B.2).
+Admin's registry DB is the project-wide user source of truth. Memory reads
+that registry and executes runtime state, while admin best-effort enriches
+views with memory health.
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
+
+from eidolon_sdk.adapters.registry_sqlite import UserRepository
+from eidolon_sdk.registry.models import UserRegistryRecord
 
 from .._shared import unwrap_detail
 from ..schemas.user import (
@@ -42,8 +28,6 @@ from .repository import (
     MemoryUserClient,
     MemoryUserUnreachable,
     MemoryUserUpstreamError,
-    UserMetadata,
-    UserMetadataRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,6 +106,10 @@ def _parse_dt(value: str | None) -> datetime:
     return dt
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ---- orchestrator ----------------------------------------------------------
 
 
@@ -137,7 +125,7 @@ class UserOrchestrator:
         self,
         *,
         memory_client: MemoryUserClient,
-        metadata_repo: UserMetadataRepository,
+        metadata_repo: UserRepository,
         tenant_orchestrator: TenantOrchestrator,
     ) -> None:
         self._mem = memory_client
@@ -174,56 +162,36 @@ class UserOrchestrator:
 
     def _build_view(
         self,
-        memory_record: dict[str, Any],
-        admin_meta: UserMetadata | None,
+        user_id: str,
+        admin_record: UserRegistryRecord,
+        memory_record: dict[str, Any] | None = None,
     ) -> UserView:
-        """Compose admin's UserView from the two sources."""
-        spec_block = memory_record.get("spec", {})
-        health_block = memory_record.get("health", {})
-
-        # Admin's metadata is authoritative for tenant_id + display_name.
-        # If metadata is absent (memory has a user admin doesn't know
-        # about), fall back to defaults — the user appears as an
-        # "unmanaged" entry the operator can adopt.
-        tenant_id = admin_meta.tenant_id if admin_meta else "default"
-        display_name = (
-            admin_meta.display_name
-            if (admin_meta and admin_meta.display_name)
-            else spec_block.get("display_name") or spec_block.get("user_id", "")
-        )
-        active_agent_id = admin_meta.active_agent_id if admin_meta else None
-        enabled = bool(spec_block.get("enabled", True))
-        if "enabled" not in spec_block and str(health_block.get("note", "")).startswith(
-            "user disabled"
-        ):
-            enabled = False
-
+        """Compose UserView with admin registry as the spine."""
+        record = memory_record or {}
+        health_block = record.get("health", {})
+        mcp_http_url = record.get("mcp_http_url", "")
+        if not mcp_http_url and admin_record.memory_port > 0:
+            mcp_http_url = f"http://127.0.0.1:{admin_record.memory_port}/mcp"
         spec = UserSpec(
-            user_id=spec_block["user_id"],
-            tenant_id=tenant_id,
-            display_name=display_name,
-            enabled=enabled,
-            palace_path=spec_block.get("palace_path", ""),
-            consolidator=_memory_to_consolidator(spec_block.get("consolidator")),
-            created_at=_parse_dt(spec_block.get("created_at")),
+            user_id=user_id,
+            tenant_id=admin_record.tenant_id,
+            display_name=admin_record.display_name or user_id,
+            enabled=admin_record.enabled,
+            memory_port=admin_record.memory_port,
+            palace_path=admin_record.palace_path,
+            consolidator=admin_record.consolidator,
+            created_at=_parse_dt(admin_record.created_at),
         )
         health = UserHealth(
             worker_running=bool(health_block.get("worker_running")),
             mcp_reachable=bool(health_block.get("mcp_reachable")),
             palace_initialized=bool(health_block.get("palace_initialized")),
-            note=health_block.get("note", ""),
+            note=health_block.get("note", "") if memory_record else "memory unavailable",
         )
-        # Memory exposes the per-user MCP URL on the view envelope
-        # (added 29.K). Older memory builds may not include it — in
-        # that case we leave the field empty; resolve will then refuse
-        # to dial, which is the correct behavior (better than a
-        # silently-stale synthesized URL).
-        mcp_http_url = memory_record.get("mcp_http_url", "")
-
         return UserView(
             spec=spec,
             health=health,
-            active_agent_id=active_agent_id,
+            active_agent_id=admin_record.active_agent_id,
             # agent_ids: empty here; callers that have the provider wired
             # (list_users / get_user) decorate after _build_view returns.
             # Direct callers without an agent_orchestrator (tests, edge
@@ -245,6 +213,36 @@ class UserOrchestrator:
         # a useful status code.
         raise UserError(f"memory returned {exc.status_code}: {message}")
 
+    async def _memory_records_by_id(self) -> dict[str, dict[str, Any]]:
+        try:
+            envelope = await self._mem.list_users()
+        except (MemoryUserUnreachable, MemoryUserUpstreamError):
+            logger.info("users: memory health enrichment unavailable", exc_info=True)
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for record in envelope.get("users", []) or []:
+            try:
+                out[record["spec"]["user_id"]] = record
+            except Exception:  # noqa: BLE001
+                continue
+        return out
+
+    async def _reconcile_memory(self) -> None:
+        try:
+            await self._mem.reconcile()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "users: memory reconcile request failed; supervisor will catch up on restart/reload",
+                exc_info=True,
+            )
+
+    def _copy_record(
+        self, record: UserRegistryRecord, **updates: Any
+    ) -> UserRegistryRecord:
+        data = record.model_dump()
+        data.update(updates)
+        return UserRegistryRecord(**data)
+
     # ---- public API ----------------------------------------------------
 
     async def clear_active_agent_references(self, agent_id: str) -> list[str]:
@@ -259,12 +257,9 @@ class UserOrchestrator:
         affected: list[str] = []
         for user_id, meta in all_meta.items():
             if meta.active_agent_id == agent_id:
-                new_meta = UserMetadata(
-                    tenant_id=meta.tenant_id,
-                    active_agent_id=None,
-                    display_name=meta.display_name,
+                await self._meta.put(
+                    self._copy_record(meta, active_agent_id=None),
                 )
-                await self._meta.put(user_id, new_meta)
                 affected.append(user_id)
         if affected:
             logger.info(
@@ -290,23 +285,12 @@ class UserOrchestrator:
         return sum(1 for m in all_meta.values() if m.tenant_id == tenant_id)
 
     async def list_users(self) -> list[UserView]:
-        """List users by joining memory's authoritative list with admin's
-        metadata map. Memory's view is the spine — users that exist in
-        admin's metadata store but NOT in memory are silently dropped
-        (memory is authoritative; an admin metadata entry without a memory
-        user is dead config the operator should clean up via DELETE)."""
-        try:
-            envelope = await self._mem.list_users()
-        except MemoryUserUnreachable as exc:
-            raise UserMemoryDown(str(exc)) from exc
-        except MemoryUserUpstreamError as exc:
-            self._map_memory_error(exc)
-
-        users = envelope.get("users", [])
+        """List users from admin DB and best-effort attach memory health."""
         meta_map = await self._meta.list_all()
+        memory_map = await self._memory_records_by_id()
         views = [
-            self._build_view(record, meta_map.get(record["spec"]["user_id"]))
-            for record in users
+            self._build_view(user_id, meta, memory_map.get(user_id))
+            for user_id, meta in meta_map.items()
         ]
         # Decorate with agent_ids if the agent orchestrator is wired.
         # We fetch once per user — N HTTP calls. For dev-stack scale
@@ -318,15 +302,43 @@ class UserOrchestrator:
                 view.agent_ids = await self._safe_agent_ids(view.spec.user_id)
         return views
 
+    async def list_registry_specs(self) -> list[UserSpec]:
+        """Pure admin-registry view for execution projects.
+
+        This deliberately does not call memory. Memory reads this endpoint to
+        avoid a recursion loop where admin /api/users enriches via memory and
+        memory asks admin /api/users again.
+        """
+        meta_map = await self._meta.list_all()
+        specs: list[UserSpec] = []
+        for user_id, meta in meta_map.items():
+            specs.append(
+                UserSpec(
+                    user_id=user_id,
+                    tenant_id=meta.tenant_id,
+                    display_name=meta.display_name or user_id,
+                    enabled=meta.enabled,
+                    memory_port=meta.memory_port,
+                    palace_path=meta.palace_path,
+                    consolidator=meta.consolidator,
+                    created_at=_parse_dt(meta.created_at),
+                )
+            )
+        return specs
+
     async def get_user(self, user_id: str) -> UserView:
+        meta = await self._meta.get(user_id)
+        if meta is None:
+            raise UserNotFound(f"user {user_id!r} not found")
+        record: dict[str, Any] | None = None
         try:
             record = await self._mem.get_user(user_id)
         except MemoryUserUnreachable as exc:
-            raise UserMemoryDown(str(exc)) from exc
+            logger.info("users: memory get unavailable for %s: %s", user_id, exc)
         except MemoryUserUpstreamError as exc:
-            self._map_memory_error(exc)
-        meta = await self._meta.get(user_id)
-        view = self._build_view(record, meta)
+            if exc.status_code != 404:
+                logger.info("users: memory get failed for %s", user_id, exc_info=True)
+        view = self._build_view(user_id, meta, record)
         if self._agent_ids_provider is not None:
             view.agent_ids = await self._safe_agent_ids(user_id)
         return view
@@ -349,14 +361,7 @@ class UserOrchestrator:
             return []
 
     async def create_user(self, body: CreateUserRequest) -> UserView:
-        """Two-step create with compensation:
-
-          1. POST memory /api/admin/users → worker spawns
-          2. PUT admin's metadata (tenant_id, display_name)
-
-        If step 2 fails, roll back step 1 (memory delete) so the two
-        sides don't drift.
-        """
+        """Create user in admin registry, then ask memory to reconcile."""
         # Cross-project invariant: tenant must exist before we assign
         # a user to it.
         try:
@@ -367,91 +372,48 @@ class UserOrchestrator:
                 f"assigning users to it"
             ) from exc
 
-        # Step 1 — memory create
-        try:
-            memory_record = await self._mem.create_user(
-                user_id=body.user_id,
-                enabled=body.enabled,
-                palace_path=body.palace_path,
-                consolidator=_consolidator_to_memory_dict(body.consolidator),
-            )
-        except MemoryUserUnreachable as exc:
-            raise UserMemoryDown(str(exc)) from exc
-        except MemoryUserUpstreamError as exc:
-            self._map_memory_error(exc)
+        if await self._meta.get(body.user_id) is not None:
+            raise UserAlreadyExists(f"user {body.user_id!r} already exists")
 
-        # Step 2 — admin metadata. If this fails we MUST clean up the
-        # memory side so admin and memory don't drift.
-        meta = UserMetadata(
+        memory_port = await self._meta.allocate_memory_port()
+        record = UserRegistryRecord(
+            user_id=body.user_id,
             tenant_id=body.tenant_id,
             display_name=body.display_name,
+            enabled=body.enabled,
+            palace_path=body.palace_path,
+            memory_port=memory_port,
+            consolidator=body.consolidator,
+            created_at=_now_iso(),
         )
-        try:
-            await self._meta.put(body.user_id, meta)
-        except Exception as exc:  # noqa: BLE001 — drives compensation
-            logger.exception(
-                "user_create: admin metadata write failed for %s; "
-                "rolling back memory side",
-                body.user_id,
-            )
-            # Best-effort rollback. We DON'T raise from the rollback —
-            # the original error is the one that matters to the caller.
-            try:
-                await self._mem.delete_user(body.user_id)
-            except Exception:
-                logger.exception(
-                    "user_create: rollback (memory delete) ALSO failed "
-                    "for %s; user is now memory-only — operator should "
-                    "manually DELETE via /api/users to clean up",
-                    body.user_id,
-                )
-            raise UserError(
-                f"failed to persist admin metadata: {exc} (memory side "
-                f"rolled back)"
-            ) from exc
+        await self._meta.put(record)
+        await self._reconcile_memory()
 
-        return self._build_view(memory_record, meta)
+        return await self.get_user(body.user_id)
 
     async def update_user(
         self, user_id: str, body: UpdateUserRequest
     ) -> UserView:
-        """Update admin-owned fields (display_name + consolidator).
-
-        Memory's surface from 29.B.2 has no PUT, so consolidator updates
-        currently fall through to admin's metadata (we store the new
-        config but memory's worker keeps the old). This is an explicit
-        limitation noted in the schema; once memory's PUT exists, this
-        method propagates the consolidator change through.
-        """
-        # Verify user exists first (in memory — the authoritative source)
-        try:
-            await self._mem.get_user(user_id)
-        except MemoryUserUnreachable as exc:
-            raise UserMemoryDown(str(exc)) from exc
-        except MemoryUserUpstreamError as exc:
-            self._map_memory_error(exc)
-
-        current = await self._meta.get(user_id) or UserMetadata(tenant_id="default")
-        new_meta = UserMetadata(
-            tenant_id=current.tenant_id,
-            active_agent_id=current.active_agent_id,
-            display_name=(
-                body.display_name if body.display_name is not None
-                else current.display_name
-            ),
-        )
-        # NOTE: body.consolidator is accepted for the schema's sake but
-        # not yet propagated to memory (no PUT endpoint there). Surfaced
-        # as a warning so we remember.
+        """Update admin-owned user fields and ask memory to reconcile."""
+        current = await self._meta.get(user_id)
+        if current is None:
+            raise UserNotFound(f"user {user_id!r} not found")
+        updates: dict[str, Any] = {}
+        if body.display_name is not None:
+            updates["display_name"] = body.display_name
         if body.consolidator is not None:
-            logger.warning(
-                "user_update: consolidator change for %s NOT yet propagated "
-                "to memory worker (memory has no PUT endpoint); admin will "
-                "show the new config in views but the worker keeps old "
-                "settings until a memory restart applies users.yaml",
-                user_id,
-            )
-        await self._meta.put(user_id, new_meta)
+            updates["consolidator"] = body.consolidator
+        new_record = self._copy_record(current, **updates)
+        await self._meta.put(new_record)
+        await self._reconcile_memory()
+        return await self.get_user(user_id)
+
+    async def set_user_enabled(self, user_id: str, enabled: bool) -> UserView:
+        current = await self._meta.get(user_id)
+        if current is None:
+            raise UserNotFound(f"user {user_id!r} not found")
+        await self._meta.put(self._copy_record(current, enabled=enabled))
+        await self._reconcile_memory()
         return await self.get_user(user_id)
 
     async def set_active_agent(
@@ -465,21 +427,11 @@ class UserOrchestrator:
         Use of an empty string is rejected by the schema (Field
         min_length=1) so we don't have to handle "unset".
         """
-        # Confirm user exists
-        try:
-            await self._mem.get_user(user_id)
-        except MemoryUserUnreachable as exc:
-            raise UserMemoryDown(str(exc)) from exc
-        except MemoryUserUpstreamError as exc:
-            self._map_memory_error(exc)
-
-        current = await self._meta.get(user_id) or UserMetadata(tenant_id="default")
-        new_meta = UserMetadata(
-            tenant_id=current.tenant_id,
-            active_agent_id=body.agent_id,
-            display_name=current.display_name,
-        )
-        await self._meta.put(user_id, new_meta)
+        current = await self._meta.get(user_id)
+        if current is None:
+            raise UserNotFound(f"user {user_id!r} not found")
+        new_record = self._copy_record(current, active_agent_id=body.agent_id)
+        await self._meta.put(new_record)
         return await self.get_user(user_id)
 
     async def delete_user(self, user_id: str) -> dict[str, Any]:
@@ -520,28 +472,36 @@ class UserOrchestrator:
                         f"deleting user {user_id!r}; aborting user delete"
                     ) from exc
 
-        # Step 2 — memory delete. Atomicity-wise, doing this AFTER the
-        # admin-side cleanup would mean a failure leaves a user in memory
-        # with no admin metadata. Doing it BEFORE means a failure leaves
-        # an orphan admin metadata key (harmless, idempotent retry of
-        # DELETE cleans it). The latter is preferable.
+        current = await self._meta.get(user_id)
+        if current is None:
+            raise UserNotFound(f"user {user_id!r} not found")
+
+        # Disable first in the admin registry. Memory only executes the
+        # registry state, so this is the single project-wide stop switch.
+        if current.enabled:
+            await self._meta.put(self._copy_record(current, enabled=False))
+            await self._reconcile_memory()
+
+        # Ask memory to clean up memory-owned data. This is best-effort; the
+        # registry delete still proceeds so admin remains the source of truth.
+        memory_result: dict[str, Any] = {
+            "user_id": user_id,
+            "deleted": True,
+            "palace_trashed_to": None,
+        }
         try:
             memory_result = await self._mem.delete_user(user_id)
         except MemoryUserUnreachable as exc:
-            raise UserMemoryDown(str(exc)) from exc
+            logger.warning("user_delete: memory unavailable for cleanup: %s", exc)
         except MemoryUserUpstreamError as exc:
-            self._map_memory_error(exc)
-
-        # Step 3 — admin metadata cleanup. Best-effort; idempotent.
-        try:
-            await self._meta.delete(user_id)
-        except Exception:
-            logger.exception(
-                "user_delete: admin metadata cleanup failed for %s; "
-                "memory user is already gone — retry DELETE to clean "
-                "the orphan metadata",
-                user_id,
+            logger.warning(
+                "user_delete: memory cleanup returned %s: %s",
+                exc.status_code,
+                exc.message,
             )
+
+        await self._meta.delete(user_id)
+        await self._reconcile_memory()
         memory_result["deleted_agents"] = [
             r.get("agent_id") for r in deleted_agents if r.get("agent_id")
         ]

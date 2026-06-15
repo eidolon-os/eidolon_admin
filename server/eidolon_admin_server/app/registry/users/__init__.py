@@ -1,27 +1,21 @@
-"""Users — identity layer, business logic in memory project.
+"""Users — identity layer, admin registry source of truth.
 
-Admin's role mirrors the Templates module's relationship to agent:
+Admin owns the project-wide user catalog in SQLite:
 
-  - memory owns palace + user-worker + ``users.yaml`` (business
-    implementation)
-  - admin owns the tenant↔user mapping and the per-user
-    ``active_agent_id`` (cross-cutting bookkeeping memory has no
-    notion of)
-  - admin's REST surface (``/api/users``) composes both
+  - admin owns user existence, enabled state, tenant scope, memory port,
+    consolidator config, and ``active_agent_id``.
+  - memory consumes the admin registry and executes runtime state:
+    user-worker lifecycle, palace data, and health probes.
+  - admin's REST surface (``/api/users``) returns registry rows enriched
+    with best-effort memory health.
 
-The four files mirror Tenants/Templates:
+The files mirror Tenants/Templates:
 
-    repository.py       HTTP client to memory's /api/admin/users/*
-                        AND SQLite adapter for admin's per-user metadata.
-                        Two stores, one repository module —
-                        because admin always reads BOTH sources to build
-                        a complete UserView.
+    repository.py       HTTP client to memory health/reconcile endpoints
+                        plus admin-local helper wiring.
 
-    orchestrator.py     CRUD + cross-project orchestration. Atomicity:
-                        a memory create followed by a SQLite metadata write
-                        is two operations; the orchestrator compensates
-                        if step 2 fails (deletes the memory user that
-                        step 1 created).
+    orchestrator.py     CRUD + cross-project orchestration. Writes SQLite
+                        first, then asks memory to reconcile.
 
     router.py           HTTP I/O. Same status-code mapping pattern as
                         templates.
@@ -40,7 +34,7 @@ from .repository import (
     MemoryUserClient,
     MemoryUserUnreachable,
     MemoryUserUpstreamError,
-    UserMetadataRepository,
+    resolve_legacy_users_yaml_path,
 )
 from .router import router
 
@@ -48,11 +42,11 @@ __all__ = [
     "MemoryUserClient",
     "MemoryUserUnreachable",
     "MemoryUserUpstreamError",
+    "resolve_legacy_users_yaml_path",
     "TenantNotFoundForUser",
     "UserAlreadyExists",
     "UserError",
     "UserMemoryDown",
-    "UserMetadataRepository",
     "UserNotFound",
     "UserOrchestrator",
     "router",

@@ -2,8 +2,8 @@
 
 Three layers under test, matching the templates pattern:
 
-  - **MemoryUserClient + UserMetadataRepository**: the two repos.
-    MemoryUserClient covered by respx; metadata repo covered by a
+  - **MemoryUserClient + SDK UserRepository**: the two repos.
+    MemoryUserClient covered by respx; user repo covered by a
     per-test SQLite file.
 
   - **UserOrchestrator**: status-code translation, compose-from-two-sources,
@@ -13,7 +13,6 @@ Three layers under test, matching the templates pattern:
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
@@ -22,9 +21,15 @@ import pytest
 import respx
 from fastapi import FastAPI
 
+from eidolon_sdk.adapters.registry_sqlite import (
+    RegistrySqliteStore,
+    TenantRepository,
+    UserRepository,
+)
+from eidolon_sdk.registry.models import UserRegistryRecord
+
 from eidolon_admin_server.app.registry.schemas.tenant import (
     CreateTenantRequest,
-    TenantSpec,
 )
 from eidolon_admin_server.app.registry.schemas.user import (
     CreateUserRequest,
@@ -33,12 +38,9 @@ from eidolon_admin_server.app.registry.schemas.user import (
 )
 from eidolon_admin_server.app.registry.tenants import (
     TenantOrchestrator,
-    TenantRepository,
 )
 from eidolon_admin_server.app.registry.users import (
     MemoryUserClient,
-    UserMemoryDown,
-    UserMetadataRepository,
     UserOrchestrator,
     router as users_router,
 )
@@ -48,14 +50,24 @@ from eidolon_admin_server.app.registry.users.orchestrator import (
     UserError,
     UserNotFound,
 )
-from eidolon_admin_server.app.registry.users.repository import (
-    MemoryUserUnreachable,
-    MemoryUserUpstreamError,
-    UserMetadata,
-)
 
 
 MEMORY_URL = "http://memory.test"
+
+
+def _user_record(user_id: str, **updates) -> UserRegistryRecord:
+    data = {
+        "user_id": user_id,
+        "tenant_id": "default",
+        "active_agent_id": None,
+        "display_name": "",
+        "enabled": True,
+        "palace_path": "",
+        "memory_port": 0,
+        "created_at": "",
+    }
+    data.update(updates)
+    return UserRegistryRecord(**data)
 
 
 # ---- fixtures ---------------------------------------------------------------
@@ -76,12 +88,13 @@ async def orchestrator(
     memory client. The default tenant is seeded so create-user happy path
     doesn't need extra setup."""
     registry_db = tmp_path / "registry.sqlite3"
-    tenant_orch = TenantOrchestrator(TenantRepository(registry_db))
+    store = RegistrySqliteStore(registry_db)
+    tenant_orch = TenantOrchestrator(TenantRepository(store))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    metadata_repo = UserMetadataRepository(registry_db)
+    metadata_repo = UserRepository(store)
     yield UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=metadata_repo,
@@ -92,25 +105,19 @@ async def orchestrator(
 # ---- metadata repository ----------------------------------------------------
 
 
-async def test_user_metadata_repository_uses_local_sqlite(tmp_path) -> None:
-    repo = UserMetadataRepository(tmp_path / "registry.sqlite3")
+async def test_sdk_user_repository_uses_local_sqlite(tmp_path) -> None:
+    repo = UserRepository(RegistrySqliteStore(tmp_path / "registry.sqlite3"))
 
     assert await repo.get("alice") is None
-    await repo.put(
+    record = _user_record(
         "alice",
-        UserMetadata(
-            tenant_id="default",
-            active_agent_id="ag-1",
-            display_name="Alice",
-        ),
-    )
-
-    stored = await repo.get("alice")
-    assert stored == UserMetadata(
-        tenant_id="default",
         active_agent_id="ag-1",
         display_name="Alice",
     )
+    await repo.put(record)
+
+    stored = await repo.get("alice")
+    assert stored == record
     assert await repo.list_all() == {"alice": stored}
 
     await repo.delete("alice")
@@ -170,10 +177,7 @@ async def test_list_joins_memory_with_admin_metadata(
     in tenant default with active_agent ag-1. The view must combine both."""
     # Pre-populate admin metadata
     await orchestrator._meta.put(
-        "alice",
-        UserMetadata(
-            tenant_id="default", active_agent_id="ag-1", display_name="Alice K."
-        ),
+        _user_record("alice", active_agent_id="ag-1", display_name="Alice K."),
     )
     with respx.mock(base_url=MEMORY_URL) as rsx:
         rsx.get("/api/admin/users").mock(
@@ -199,12 +203,8 @@ async def test_list_decorates_agent_ids_when_provider_wired(
     when ``set_agent_ids_provider`` is wired (lifespan does this once
     AgentOrchestrator exists), each user's agents get listed. Pins the
     fix — and that the lookup is per-user, not shared across users."""
-    await orchestrator._meta.put(
-        "alice", UserMetadata(tenant_id="default", display_name="A")
-    )
-    await orchestrator._meta.put(
-        "bob", UserMetadata(tenant_id="default", display_name="B")
-    )
+    await orchestrator._meta.put(_user_record("alice", display_name="A"))
+    await orchestrator._meta.put(_user_record("bob", display_name="B"))
 
     calls: list[str] = []
 
@@ -247,9 +247,7 @@ async def test_list_agent_ids_failure_falls_back_to_empty(
 
     orchestrator.set_agent_ids_provider(broken_provider)
 
-    await orchestrator._meta.put(
-        "alice", UserMetadata(tenant_id="default", display_name="A")
-    )
+    await orchestrator._meta.put(_user_record("alice", display_name="A"))
     with respx.mock(base_url=MEMORY_URL) as rsx:
         rsx.get("/api/admin/users").mock(
             return_value=httpx.Response(
@@ -262,13 +260,10 @@ async def test_list_agent_ids_failure_falls_back_to_empty(
     assert views[0].agent_ids == []
 
 
-async def test_list_omits_memory_users_without_admin_metadata_orphans(
+async def test_list_ignores_memory_users_without_admin_registry_rows(
     orchestrator: UserOrchestrator,
 ) -> None:
-    """A memory user without an admin metadata entry surfaces as a view
-    with default fallback (tenant=default, no active_agent). This makes
-    "memory has users admin doesn't track" visible to the operator —
-    they can either adopt or delete from admin."""
+    """Admin DB is the user catalog. Memory-only drift is ignored."""
     with respx.mock(base_url=MEMORY_URL) as rsx:
         rsx.get("/api/admin/users").mock(
             return_value=httpx.Response(
@@ -277,41 +272,39 @@ async def test_list_omits_memory_users_without_admin_metadata_orphans(
             )
         )
         views = await orchestrator.list_users()
-    assert len(views) == 1
-    assert views[0].spec.user_id == "orphan"
-    assert views[0].spec.tenant_id == "default"  # fallback
-    assert views[0].active_agent_id is None
+    assert views == []
 
 
-async def test_list_memory_down_translates_to_user_memory_down(
+async def test_list_memory_down_keeps_admin_registry_users(
     orchestrator: UserOrchestrator,
 ) -> None:
+    await orchestrator._meta.put(_user_record("alice", display_name="Alice"))
     with respx.mock(base_url=MEMORY_URL) as rsx:
         rsx.get("/api/admin/users").mock(side_effect=httpx.ConnectError("down"))
-        with pytest.raises(UserMemoryDown):
-            await orchestrator.list_users()
+        views = await orchestrator.list_users()
+    assert len(views) == 1
+    assert views[0].spec.user_id == "alice"
+    assert views[0].health.note == "memory unavailable"
 
 
 async def test_get_404_translates_to_user_not_found(
     orchestrator: UserOrchestrator,
 ) -> None:
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.get("/api/admin/users/ghost").mock(return_value=httpx.Response(404))
-        with pytest.raises(UserNotFound):
-            await orchestrator.get_user("ghost")
+    with pytest.raises(UserNotFound):
+        await orchestrator.get_user("ghost")
 
 
 # ---- orchestrator: create + cross-project invariants ----------------------
 
 
 async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
-    """Memory create + admin metadata write both succeed → view is composed."""
+    """Admin metadata write succeeds, then memory reconcile enriches view."""
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        route = rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(
-                201,
-                json=_memory_user_record(user_id="alice", enabled=False),
-            )
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        rsx.get("/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
         view = await orchestrator.create_user(
             CreateUserRequest(
@@ -327,7 +320,7 @@ async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
     assert meta is not None
     assert meta.tenant_id == "default"
     assert meta.display_name == "Alice"
-    assert json.loads(route.calls.last.request.content)["enabled"] is False
+    assert meta.memory_port == 8030
 
 
 async def test_create_user_with_missing_tenant_returns_409(
@@ -335,7 +328,7 @@ async def test_create_user_with_missing_tenant_returns_409(
 ) -> None:
     """Cross-project invariant: tenant must exist BEFORE assigning users
     to it. Memory create should not even be attempted."""
-    with respx.mock(base_url=MEMORY_URL) as rsx:
+    with respx.mock(base_url=MEMORY_URL):
         # If memory.create gets called, that's a test failure (the
         # tenant-check must short-circuit). We register no route so any
         # call would surface as an unmatched-request error.
@@ -349,56 +342,34 @@ async def test_create_user_with_missing_tenant_returns_409(
             )
 
 
-async def test_create_user_409_from_memory_translates(
+async def test_create_user_duplicate_admin_row_translates(
     orchestrator: UserOrchestrator,
 ) -> None:
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(409, text="already in users.yaml")
-        )
-        with pytest.raises(UserAlreadyExists):
-            await orchestrator.create_user(
-                CreateUserRequest(
-                    user_id="alice", tenant_id="default", display_name="X"
-                )
+    await orchestrator._meta.put(_user_record("alice", display_name="Alice"))
+    with pytest.raises(UserAlreadyExists):
+        await orchestrator.create_user(
+            CreateUserRequest(
+                user_id="alice", tenant_id="default", display_name="X"
             )
+        )
 
 
-async def test_create_user_rolls_back_memory_on_admin_metadata_failure(
+async def test_create_user_propagates_admin_registry_failure(
     orchestrator: UserOrchestrator, monkeypatch
 ) -> None:
-    """The 2-step create's compensation path: memory create succeeds, then
-    metadata write fails → orchestrator should DELETE the memory user
-    so the two sides don't drift."""
+    """Admin DB is written before memory reconcile; a failed DB write aborts."""
 
     async def _explode(*_args, **_kwargs):
         raise RuntimeError("simulated kv put failure")
 
     monkeypatch.setattr(orchestrator._meta, "put", _explode)
 
-    deletes_seen: list[str] = []
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(201, json=_memory_user_record(user_id="rolled"))
-        )
-
-        # respx delete needs to record AND respond OK
-        def _delete_handler(request):
-            deletes_seen.append(str(request.url))
-            return httpx.Response(200, json={"user_id": "rolled", "deleted": True})
-
-        rsx.delete("/api/admin/users/rolled").mock(side_effect=_delete_handler)
-
-        with pytest.raises(UserError) as exc_info:
-            await orchestrator.create_user(
-                CreateUserRequest(
-                    user_id="rolled", tenant_id="default", display_name="X"
-                )
+    with pytest.raises(RuntimeError, match="simulated kv put failure"):
+        await orchestrator.create_user(
+            CreateUserRequest(
+                user_id="rolled", tenant_id="default", display_name="X"
             )
-
-    assert "rolled back" in str(exc_info.value)
-    # Verify the rollback actually called memory's delete
-    assert any("rolled" in url for url in deletes_seen)
+        )
 
 
 # ---- orchestrator: update / set_active_agent / delete ----------------------
@@ -407,18 +378,12 @@ async def test_create_user_rolls_back_memory_on_admin_metadata_failure(
 async def test_update_only_changes_admin_owned_fields(
     orchestrator: UserOrchestrator,
 ) -> None:
-    # Seed
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(201, json=_memory_user_record(user_id="alice"))
-        )
-        await orchestrator.create_user(
-            CreateUserRequest(
-                user_id="alice", tenant_id="default", display_name="Old"
-            )
-        )
+    await orchestrator._meta.put(_user_record("alice", display_name="Old"))
     # Update display_name
     with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
         rsx.get("/api/admin/users/alice").mock(
             return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
@@ -433,16 +398,7 @@ async def test_update_only_changes_admin_owned_fields(
 async def test_set_active_agent_persists_to_admin_kv(
     orchestrator: UserOrchestrator,
 ) -> None:
-    # Seed
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(201, json=_memory_user_record(user_id="alice"))
-        )
-        await orchestrator.create_user(
-            CreateUserRequest(
-                user_id="alice", tenant_id="default", display_name="A"
-            )
-        )
+    await orchestrator._meta.put(_user_record("alice", display_name="A"))
     with respx.mock(base_url=MEMORY_URL) as rsx:
         rsx.get("/api/admin/users/alice").mock(
             return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
@@ -458,9 +414,12 @@ async def test_delete_user_calls_memory_then_cleans_metadata(
 ) -> None:
     # Pre-populate admin metadata so we can verify it gets cleaned
     await orchestrator._meta.put(
-        "alice", UserMetadata(tenant_id="default", display_name="A")
+        _user_record("alice", display_name="A", enabled=False)
     )
     with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
         rsx.delete("/api/admin/users/alice").mock(
             return_value=httpx.Response(
                 200,
@@ -484,7 +443,7 @@ async def test_delete_user_deletes_owned_agents_before_memory(
     """User delete cascades through agent delete first. The fake agent
     delete result mirrors AgentOrchestrator.delete_agent's envelope."""
     await orchestrator._meta.put(
-        "alice", UserMetadata(tenant_id="default", display_name="A")
+        _user_record("alice", display_name="A", enabled=False)
     )
     calls: list[str] = []
 
@@ -505,6 +464,9 @@ async def test_delete_user_deletes_owned_agents_before_memory(
     orchestrator.set_agent_delete_provider(fake_delete_agent)
 
     with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
         rsx.delete("/api/admin/users/alice").mock(
             return_value=httpx.Response(
                 200,
@@ -527,9 +489,7 @@ async def test_delete_user_aborts_if_owned_agent_delete_fails(
 ) -> None:
     """If related data cannot be removed, user delete must not proceed
     to memory. That prevents orphaning agents behind a deleted user."""
-    await orchestrator._meta.put(
-        "alice", UserMetadata(tenant_id="default", display_name="A")
-    )
+    await orchestrator._meta.put(_user_record("alice", display_name="A"))
 
     async def fake_agent_ids(user_id: str) -> list[str]:
         return ["ag-1"]
@@ -550,12 +510,8 @@ async def test_delete_user_aborts_if_owned_agent_delete_fails(
 async def test_delete_user_propagates_memory_404(
     orchestrator: UserOrchestrator,
 ) -> None:
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.delete("/api/admin/users/ghost").mock(
-            return_value=httpx.Response(404)
-        )
-        with pytest.raises(UserNotFound):
-            await orchestrator.delete_user("ghost")
+    with pytest.raises(UserNotFound):
+        await orchestrator.delete_user("ghost")
 
 
 # ---- router (HTTP wire) ----------------------------------------------------
@@ -598,13 +554,16 @@ async def test_http_list_envelope_when_memory_down(
     assert r.status_code == 200
     body = r.json()
     assert body["users"] == []
-    assert body["memory_available"] is False
+    assert body["memory_available"] is True
 
 
 async def test_http_create_201(client: httpx.AsyncClient) -> None:
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.post("/api/admin/users").mock(
-            return_value=httpx.Response(201, json=_memory_user_record(user_id="alice"))
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        rsx.get("/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
         r = await client.post(
             "/api/users",
@@ -649,9 +608,9 @@ async def test_count_users_for_tenant_reflects_admin_metadata(
     admin's metadata store is the authoritative source for tenant↔user mapping."""
     # Default tenant exists from the orchestrator fixture. Add 2 users
     # to it + 1 to a different tenant.
-    await orchestrator._meta.put("u1", UserMetadata(tenant_id="default"))
-    await orchestrator._meta.put("u2", UserMetadata(tenant_id="default"))
-    await orchestrator._meta.put("u3", UserMetadata(tenant_id="other"))
+    await orchestrator._meta.put(_user_record("u1", tenant_id="default"))
+    await orchestrator._meta.put(_user_record("u2", tenant_id="default"))
+    await orchestrator._meta.put(_user_record("u3", tenant_id="other"))
 
     assert await orchestrator.count_users_for_tenant("default") == 2
     assert await orchestrator.count_users_for_tenant("other") == 1
@@ -678,7 +637,7 @@ async def test_tenant_delete_through_lifespan_wiring_refuses_when_users_present(
     tenant_orch.set_user_refcount_provider(orchestrator.count_users_for_tenant)
 
     # Add a user to default
-    await orchestrator._meta.put("alice", UserMetadata(tenant_id="default"))
+    await orchestrator._meta.put(_user_record("alice", tenant_id="default"))
 
     # Create a second tenant (otherwise last-tenant guard fires first)
     from eidolon_admin_server.app.registry.schemas.tenant import (

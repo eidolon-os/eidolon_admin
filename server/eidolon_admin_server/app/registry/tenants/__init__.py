@@ -21,7 +21,6 @@ from .orchestrator import (
     TenantOrchestrator,
     seed_default,
 )
-from .repository import TenantRepository
 from .router import router
 
 __all__ = [
@@ -30,7 +29,6 @@ __all__ = [
     "TenantInUse",
     "TenantNotFound",
     "TenantOrchestrator",
-    "TenantRepository",
     "router",
     "seed_default",
 ]

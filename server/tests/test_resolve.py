@@ -18,6 +18,13 @@ import pytest
 import respx
 from fastapi import FastAPI
 
+from eidolon_sdk.adapters.registry_sqlite import (
+    RegistrySqliteStore,
+    TenantRepository,
+    UserRepository,
+)
+from eidolon_sdk.registry.models import UserRegistryRecord
+
 from eidolon_admin_server.app.nats_kv import KVClient
 from eidolon_admin_server.app.registry import buckets as buckets_module
 from eidolon_admin_server.app.registry.agents.repository import (
@@ -48,20 +55,32 @@ from eidolon_admin_server.app.registry.templates import (
 )
 from eidolon_admin_server.app.registry.tenants import (
     TenantOrchestrator,
-    TenantRepository,
 )
 from eidolon_admin_server.app.registry.users import (
     MemoryUserClient,
-    UserMetadataRepository,
     UserOrchestrator,
 )
-from eidolon_admin_server.app.registry.users.repository import UserMetadata
 from eidolon_admin_server.app.registry.voiceprints import VoiceprintStore
 
 
 MEMORY_URL = "http://memory.test"
 AGENT_URL = "http://agent.test"
 HUB_URL = "http://hub.test"
+
+
+def _user_record(user_id: str, **updates) -> UserRegistryRecord:
+    data = {
+        "user_id": user_id,
+        "tenant_id": "default",
+        "active_agent_id": None,
+        "display_name": "",
+        "enabled": True,
+        "palace_path": "",
+        "memory_port": 0,
+        "created_at": "",
+    }
+    data.update(updates)
+    return UserRegistryRecord(**data)
 
 
 def _hub_device(device_id: str, *, enabled: bool = True, approved: bool = True) -> dict:
@@ -168,13 +187,14 @@ async def orchestrator(
 ) -> AsyncIterator[ResolveOrchestrator]:
     # Tenants → Users → Agents → Templates → Devices wiring (subset).
     registry_db = tmp_path / "registry.sqlite3"
-    tenant_orch = TenantOrchestrator(TenantRepository(registry_db))
+    store = RegistrySqliteStore(registry_db)
+    tenant_orch = TenantOrchestrator(TenantRepository(store))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     user_orch = UserOrchestrator(
         memory_client=MemoryUserClient(http_client, MEMORY_URL),
-        metadata_repo=UserMetadataRepository(registry_db),
+        metadata_repo=UserRepository(store),
         tenant_orchestrator=tenant_orch,
     )
     template_orch = TemplateOrchestrator(
@@ -259,7 +279,7 @@ async def test_resolve_device_happy_path(
         ),
     )
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+        _user_record("alice", display_name="Alice")
     )
 
     with respx.mock() as rsx:
@@ -302,7 +322,7 @@ async def test_resolve_device_rejects_disabled_user(
         ),
     )
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+        _user_record("alice", display_name="Alice", enabled=False)
     )
 
     with respx.mock() as rsx:
@@ -335,7 +355,7 @@ async def test_resolve_device_rejects_worker_down_user(
         ),
     )
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+        _user_record("alice", display_name="Alice")
     )
 
     with respx.mock() as rsx:
@@ -371,7 +391,7 @@ async def test_resolve_device_includes_voiceprint_summary(
         ),
     )
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "alice", UserMetadata(tenant_id="default", display_name="Alice")
+        _user_record("alice", display_name="Alice")
     )
 
     store = orchestrator._voiceprints  # type: ignore[attr-defined]
@@ -432,7 +452,7 @@ async def test_resolve_propagates_empty_mcp_url_when_memory_omits_it(
         "esp-stale", DeviceBinding(agent_id="ag-stale", bound_at=base_dt),
     )
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "bob", UserMetadata(tenant_id="default", display_name="Bob")
+        _user_record("bob", display_name="Bob")
     )
     bare = _memory_user("bob")
     bare.pop("mcp_http_url")  # simulate old memory
@@ -466,7 +486,7 @@ async def test_resolve_user_no_active_agent_returns_412(
 ) -> None:
     """User exists in admin metadata but no active_agent_id set."""
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "alice", UserMetadata(tenant_id="default", active_agent_id=None)
+        _user_record("alice", active_agent_id=None)
     )
     with pytest.raises(ResolveUserNoActiveAgent) as exc_info:
         await orchestrator.resolve_user("alice")
@@ -478,7 +498,7 @@ async def test_resolve_user_happy_path(
 ) -> None:
     base = datetime.now(timezone.utc).isoformat()
     await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        "alice", UserMetadata(tenant_id="default", active_agent_id="ag-1")
+        _user_record("alice", active_agent_id="ag-1")
     )
     await orchestrator._agents.put(
         "ag-1",

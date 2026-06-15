@@ -8,18 +8,8 @@ catalog.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-from eidolon_sdk.adapters.registry_sqlite import (
-    RegistrySqliteStore,
-    UserRepository as SdkUserRepository,
-)
-from eidolon_sdk.registry.models import (
-    ConsolidatorConfig as SdkConsolidatorConfig,
-    UserRegistryRecord,
-)
 
 from eidolon_sdk.http import (
     ServiceHTTPClient,
@@ -106,143 +96,7 @@ class MemoryUserClient(ServiceHTTPClient):
         return r.json()
 
 
-# ===== admin's per-user metadata store ======================================
-
-
-@dataclass
-class UserMetadata:
-    """Admin-owned user registry row."""
-
-    tenant_id: str
-    active_agent_id: str | None = None
-    display_name: str = ""  # admin-side label; memory doesn't have one
-    enabled: bool = True
-    palace_path: str = ""
-    memory_port: int = 0
-    consolidator_enabled: bool = True
-    consolidator_interval_hours: float = 6.0
-    consolidator_window_days: int = 30
-    consolidator_min_drawers: int = 3
-    consolidator_min_confidence: float = 0.6
-    created_at: str = ""
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "tenant_id": self.tenant_id,
-            "active_agent_id": self.active_agent_id,
-            "display_name": self.display_name,
-            "enabled": self.enabled,
-            "palace_path": self.palace_path,
-            "memory_port": self.memory_port,
-            "consolidator_enabled": self.consolidator_enabled,
-            "consolidator_interval_hours": self.consolidator_interval_hours,
-            "consolidator_window_days": self.consolidator_window_days,
-            "consolidator_min_drawers": self.consolidator_min_drawers,
-            "consolidator_min_confidence": self.consolidator_min_confidence,
-            "created_at": self.created_at,
-        }
-
-    @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "UserMetadata":
-        return cls(
-            tenant_id=data.get("tenant_id", "default"),
-            active_agent_id=data.get("active_agent_id"),
-            display_name=data.get("display_name", ""),
-            enabled=bool(data.get("enabled", True)),
-            palace_path=data.get("palace_path", "") or "",
-            memory_port=int(data.get("memory_port", 0) or 0),
-            consolidator_enabled=bool(data.get("consolidator_enabled", True)),
-            consolidator_interval_hours=float(
-                data.get("consolidator_interval_hours", 6.0) or 6.0
-            ),
-            consolidator_window_days=int(data.get("consolidator_window_days", 30) or 30),
-            consolidator_min_drawers=int(data.get("consolidator_min_drawers", 3) or 3),
-            consolidator_min_confidence=float(
-                data.get("consolidator_min_confidence", 0.6) or 0.6
-            ),
-            created_at=data.get("created_at", "") or "",
-        )
-
-
-class UserMetadataRepository:
-    """Admin-facing thin wrapper over the SDK user registry store."""
-
-    def __init__(self, db_path: str | Path) -> None:
-        self._store = RegistrySqliteStore(
-            db_path,
-            legacy_users_yaml_path=_legacy_users_yaml_path(),
-        )
-        self._repo = SdkUserRepository(self._store)
-
-    @property
-    def db_path(self) -> Path:
-        return self._store.db_path
-
-    async def get(self, user_id: str) -> UserMetadata | None:
-        record = await self._repo.get(user_id)
-        if record is None:
-            return None
-        return _record_to_meta(record)
-
-    async def put(self, user_id: str, meta: UserMetadata) -> None:
-        await self._repo.put(_meta_to_record(user_id, meta))
-
-    async def delete(self, user_id: str) -> None:
-        """Idempotent — deleting a non-existent key is a no-op."""
-        await self._repo.delete(user_id)
-
-    async def list_all(self) -> dict[str, UserMetadata]:
-        """Return the full per-user map (user_id -> metadata).
-
-        Returned as a dict for cheap "do I have this user?" lookups in
-        the orchestrator's list path (which joins memory list × admin
-        map by user_id).
-        """
-        records = await self._repo.list_all()
-        return {user_id: _record_to_meta(record) for user_id, record in records.items()}
-
-    async def allocate_memory_port(self) -> int:
-        return await self._repo.allocate_memory_port()
-
-
-def _record_to_meta(record: UserRegistryRecord) -> UserMetadata:
-    return UserMetadata(
-        tenant_id=record.tenant_id,
-        active_agent_id=record.active_agent_id,
-        display_name=record.display_name,
-        enabled=record.enabled,
-        palace_path=record.palace_path,
-        memory_port=record.memory_port,
-        consolidator_enabled=record.consolidator.enabled,
-        consolidator_interval_hours=record.consolidator.interval_hours,
-        consolidator_window_days=record.consolidator.window_days,
-        consolidator_min_drawers=record.consolidator.min_drawers,
-        consolidator_min_confidence=record.consolidator.min_confidence,
-        created_at=record.created_at,
-    )
-
-
-def _meta_to_record(user_id: str, meta: UserMetadata) -> UserRegistryRecord:
-    return UserRegistryRecord(
-        user_id=user_id,
-        tenant_id=meta.tenant_id,
-        active_agent_id=meta.active_agent_id,
-        display_name=meta.display_name,
-        enabled=meta.enabled,
-        palace_path=meta.palace_path,
-        memory_port=meta.memory_port,
-        consolidator=SdkConsolidatorConfig(
-            enabled=meta.consolidator_enabled,
-            interval_hours=meta.consolidator_interval_hours,
-            window_days=meta.consolidator_window_days,
-            min_drawers=meta.consolidator_min_drawers,
-            min_confidence=meta.consolidator_min_confidence,
-        ),
-        created_at=meta.created_at,
-    )
-
-
-def _legacy_users_yaml_path() -> Path:
+def resolve_legacy_users_yaml_path() -> Path:
     raw = os.environ.get("EIDOLON_MEMORY_USERS_YAML", "").strip()
     if raw:
         return Path(raw).expanduser().resolve()

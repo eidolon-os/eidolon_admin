@@ -27,12 +27,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
+from eidolon_sdk.adapters.registry_sqlite import TenantRepository
+
 from ..schemas.tenant import (
     CreateTenantRequest,
     TenantSpec,
     UpdateTenantRequest,
 )
-from .repository import TenantRepository
 
 logger = logging.getLogger(__name__)
 

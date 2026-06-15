@@ -19,6 +19,13 @@ import pytest
 import respx
 from fastapi import FastAPI
 
+from eidolon_sdk.adapters.registry_sqlite import (
+    RegistrySqliteStore,
+    TenantRepository,
+    UserRepository,
+)
+from eidolon_sdk.registry.models import UserRegistryRecord
+
 from eidolon_admin_server.app.nats_kv import KVClient
 from eidolon_admin_server.app.registry import buckets as buckets_module
 from eidolon_admin_server.app.registry.agents import (
@@ -35,23 +42,32 @@ from eidolon_admin_server.app.registry.agents.orchestrator import (
 from eidolon_admin_server.app.registry.agents.repository import AgentMetadata
 from eidolon_admin_server.app.registry.schemas.agent import CreateAgentRequest
 from eidolon_admin_server.app.registry.schemas.tenant import CreateTenantRequest
-from eidolon_admin_server.app.registry.schemas.user import (
-    CreateUserRequest,
-    SetActiveAgentRequest,
-)
 from eidolon_admin_server.app.registry.tenants import (
     TenantOrchestrator,
-    TenantRepository,
 )
 from eidolon_admin_server.app.registry.users import (
     MemoryUserClient,
-    UserMetadataRepository,
     UserOrchestrator,
 )
 
 
 MEMORY_URL = "http://memory.test"
 AGENT_URL = "http://agent.test"
+
+
+def _user_record(user_id: str, **updates) -> UserRegistryRecord:
+    data = {
+        "user_id": user_id,
+        "tenant_id": "default",
+        "active_agent_id": None,
+        "display_name": "",
+        "enabled": True,
+        "palace_path": "",
+        "memory_port": 0,
+        "created_at": "",
+    }
+    data.update(updates)
+    return UserRegistryRecord(**data)
 
 
 # ---- fixtures ---------------------------------------------------------------
@@ -146,17 +162,19 @@ async def orchestrator(
 ) -> AsyncIterator[AgentOrchestrator]:
     # Build all the underpinnings the agent orchestrator depends on.
     registry_db = tmp_path / "registry.sqlite3"
-    tenant_orch = TenantOrchestrator(TenantRepository(registry_db))
+    store = RegistrySqliteStore(registry_db)
+    tenant_orch = TenantOrchestrator(TenantRepository(store))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    user_repo = UserMetadataRepository(registry_db)
+    user_repo = UserRepository(store)
     user_orch = UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=user_repo,
         tenant_orchestrator=tenant_orch,
     )
+    await user_repo.put(_user_record("alice", display_name="Alice"))
     tenant_orch.set_user_refcount_provider(user_orch.count_users_for_tenant)
 
     # Stub template-exists check — defaults to True for "caretaker_jiezhi",
@@ -190,6 +208,9 @@ async def test_list_empty(orchestrator: AgentOrchestrator) -> None:
 async def test_list_filters_by_user(orchestrator: AgentOrchestrator) -> None:
     """Pre-seed metadata: 2 agents for alice, 1 for bob. Filter works."""
     base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._test_user_orch._meta.put(
+        _user_record("bob", display_name="Bob")
+    )
     await orchestrator._meta.put(
         "ag-1",
         AgentMetadata(
@@ -240,16 +261,14 @@ async def test_get_missing_raises_404(orchestrator: AgentOrchestrator) -> None:
 async def test_create_with_missing_user_returns_bad_request(
     orchestrator: AgentOrchestrator,
 ) -> None:
-    """User MUST exist in memory before an agent can be created.
+    """User MUST exist in the admin registry before an agent can be created.
     Returns AgentBadRequest (400) — the request body is wrong, not
     the endpoint."""
-    with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.get("/api/admin/users/ghost").mock(return_value=httpx.Response(404))
-        with pytest.raises(AgentBadRequest, match="user 'ghost' not found") as exc_info:
-            await orchestrator.create_agent(
-                CreateAgentRequest(user_id="ghost", template_id="caretaker_jiezhi")
-            )
-        assert exc_info.value.status_code == 400
+    with pytest.raises(AgentBadRequest, match="user 'ghost' not found") as exc_info:
+        await orchestrator.create_agent(
+            CreateAgentRequest(user_id="ghost", template_id="caretaker_jiezhi")
+        )
+    assert exc_info.value.status_code == 400
 
 
 async def test_create_with_missing_template_returns_bad_request(
@@ -382,13 +401,7 @@ async def test_delete_cascades_active_agent_clear(
     # Seed: user alice with active_agent='ag-todelete', metadata for it
     base = datetime.now(timezone.utc).isoformat()
     await orchestrator._test_user_orch._meta.put(
-        "alice",
-        __import__(
-            "eidolon_admin_server.app.registry.users.repository",
-            fromlist=["UserMetadata"],
-        ).UserMetadata(
-            tenant_id="default", active_agent_id="ag-todelete", display_name="A"
-        ),
+        _user_record("alice", active_agent_id="ag-todelete", display_name="A"),
     )
     await orchestrator._meta.put(
         "ag-todelete",

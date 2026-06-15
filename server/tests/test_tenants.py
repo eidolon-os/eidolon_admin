@@ -18,6 +18,8 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
+from eidolon_sdk.adapters.registry_sqlite import RegistrySqliteStore, TenantRepository
+
 from eidolon_admin_server.app.registry.schemas.tenant import (
     CreateTenantRequest,
     TenantSpec,
@@ -29,7 +31,6 @@ from eidolon_admin_server.app.registry.tenants import (
     TenantInUse,
     TenantNotFound,
     TenantOrchestrator,
-    TenantRepository,
     router as tenants_router,
     seed_default,
 )
@@ -42,7 +43,7 @@ from eidolon_admin_server.app.registry.tenants import (
 async def repo(tmp_path) -> TenantRepository:
     """Repo backed by a per-test registry DB so parallel runs / re-runs
     never see leaked state from prior tests."""
-    return TenantRepository(tmp_path / "registry.sqlite3")
+    return TenantRepository(RegistrySqliteStore(tmp_path / "registry.sqlite3"))
 
 
 @pytest.fixture

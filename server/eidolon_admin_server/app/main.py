@@ -54,14 +54,13 @@ from .registry.templates import (
 from .registry.templates.orchestrator import TemplateNotFound
 from .registry.tenants import (
     TenantOrchestrator,
-    TenantRepository,
     router as tenants_router,
     seed_default as seed_default_tenant,
 )
 from .registry.users import (
     MemoryUserClient,
-    UserMetadataRepository,
     UserOrchestrator,
+    resolve_legacy_users_yaml_path,
     router as users_router,
 )
 from .registry.voiceprints import (
@@ -109,11 +108,26 @@ def create_app(
                 exc,
             )
 
-        # Tenants are admin-owned control-plane data and live in the local
-        # registry DB. Seed the default tenant regardless of NATS state so
-        # user CRUD can still validate tenant ownership when the bus is down.
+        tenant_repo = None
+        user_repo = None
+
+        # Tenants/users are admin-owned control-plane data and live in the
+        # local registry DB. Seed the default tenant regardless of NATS state
+        # so user CRUD can still validate tenant ownership when the bus is down.
         try:
-            tenant_orch = TenantOrchestrator(TenantRepository(settings.registry_db_path))
+            from eidolon_sdk.adapters.registry_sqlite import (
+                RegistrySqliteStore,
+                TenantRepository,
+                UserRepository,
+            )
+
+            registry_store = RegistrySqliteStore(
+                settings.registry_db_path,
+                legacy_users_yaml_path=resolve_legacy_users_yaml_path(),
+            )
+            tenant_repo = TenantRepository(registry_store)
+            user_repo = UserRepository(registry_store)
+            tenant_orch = TenantOrchestrator(tenant_repo)
             app.state.tenant_orchestrator = tenant_orch
             created = await seed_default_tenant(tenant_orch)
             if created:
@@ -156,17 +170,13 @@ def create_app(
                 "missing from services.yaml"
             )
 
-        # Users module — talks to memory's supervisor admin HTTP (29.B.2)
-        # for memory-side CRUD, plus admin's local registry DB for the
-        # tenant/active_agent metadata. It no longer stores user metadata
-        # in NATS; NATS is only indirectly required here if tenants are
-        # still backed by the tenant orchestrator.
+        # Users module — admin's local registry DB is the user source of
+        # truth; memory's supervisor admin HTTP provides health/reconcile.
         memory_admin_url = _resolve_memory_supervisor_url()
         if memory_admin_url and getattr(
             app.state, "tenant_orchestrator", None
-        ) is not None:
+        ) is not None and user_repo is not None:
             user_client = MemoryUserClient(app.state.http_client, memory_admin_url)
-            user_repo = UserMetadataRepository(settings.registry_db_path)
             user_orch = UserOrchestrator(
                 memory_client=user_client,
                 metadata_repo=user_repo,
