@@ -1,9 +1,9 @@
 """Phase 33.A1: cross-project token contract test.
 
 The Phase 32 plan-D runtime path has channel signing a device JWT that
-agent's ``PairingTokenVerifier`` consumes. The two implementations live
-in separate projects (eidolon_channel + eidolon_agent) with **duplicated
-payload schema** — same field names, same algorithm, same secret resolution.
+agent's ``PairingTokenVerifier`` consumes. The canonical implementation
+now lives in ``eidolon_sdk.runtime``; channel and agent keep thin wrappers
+so their public APIs stay stable.
 
 This test pins that contract end-to-end:
   - Use channel's ``sign_device_token`` to mint a JWT with known fields
@@ -18,15 +18,11 @@ venv (channel's ``livekit-agents`` transitive is declared in admin's
 plain Python ``from eidolon.livekit.agent.runtime import …``.
 
 If this test fails, ONE of these happened:
-  1. Someone changed channel's payload field names / algorithm / scopes
-     without updating agent.
-  2. Someone changed agent's verifier expectations without updating channel.
+  1. Someone changed the SDK payload field names / algorithm / scopes.
+  2. Someone changed the agent/channel compatibility wrapper behavior.
   3. The secret resolution diverged.
 Any of those would silently break ALL web/esp32 voice conversations until
 the next deploy actually used a session — this test catches it at CI.
-
-Until ``eidolon-runtime-tokens`` micro-pkg is extracted (Phase 33 plan
-deferred to a unified SDK pass), this is the safety net.
 """
 
 from __future__ import annotations
