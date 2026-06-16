@@ -1,12 +1,27 @@
 """Tests for the unified gateway proxy."""
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 import respx
 
+from eidolon_admin_server.app.gateway import proxy
+
 
 pytestmark = pytest.mark.asyncio
+
+
+class _DelayedByteStream(httpx.AsyncByteStream):
+    def __init__(self, *, delay: float, chunks: list[bytes]) -> None:
+        self.delay = delay
+        self.chunks = chunks
+
+    async def __aiter__(self):
+        await asyncio.sleep(self.delay)
+        for chunk in self.chunks:
+            yield chunk
 
 
 @respx.mock
@@ -102,6 +117,22 @@ async def test_proxy_post_body(app):
     assert resp.status_code == 201
     assert b"template_id" in captured["body"]
     assert "application/json" in captured["ctype"]
+
+
+async def test_sse_proxy_emits_heartbeat_while_upstream_is_idle(monkeypatch):
+    monkeypatch.setattr(proxy, "_SSE_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    upstream = httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        stream=_DelayedByteStream(delay=0.03, chunks=[b"data: done\n\n"]),
+    )
+
+    chunks = []
+    async for chunk in proxy._stream_sse_with_heartbeat(upstream):
+        chunks.append(chunk)
+
+    assert b": keepalive\n\n" in chunks
+    assert chunks[-1] == b"data: done\n\n"
 
 
 async def test_services_catalog(app):

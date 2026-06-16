@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable
+import asyncio
+from collections.abc import AsyncIterator, Iterable
+from contextlib import suppress
 
 import httpx
+from eidolon_sdk.streaming import SSE_HEARTBEAT_BYTES
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -27,6 +30,7 @@ _HOP_BY_HOP = {
 _REQUEST_DROP = _HOP_BY_HOP | {"authorization", "cookie"}
 # Headers we drop from upstream response before returning.
 _RESPONSE_DROP = _HOP_BY_HOP | {"content-encoding"}
+_SSE_HEARTBEAT_INTERVAL_SECONDS = 2.0
 
 
 def _filter_request_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
@@ -64,6 +68,56 @@ def _is_stream_response(resp: httpx.Response) -> bool:
     return "text/event-stream" in ctype or "application/x-ndjson" in ctype
 
 
+def _is_sse_response(resp: httpx.Response) -> bool:
+    ctype = resp.headers.get("content-type", "").lower()
+    return "text/event-stream" in ctype
+
+
+async def _stream_raw(upstream_resp: httpx.Response) -> AsyncIterator[bytes]:
+    try:
+        async for chunk in upstream_resp.aiter_raw():
+            yield chunk
+    finally:
+        await upstream_resp.aclose()
+
+
+async def _stream_sse_with_heartbeat(upstream_resp: httpx.Response) -> AsyncIterator[bytes]:
+    queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+
+    async def _read_upstream() -> None:
+        try:
+            async for chunk in upstream_resp.aiter_raw():
+                await queue.put(chunk)
+        except Exception as exc:
+            await queue.put(exc)
+        finally:
+            await queue.put(None)
+
+    reader = asyncio.create_task(_read_upstream())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    queue.get(),
+                    timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS,
+                )
+            except TimeoutError:
+                yield SSE_HEARTBEAT_BYTES
+                continue
+
+            if item is None:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+    finally:
+        if not reader.done():
+            reader.cancel()
+            with suppress(asyncio.CancelledError):
+                await reader
+        await upstream_resp.aclose()
+
+
 async def proxy_request(
     request: Request,
     service: ServiceConfig,
@@ -84,15 +138,14 @@ async def proxy_request(
     upstream_resp = await client.send(upstream_req, stream=True)
 
     if _is_stream_response(upstream_resp):
-        async def _aiter():
-            try:
-                async for chunk in upstream_resp.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream_resp.aclose()
+        stream_iter = (
+            _stream_sse_with_heartbeat(upstream_resp)
+            if _is_sse_response(upstream_resp)
+            else _stream_raw(upstream_resp)
+        )
 
         return StreamingResponse(
-            _aiter(),
+            stream_iter,
             status_code=upstream_resp.status_code,
             headers=_filter_response_headers(upstream_resp.headers),
             media_type=upstream_resp.headers.get("content-type"),
