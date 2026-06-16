@@ -25,6 +25,7 @@ export interface LongTaskSummary {
   expected_output: string | null
   progress_summary: string | null
   result_text: string | null
+  result_tts_summary: string | null
   error_code: string | null
   error_message: string | null
   worker_id: string | null
