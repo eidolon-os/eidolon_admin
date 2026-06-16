@@ -22,6 +22,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+
 from .._shared import unwrap_detail
 from ..schemas.device import (
     BindDeviceRequest,
@@ -30,8 +32,6 @@ from ..schemas.device import (
 )
 from .repository import (
     DeviceBindingRepository,
-    DeviceHubUnreachable,
-    DeviceHubUpstreamError,
     HubDeviceClient,
 )
 
@@ -102,7 +102,7 @@ class DeviceOrchestrator:
 
     # ---- helpers -------------------------------------------------------
 
-    def _map_hub_error(self, exc: DeviceHubUpstreamError) -> None:
+    def _map_hub_error(self, exc: ServiceUpstreamError) -> None:
         message = unwrap_detail(exc.message)
         if exc.status_code == 404:
             raise DeviceNotFound(message)
@@ -152,9 +152,9 @@ class DeviceOrchestrator:
         """Joins hub's device list × admin's bindings × agent metadata."""
         try:
             hub_records = await self._hub.list_devices()
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
 
         bindings = await self._bindings.list_all()
@@ -182,9 +182,9 @@ class DeviceOrchestrator:
     async def get_device(self, device_id: str) -> DeviceView:
         try:
             record = await self._hub.get_device(device_id)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
 
         binding = await self._bindings.get(device_id)
@@ -206,9 +206,9 @@ class DeviceOrchestrator:
         """Proxy to hub's approve + return updated view."""
         try:
             await self._hub.approve_device(device_id)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
         await self._notify_config_refresh(device_id)
         return await self.get_device(device_id)
@@ -224,9 +224,9 @@ class DeviceOrchestrator:
         """
         try:
             record = await self._hub.set_device_enabled(device_id, enabled=enabled)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
         if not enabled:
             logger.info("device_disabled device_id=%s", device_id)
@@ -262,9 +262,9 @@ class DeviceOrchestrator:
         # Gate 1 — device exists + approved
         try:
             record = await self._hub.get_device(device_id)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
         if not record.get("enabled", True):
             raise DeviceDisabled(
@@ -313,9 +313,9 @@ class DeviceOrchestrator:
             raise DeviceBadRequest(f"device {device_id!r} is not bound to an agent")
         try:
             return await self._hub.send_room_join(device_id)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
 
     async def unregister_device(self, device_id: str) -> dict[str, Any]:
@@ -328,9 +328,9 @@ class DeviceOrchestrator:
         await self._bindings.delete(device_id)
         try:
             hub_result = await self._hub.unregister_device(device_id)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise DeviceHubDown(str(exc)) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
         # Hub's response is already the right envelope — pass through.
         return hub_result

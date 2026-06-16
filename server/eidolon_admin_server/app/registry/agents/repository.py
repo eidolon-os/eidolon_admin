@@ -27,18 +27,11 @@ from typing import Any
 from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
 from eidolon_sdk.http import (
     ServiceHTTPClient,
-    ServiceUnavailable,
-    ServiceUpstreamError,
 )
 from ..buckets import AGENTS_METADATA_BUCKET
 from ..keys import agent_metadata_key
 
 logger = logging.getLogger(__name__)
-
-
-# Domain-specific names for SDK transport errors.
-AgentProjectUnreachable = ServiceUnavailable
-AgentProjectUpstreamError = ServiceUpstreamError
 
 
 # ===== HTTP client to agent project =========================================

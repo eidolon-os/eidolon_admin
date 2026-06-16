@@ -7,6 +7,7 @@ classes.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
 
 from ..schemas.user import (
     CreateUserRequest,
@@ -167,16 +168,11 @@ async def revoke_user_sessions(user_id: str, request: Request) -> dict:
     # Reach into the agent's project client. We don't bother going
     # through an orchestrator method because this is a thin RPC proxy
     # with no admin-side state mutation.
-    from ..agents.repository import (
-        AgentProjectUnreachable,
-        AgentProjectUpstreamError,
-    )
-
     try:
         return await agent_orch._agent.revoke_user_sessions(user_id)
-    except AgentProjectUnreachable as exc:
+    except ServiceUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except AgentProjectUpstreamError as exc:
+    except ServiceUpstreamError as exc:
         raise HTTPException(
             status_code=502,
             detail=f"agent upstream: {exc.message}",

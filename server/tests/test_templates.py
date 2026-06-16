@@ -27,6 +27,7 @@ from typing import AsyncIterator
 import httpx
 import pytest
 import respx
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
 from fastapi import FastAPI
 
 from eidolon_admin_server.app.registry.templates import (
@@ -39,10 +40,6 @@ from eidolon_admin_server.app.registry.templates.orchestrator import (
     TemplateConflict,
     TemplateInvalid,
     TemplateNotFound,
-)
-from eidolon_admin_server.app.registry.templates.repository import (
-    TemplateAgentUnreachable,
-    TemplateUpstreamError,
 )
 from eidolon_admin_server.app.registry.schemas.template import (
     CreateTemplateRequest,
@@ -106,7 +103,7 @@ async def test_client_connection_refused_raises_unreachable(
         rsx.get("/api/admin/personas/templates").mock(
             side_effect=httpx.ConnectError("refused")
         )
-        with pytest.raises(TemplateAgentUnreachable):
+        with pytest.raises(ServiceUnavailable):
             await agent_client.list_templates()
 
 
@@ -117,7 +114,7 @@ async def test_client_404_raises_upstream_error(
         rsx.get("/api/admin/personas/templates/ghost").mock(
             return_value=httpx.Response(404, text="not found")
         )
-        with pytest.raises(TemplateUpstreamError) as exc_info:
+        with pytest.raises(ServiceUpstreamError) as exc_info:
             await agent_client.get_template("ghost")
     assert exc_info.value.status_code == 404
 
@@ -129,7 +126,7 @@ async def test_client_500_raises_upstream_error(
         rsx.get("/api/admin/personas/templates").mock(
             return_value=httpx.Response(500, text="server boom")
         )
-        with pytest.raises(TemplateUpstreamError) as exc_info:
+        with pytest.raises(ServiceUpstreamError) as exc_info:
             await agent_client.list_templates()
     assert exc_info.value.status_code == 500
 

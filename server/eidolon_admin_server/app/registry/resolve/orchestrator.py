@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import logging
 
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+
 from .._shared import unwrap_detail
 from ..agents.repository import AgentMetadataRepository
 from ..devices.repository import (
     DeviceBindingRepository,
-    DeviceHubUnreachable,
-    DeviceHubUpstreamError,
     HubDeviceClient,
 )
 from ..schemas.resolve import ResolvedContext, VoiceprintResolveSummary
@@ -216,11 +216,11 @@ class ResolveOrchestrator:
             return
         try:
             record = await self._hub.get_device(device_id)
-        except DeviceHubUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise ResolveUpstreamDown(
                 f"hub unreachable resolving device {device_id!r}: {exc}"
             ) from exc
-        except DeviceHubUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             detail = unwrap_detail(exc.message)
             if exc.status_code == 404:
                 raise ResolveError404(detail) from exc

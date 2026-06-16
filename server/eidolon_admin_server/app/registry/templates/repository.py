@@ -11,9 +11,7 @@ in the orchestrator. This keeps the HTTP layer dumb and the schema
 layer testable in isolation.
 
 Errors are inherited from the SDK ``ServiceHTTPClient`` base
-(``ServiceUnavailable`` / ``ServiceUpstreamError``); the module
-re-exports them under template-specific names so existing imports
-keep working.
+(``ServiceUnavailable`` / ``ServiceUpstreamError``).
 """
 from __future__ import annotations
 
@@ -22,16 +20,9 @@ from typing import Any
 
 from eidolon_sdk.http import (
     ServiceHTTPClient,
-    ServiceUnavailable,
-    ServiceUpstreamError,
 )
 
 logger = logging.getLogger(__name__)
-
-
-# Domain-specific names for SDK transport errors.
-TemplateAgentUnreachable = ServiceUnavailable
-TemplateUpstreamError = ServiceUpstreamError
 
 
 class TemplateAgentClient(ServiceHTTPClient):

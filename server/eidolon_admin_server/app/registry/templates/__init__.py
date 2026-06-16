@@ -13,21 +13,17 @@ that ``repository.py`` is an HTTP client to agent rather than a NATS
 KV adapter — same role (CRUD primitive layer), different transport.
 """
 from .orchestrator import (
-    TemplateAgentUnreachable,
     TemplateError,
     TemplateNotFound,
     TemplateOrchestrator,
-    TemplateUpstreamError,
 )
 from .repository import TemplateAgentClient
 from .router import router
 
 __all__ = [
     "TemplateAgentClient",
-    "TemplateAgentUnreachable",
     "TemplateError",
     "TemplateNotFound",
     "TemplateOrchestrator",
-    "TemplateUpstreamError",
     "router",
 ]

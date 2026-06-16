@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from eidolon_sdk.adapters.registry_sqlite import UserRepository
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
 from eidolon_sdk.registry.models import UserRegistryRecord
 
 from .._shared import unwrap_detail
@@ -24,11 +25,7 @@ from ..schemas.user import (
     UserView,
 )
 from ..tenants.orchestrator import TenantNotFound, TenantOrchestrator
-from .repository import (
-    MemoryUserClient,
-    MemoryUserUnreachable,
-    MemoryUserUpstreamError,
-)
+from .repository import MemoryUserClient
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +197,7 @@ class UserOrchestrator:
             mcp_http_url=mcp_http_url,
         )
 
-    def _map_memory_error(self, exc: MemoryUserUpstreamError) -> None:
+    def _map_memory_error(self, exc: ServiceUpstreamError) -> None:
         """Status-code translation. Unwraps memory's
         ``{"detail": "..."}`` envelope so the message stays single-layer
         through admin's HTTPException."""
@@ -216,7 +213,7 @@ class UserOrchestrator:
     async def _memory_records_by_id(self) -> dict[str, dict[str, Any]]:
         try:
             envelope = await self._mem.list_users()
-        except (MemoryUserUnreachable, MemoryUserUpstreamError):
+        except (ServiceUnavailable, ServiceUpstreamError):
             logger.info("users: memory health enrichment unavailable", exc_info=True)
             return {}
         out: dict[str, dict[str, Any]] = {}
@@ -333,9 +330,9 @@ class UserOrchestrator:
         record: dict[str, Any] | None = None
         try:
             record = await self._mem.get_user(user_id)
-        except MemoryUserUnreachable as exc:
+        except ServiceUnavailable as exc:
             logger.info("users: memory get unavailable for %s: %s", user_id, exc)
-        except MemoryUserUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             if exc.status_code != 404:
                 logger.info("users: memory get failed for %s", user_id, exc_info=True)
         view = self._build_view(user_id, meta, record)
@@ -491,9 +488,9 @@ class UserOrchestrator:
         }
         try:
             memory_result = await self._mem.delete_user(user_id)
-        except MemoryUserUnreachable as exc:
+        except ServiceUnavailable as exc:
             logger.warning("user_delete: memory unavailable for cleanup: %s", exc)
-        except MemoryUserUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             logger.warning(
                 "user_delete: memory cleanup returned %s: %s",
                 exc.status_code,

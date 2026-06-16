@@ -32,16 +32,12 @@ from .orchestrator import (
 )
 from .repository import (
     MemoryUserClient,
-    MemoryUserUnreachable,
-    MemoryUserUpstreamError,
     resolve_legacy_users_yaml_path,
 )
 from .router import router
 
 __all__ = [
     "MemoryUserClient",
-    "MemoryUserUnreachable",
-    "MemoryUserUpstreamError",
     "resolve_legacy_users_yaml_path",
     "TenantNotFoundForUser",
     "UserAlreadyExists",

@@ -13,16 +13,9 @@ from typing import Any
 
 from eidolon_sdk.http import (
     ServiceHTTPClient,
-    ServiceUnavailable,
-    ServiceUpstreamError,
 )
 
 # ===== memory HTTP client ===================================================
-#
-# Domain-specific names for SDK transport errors.
-
-MemoryUserUnreachable = ServiceUnavailable
-MemoryUserUpstreamError = ServiceUpstreamError
 
 
 class MemoryUserClient(ServiceHTTPClient):

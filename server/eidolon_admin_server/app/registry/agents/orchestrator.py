@@ -38,6 +38,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+
 from .._shared import unwrap_detail
 from ..schemas.agent import (
     AgentDetail,
@@ -51,8 +53,6 @@ from .repository import (
     AgentMetadata,
     AgentMetadataRepository,
     AgentProjectClient,
-    AgentProjectUnreachable,
-    AgentProjectUpstreamError,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ class AgentOrchestrator:
 
     # ---- helpers -------------------------------------------------------
 
-    def _map_agent_error(self, exc: AgentProjectUpstreamError) -> None:
+    def _map_agent_error(self, exc: ServiceUpstreamError) -> None:
         message = unwrap_detail(exc.message)
         if exc.status_code == 404:
             raise AgentNotFound(message)
@@ -245,9 +245,9 @@ class AgentOrchestrator:
             persona = await self._agent.get_instance(
                 meta.tenant_id, meta.user_id, agent_id
             )
-        except AgentProjectUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise AgentProjectDown(str(exc)) from exc
-        except AgentProjectUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_agent_error(exc)
 
         active = await self._user_active_agent(meta.user_id)
@@ -263,7 +263,7 @@ class AgentOrchestrator:
         try:
             render_result = await self._agent.render_template(meta.template_id)
             soul_md = render_result.get("markdown", "")
-        except (AgentProjectUnreachable, AgentProjectUpstreamError) as exc:
+        except (ServiceUnavailable, ServiceUpstreamError) as exc:
             logger.warning(
                 "get_agent: soul render failed for template=%s (agent=%s); "
                 "returning empty soul. cause=%s",
@@ -328,9 +328,9 @@ class AgentOrchestrator:
                 instance_id=agent_id,
                 template_id=body.template_id,
             )
-        except AgentProjectUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise AgentProjectDown(str(exc)) from exc
-        except AgentProjectUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_agent_error(exc)
 
         # Pull template_revision off the persona's metadata (agent set
@@ -443,9 +443,9 @@ class AgentOrchestrator:
             await self._agent.delete_instance(
                 meta.tenant_id, meta.user_id, agent_id
             )
-        except AgentProjectUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise AgentProjectDown(str(exc)) from exc
-        except AgentProjectUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             # If agent returns 404, treat as already-gone (idempotent
             # DELETE) and proceed to clean admin metadata.
             if exc.status_code != 404:
@@ -477,7 +477,7 @@ class AgentOrchestrator:
             return await self._agent.get_evolution_history(
                 meta.tenant_id, meta.user_id, agent_id, limit=limit,
             )
-        except AgentProjectUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise AgentProjectDown(str(exc)) from exc
-        except AgentProjectUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._map_agent_error(exc)

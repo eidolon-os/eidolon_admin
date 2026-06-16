@@ -40,6 +40,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+
 from .._shared import unwrap_detail
 from ..schemas.template import (
     CreateTemplateRequest,
@@ -48,11 +50,7 @@ from ..schemas.template import (
     TemplateRef,
     UpdateTemplateRequest,
 )
-from .repository import (
-    TemplateAgentClient,
-    TemplateAgentUnreachable,
-    TemplateUpstreamError,
-)
+from .repository import TemplateAgentClient
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +98,7 @@ class TemplateOrchestrator:
 
     # -------- helpers -----------------------------------------------------
 
-    def _raise_mapped(self, exc: TemplateUpstreamError) -> None:
+    def _raise_mapped(self, exc: ServiceUpstreamError) -> None:
         """Map an upstream HTTP status to admin's exception hierarchy.
 
         Uses the shared :func:`unwrap_detail` to strip FastAPI's
@@ -165,9 +163,9 @@ class TemplateOrchestrator:
         """
         try:
             raw_list = await self._client.list_templates()
-        except TemplateAgentUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise TemplateAgentDown(str(exc)) from exc
-        except TemplateUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._raise_mapped(exc)
 
         return [
@@ -180,9 +178,9 @@ class TemplateOrchestrator:
         try:
             parsed = await self._client.get_template(template_id)
             raw_yaml = await self._client.get_template_raw(template_id)
-        except TemplateAgentUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise TemplateAgentDown(str(exc)) from exc
-        except TemplateUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._raise_mapped(exc)
 
         meta = parsed.get("metadata", {})
@@ -212,9 +210,9 @@ class TemplateOrchestrator:
                 display_name=body.display_name,
                 yaml_body=body.yaml_body,
             )
-        except TemplateAgentUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise TemplateAgentDown(str(exc)) from exc
-        except TemplateUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._raise_mapped(exc)
 
         return TemplateRef(
@@ -236,9 +234,9 @@ class TemplateOrchestrator:
                 display_name=body.display_name,
                 yaml_body=body.yaml_body,
             )
-        except TemplateAgentUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise TemplateAgentDown(str(exc)) from exc
-        except TemplateUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._raise_mapped(exc)
 
         return TemplateRef(
@@ -254,9 +252,9 @@ class TemplateOrchestrator:
     async def delete(self, template_id: str) -> None:
         try:
             await self._client.delete_custom(template_id)
-        except TemplateAgentUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise TemplateAgentDown(str(exc)) from exc
-        except TemplateUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._raise_mapped(exc)
 
     async def fork(
@@ -269,9 +267,9 @@ class TemplateOrchestrator:
                 target_tenant_id=body.target_tenant_id,
                 new_display_name=body.new_display_name,
             )
-        except TemplateAgentUnreachable as exc:
+        except ServiceUnavailable as exc:
             raise TemplateAgentDown(str(exc)) from exc
-        except TemplateUpstreamError as exc:
+        except ServiceUpstreamError as exc:
             self._raise_mapped(exc)
 
         return TemplateRef(
