@@ -10,7 +10,7 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.5",
     "pyyaml>=6.0",
-    "eidolon-sdk[db,http]",
+    "eidolon-sdk",
     "supervisor>=4.2.5",
     "psutil>=6.0",
     "mcp>=1.2.0",
@@ -59,7 +59,7 @@ eidolon-admin = "eidolon_admin_server.app.cli:main"
 find-links = ["https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html"]
 
 [tool.uv.sources]
-eidolon-sdk = { path = "../eidolon_sdk", editable = true }
+eidolon-sdk = { path = "../eidolon_sdk" }
 
 [build-system]
 requires = ["setuptools>=68"]
