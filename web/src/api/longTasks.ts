@@ -90,9 +90,13 @@ export async function listLongTasks(
   return data
 }
 
-export async function getLongTask(taskId: string): Promise<LongTaskDetail> {
+export async function getLongTask(
+  taskId: string,
+  options: { suppressToast?: boolean } = {},
+): Promise<LongTaskDetail> {
   const { data } = await client.get<LongTaskDetail>(
     `/services/agent/long-tasks/${encodeURIComponent(taskId)}`,
+    { suppressToast: options.suppressToast },
   )
   return data
 }

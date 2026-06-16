@@ -4,6 +4,14 @@ import { ElMessage } from 'element-plus'
 import { ArrowDown, ArrowUp, Promotion, Refresh } from '@element-plus/icons-vue'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
 import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
+import {
+  getTurn,
+  listTurns,
+  type ChatMessageView,
+  type ListTurnsParams,
+} from '@/api/conversations'
+import { getLongTask, type LongTaskDetail } from '@/api/longTasks'
+import { extractErrorMessage } from '@/utils/format'
 
 // Conversation-style view over the agent /chat/test SSE endpoint.
 //
@@ -11,11 +19,12 @@ import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
 // stream (one row per DELTA/TOOL_CALL/STATE/DONE) — great for debugging the
 // wire format, terrible for actually reading what the agent said. This view
 // is the human-facing dual: chat bubbles, streaming text, tool calls collapsed
-// inline, multi-turn history maintained client-side.
+// inline, and recent history loaded from the agent conversation log.
 //
 // Note on session semantics: each user input opens a fresh pairing →
 // ExchangePairingCode → Chat stream. The agent doesn't carry conversation
-// state across these calls; the *visual* history lives only in this page.
+// state across these calls; this page only reloads recent persisted turns for
+// visual continuity.
 // For real conversation continuity, point a real device at the agent gRPC
 // endpoint with a stable device_token.
 
@@ -25,11 +34,14 @@ interface ToolCall {
   name: string
   args?: any
   result?: any
+  taskId?: string
+  progressSubject?: string
+  status?: string
 }
 
 interface Message {
   id: string
-  role: 'user' | 'assistant' | 'system' | 'error'
+  role: 'user' | 'assistant' | 'system' | 'error' | 'tool'
   text: string                  // assistant: streamed; others: full text
   tools: ToolCall[]
   state?: string                // last STATE event for assistant turn
@@ -37,6 +49,7 @@ interface Message {
   errored: boolean
   startedAt: number
   finishedAt?: number
+  durationMs?: number | null
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -54,6 +67,7 @@ const settings = ref({
 const settingsCollapsed = ref(false)
 const input = ref('')
 const messages = ref<Message[]>([])
+const historyLoading = ref(false)
 const sending = ref(false)
 const connected = ref(false)
 const showEvents = ref(false)
@@ -61,9 +75,87 @@ const rawEventLog = ref<string[]>([])
 const paneRef = ref<HTMLElement | null>(null)
 
 let abortCtrl: AbortController | null = null
+let historyLoadSeq = 0
+const HISTORY_MESSAGE_LIMIT = 20
+const longTaskPolls = new Set<string>()
+let destroyed = false
 
 function genId(): string {
   return Math.random().toString(36).slice(2, 10)
+}
+
+function normalizeRole(role: string): Message['role'] {
+  if (role === 'user' || role === 'assistant' || role === 'system' || role === 'tool') return role
+  if (role === 'error') return 'error'
+  return 'system'
+}
+
+function tsToMs(ts: string | null | undefined): number {
+  if (!ts) return Date.now()
+  const ms = Date.parse(ts)
+  return Number.isFinite(ms) ? ms : Date.now()
+}
+
+function fromHistoryMessage(m: ChatMessageView, turnDurationMs: number | null = null): Message {
+  const at = tsToMs(m.created_at)
+  return {
+    id: `history-${m.id}`,
+    role: normalizeRole(m.role),
+    text: m.content || '',
+    tools: m.tool_name
+      ? [{
+          name: m.tool_name,
+          args: m.tool_arguments,
+          result: m.role === 'tool' ? m.content : undefined,
+        }]
+      : [],
+    done: true,
+    errored: m.role === 'error',
+    startedAt: at,
+    finishedAt: at,
+    durationMs: m.role === 'assistant' ? turnDurationMs : null,
+  }
+}
+
+async function loadRecentHistory() {
+  const userId = settings.value.user_id
+  if (!userId) {
+    historyLoadSeq += 1
+    historyLoading.value = false
+    messages.value = []
+    return
+  }
+  const seq = ++historyLoadSeq
+  historyLoading.value = true
+  try {
+    const params: ListTurnsParams = {
+      tenant_id: settings.value.tenant_id,
+      user_id: userId,
+      limit: HISTORY_MESSAGE_LIMIT,
+    }
+    const r = await listTurns(params)
+    const details = await Promise.all(r.turns.map((turn) => getTurn(turn.turn_id)))
+    if (seq !== historyLoadSeq || sending.value) return
+
+    const loaded = details
+      .flatMap((turn) => turn.messages.map((message) => ({
+        message,
+        turnDurationMs: turn.total_latency_ms,
+      })))
+      .sort((a, b) => tsToMs(a.message.created_at) - tsToMs(b.message.created_at))
+      .slice(-HISTORY_MESSAGE_LIMIT)
+      .map(({ message, turnDurationMs }) => fromHistoryMessage(message, turnDurationMs))
+
+    messages.value = loaded
+    rawEventLog.value = []
+    await scrollToBottom()
+  } catch (e: any) {
+    if (seq === historyLoadSeq) {
+      ElMessage.error(`加载最近 ${HISTORY_MESSAGE_LIMIT} 条消息失败: ${extractErrorMessage(e)}`)
+    }
+  } finally {
+    if (seq === historyLoadSeq) historyLoading.value = false
+  }
 }
 
 async function send() {
@@ -73,6 +165,8 @@ async function send() {
     ElMessage.warning('请选择 user')
     return
   }
+  historyLoadSeq += 1
+  historyLoading.value = false
 
   // append user bubble
   const userMsg: Message = {
@@ -132,6 +226,7 @@ async function send() {
   } finally {
     asstMsg.done = true
     asstMsg.finishedAt = Date.now()
+    asstMsg.durationMs = asstMsg.finishedAt - asstMsg.startedAt
     sending.value = false
     connected.value = false
     abortCtrl = null
@@ -205,8 +300,35 @@ function applyEvent(ev: ParsedEvent, asst: Message) {
     // attach result to the most recent matching tool call
     const name = payload?.tool || payload?.name
     const tc = [...asst.tools].reverse().find((t) => !name || t.name === name)
-    if (tc) tc.result = payload?.result ?? payload
-    else asst.tools.push({ name: name || 'tool', result: payload })
+    const result = payload?.result ?? payload
+    const content = result?.content ?? result
+    if (tc) {
+      tc.result = result
+      if (isCoworkerDelegationTool(name) && content?.task_id) {
+        tc.taskId = content.task_id
+        tc.progressSubject = content.progress_subject
+        tc.status = content.accepted ? 'accepted' : tc.status
+      }
+    } else {
+      asst.tools.push({
+        name: name || 'tool',
+        result,
+        taskId: isCoworkerDelegationTool(name) ? content?.task_id : undefined,
+        progressSubject: isCoworkerDelegationTool(name) ? content?.progress_subject : undefined,
+        status: isCoworkerDelegationTool(name) && content?.accepted ? 'accepted' : undefined,
+      })
+    }
+  } else if (kind === 'HANDOFF') {
+    const taskId = payload?.task_id
+    if (taskId) {
+      const tc = [...asst.tools].reverse().find((t) => t.taskId === taskId || isCoworkerDelegationTool(t.name))
+      if (tc) {
+        tc.taskId = taskId
+        tc.progressSubject = payload?.progress_subject ?? tc.progressSubject
+        tc.status = tc.status || 'accepted'
+      }
+      void pollLongTaskResult(taskId, asst)
+    }
   } else if (kind === 'ERROR') {
     asst.errored = true
     const msg = (typeof payload === 'object' && (payload.message || payload.error)) || JSON.stringify(payload)
@@ -218,6 +340,65 @@ function applyEvent(ev: ParsedEvent, asst: Message) {
   }
 }
 
+function isCoworkerDelegationTool(name: unknown): boolean {
+  return name === 'delegate_to_coworker' || name === 'submit_long_task'
+}
+
+function isLongTaskTerminal(status: string | null | undefined): boolean {
+  return status === 'succeeded'
+    || status === 'failed'
+    || status === 'cancelled'
+    || status === 'timed_out'
+}
+
+function applyLongTaskDetail(task: LongTaskDetail, asst: Message) {
+  const tc = [...asst.tools].reverse().find((t) => t.taskId === task.task_id)
+  if (tc) {
+    tc.status = task.status
+    tc.result = task.result_text || task.error_message || tc.result
+  }
+  if (!isLongTaskTerminal(task.status)) return
+
+  const id = `long-task-result-${task.task_id}`
+  if (messages.value.some((m) => m.id === id)) return
+
+  const ok = task.status === 'succeeded'
+  const text = ok
+    ? (task.result_text || '长任务已完成。')
+    : `长任务 ${task.status}: ${task.error_message || task.error_code || '未返回详细错误'}`
+  const at = task.completed_at ? tsToMs(task.completed_at) : Date.now()
+  messages.value.push({
+    id,
+    role: ok ? 'assistant' : 'error',
+    text,
+    tools: [],
+    done: true,
+    errored: !ok,
+    startedAt: at,
+    finishedAt: at,
+    durationMs: null,
+  })
+}
+
+async function pollLongTaskResult(taskId: string, asst: Message) {
+  if (longTaskPolls.has(taskId)) return
+  longTaskPolls.add(taskId)
+  try {
+    for (let attempt = 0; attempt < 30 && !destroyed; attempt += 1) {
+      const task = await getLongTask(taskId, { suppressToast: true })
+      applyLongTaskDetail(task, asst)
+      if (isLongTaskTerminal(task.status)) return
+      await new Promise((resolve) => window.setTimeout(resolve, 2000))
+    }
+  } catch (e: any) {
+    const tc = [...asst.tools].reverse().find((t) => t.taskId === taskId)
+    if (tc) tc.status = `poll_error: ${extractErrorMessage(e)}`
+  } finally {
+    longTaskPolls.delete(taskId)
+    await scrollToBottom()
+  }
+}
+
 function cancel() {
   abortCtrl?.abort()
   abortCtrl = null
@@ -225,6 +406,8 @@ function cancel() {
 }
 
 function clearAll() {
+  historyLoadSeq += 1
+  historyLoading.value = false
   if (sending.value) cancel()
   messages.value = []
   rawEventLog.value = []
@@ -236,17 +419,41 @@ async function scrollToBottom() {
 }
 
 watch(messages, scrollToBottom, { deep: true })
-onBeforeUnmount(cancel)
+watch(
+  () => [settings.value.tenant_id, settings.value.user_id],
+  () => {
+    if (sending.value) return
+    void loadRecentHistory()
+  },
+)
+onBeforeUnmount(() => {
+  destroyed = true
+  cancel()
+})
 
 const placeholder = computed(() =>
   sending.value ? 'agent 正在回复…' : 'Shift+Enter 换行 · Enter 发送',
 )
 
-function fmtDuration(m: Message): string {
-  if (!m.finishedAt) return ''
-  const ms = m.finishedAt - m.startedAt
+function fmtDurationMs(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(1)}s`
+}
+
+function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function fmtBubbleMeta(m: Message): string {
+  const duration = m.durationMs ?? (m.finishedAt ? m.finishedAt - m.startedAt : null)
+  if (m.role === 'assistant' && duration !== null && duration > 0) {
+    return `耗时 ${fmtDurationMs(duration)}`
+  }
+  return fmtClock(m.startedAt)
 }
 
 function onKeyDown(e: KeyboardEvent) {
@@ -270,7 +477,16 @@ function onKeyDown(e: KeyboardEvent) {
       </div>
       <div class="actions">
         <el-checkbox v-model="showEvents" size="small">显示原始事件</el-checkbox>
-        <el-button size="small" :icon="Refresh" :disabled="sending" @click="clearAll">清空</el-button>
+        <el-button
+          size="small"
+          :icon="Refresh"
+          :loading="historyLoading"
+          :disabled="sending || !settings.user_id"
+          @click="loadRecentHistory"
+        >
+          刷新历史
+        </el-button>
+        <el-button size="small" :disabled="sending" @click="clearAll">清空</el-button>
       </div>
     </div>
 
@@ -303,7 +519,10 @@ function onKeyDown(e: KeyboardEvent) {
 
     <!-- Conversation pane -->
     <div ref="paneRef" class="conv">
-      <div v-if="messages.length === 0" class="conv-empty">
+      <div v-if="historyLoading && messages.length === 0" class="conv-empty">
+        正在加载最近 20 条消息…
+      </div>
+      <div v-else-if="messages.length === 0" class="conv-empty">
         输入一句话开始对话 ↓
       </div>
       <div v-for="m in messages" :key="m.id" :class="['bubble-wrap', `role-${m.role}`]">
@@ -313,10 +532,15 @@ function onKeyDown(e: KeyboardEvent) {
             ASSISTANT
             <span v-if="m.state && !m.done" class="state-tag">· {{ m.state }}</span>
           </div>
+          <div v-else class="bubble-meta-top">{{ m.role.toUpperCase() }}</div>
 
           <!-- Tool calls (inline cards within assistant bubble) -->
           <div v-for="(t, i) in m.tools" :key="i" class="tool-card">
-            <div class="tool-name">⚙ {{ t.name }}</div>
+            <div class="tool-name">
+              ⚙ {{ t.name }}
+              <span v-if="t.status" class="tool-status">{{ t.status }}</span>
+              <span v-if="t.taskId" class="tool-task-id">{{ t.taskId.slice(0, 8) }}</span>
+            </div>
             <pre v-if="t.args" class="tool-block">args: {{ JSON.stringify(t.args, null, 2) }}</pre>
             <pre v-if="t.result" class="tool-block">result: {{ typeof t.result === 'string' ? t.result : JSON.stringify(t.result, null, 2) }}</pre>
           </div>
@@ -326,7 +550,7 @@ function onKeyDown(e: KeyboardEvent) {
             <span class="dot" /><span class="dot" /><span class="dot" />
           </div>
 
-          <div v-if="m.done" class="bubble-meta-bottom">{{ fmtDuration(m) }}</div>
+          <div v-if="m.done" class="bubble-meta-bottom">{{ fmtBubbleMeta(m) }}</div>
         </div>
       </div>
     </div>
@@ -429,7 +653,8 @@ function onKeyDown(e: KeyboardEvent) {
 .bubble-wrap.role-user { justify-content: flex-end; }
 .bubble-wrap.role-assistant,
 .bubble-wrap.role-system,
-.bubble-wrap.role-error { justify-content: flex-start; }
+.bubble-wrap.role-error,
+.bubble-wrap.role-tool { justify-content: flex-start; }
 
 .bubble {
   max-width: 75%;
@@ -507,10 +732,23 @@ function onKeyDown(e: KeyboardEvent) {
   font-size: 12px;
 }
 .tool-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
   font-family: var(--eid-font-mono);
   color: var(--eid-accent);
   font-weight: 500;
   margin-bottom: 4px;
+}
+.tool-status,
+.tool-task-id {
+  color: var(--eid-text-muted);
+  border: 1px solid var(--eid-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  line-height: 1.4;
 }
 .tool-block {
   margin: 4px 0 0 0;
