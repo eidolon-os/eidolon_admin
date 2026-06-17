@@ -45,6 +45,7 @@ const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents'] as const
 const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
+  if (route.name === 'benchmarks') return 'benchmark'
   if (typeof route.name === 'string' && (CATALOG_KEYS as readonly string[]).includes(route.name)) {
     return route.name
   }
@@ -115,6 +116,15 @@ const staticCommands = computed<CommandItem[]>(() => [
     route: { name: 'agents' },
     scope: 'catalog',
   },
+  {
+    id: 'benchmark-agent',
+    label: 'Agent Benchmark',
+    group: 'Benchmark',
+    hint: 'Realtime benchmark reports and latency thresholds',
+    icon: 'DataAnalysis',
+    route: { name: 'benchmarks', params: { project: 'agent' } },
+    scope: 'benchmark',
+  },
 ])
 
 const serviceCommands = computed<CommandItem[]>(() =>
@@ -140,6 +150,7 @@ const currentTitle = computed(() => {
   if (route.name === 'templates') return 'Catalog / Templates'
   if (route.name === 'users') return 'Catalog / Users'
   if (route.name === 'agents') return 'Catalog / Agents'
+  if (route.name === 'benchmarks') return `Benchmark / ${route.params.project || 'agent'}`
   if (route.params.serviceId) {
     const serviceName = store.findService(route.params.serviceId as string)?.name || route.params.serviceId
     return `${serviceName} / ${route.params.feature}`
@@ -151,6 +162,7 @@ const scopeLabel = computed(() => {
   if (!commandScope.value) return 'All systems'
   if (commandScope.value === 'core') return 'Core'
   if (commandScope.value === 'catalog') return 'Catalog'
+  if (commandScope.value === 'benchmark') return 'Benchmark'
   return store.findService(commandScope.value)?.name || commandScope.value
 })
 
@@ -179,6 +191,7 @@ const groupedCommands = computed(() => {
 const railItems = computed(() => [
   { id: 'core', label: 'Core', code: 'SYS', icon: 'Monitor', active: ['supervisor', 'configs'].includes(activeKey.value) },
   { id: 'catalog', label: 'Catalog', code: 'CAT', icon: 'Files', active: (CATALOG_KEYS as readonly string[]).includes(activeKey.value) },
+  { id: 'benchmark', label: 'Benchmark', code: 'BMK', icon: 'DataAnalysis', active: activeKey.value === 'benchmark' },
   ...navigableServices.value.map((svc) => ({
     id: svc.id,
     label: svc.name,
@@ -218,7 +231,7 @@ function runCommand(item: CommandItem) {
 }
 
 function handleRailClick(id: string) {
-  if (id === 'core' || id === 'catalog') {
+  if (id === 'core' || id === 'catalog' || id === 'benchmark') {
     openCommand(id)
     return
   }
@@ -306,6 +319,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <button :class="{ active: commandScope === null }" @click="openCommand(null)">All</button>
           <button :class="{ active: commandScope === 'core' }" @click="openCommand('core')">Core</button>
           <button :class="{ active: commandScope === 'catalog' }" @click="openCommand('catalog')">Catalog</button>
+          <button :class="{ active: commandScope === 'benchmark' }" @click="openCommand('benchmark')">Benchmark</button>
           <button
             v-for="svc in navigableServices"
             :key="svc.id"

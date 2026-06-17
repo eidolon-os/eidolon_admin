@@ -41,6 +41,15 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/agents/Overview.vue'),
       },
       {
+        path: 'benchmarks',
+        redirect: { name: 'benchmarks', params: { project: 'agent' } },
+      },
+      {
+        path: 'benchmarks/:project',
+        name: 'benchmarks',
+        component: () => import('@/modules/benchmark/Overview.vue'),
+      },
+      {
         path: 'devices',
         name: 'devices',
         redirect: {
