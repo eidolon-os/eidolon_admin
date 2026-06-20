@@ -58,6 +58,11 @@ class ResolvedContext(BaseModel):
     # device_id is present only on the /resolve/device path. /resolve/user
     # paths omit it (the user might be talking via web client, no device).
     device_id: str | None = None
+    # Phase 6: per-device interaction-mode override from the device binding.
+    # Present only on the /resolve/device path when the operator set one; hub
+    # gives it priority over the device's self-declared header. None = no
+    # override.
+    interaction_mode: str | None = None
     voiceprint: VoiceprintResolveSummary = Field(
         default_factory=VoiceprintResolveSummary
     )

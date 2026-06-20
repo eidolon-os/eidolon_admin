@@ -303,6 +303,48 @@ async def test_resolve_device_happy_path(
     assert ctx.memory_mcp_url == "http://127.0.0.1:8030/mcp"
     assert ctx.soul_preview.startswith("metadata:")
     assert ctx.voiceprint.enabled is False
+    # Phase 6: no per-device override set on the binding → None.
+    assert ctx.interaction_mode is None
+
+
+async def test_resolve_device_carries_interaction_mode_override(
+    orchestrator: ResolveOrchestrator,
+) -> None:
+    """Phase 6: a per-device interaction_mode on the binding flows into the
+    resolved context (hub gives it priority over the device header)."""
+    base = datetime.now(timezone.utc).isoformat()
+    await orchestrator._bindings.put(
+        "esp-mode",
+        DeviceBinding(
+            agent_id="ag-1",
+            bound_at=datetime.now(timezone.utc),
+            interaction_mode="full_duplex",
+        ),
+    )
+    await orchestrator._agents.put(
+        "ag-1",
+        AgentMetadata(
+            tenant_id="default", user_id="alice",
+            template_id="caretaker_jiezhi", template_revision=1,
+            display_name="Caretaker for Alice", created_at=base,
+        ),
+    )
+    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
+        _user_record("alice", display_name="Alice")
+    )
+
+    with respx.mock() as rsx:
+        rsx.get(f"{HUB_URL}/api/admin/devices/esp-mode").mock(
+            return_value=httpx.Response(200, json=_hub_device("esp-mode"))
+        )
+        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+            return_value=httpx.Response(200, json=_memory_user("alice"))
+        )
+        rsx.get(
+            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
+        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
+        ctx = await orchestrator.resolve_device("esp-mode")
+    assert ctx.interaction_mode == "full_duplex"
 
 
 async def test_resolve_device_rejects_disabled_user(

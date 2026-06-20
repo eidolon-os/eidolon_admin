@@ -288,9 +288,15 @@ class DeviceOrchestrator:
         binding = DeviceBinding(
             agent_id=body.agent_id,
             bound_at=datetime.now(timezone.utc),
+            interaction_mode=body.interaction_mode,
         )
         await self._bindings.put(device_id, binding)
-        logger.info("device_bound device_id=%s agent_id=%s", device_id, body.agent_id)
+        logger.info(
+            "device_bound device_id=%s agent_id=%s interaction_mode=%s",
+            device_id,
+            body.agent_id,
+            body.interaction_mode,
+        )
         await self._notify_config_refresh(device_id)
         return await self.get_device(device_id)
 

@@ -246,7 +246,32 @@ async def test_bind_happy_path(orchestrator: DeviceOrchestrator) -> None:
     stored = await orchestrator._bindings.get("esp-1")
     assert stored is not None
     assert stored.agent_id == "ag-1"
+    assert stored.interaction_mode is None  # Phase 6: unset by default
     assert refresh.called
+
+
+async def test_bind_persists_interaction_mode_override(
+    orchestrator: DeviceOrchestrator,
+) -> None:
+    """Phase 6: the optional interaction_mode on the bind request is stored on
+    the binding (and surfaced via the device view's embedded binding)."""
+    with respx.mock(base_url=HUB_URL) as rsx:
+        rsx.get("/api/admin/devices/esp-1").mock(
+            return_value=httpx.Response(200, json=_hub_device_record("esp-1"))
+        )
+        rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(200, json=_hub_command_response("esp-1"))
+        )
+        view = await orchestrator.bind_device(
+            "esp-1",
+            BindDeviceRequest(agent_id="ag-1", interaction_mode="half_duplex"),
+        )
+    assert view.binding is not None
+    assert view.binding.interaction_mode == "half_duplex"
+
+    stored = await orchestrator._bindings.get("esp-1")
+    assert stored is not None
+    assert stored.interaction_mode == "half_duplex"
 
 
 async def test_bind_unapproved_device_rejects(

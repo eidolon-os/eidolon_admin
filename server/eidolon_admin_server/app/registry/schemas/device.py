@@ -28,6 +28,12 @@ from pydantic import BaseModel, Field
 
 DeviceKind = Literal["web", "esp32", "mobile", "unknown"]
 
+# Phase 6: per-device interaction-mode override. When set, it takes priority
+# over the device's self-declared X-Device-Interaction-Mode header at hub
+# resolve time (operator override > device self-declaration). None = no
+# override, fall back to the device-declared / defaulted mode.
+InteractionMode = Literal["half_duplex", "full_duplex"]
+
 
 class DeviceBinding(BaseModel):
     """Admin-owned pointer from device to agent.
@@ -39,6 +45,8 @@ class DeviceBinding(BaseModel):
 
     agent_id: str = Field(..., min_length=1)
     bound_at: datetime
+    # Phase 6: optional operator override of the device's interaction mode.
+    interaction_mode: InteractionMode | None = None
 
 
 class DeviceView(BaseModel):
@@ -83,6 +91,9 @@ class BindDeviceRequest(BaseModel):
     """
 
     agent_id: str = Field(..., min_length=1)
+    # Phase 6: optional per-device interaction-mode override (overrides the
+    # device's self-declared header at hub resolve time). Omit to leave unset.
+    interaction_mode: InteractionMode | None = None
 
 
 class UnbindDeviceResponse(BaseModel):

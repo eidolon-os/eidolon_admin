@@ -114,6 +114,7 @@ class ResolveOrchestrator:
         *,
         agent_id: str,
         device_id: str | None,
+        interaction_mode: str | None = None,
     ) -> ResolvedContext:
         """Given an agent_id (and optionally a device_id), assemble the
         runtime context. Raises ResolveError404/ResolveUpstreamDown as
@@ -206,6 +207,7 @@ class ResolveOrchestrator:
             memory_mcp_url=memory_mcp_url,
             soul_preview=soul_preview,
             device_id=device_id,
+            interaction_mode=interaction_mode,
             voiceprint=voiceprint,
         )
 
@@ -251,7 +253,9 @@ class ResolveOrchestrator:
             )
         await self._assert_device_available(device_id)
         return await self._compose_context(
-            agent_id=binding.agent_id, device_id=device_id,
+            agent_id=binding.agent_id,
+            device_id=device_id,
+            interaction_mode=binding.interaction_mode,
         )
 
     async def resolve_user(self, user_id: str) -> ResolvedContext:
