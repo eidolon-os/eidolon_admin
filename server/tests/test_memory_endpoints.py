@@ -124,6 +124,52 @@ async def test_users_list(app, users_yaml):
     assert data["users"][1]["agent_reachable"] is False
 
 
+class _FakeMemorySupervisorClient:
+    async def rebuild_index(self, user_id: str):
+        return {
+            "job_id": f"job-{user_id}",
+            "user_id": user_id,
+            "status": "pending",
+            "created_at": "2026-06-20T00:00:00+00:00",
+            "started_at": None,
+            "finished_at": None,
+            "log_path": "/tmp/job.log",
+            "error": None,
+            "result": None,
+        }
+
+    async def get_rebuild_index_job(self, job_id: str):
+        return {
+            "job_id": job_id,
+            "user_id": "alice",
+            "status": "succeeded",
+            "created_at": "2026-06-20T00:00:00+00:00",
+            "started_at": "2026-06-20T00:00:01+00:00",
+            "finished_at": "2026-06-20T00:00:02+00:00",
+            "log_path": "/tmp/job.log",
+            "error": None,
+            "result": {"returncode": 0},
+        }
+
+    async def list_rebuild_index_jobs(self, user_id: str):
+        return {"jobs": [await self.get_rebuild_index_job(f"job-{user_id}")]}
+
+
+async def test_rebuild_index_routes_proxy_to_memory_supervisor(app):
+    app.state.memory_user_client = _FakeMemorySupervisorClient()
+    async with await _http(app) as ac:
+        created = await ac.post("/api/memory/users/alice/rebuild-index")
+        status = await ac.get("/api/memory/rebuild-index/job-alice")
+        listed = await ac.get("/api/memory/users/alice/rebuild-index")
+
+    assert created.status_code == 202
+    assert created.json()["job_id"] == "job-alice"
+    assert status.status_code == 200
+    assert status.json()["status"] == "succeeded"
+    assert listed.status_code == 200
+    assert listed.json()["jobs"][0]["user_id"] == "alice"
+
+
 # -- memories: search / list --------------------------------------------------
 
 

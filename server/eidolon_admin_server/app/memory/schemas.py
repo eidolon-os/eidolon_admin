@@ -73,6 +73,22 @@ class UserMutateResponse(BaseModel):
     message: str
 
 
+class RebuildIndexJob(BaseModel):
+    job_id: str
+    user_id: str
+    status: str
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    log_path: str = ""
+    error: str | None = None
+    result: dict[str, Any] | None = None
+
+
+class RebuildIndexJobsResponse(BaseModel):
+    jobs: list[RebuildIndexJob] = Field(default_factory=list)
+
+
 # -- Memories -----------------------------------------------------------------
 
 

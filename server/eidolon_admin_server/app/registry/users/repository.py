@@ -88,6 +88,32 @@ class MemoryUserClient(ServiceHTTPClient):
         r = await self._request("POST", "/api/admin/reconcile", timeout=120.0)
         return r.json()
 
+    async def rebuild_index(self, user_id: str) -> dict[str, Any]:
+        """Start an async MemPalace vector-index rebuild for one user."""
+        r = await self._request(
+            "POST",
+            f"/api/admin/users/{user_id}/memory/rebuild-index",
+            ok_statuses=(202,),
+            timeout=30.0,
+        )
+        return r.json()
+
+    async def get_rebuild_index_job(self, job_id: str) -> dict[str, Any]:
+        r = await self._request(
+            "GET",
+            f"/api/admin/memory/rebuild-index/{job_id}",
+            timeout=30.0,
+        )
+        return r.json()
+
+    async def list_rebuild_index_jobs(self, user_id: str) -> dict[str, Any]:
+        r = await self._request(
+            "GET",
+            f"/api/admin/users/{user_id}/memory/rebuild-index",
+            timeout=30.0,
+        )
+        return r.json()
+
 
 def resolve_legacy_users_yaml_path() -> Path:
     raw = os.environ.get("EIDOLON_MEMORY_USERS_YAML", "").strip()

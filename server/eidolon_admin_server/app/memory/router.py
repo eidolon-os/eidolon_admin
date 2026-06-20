@@ -10,6 +10,7 @@ Mounts every sub-router under ``/memory`` so the URL space stays:
     /api/memory/kg/...
     /api/memory/recall
     /api/memory/mcp/tools
+    /api/memory/users/{user_id}/rebuild-index
 
 Each sub-router lives in ``memory/routers/<feature>.py`` and stays small
 (< 80 lines). Pydantic models are centralised in ``schemas.py``.
@@ -23,6 +24,7 @@ from .routers import (
     hierarchy,
     kg,
     lifecycle,
+    maintenance,
     mcp_tools,
     memories,
     recall,
@@ -48,3 +50,4 @@ router.include_router(writes.router)
 
 # User lifecycle (Phase 15).
 router.include_router(lifecycle.router)
+router.include_router(maintenance.router)

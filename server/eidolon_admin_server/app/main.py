@@ -177,6 +177,7 @@ def create_app(
             app.state, "tenant_orchestrator", None
         ) is not None and user_repo is not None:
             user_client = MemoryUserClient(app.state.http_client, memory_admin_url)
+            app.state.memory_user_client = user_client
             user_orch = UserOrchestrator(
                 memory_client=user_client,
                 metadata_repo=user_repo,
@@ -359,6 +360,7 @@ def create_app(
     # check the slot before serving and emit 503 if absent.
     app.state.tenant_orchestrator = None
     app.state.template_orchestrator = None
+    app.state.memory_user_client = None
     app.state.user_orchestrator = None
     app.state.agent_orchestrator = None
     app.state.device_orchestrator = None

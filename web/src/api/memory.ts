@@ -117,6 +117,22 @@ export interface UserMutateResponse {
   message: string
 }
 
+export interface RebuildIndexJob {
+  job_id: string
+  user_id: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  log_path: string
+  error: string | null
+  result: Record<string, any> | null
+}
+
+export interface RebuildIndexJobsResponse {
+  jobs: RebuildIndexJob[]
+}
+
 export async function listMemoryUsers(): Promise<UsersListResponse> {
   const { data } = await client.get<UsersListResponse>('/memory/users')
   return data
@@ -156,6 +172,29 @@ export async function stopMemoryUser(userId: string): Promise<UserMutateResponse
 export async function initMemoryUserPalace(userId: string): Promise<UserMutateResponse> {
   const { data } = await client.post<UserMutateResponse>(
     `/memory/users/${encodeURIComponent(userId)}/init`,
+  )
+  return data
+}
+
+export async function rebuildMemoryUserIndex(userId: string): Promise<RebuildIndexJob> {
+  const { data } = await client.post<RebuildIndexJob>(
+    `/memory/users/${encodeURIComponent(userId)}/rebuild-index`,
+  )
+  return data
+}
+
+export async function getMemoryRebuildIndexJob(jobId: string): Promise<RebuildIndexJob> {
+  const { data } = await client.get<RebuildIndexJob>(
+    `/memory/rebuild-index/${encodeURIComponent(jobId)}`,
+  )
+  return data
+}
+
+export async function listMemoryRebuildIndexJobs(
+  userId: string,
+): Promise<RebuildIndexJobsResponse> {
+  const { data } = await client.get<RebuildIndexJobsResponse>(
+    `/memory/users/${encodeURIComponent(userId)}/rebuild-index`,
   )
   return data
 }

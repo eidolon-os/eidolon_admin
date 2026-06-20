@@ -4,7 +4,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import {
   createMemoryUser,
+  getMemoryRebuildIndexJob,
   initMemoryUserPalace,
+  rebuildMemoryUserIndex,
   removeMemoryUserConsolidator,
   setMemoryUserEnabled,
   startMemoryUser,
@@ -12,13 +14,16 @@ import {
   updateMemoryUserConsolidator,
   type ConsolidatorStatus,
   type ConsolidatorUpdateBody,
+  type RebuildIndexJob,
 } from '@/api/memory'
 import { useMemoryUserStore } from '@/stores/memoryUser'
 import { memoryAgentStatus } from '@/utils/memoryRuntime'
 
 const store = useMemoryUserStore()
 const busy = ref<Record<string, boolean>>({})
+const rebuildJobs = ref<Record<string, RebuildIndexJob>>({})
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+const rebuildTimers = new Map<string, ReturnType<typeof setInterval>>()
 const dialogOpen = ref(false)
 const submitting = ref(false)
 const form = ref({ id: '', port: 8030, enabled: true, palace_path: '' })
@@ -44,6 +49,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (refreshTimer) clearInterval(refreshTimer)
+  for (const timer of rebuildTimers.values()) clearInterval(timer)
+  rebuildTimers.clear()
 })
 
 async function refresh() {
@@ -103,6 +110,78 @@ async function onInit(userId: string) {
     const r = await initMemoryUserPalace(userId)
     ElMessage.success(r.message)
   })
+}
+
+function rebuildRunning(userId: string) {
+  const status = rebuildJobs.value[userId]?.status
+  return status === 'pending' || status === 'running'
+}
+
+function rebuildTagType(job: RebuildIndexJob | undefined) {
+  if (!job) return 'info'
+  if (job.status === 'succeeded') return 'success'
+  if (job.status === 'failed') return 'danger'
+  return 'warning'
+}
+
+function rememberRebuildJob(job: RebuildIndexJob) {
+  rebuildJobs.value = { ...rebuildJobs.value, [job.user_id]: job }
+}
+
+function stopRebuildPolling(userId: string) {
+  const timer = rebuildTimers.get(userId)
+  if (timer) clearInterval(timer)
+  rebuildTimers.delete(userId)
+}
+
+async function pollRebuildJob(userId: string, jobId: string) {
+  try {
+    const job = await getMemoryRebuildIndexJob(jobId)
+    rememberRebuildJob(job)
+    if (job.status === 'succeeded') {
+      stopRebuildPolling(userId)
+      ElMessage.success(`${userId}: index rebuild complete`)
+      await refresh()
+    } else if (job.status === 'failed') {
+      stopRebuildPolling(userId)
+      ElMessage.error(`${userId}: ${job.error || 'index rebuild failed'}`)
+      await refresh()
+    }
+  } catch (e: any) {
+    stopRebuildPolling(userId)
+    ElMessage.error(`${userId}: ${e?.response?.data?.detail || e.message}`)
+  }
+}
+
+function startRebuildPolling(job: RebuildIndexJob) {
+  stopRebuildPolling(job.user_id)
+  void pollRebuildJob(job.user_id, job.job_id)
+  rebuildTimers.set(job.user_id, setInterval(() => {
+    void pollRebuildJob(job.user_id, job.job_id)
+  }, 1_500))
+}
+
+async function onRebuildIndex(userId: string) {
+  try {
+    await ElMessageBox.confirm(
+      `重建 ${userId} 的 memory index？该用户的 agent_runner 会短暂停止，完成后自动恢复。`,
+      '重建 Memory Index',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  lock(userId)
+  try {
+    const job = await rebuildMemoryUserIndex(userId)
+    rememberRebuildJob(job)
+    startRebuildPolling(job)
+    ElMessage.success(`${userId}: index rebuild queued`)
+  } catch (e: any) {
+    ElMessage.error(`${userId}: ${e?.response?.data?.detail || e.message}`)
+  } finally {
+    unlock(userId)
+  }
 }
 
 function openCreate() {
@@ -265,9 +344,16 @@ const usersFile = computed(() => store.users.length ? 'eidolon_admin/var/registr
             type="success" effect="plain" size="small"
             style="margin-left: 4px"
           >✓</el-tag>
+          <el-tag
+            v-if="rebuildJobs[row.user_id]"
+            :type="rebuildTagType(rebuildJobs[row.user_id])"
+            effect="plain"
+            size="small"
+            style="margin-left: 4px"
+          >{{ rebuildJobs[row.user_id].status }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="360" fixed="right">
+      <el-table-column label="操作" width="430" fixed="right">
         <template #default="{ row }">
           <el-button size="small" :loading="busy[row.user_id]" @click="onInit(row.user_id)">init</el-button>
           <el-button
@@ -282,6 +368,14 @@ const usersFile = computed(() => store.users.length ? 'eidolon_admin/var/registr
             :loading="busy[row.user_id]"
             @click="onStop(row.user_id)"
           >stop</el-button>
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            :icon="Refresh"
+            :loading="busy[row.user_id] || rebuildRunning(row.user_id)"
+            @click="onRebuildIndex(row.user_id)"
+          >rebuild</el-button>
           <el-button
             size="small"
             :loading="busy[row.user_id]"
