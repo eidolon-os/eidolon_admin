@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import logging
 
+from .benchmarks import router as benchmarks_router
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
@@ -366,6 +367,7 @@ def create_app(
     )
 
     app.include_router(services_router, prefix="/api")
+    app.include_router(benchmarks_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
     app.include_router(supervisor_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")

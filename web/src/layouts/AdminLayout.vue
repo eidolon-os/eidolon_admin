@@ -118,9 +118,9 @@ const staticCommands = computed<CommandItem[]>(() => [
   },
   {
     id: 'benchmark-agent',
-    label: 'Agent Benchmark',
+    label: 'Benchmark Center',
     group: 'Benchmark',
-    hint: 'Realtime benchmark reports and latency thresholds',
+    hint: 'Cross-project benchmark artifacts and run management',
     icon: 'DataAnalysis',
     route: { name: 'benchmarks', params: { project: 'agent' } },
     scope: 'benchmark',
