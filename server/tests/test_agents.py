@@ -1,16 +1,15 @@
 """Tests for admin's Agents module (Phase 29.F).
 
-Real NATS + per-test bucket + respx-mocked agent project. The
+Temporary SQLite registry + respx-mocked agent project. The
 orchestrator's cross-project compose is exercised against:
 
   - real UserOrchestrator (with respx-mocked memory)
-  - real AgentMetadataRepository (real KV)
+  - real AgentMetadataRepository (SQLite-backed)
   - a fake template_exists_check callable
   - respx-mocked AgentProjectClient
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
@@ -20,14 +19,13 @@ import respx
 from fastapi import FastAPI
 
 from eidolon_sdk.adapters.registry_sqlite import (
+    AgentMetadataRepository as SqliteAgentMetadataRepository,
     RegistrySqliteStore,
     TenantRepository,
     UserRepository,
 )
 from eidolon_sdk.registry.models import UserRegistryRecord
 
-from eidolon_admin_server.app.nats_kv import KVClient
-from eidolon_admin_server.app.registry import buckets as buckets_module
 from eidolon_admin_server.app.registry.agents import (
     AgentMetadataRepository,
     AgentNotFound,
@@ -71,29 +69,6 @@ def _user_record(user_id: str, **updates) -> UserRegistryRecord:
 
 
 # ---- fixtures ---------------------------------------------------------------
-
-
-@pytest.fixture
-async def kv_client() -> AsyncIterator[KVClient]:
-    client = KVClient()
-    try:
-        await client.connect()
-    except Exception:
-        pytest.skip("NATS not reachable at 127.0.0.1:4222")
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
-    suffix = uuid.uuid4().hex[:10]
-    orig = {
-        "agents": buckets_module.AGENTS_METADATA_BUCKET.name,
-    }
-    object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", f"test_a_{suffix}")
-    await kv_client.ensure_bucket(buckets_module.AGENTS_METADATA_BUCKET)
-    yield
-    object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", orig["agents"])
 
 
 @pytest.fixture
@@ -155,8 +130,6 @@ def _persona_instance(instance_id: str = "ag_xxx", user_id: str = "alice") -> di
 
 @pytest.fixture
 async def orchestrator(
-    kv_client: KVClient,
-    buckets_setup: None,
     http_client: httpx.AsyncClient,
     tmp_path,
 ) -> AsyncIterator[AgentOrchestrator]:
@@ -185,7 +158,7 @@ async def orchestrator(
         return template_id in known_templates
 
     agent_client = AgentProjectClient(http_client, AGENT_URL)
-    agent_repo = AgentMetadataRepository(kv_client)
+    agent_repo = AgentMetadataRepository(SqliteAgentMetadataRepository(store))
     orch = AgentOrchestrator(
         agent_client=agent_client,
         metadata_repo=agent_repo,
@@ -196,6 +169,7 @@ async def orchestrator(
     orch._test_known_templates = known_templates  # type: ignore[attr-defined]
     orch._test_user_orch = user_orch  # type: ignore[attr-defined]
     yield orch
+    await store.dispose()
 
 
 # ---- list / get -----------------------------------------------------------
@@ -500,7 +474,7 @@ async def test_list_propagates_real_errors(
 async def test_delete_treats_agent_project_404_as_already_gone(
     orchestrator: AgentOrchestrator,
 ) -> None:
-    """If admin's KV has the agent but agent project says 404 (drift),
+    """If admin's registry has the agent but agent project says 404 (drift),
     DELETE should still clean admin metadata — DELETE is idempotent."""
     base = datetime.now(timezone.utc).isoformat()
     await orchestrator._meta.put(

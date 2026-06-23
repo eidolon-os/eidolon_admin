@@ -12,12 +12,12 @@ this phase:
     sessions for it must hard-reject (412), no fallback.
 
 Layout (4-layer, matches other registry modules):
-    repository.py     HubClient (HTTP→hub) + DeviceBindingRepository (KV)
+    repository.py     HubClient (HTTP→hub) + DeviceBindingRepository (SQLite)
     orchestrator.py   list / bind / unbind / approve / unregister
                       with cascade
     router.py         FastAPI HTTP
 
-Boundary: admin never touches hub's devices.json directly — all goes
+Boundary: admin never touches hub's device store directly — all goes
 through hub's REST surface (extended in 29.B.3 with DELETE).
 """
 from .orchestrator import (

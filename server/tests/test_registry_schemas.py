@@ -9,9 +9,6 @@ pin down:
   2. The few cross-field invariants (knob overlay value bounds, the
      ConsolidatorConfig sane defaults, the immutability declarations
      baked into UpdateXRequest models).
-
-Bucket constants and key helpers get a smoke test too — easy to typo
-and easy to verify.
 """
 from __future__ import annotations
 
@@ -20,13 +17,6 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from eidolon_admin_server.app.registry import (
-    ALL_BUCKETS,
-    DEVICE_BINDINGS_BUCKET,
-    decode_device_binding_key,
-    device_binding_key,
-    legacy_device_binding_key,
-)
 from eidolon_admin_server.app.registry.schemas import (
     AgentRef,
     BindDeviceRequest,
@@ -42,25 +32,6 @@ from eidolon_admin_server.app.registry.schemas import (
     TenantSpec,
     UserSpec,
 )
-
-
-# ---- bucket / key smoke -----------------------------------------------------
-
-
-def test_buckets_have_distinct_names() -> None:
-    """Buckets have distinct names — would silently overwrite otherwise."""
-    names = [b.name for b in ALL_BUCKETS]
-    assert len(names) == len(set(names)), f"duplicate bucket names: {names}"
-    assert DEVICE_BINDINGS_BUCKET.name == "eidolon_admin_device_bindings"
-
-
-def test_key_helpers_use_dot_prefix() -> None:
-    """NATS list_keys(prefix=...) relies on the dot delimiter."""
-    key = device_binding_key("1c:db:d4:7a:ef:0c")
-    assert key.startswith("device.v1.")
-    assert ":" not in key
-    assert decode_device_binding_key(key) == "1c:db:d4:7a:ef:0c"
-    assert legacy_device_binding_key("1c:db:d4:7a:ef:0c") is None
 
 
 # ---- ID validation (shared regex across entities) ---------------------------

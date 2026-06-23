@@ -1,4 +1,4 @@
-"""Map users.yaml + live processes into API models."""
+"""Map registry users + live processes into API models."""
 from __future__ import annotations
 
 import time

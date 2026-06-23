@@ -19,8 +19,10 @@ import pytest
 import respx
 from fastapi import FastAPI
 
-from eidolon_admin_server.app.nats_kv import KVClient
-from eidolon_admin_server.app.registry import buckets as buckets_module
+from eidolon_sdk.adapters.registry_sqlite import (
+    DeviceBindingRepository as SqliteDeviceBindingRepository,
+    RegistrySqliteStore,
+)
 from eidolon_admin_server.app.registry.agents.repository import AgentMetadata
 from eidolon_admin_server.app.registry.devices import (
     DeviceBadRequest,
@@ -82,26 +84,10 @@ def _hub_command_response(device_id: str) -> dict:
 
 
 @pytest.fixture
-async def kv_client() -> AsyncIterator[KVClient]:
-    client = KVClient()
-    try:
-        await client.connect()
-    except Exception:
-        pytest.skip("NATS not reachable at 127.0.0.1:4222")
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
-    suffix = uuid.uuid4().hex[:10]
-    orig = buckets_module.DEVICE_BINDINGS_BUCKET.name
-    object.__setattr__(
-        buckets_module.DEVICE_BINDINGS_BUCKET, "name", f"test_dev_{suffix}"
-    )
-    await kv_client.ensure_bucket(buckets_module.DEVICE_BINDINGS_BUCKET)
-    yield
-    object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", orig)
+async def registry_store(tmp_path) -> AsyncIterator[RegistrySqliteStore]:
+    store = RegistrySqliteStore(tmp_path / "registry.sqlite3")
+    yield store
+    await store.dispose()
 
 
 @pytest.fixture
@@ -112,12 +98,13 @@ async def http_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def orchestrator(
-    kv_client: KVClient,
-    buckets_setup: None,
+    registry_store: RegistrySqliteStore,
     http_client: httpx.AsyncClient,
 ) -> AsyncIterator[DeviceOrchestrator]:
     hub_client = HubDeviceClient(http_client, HUB_URL)
-    binding_repo = DeviceBindingRepository(kv_client)
+    binding_repo = DeviceBindingRepository(
+        SqliteDeviceBindingRepository(registry_store)
+    )
 
     # Stub agent_lookup. Returns AgentMetadata for known ids, None for others.
     known_agents: dict[str, AgentMetadata] = {

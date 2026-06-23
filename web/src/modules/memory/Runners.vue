@@ -89,14 +89,14 @@ function consolidatorTag(c: {
     </div>
 
     <el-alert
-      v-if="data && !data.users_yaml_exists"
+      v-if="data && !data.users_source_exists"
       type="warning"
       :closable="false"
       show-icon
       style="margin-bottom: 16px"
     >
       <template #title>
-        用户注册表不可用：<code>{{ data.users_source || data.users_yaml }}</code>
+        用户注册表不可用：<code>{{ data.users_source }}</code>
         ——
         确认 admin registry DB 和 admin-api 正常
       </template>
@@ -104,7 +104,7 @@ function consolidatorTag(c: {
 
     <el-card>
       <template #header>
-        <span>声明的用户（{{ data?.users_source || data?.users_yaml || '...' }}）</span>
+        <span>声明的用户（{{ data?.users_source || '...' }}）</span>
       </template>
 
       <el-table :data="data?.runners || []" stripe v-loading="loading">

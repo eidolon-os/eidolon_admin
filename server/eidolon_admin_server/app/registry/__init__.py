@@ -19,8 +19,8 @@ Admin DOES own:
 
 Submodules:
     schemas/   Pydantic wire shapes for each entity (admin's REST contract).
-    buckets    NATS KV bucket specs admin owns (agents, device bindings).
-    keys       Key naming conventions for admin's KV (kept private).
+    buckets    Legacy NATS KV bucket specs kept for old import compatibility.
+    keys       Legacy key naming conventions kept for old import compatibility.
 
 The actual routers / orchestrators / repositories per entity arrive in
 later phases (29.C through 29.G). This phase only locks the schemas and

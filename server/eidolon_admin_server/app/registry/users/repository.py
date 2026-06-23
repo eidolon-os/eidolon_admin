@@ -7,8 +7,6 @@ catalog.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
 from eidolon_sdk.http import (
@@ -64,7 +62,7 @@ class MemoryUserClient(ServiceHTTPClient):
         # Create can block on memory's reconcile/palace init path
         # (60s palace init + worker wait). Keep this longer than the
         # normal control-plane timeout so admin doesn't report failure
-        # after memory already wrote users.yaml.
+        # after memory already reconciled the registry.
         r = await self._request(
             "POST",
             "/api/admin/users",
@@ -113,15 +111,3 @@ class MemoryUserClient(ServiceHTTPClient):
             timeout=30.0,
         )
         return r.json()
-
-
-def resolve_legacy_users_yaml_path() -> Path:
-    raw = os.environ.get("EIDOLON_MEMORY_USERS_YAML", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    root = os.environ.get("EIDOLON_ROOT", "").strip()
-    if root:
-        base = Path(root).expanduser()
-    else:
-        base = Path(__file__).resolve().parents[6]
-    return (base / "eidolon_memory" / "config" / "users.yaml").resolve()

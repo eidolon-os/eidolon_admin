@@ -1,4 +1,4 @@
-"""Repository layer for Agents — agent project HTTP + admin's metadata KV.
+"""Repository layer for Agents — agent project HTTP + admin registry metadata.
 
 Two stores composed in one module (same pattern as Users):
 
@@ -7,15 +7,15 @@ Two stores composed in one module (same pattern as Users):
     well before Phase 29). Sub-classes SDK
     :class:`ServiceHTTPClient` for shared transport.
 
-  - :class:`AgentMetadataRepository` — NATS KV adapter over
-    ``AGENTS_METADATA_BUCKET``. Stores the routing info admin needs
+  - :class:`AgentMetadataRepository` — SQLite-backed registry store.
+    Stores the routing info admin needs
     to translate single ``agent_id`` to agent project's composite key
     ``(tenant_id, user_id, instance_id)``, plus the operator-chosen
     ``display_name``.
 
 Why we DON'T just call agent's ``GET /personas/instances`` and scan for
 the matching id: that endpoint returns ALL instances across users,
-which scales linearly. Admin's metadata bucket gives us O(1) lookup
+which scales linearly. Admin's metadata table gives us O(1) lookup
 keyed by agent_id.
 """
 from __future__ import annotations
@@ -24,12 +24,13 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from ...nats_kv import KVClient, from_json_bytes, to_json_bytes
+from eidolon_sdk.adapters.registry_sqlite import (
+    AgentMetadataRepository as SqliteAgentMetadataRepository,
+)
 from eidolon_sdk.http import (
     ServiceHTTPClient,
 )
-from ..buckets import AGENTS_METADATA_BUCKET
-from ..keys import agent_metadata_key
+from eidolon_sdk.registry.models import AgentMetadataRecord
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class AgentProjectClient(ServiceHTTPClient):
         return r.json()
 
 
-# ===== admin's per-agent metadata KV =======================================
+# ===== admin's per-agent metadata registry =================================
 
 
 @dataclass
@@ -178,52 +179,39 @@ class AgentMetadata:
 
 
 class AgentMetadataRepository:
-    """KV-backed store for per-agent admin metadata."""
+    """SQLite-backed store for per-agent admin metadata."""
 
-    def __init__(self, kv: KVClient) -> None:
-        self._kv = kv
+    def __init__(self, repository: SqliteAgentMetadataRepository) -> None:
+        self._repo = repository
 
     async def get(self, agent_id: str) -> AgentMetadata | None:
-        raw = await self._kv.get(
-            AGENTS_METADATA_BUCKET.name, agent_metadata_key(agent_id)
-        )
-        if raw is None:
+        record = await self._repo.get(agent_id)
+        if record is None:
             return None
         try:
-            return AgentMetadata.from_json(from_json_bytes(raw))
+            return _metadata_from_record(record)
         except Exception:
-            logger.exception("agents: malformed KV entry %s", agent_id)
+            logger.exception("agents: malformed registry entry %s", agent_id)
             return None
 
     async def put(self, agent_id: str, meta: AgentMetadata) -> None:
-        await self._kv.put(
-            AGENTS_METADATA_BUCKET.name,
-            agent_metadata_key(agent_id),
-            to_json_bytes(meta.to_json()),
-        )
+        await self._repo.put(_metadata_to_record(agent_id, meta))
 
     async def delete(self, agent_id: str) -> None:
         """Idempotent."""
-        await self._kv.delete(
-            AGENTS_METADATA_BUCKET.name, agent_metadata_key(agent_id)
-        )
+        await self._repo.delete(agent_id)
 
     async def list_all(self) -> dict[str, AgentMetadata]:
-        keys = await self._kv.list_keys(
-            AGENTS_METADATA_BUCKET.name, prefix="agent."
-        )
         out: dict[str, AgentMetadata] = {}
-        for key in keys:
-            raw = await self._kv.get(AGENTS_METADATA_BUCKET.name, key)
-            if raw is None:
-                continue
+        for record in (await self._repo.list_all()).values():
             try:
-                meta = AgentMetadata.from_json(from_json_bytes(raw))
+                meta = _metadata_from_record(record)
             except Exception:
-                logger.exception("agents: malformed KV entry at key %s", key)
+                logger.exception(
+                    "agents: malformed registry entry %s", record.agent_id
+                )
                 continue
-            agent_id = key.removeprefix("agent.")
-            out[agent_id] = meta
+            out[record.agent_id] = meta
         return out
 
     async def list_by_user(self, user_id: str) -> list[tuple[str, AgentMetadata]]:
@@ -231,5 +219,35 @@ class AgentMetadataRepository:
 
         Used by the orchestrator's ``list_agents?user_id=`` filter.
         """
-        all_meta = await self.list_all()
-        return [(aid, m) for aid, m in all_meta.items() if m.user_id == user_id]
+        out: list[tuple[str, AgentMetadata]] = []
+        for agent_id, record in await self._repo.list_by_user(user_id):
+            try:
+                out.append((agent_id, _metadata_from_record(record)))
+            except Exception:
+                logger.exception(
+                    "agents: malformed registry entry %s", agent_id
+                )
+        return out
+
+
+def _metadata_from_record(record: AgentMetadataRecord) -> AgentMetadata:
+    return AgentMetadata(
+        tenant_id=record.tenant_id,
+        user_id=record.user_id,
+        template_id=record.template_id,
+        template_revision=record.template_revision,
+        display_name=record.display_name,
+        created_at=record.created_at,
+    )
+
+
+def _metadata_to_record(agent_id: str, meta: AgentMetadata) -> AgentMetadataRecord:
+    return AgentMetadataRecord(
+        agent_id=agent_id,
+        tenant_id=meta.tenant_id,
+        user_id=meta.user_id,
+        template_id=meta.template_id,
+        template_revision=meta.template_revision,
+        display_name=meta.display_name,
+        created_at=meta.created_at,
+    )

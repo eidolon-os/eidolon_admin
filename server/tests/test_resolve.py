@@ -7,7 +7,6 @@ structured to pin what channel sees.
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import AsyncIterator
@@ -19,14 +18,14 @@ import respx
 from fastapi import FastAPI
 
 from eidolon_sdk.adapters.registry_sqlite import (
+    AgentMetadataRepository as SqliteAgentMetadataRepository,
+    DeviceBindingRepository as SqliteDeviceBindingRepository,
     RegistrySqliteStore,
     TenantRepository,
     UserRepository,
 )
 from eidolon_sdk.registry.models import UserRegistryRecord
 
-from eidolon_admin_server.app.nats_kv import KVClient
-from eidolon_admin_server.app.registry import buckets as buckets_module
 from eidolon_admin_server.app.registry.agents.repository import (
     AgentMetadata,
     AgentMetadataRepository,
@@ -144,35 +143,6 @@ def _wav_bytes() -> bytes:
 
 
 @pytest.fixture
-async def kv_client() -> AsyncIterator[KVClient]:
-    client = KVClient()
-    try:
-        await client.connect()
-    except Exception:
-        pytest.skip("NATS not reachable at 127.0.0.1:4222")
-    yield client
-    await client.close()
-
-
-@pytest.fixture
-async def buckets_setup(kv_client: KVClient) -> AsyncIterator[None]:
-    suffix = uuid.uuid4().hex[:10]
-    orig = {
-        "a": buckets_module.AGENTS_METADATA_BUCKET.name,
-        "d": buckets_module.DEVICE_BINDINGS_BUCKET.name,
-    }
-    object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", f"test_a_{suffix}")
-    object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", f"test_d_{suffix}")
-    for b in (
-        buckets_module.AGENTS_METADATA_BUCKET, buckets_module.DEVICE_BINDINGS_BUCKET,
-    ):
-        await kv_client.ensure_bucket(b)
-    yield
-    object.__setattr__(buckets_module.AGENTS_METADATA_BUCKET, "name", orig["a"])
-    object.__setattr__(buckets_module.DEVICE_BINDINGS_BUCKET, "name", orig["d"])
-
-
-@pytest.fixture
 async def http_client() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient() as c:
         yield c
@@ -180,8 +150,6 @@ async def http_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def orchestrator(
-    kv_client: KVClient,
-    buckets_setup: None,
     http_client: httpx.AsyncClient,
     tmp_path,
 ) -> AsyncIterator[ResolveOrchestrator]:
@@ -200,8 +168,8 @@ async def orchestrator(
     template_orch = TemplateOrchestrator(
         TemplateAgentClient(http_client, AGENT_URL)
     )
-    agent_meta_repo = AgentMetadataRepository(kv_client)
-    binding_repo = DeviceBindingRepository(kv_client)
+    agent_meta_repo = AgentMetadataRepository(SqliteAgentMetadataRepository(store))
+    binding_repo = DeviceBindingRepository(SqliteDeviceBindingRepository(store))
 
     yield ResolveOrchestrator(
         binding_repo=binding_repo,
@@ -211,6 +179,7 @@ async def orchestrator(
         template_orchestrator=template_orch,
         voiceprint_store=VoiceprintStore(tmp_path),
     )
+    await store.dispose()
 
 
 # ---- resolve_device --------------------------------------------------------

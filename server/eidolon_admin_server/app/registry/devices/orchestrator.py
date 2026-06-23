@@ -2,14 +2,14 @@
 
 Three cross-project responsibilities:
 
-  - **list/get**: hub authoritative for device facts, admin's KV for
+  - **list/get**: hub authoritative for device facts, admin's registry DB for
     binding, agent's metadata for the resolved agent label. The
     orchestrator joins all three so the UI sees one composed row.
 
   - **bind**: validate the agent exists in admin's registry BEFORE
     writing the binding (no orphan-pointer bindings).
 
-  - **unbind**: idempotent; deletes admin's KV entry. Hub fact stays —
+  - **unbind**: idempotent; deletes admin's binding row. Hub fact stays —
     a device can be unbound + still approved (it's idle until rebound).
 
   - **approve** / **unregister**: proxies to hub's existing endpoints.
@@ -69,7 +69,7 @@ class DeviceBadRequest(DeviceError):
 
 
 class DeviceAgentMismatch(DeviceError):
-    """Operational inconsistency: KV says device bound to agent X,
+    """Operational inconsistency: registry says device bound to agent X,
     but admin's agent registry has no record of X (drift)."""
 
     status_code = 500

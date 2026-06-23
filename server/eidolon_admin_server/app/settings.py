@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+from eidolon_sdk.registry import resolve_registry_db_path
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -138,10 +139,7 @@ def default_voiceprint_root() -> Path:
 
 def default_registry_db_path() -> Path:
     """Default location for admin-owned shared registry data."""
-    env = os.environ.get("EIDOLON_REGISTRY_DB_PATH", "").strip()
-    if env:
-        return Path(env).expanduser()
-    return Path.home() / "eidolon" / "db" / "registry.sqlite3"
+    return resolve_registry_db_path()
 
 
 def default_3dspeaker_model_dir() -> Path:

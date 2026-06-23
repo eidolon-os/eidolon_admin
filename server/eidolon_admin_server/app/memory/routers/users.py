@@ -76,7 +76,7 @@ async def list_memory_users() -> UsersListResponse:
         *(_build_detail(e, agent_map=agent_map, cons_map=cons_map) for e in entries)
     )
     return UsersListResponse(
-        users_file=str(users_source_path()),
+        users_source=str(users_source_path()),
         users=details,
         default_user_id=entries[0].id if entries else "",
     )

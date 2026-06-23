@@ -12,39 +12,20 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import psutil
-import yaml
+from eidolon_sdk.adapters.registry_sqlite import list_memory_user_records_sync
+from eidolon_sdk.registry import resolve_registry_db_path
 
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"
-_ADMIN_REPO_ROOT = Path(__file__).resolve().parents[4]
-
-
-def _default_users_yaml() -> Path:
-    """``eidolon_memory/config/users.yaml`` under the monorepo root."""
-    root = os.environ.get("EIDOLON_ROOT", "").strip()
-    base = Path(root).expanduser() if root else _ADMIN_REPO_ROOT.parent
-    return (base / "eidolon_memory" / "config" / "users.yaml").resolve()
-
-
-def users_yaml_path() -> Path:
-    raw = os.environ.get("EIDOLON_MEMORY_USERS_YAML", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return _default_users_yaml()
-
 
 def users_source_path() -> Path:
-    raw = os.environ.get("EIDOLON_ADMIN_REGISTRY_DB_PATH", "").strip()
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return (_ADMIN_REPO_ROOT / "var" / "registry.sqlite3").resolve()
+    return resolve_registry_db_path().resolve()
 
 
 def memory_log_dir() -> Path:
@@ -108,89 +89,27 @@ class UserEntry:
         return bool(self.consolidator and self.consolidator.enabled)
 
 
-def parse_user_dict(u: dict[str, Any]) -> UserEntry | None:
-    uid = u.get("id")
-    if not uid:
-        return None
-    return UserEntry(
-        id=str(uid),
-        port=int(u.get("port", 0) or 0),
-        enabled=bool(u.get("enabled", True)),
-        palace_path=str(u.get("palace_path", "") or ""),
-        consolidator=ConsolidatorConfig.from_yaml(u.get("consolidator")),
-    )
-
-
-def user_entry_to_dict(u: UserEntry) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        "id": u.id,
-        "port": u.port,
-        "enabled": u.enabled,
-        "palace_path": u.palace_path,
-    }
-    if u.consolidator is not None:
-        row["consolidator"] = u.consolidator.to_yaml_dict()
-    return row
-
-
-def load_users(path: Path | None = None) -> list[UserEntry]:
-    if path is None:
-        return _load_users_from_registry(users_source_path())
-    target = path or users_yaml_path()
-    if not target.exists():
-        return []
-    data = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
-    out: list[UserEntry] = []
-    for u in data.get("users", []) or []:
-        if not isinstance(u, dict):
-            continue
-        entry = parse_user_dict(u)
-        if entry:
-            out.append(entry)
-    return out
+def load_users() -> list[UserEntry]:
+    return _load_users_from_registry(users_source_path())
 
 
 def _load_users_from_registry(db_path: Path) -> list[UserEntry]:
-    if not db_path.exists():
-        return []
-    try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        with conn:
-            rows = conn.execute(
-                """
-                SELECT user_id, enabled, palace_path, memory_port,
-                       consolidator_enabled, consolidator_interval_hours,
-                       consolidator_window_days, consolidator_min_drawers,
-                       consolidator_min_confidence
-                FROM users
-                ORDER BY user_id
-                """
-            ).fetchall()
-    except sqlite3.Error:
-        return []
     return [
         UserEntry(
-            id=row["user_id"],
-            port=int(row["memory_port"] or 0),
-            enabled=bool(row["enabled"]),
-            palace_path=row["palace_path"] or "",
+            id=record.user_id,
+            port=int(record.memory_port or 0),
+            enabled=record.enabled,
+            palace_path=record.palace_path,
             consolidator=ConsolidatorConfig(
-                enabled=bool(row["consolidator_enabled"]),
-                interval_hours=float(row["consolidator_interval_hours"] or 6.0),
-                window_days=int(row["consolidator_window_days"] or 30),
-                min_drawers=int(row["consolidator_min_drawers"] or 3),
-                min_confidence=float(row["consolidator_min_confidence"] or 0.6),
+                enabled=record.consolidator.enabled,
+                interval_hours=record.consolidator.interval_hours,
+                window_days=record.consolidator.window_days,
+                min_drawers=record.consolidator.min_drawers,
+                min_confidence=record.consolidator.min_confidence,
             ),
         )
-        for row in rows
-        if int(row["memory_port"] or 0) > 0
+        for record in list_memory_user_records_sync(db_path)
     ]
-
-
-def serialize_users(users: list[UserEntry]) -> str:
-    data = {"users": [user_entry_to_dict(u) for u in users]}
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
 def _user_id_from_cmdline(cmd: list[str]) -> str | None:
@@ -332,8 +251,6 @@ async def list_runners() -> dict[str, Any]:
         cons_orphans.append({"user_id": uid, "role": "consolidator", **_proc_meta(proc)})
 
     return {
-        "users_yaml": str(source_path),
-        "users_yaml_exists": source_path.exists(),
         "users_source": str(source_path),
         "users_source_type": "admin_registry",
         "users_source_exists": source_path.exists(),

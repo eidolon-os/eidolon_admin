@@ -55,7 +55,7 @@ class UserDetail(BaseModel):
 
 
 class UsersListResponse(BaseModel):
-    users_file: str
+    users_source: str
     steward_mode: str = ""
     default_user_id: str = ""
     users: list[UserDetail] = Field(default_factory=list)

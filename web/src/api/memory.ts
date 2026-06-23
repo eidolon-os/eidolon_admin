@@ -42,11 +42,9 @@ export interface OrphanInfo {
 }
 
 export interface RunnersResponse {
-  users_yaml: string
-  users_yaml_exists: boolean
-  users_source?: string
+  users_source: string
   users_source_type?: string
-  users_source_exists?: boolean
+  users_source_exists: boolean
   runners: RunnerInfo[]
   orphans: OrphanInfo[]
   consolidator_orphans: OrphanInfo[]
@@ -99,7 +97,7 @@ export interface ConsolidatorUpdateBody {
 }
 
 export interface UsersListResponse {
-  users_file: string
+  users_source: string
   steward_mode: string
   default_user_id: string
   users: MemoryUserDetail[]

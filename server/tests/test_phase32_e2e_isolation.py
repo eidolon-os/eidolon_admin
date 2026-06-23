@@ -181,7 +181,7 @@ async def test_two_users_write_to_isolated_nats_subjects() -> None:
         except Exception as exc:  # noqa: BLE001 — anything that's not a NATS issue
             pytest.skip(
                 f"agent gRPC ChatOnce failed (likely missing user palace): {exc}. "
-                "Ensure both manson and default users exist in memory's users.yaml."
+                "Ensure both manson and default users exist in the admin registry."
             )
 
         assert r1, "manson ChatOnce returned empty text"

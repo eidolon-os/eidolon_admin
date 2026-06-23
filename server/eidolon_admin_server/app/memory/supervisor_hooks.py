@@ -1,8 +1,8 @@
 """SIGHUP memory-supervisor through supervisord's XML-RPC.
 
-memory-supervisor reloads users.yaml on SIGHUP. When admin mutates the yaml
-(create user, toggle enabled), we send the signal so memory-supervisor
-reconciles agent_runner and consolidator subprocesses without an external nudge.
+memory-supervisor reloads admin's registry view on SIGHUP. When admin mutates
+users, we send the signal so memory-supervisor reconciles agent_runner and
+consolidator subprocesses without an external nudge.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ async def sighup_memory_supervisor(client: SupervisorClient) -> dict:
     """Send SIGHUP to memory-supervisor via supervisord's signalProcess.
 
     Returns a small status dict — never raises; the caller treats failure as
-    "supervisor not running yet, user changes still persisted in yaml".
+    "supervisor not running yet, registry changes are still persisted".
     """
     try:
         ok = await client._call(  # noqa: SLF001 — supervisor.signalProcess isn't in our wrapper
@@ -43,9 +43,9 @@ async def wait_for_user_reachable(
     """After SIGHUP, poll the user's MCP endpoint until it answers.
 
     Used by users lifecycle endpoints so the API reflects the reconcile result
-    (not just "yaml saved, eventually").
+    (not just "registry saved, eventually").
     """
-    # Lazy import to avoid mcp_client → users_yaml → supervisor_hooks cycle.
+    # Lazy import to avoid mcp_client → supervisor_hooks import cycles.
     from .mcp_client import probe_reachable
 
     deadline = asyncio.get_running_loop().time() + timeout_seconds

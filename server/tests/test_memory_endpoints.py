@@ -7,7 +7,6 @@ argument shaping + response un-wrapping which is what we actually want to test.
 from __future__ import annotations
 
 import sqlite3
-import textwrap
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -22,23 +21,6 @@ from eidolon_admin_server.app.settings import (
 
 
 pytestmark = pytest.mark.asyncio
-
-
-@pytest.fixture
-def users_yaml(tmp_path):
-    p = tmp_path / "users.yaml"
-    p.write_text(textwrap.dedent("""\
-        users:
-          - id: alice
-            port: 8030
-            enabled: true
-            palace_path: ''
-          - id: bob
-            port: 8031
-            enabled: false
-            palace_path: ''
-    """))
-    return p
 
 
 @pytest.fixture
@@ -77,9 +59,8 @@ def registry_db(tmp_path):
 
 
 @pytest.fixture
-def app(tmp_path, users_yaml, registry_db, monkeypatch):
-    monkeypatch.setenv("EIDOLON_MEMORY_USERS_YAML", str(users_yaml))
-    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+def app(tmp_path, registry_db, monkeypatch):
+    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
     settings = Settings(
         services_file=tmp_path / "svc.yaml",
         supervisor_socket=tmp_path / "missing.sock",
@@ -100,7 +81,7 @@ async def _http(app):
 # -- users --------------------------------------------------------------------
 
 
-async def test_users_list(app, users_yaml):
+async def test_users_list(app):
     with patch(
         "eidolon_admin_server.app.memory.routers.users.probe_reachable",
         new=AsyncMock(return_value=True),
@@ -113,7 +94,7 @@ async def test_users_list(app, users_yaml):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["users_file"].endswith("registry.sqlite3")
+    assert data["users_source"].endswith("registry.sqlite3")
     assert [u["user_id"] for u in data["users"]] == ["alice", "bob"]
     alice = data["users"][0]
     assert alice["enabled"] is True

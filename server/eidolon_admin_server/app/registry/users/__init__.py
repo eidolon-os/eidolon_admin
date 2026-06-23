@@ -30,15 +30,11 @@ from .orchestrator import (
     UserNotFound,
     UserOrchestrator,
 )
-from .repository import (
-    MemoryUserClient,
-    resolve_legacy_users_yaml_path,
-)
+from .repository import MemoryUserClient
 from .router import router
 
 __all__ = [
     "MemoryUserClient",
-    "resolve_legacy_users_yaml_path",
     "TenantNotFoundForUser",
     "UserAlreadyExists",
     "UserError",

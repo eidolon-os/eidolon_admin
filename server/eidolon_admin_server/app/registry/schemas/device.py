@@ -6,7 +6,7 @@ Two halves:
       issues approve/unregister/pairing-code through hub.
     - Device↔Agent binding (which agent runs on this device): an
       editorial decision the operator makes in admin UI, so admin
-      stores it in its own NATS KV bucket ``eidolon_admin_device_bindings``.
+      stores it in the shared registry SQLite DB.
 
 The binding is intentionally **separate from hub**:
     - hub has no agent concept; it knows about devices and pair codes.
@@ -38,7 +38,7 @@ InteractionMode = Literal["half_duplex", "full_duplex"]
 class DeviceBinding(BaseModel):
     """Admin-owned pointer from device to agent.
 
-    Stored at key ``device.<device_id>`` in the device_bindings bucket.
+    Stored as one row in the ``device_bindings`` registry table.
     A device with no binding row is "approved but not configured" —
     voice/chat sessions for it must return HTTP 412 until bound.
     """
@@ -55,7 +55,7 @@ class DeviceView(BaseModel):
     Sources:
         - device fact (id, kind, name, approved, last_seen, status):
           hub /api/admin/devices
-        - binding (agent_id + bound_at): admin's NATS KV (None if not
+        - binding (agent_id + bound_at): admin registry DB (None if not
           bound yet)
         - resolved_user_id / resolved_template_id (optional):
           orchestrator joins binding → agent → user. UI shows these

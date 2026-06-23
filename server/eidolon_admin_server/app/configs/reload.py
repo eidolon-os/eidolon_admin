@@ -2,8 +2,8 @@
 
 Reload modes (declared on each config in services.yaml):
 
-  sighup_program  — SIGHUP a single program (e.g. memory-supervisor reloads
-                    users.yaml on SIGHUP)
+  sighup_program  — SIGHUP a single program (e.g. memory-supervisor reconciles
+                    admin registry on SIGHUP)
   restart_program — supervisor stop + start one program
   restart_group   — supervisor stop + start a whole group (atomic for sets)
   none            — caller has to act (e.g. admin's own services.yaml needs

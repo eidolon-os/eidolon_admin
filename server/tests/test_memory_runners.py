@@ -1,7 +1,6 @@
 """Tests for the /api/memory/runners endpoint."""
 from __future__ import annotations
 
-import textwrap
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -19,26 +18,6 @@ from eidolon_admin_server.app.settings import (
 
 
 pytestmark = pytest.mark.asyncio
-
-
-def _write_users(tmp_path: Path) -> Path:
-    p = tmp_path / "users.yaml"
-    p.write_text(textwrap.dedent("""\
-        users:
-          - id: alice
-            port: 8030
-            enabled: true
-            palace_path: ''
-          - id: bob
-            port: 8031
-            enabled: true
-            palace_path: ''
-          - id: disabled-carol
-            port: 8032
-            enabled: false
-            palace_path: ''
-    """))
-    return p
 
 
 def _write_registry(tmp_path: Path, *, missing: bool = False) -> Path:
@@ -81,15 +60,7 @@ def _write_registry(tmp_path: Path, *, missing: bool = False) -> Path:
     return db_path
 
 
-def test_load_users(tmp_path):
-    p = _write_users(tmp_path)
-    users = runners_mod.load_users(p)
-    assert [u.id for u in users] == ["alice", "bob", "disabled-carol"]
-    assert users[0].port == 8030
-    assert users[2].enabled is False
-
-
-def test_user_id_from_cmdline_supports_both_forms():
+async def test_user_id_from_cmdline_supports_both_forms():
     f = runners_mod._user_id_from_cmdline
     assert f(["x", "--user-id", "alice", "--port", "8030"]) == "alice"
     assert f(["x", "--user-id=bob"]) == "bob"
@@ -100,7 +71,7 @@ async def _http(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
 
 
-def _app(tmp_path, users_yaml: Path):
+def _app(tmp_path, registry_db: Path):
     settings = Settings(
         services_file=tmp_path / "svc.yaml",
         supervisor_socket=tmp_path / "missing.sock",
@@ -118,7 +89,7 @@ def _app(tmp_path, users_yaml: Path):
 
 async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
     registry_db = _write_registry(tmp_path)
-    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
     app = _app(tmp_path, registry_db)
 
     with (
@@ -130,7 +101,8 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["users_yaml_exists"] is True
+    assert data["users_source_exists"] is True
+    assert data["users_source"].endswith("registry.sqlite3")
     ids = [r["user_id"] for r in data["runners"]]
     assert ids == ["alice", "bob", "disabled-carol"]
     # None of them are running.
@@ -145,7 +117,7 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
 
 async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
     registry_db = _write_registry(tmp_path)
-    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
     app = _app(tmp_path, registry_db)
 
     class FakeProc:
@@ -176,7 +148,7 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
             return 1.5
 
     fake_proc = FakeProc(pid=99001, create_time=0.0)
-    # Map includes one orphan user not in users.yaml.
+    # Map includes one orphan user not in the registry.
     fake_map = {"alice": fake_proc, "ghost": FakeProc(pid=99002, create_time=0.0)}
 
     with (
@@ -193,9 +165,9 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
     assert [o["user_id"] for o in data["orphans"]] == ["ghost"]
 
 
-async def test_endpoint_when_users_yaml_missing(tmp_path, monkeypatch):
+async def test_endpoint_when_registry_missing(tmp_path, monkeypatch):
     registry_db = _write_registry(tmp_path, missing=True)
-    monkeypatch.setenv("EIDOLON_ADMIN_REGISTRY_DB_PATH", str(registry_db))
+    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
     app = _app(tmp_path, registry_db)
 
     with (
@@ -207,23 +179,5 @@ async def test_endpoint_when_users_yaml_missing(tmp_path, monkeypatch):
 
     data = resp.json()
     assert resp.status_code == 200
-    assert data["users_yaml_exists"] is False
+    assert data["users_source_exists"] is False
     assert data["runners"] == []
-
-
-def test_load_users_parses_consolidator(tmp_path):
-    p = tmp_path / "users.yaml"
-    p.write_text(textwrap.dedent("""\
-        users:
-          - id: alice
-            port: 8030
-            enabled: true
-            consolidator:
-              enabled: true
-          - id: bob
-            port: 8031
-            enabled: true
-    """))
-    users = runners_mod.load_users(p)
-    assert users[0].consolidator_enabled() is True
-    assert users[1].consolidator is None

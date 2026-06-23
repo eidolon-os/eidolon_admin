@@ -32,7 +32,6 @@ from .gateway.router import router as gateway_router
 from .memory.nats_publisher import JetStreamPublisher
 from .memory.router import router as memory_router
 from .nats_kv import KVClient
-from .registry import ALL_BUCKETS as REGISTRY_BUCKETS
 from .registry.agents import (
     AgentMetadataRepository,
     AgentOrchestrator,
@@ -60,7 +59,6 @@ from .registry.tenants import (
 from .registry.users import (
     MemoryUserClient,
     UserOrchestrator,
-    resolve_legacy_users_yaml_path,
     router as users_router,
 )
 from .registry.voiceprints import (
@@ -88,45 +86,51 @@ def create_app(
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI):
-        # Bring up NATS — required by registry modules that still have a
-        # KV-backed store (Agents metadata, Device bindings). Tenants and
-        # user metadata are local SQLite. NATS being down must NOT block admin
-        # startup: each module's router checks its orchestrator slot
-        # for None and emits a clean 503 individually.
+        # Bring up NATS for the modules that still need the message bus.
+        # Control-plane registry data lives in SQLite, so NATS being down
+        # must not block tenants/users/agents/devices/resolve startup.
         #
-        # ``max_attempts=5`` is the Phase 30.B application-layer
-        # complement to the supervisord wait-tcp gate. The gate handles
-        # cold start; this retry tolerates ``sv restart admin:admin-api``
-        # catching NATS itself in a restart window. ~15s worst case
-        # (0.5/1/2/4/8 backoff).
+        # ``max_attempts=5`` tolerates ``sv restart admin:admin-api`` catching
+        # NATS itself in a restart window. ~15s worst case (0.5/1/2/4/8
+        # backoff), after which registry routes can still start from SQLite.
         try:
             await app.state.nats_kv.connect(max_attempts=5)
         except ConnectionError as exc:
             logger.warning(
-                "NATS unavailable (%s); NATS-backed registry routes will return 503. "
+                "NATS unavailable (%s); bus-backed routes will return 503. "
                 "Start the full stack with ./deploy/dev/run_all.sh start.",
                 exc,
             )
 
         tenant_repo = None
         user_repo = None
+        registry_store = None
+        ag_repo = None
+        binding_repo = None
+        hub_client = None
 
-        # Tenants/users are admin-owned control-plane data and live in the
-        # local registry DB. Seed the default tenant regardless of NATS state
-        # so user CRUD can still validate tenant ownership when the bus is down.
+        # Control-plane registry data lives in the shared SQLite DB. Seed the
+        # default tenant regardless of NATS state so user CRUD can still
+        # validate tenant ownership when the bus is down.
         try:
             from eidolon_sdk.adapters.registry_sqlite import (
+                AgentMetadataRepository as SqliteAgentMetadataRepository,
+                DeviceBindingRepository as SqliteDeviceBindingRepository,
                 RegistrySqliteStore,
                 TenantRepository,
                 UserRepository,
             )
 
-            registry_store = RegistrySqliteStore(
-                settings.registry_db_path,
-                legacy_users_yaml_path=resolve_legacy_users_yaml_path(),
-            )
+            registry_store = RegistrySqliteStore(settings.registry_db_path)
+            app.state.registry_store = registry_store
             tenant_repo = TenantRepository(registry_store)
             user_repo = UserRepository(registry_store)
+            ag_repo = AgentMetadataRepository(
+                SqliteAgentMetadataRepository(registry_store)
+            )
+            binding_repo = DeviceBindingRepository(
+                SqliteDeviceBindingRepository(registry_store)
+            )
             tenant_orch = TenantOrchestrator(tenant_repo)
             app.state.tenant_orchestrator = tenant_orch
             created = await seed_default_tenant(tenant_orch)
@@ -138,19 +142,6 @@ def create_app(
             logger.exception(
                 "tenant registry init failed; /api/tenants will return 503 "
                 "until the local registry DB is available",
-            )
-
-        # Phase 29 registry: ensure remaining admin-owned NATS buckets.
-        # Same fault tolerance — if NATS is down, leave the NATS-backed
-        # orchestrators None and routes 503.
-        try:
-            if app.state.nats_kv.is_connected:
-                for spec in REGISTRY_BUCKETS:
-                    await app.state.nats_kv.ensure_bucket(spec)
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "NATS registry bucket init failed; NATS-backed registry routes "
-                "will return 503 until NATS / buckets recover",
             )
 
         # Templates module — purely an HTTP proxy to agent. Doesn't need
@@ -198,7 +189,7 @@ def create_app(
             )
 
         # Agents module — bridges agent project (persona instances) and
-        # admin's own KV (single agent_id → composite key resolver).
+        # admin's registry metadata (single agent_id → composite key resolver).
         # Needs both agent service URL AND a working UserOrchestrator
         # (because every create validates the owning user).
         agent_url_for_agents = _resolve_service_base_url(cfg, "agent")
@@ -206,14 +197,13 @@ def create_app(
         user_orch_ready = getattr(app.state, "user_orchestrator", None)
         if (
             agent_url_for_agents
-            and app.state.nats_kv.is_connected
             and template_orch is not None
             and user_orch_ready is not None
+            and ag_repo is not None
         ):
             ag_client = AgentProjectClient(
                 app.state.http_client, agent_url_for_agents
             )
-            ag_repo = AgentMetadataRepository(app.state.nats_kv)
 
             # Template-existence checker: an async callable that returns
             # True iff a template by this id exists in agent. We wrap
@@ -257,24 +247,21 @@ def create_app(
             )
         else:
             logger.warning(
-                "agent orchestrator NOT initialized — agent url / NATS / "
+                "agent orchestrator NOT initialized — agent url / registry / "
                 "user orchestrator missing"
             )
 
         # Devices module — Phase 29.G replacement for the old device-
-        # creates-agent flow. Hub HTTP for the device fact, admin's KV
+        # creates-agent flow. Hub HTTP for the device fact, admin's registry
         # for the device→agent binding pointer.
         hub_url = _resolve_service_base_url(cfg, "hub")
-        ag_repo_for_devices = (
-            ag_repo if 'ag_repo' in dir() else None
-        )
+        ag_repo_for_devices = ag_repo
         if (
             hub_url
-            and app.state.nats_kv.is_connected
             and ag_repo_for_devices is not None
+            and binding_repo is not None
         ):
             hub_client = HubDeviceClient(app.state.http_client, hub_url)
-            binding_repo = DeviceBindingRepository(app.state.nats_kv)
             device_orch = DeviceOrchestrator(
                 hub_client=hub_client,
                 binding_repo=binding_repo,
@@ -290,7 +277,7 @@ def create_app(
             logger.info("device orchestrator ready (hub=%s)", hub_url)
         else:
             logger.warning(
-                "device orchestrator NOT initialized — hub url / NATS / "
+                "device orchestrator NOT initialized — hub url / registry / "
                 "agent orchestrator missing"
             )
 
@@ -326,6 +313,8 @@ def create_app(
                 await app.state.memory_publisher.aclose()
             if app.state.nats_kv is not None:
                 await app.state.nats_kv.close()
+            if app.state.registry_store is not None:
+                await app.state.registry_store.dispose()
 
     app = FastAPI(
         title="Eidolon Admin Gateway",
@@ -352,9 +341,9 @@ def create_app(
     # boots even when NATS is down. None is allowed for tests that don't
     # exercise memory write endpoints.
     app.state.memory_publisher = JetStreamPublisher()
-    # NATS KV client for device-binding storage. ensure_bucket happens in
-    # lifespan (NOT here) so test-time app creation doesn't touch NATS.
+    # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
+    app.state.registry_store = None
     # Each entity module (Tenants/Templates/Users/Agents/Devices) +
     # the Resolve aggregator gets its own orchestrator slot. Routers
     # check the slot before serving and emit 503 if absent.

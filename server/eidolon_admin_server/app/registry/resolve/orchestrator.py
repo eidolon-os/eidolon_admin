@@ -2,8 +2,8 @@
 
 Sources consulted on each call:
 
-  - admin's DeviceBindingRepository (KV) — device → agent_id
-  - admin's AgentMetadataRepository (KV) — agent → (user, template, ...)
+  - admin's DeviceBindingRepository (SQLite) — device → agent_id
+  - admin's AgentMetadataRepository (SQLite) — agent → (user, template, ...)
   - admin's UserOrchestrator → memory's GET /api/admin/users/{id}
     → memory MCP URL
   - admin's TemplateOrchestrator → agent's GET /api/admin/personas/templates/{id}/raw
@@ -42,7 +42,7 @@ class ResolveError(Exception):
 
 
 class ResolveDeviceNotBound(ResolveError):
-    """Device exists in hub but has no binding row in admin's KV.
+    """Device exists in hub but has no binding row in admin's registry DB.
     Returns 412 — caller must POST to /api/devices/{id}/bind first."""
 
     status_code = 412
