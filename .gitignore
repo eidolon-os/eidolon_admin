@@ -43,6 +43,9 @@ config/services.local.yaml
 plans/
 *.local.md
 
+# Local trash from safe-delete flows
+**/.trash/
+
 # Editor-generated
 *.tmp
 *.bak
