@@ -12,7 +12,7 @@ from fastapi import HTTPException
 
 from . import registry
 from .schemas import BenchmarkArtifact, BenchmarkRunDetail, BenchmarkRunSummary, BenchmarkStatus
-from .trash import TrashError, move_to_trash
+from .trash import TrashError, move_file_group_to_trash, move_to_trash
 
 KNOWN_EMPTY_SUITES: dict[str, tuple[tuple[str, str], ...]] = {
     "admin": (("smoke", "Smoke"),),
@@ -28,6 +28,7 @@ class RunRecord:
     cases: list[dict[str, Any]] = field(default_factory=list)
     markdown: str | None = None
     source_path: Path | None = None
+    source_paths: list[Path] = field(default_factory=list)
     root: Path | None = None
 
 
@@ -58,12 +59,22 @@ def delete_run(project: str, suite: str, run_id: str) -> Path:
     record = _find_record(project, suite, run_id)
     if record is None:
         raise HTTPException(status_code=404, detail="benchmark run not found")
-    if not record.summary.deletable or record.source_path is None or record.root is None:
+    if not record.summary.deletable or (
+        record.source_path is None and not record.source_paths
+    ) or record.root is None:
         raise HTTPException(
             status_code=409,
             detail=record.summary.delete_hint or "benchmark run is not deletable",
         )
     try:
+        if record.source_paths:
+            return move_file_group_to_trash(
+                sources=record.source_paths,
+                root=record.root,
+                project=project,
+                suite=suite,
+                run_id=run_id,
+            )
         return move_to_trash(
             source=record.source_path,
             root=record.root,
@@ -150,8 +161,8 @@ def _agent_project_records() -> list[RunRecord]:
                     suite_label=label,
                     path=item,
                     root=root,
-                    deletable=False,
-                    delete_hint="single-file agent benchmark reports are read-only in v1",
+                    deletable=True,
+                    delete_hint=None,
                 )
                 if record:
                     records.append(record)
@@ -173,8 +184,8 @@ def _agent_debug_records() -> list[RunRecord]:
                 suite_label=_title(suite),
                 path=path,
                 root=root,
-                deletable=False,
-                delete_hint="agent debug reports are single-file artifacts and read-only in v1",
+                deletable=True,
+                delete_hint=None,
             )
             if record:
                 records.append(record)
@@ -332,6 +343,7 @@ def _json_file_record(
         cases=cases,
         markdown=_read_text(path.with_suffix(".md")),
         source_path=path if deletable else None,
+        source_paths=_sidecar_paths(path) if deletable else [],
         root=root if deletable else None,
     )
 
@@ -462,12 +474,16 @@ def _artifacts(path: Path) -> list[BenchmarkArtifact]:
 
 
 def _sidecar_artifacts(path: Path) -> list[BenchmarkArtifact]:
-    artifacts = [_artifact(path)]
+    return [_artifact(sidecar) for sidecar in _sidecar_paths(path)]
+
+
+def _sidecar_paths(path: Path) -> list[Path]:
+    paths = [path]
     for suffix in (".md", ".html", ".log"):
         sidecar = path.with_suffix(suffix)
         if sidecar.exists():
-            artifacts.append(_artifact(sidecar))
-    return artifacts
+            paths.append(sidecar)
+    return paths
 
 
 def _artifact(path: Path, kind: str | None = None) -> BenchmarkArtifact:

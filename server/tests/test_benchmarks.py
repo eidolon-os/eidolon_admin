@@ -85,6 +85,27 @@ def _write_agent_report(root: Path) -> Path:
     return path
 
 
+def _write_agent_project_file_run(root: Path) -> Path:
+    suite_dir = root / "live-memory-e2e"
+    suite_dir.mkdir(parents=True)
+    path = suite_dir / "manson.json"
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-05T10:03:11+00:00",
+                "mode": "live_service",
+                "passed": False,
+                "summary": {"scenario_count": 11, "passed": 5, "failed": 6},
+                "metrics": {"turn_count": 24},
+                "scenarios": [{"scenario_id": "s1", "passed": False}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (suite_dir / "manson.md").write_text("# Replay Report\n", encoding="utf-8")
+    return path
+
+
 def _write_memory_report(root: Path) -> Path:
     report_dir = root / "memory_perf_20260623_120000"
     report_dir.mkdir(parents=True)
@@ -133,6 +154,7 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     roots = _isolate_benchmark_roots(monkeypatch, tmp_path)
     _write_channel_run(roots["channel_runs"])
     _write_agent_report(roots["agent_reports"])
+    _write_agent_project_file_run(roots["agent_runs"])
     _write_memory_report(roots["memory_reports"])
 
     client = TestClient(app)
@@ -143,9 +165,11 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     by_key = {(run["project"], run["suite"], run["run_id"]): run for run in runs}
     assert ("channel", "voice", "run-a") in by_key
     assert ("agent", "realtime", "latest.json") in by_key
+    assert ("agent", "live-memory-e2e", "manson.json") in by_key
     assert ("memory", "memory_perf", "memory_perf_20260623_120000") in by_key
     assert by_key[("channel", "voice", "run-a")]["deletable"] is True
-    assert by_key[("agent", "realtime", "latest.json")]["deletable"] is False
+    assert by_key[("agent", "live-memory-e2e", "manson.json")]["deletable"] is True
+    assert by_key[("agent", "realtime", "latest.json")]["deletable"] is True
 
     detail_resp = client.get("/api/benchmarks/runs/channel/voice/run-a")
 
@@ -175,15 +199,38 @@ def test_delete_benchmark_run_moves_directory_to_trash(app, tmp_path, monkeypatc
     assert list_resp.json()["runs"] == []
 
 
-def test_delete_rejects_single_file_agent_report(app, tmp_path, monkeypatch):
+def test_delete_agent_project_file_run_moves_sidecars_to_trash(app, tmp_path, monkeypatch):
     roots = _isolate_benchmark_roots(monkeypatch, tmp_path)
-    _write_agent_report(roots["agent_reports"])
+    report = _write_agent_project_file_run(roots["agent_runs"])
+    markdown = report.with_suffix(".md")
+
+    client = TestClient(app)
+    resp = client.delete("/api/benchmarks/runs/agent/live-memory-e2e/manson.json")
+
+    assert resp.status_code == 200
+    trashed = Path(resp.json()["trashed_path"])
+    assert not report.exists()
+    assert not markdown.exists()
+    assert (trashed / "manson.json").exists()
+    assert (trashed / "manson.md").exists()
+    assert trashed.parent == roots["agent_runs"] / ".trash" / "agent" / "live-memory-e2e"
+
+
+def test_delete_agent_debug_report_moves_sidecars_to_trash(app, tmp_path, monkeypatch):
+    roots = _isolate_benchmark_roots(monkeypatch, tmp_path)
+    report = _write_agent_report(roots["agent_reports"])
+    markdown = report.with_suffix(".md")
 
     client = TestClient(app)
     resp = client.delete("/api/benchmarks/runs/agent/realtime/latest.json")
 
-    assert resp.status_code == 409
-    assert "single-file" in resp.json()["detail"]
+    assert resp.status_code == 200
+    trashed = Path(resp.json()["trashed_path"])
+    assert not report.exists()
+    assert not markdown.exists()
+    assert (trashed / "latest.json").exists()
+    assert (trashed / "latest.md").exists()
+    assert trashed.parent == roots["agent_reports"] / ".trash" / "agent" / "realtime"
 
 
 def test_benchmark_rejects_unsafe_run_id(app, tmp_path, monkeypatch):
