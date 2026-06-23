@@ -10,6 +10,7 @@ import {
   unbindDevice,
   unregisterDevice,
   wakeDevice,
+  type DeviceListResponse,
   type DeviceView,
 } from '@/api/devices'
 import { listAgents, type AgentRef } from '@/api/agents'
@@ -40,6 +41,13 @@ const filteredDevices = computed(() => {
 
 const pendingCount = computed(() => devices.value.filter((d) => !d.approved).length)
 const unboundCount = computed(() => devices.value.filter((d) => d.approved && !d.binding).length)
+const lastDiscovery = ref<DeviceListResponse['discovery'] | null>(null)
+const discoveryBadge = computed(() => {
+  if (!hubAvailable.value) return { label: 'Hub unreachable', type: 'danger' as const }
+  if (!lastDiscovery.value) return { label: 'Discovery unknown', type: 'info' as const }
+  if (lastDiscovery.value.registered) return { label: 'mDNS broadcasting', type: 'success' as const }
+  return { label: 'mDNS stopped', type: 'warning' as const }
+})
 
 async function refresh() {
   loading.value = true
@@ -47,6 +55,7 @@ async function refresh() {
     const [d, a] = await Promise.all([listDevices(), listAgents()])
     devices.value = d.devices
     hubAvailable.value = d.hub_available
+    lastDiscovery.value = d.discovery
     agents.value = a.agents
   } catch (e: any) {
     ElMessage.error(`加载失败: ${extractErrorMessage(e)}`)
@@ -235,6 +244,21 @@ async function onUnregister(d: DeviceView) {
       </div>
     </div>
 
+    <div class="discovery-row">
+      <el-tag size="small" :type="discoveryBadge.type" effect="dark">
+        {{ discoveryBadge.label }}
+      </el-tag>
+      <span v-if="lastDiscovery?.config_url" class="mono">
+        {{ lastDiscovery.config_url }}
+      </span>
+      <span v-if="lastDiscovery?.ip" class="muted">
+        {{ lastDiscovery.service_name }} · {{ lastDiscovery.ip }}:{{ lastDiscovery.port }}
+      </span>
+      <span v-if="lastDiscovery?.last_error" class="warn">
+        {{ lastDiscovery.last_error }}
+      </span>
+    </div>
+
     <el-table :data="filteredDevices" v-loading="loading && devices.length === 0" size="small" stripe>
       <el-table-column label="Device ID" min-width="180">
         <template #default="{ row }"><code class="mono">{{ row.device_id }}</code></template>
@@ -314,7 +338,7 @@ async function onUnregister(d: DeviceView) {
     </el-table>
 
     <div v-if="!loading && filteredDevices.length === 0" class="empty">
-      暂无设备
+      {{ lastDiscovery?.registered ? '等待设备请求配置' : '等待 Hub mDNS 广播恢复' }}
     </div>
 
     <el-drawer
@@ -354,6 +378,7 @@ async function onUnregister(d: DeviceView) {
 .subtitle { font-size: 12px; color: var(--eid-text-muted); margin-top: 4px; }
 .warn { color: var(--eid-warning); margin-left: 8px; }
 .actions { display: flex; gap: 12px; align-items: center; }
+.discovery-row { display: flex; gap: 10px; align-items: center; min-height: 30px; margin: -4px 0 12px; flex-wrap: wrap; }
 .mono { font-family: var(--eid-font-mono); font-size: 12px; padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
 .muted { color: var(--eid-text-muted); font-size: 12px; }
 .empty { padding: 32px; text-align: center; color: var(--eid-text-muted); font-size: 12px; background: var(--eid-bg-panel); border: 1px dashed var(--eid-border); border-radius: var(--eid-radius); }

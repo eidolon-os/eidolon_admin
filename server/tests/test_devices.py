@@ -80,6 +80,21 @@ def _hub_command_response(device_id: str) -> dict:
     }
 
 
+def _hub_discovery_response() -> dict:
+    return {
+        "service_type": "_eidolon-hub._tcp.local.",
+        "service_name": "Eidolon Hub._eidolon-hub._tcp.local.",
+        "hostname": "eidolon-hub",
+        "port": 8082,
+        "registered": True,
+        "ip": "192.168.1.50",
+        "config_url": "http://192.168.1.50:8082/api/config",
+        "last_registered_at": "2026-06-23T00:00:00+00:00",
+        "last_updated_at": "2026-06-23T00:00:00+00:00",
+        "last_error": "",
+    }
+
+
 # ---- fixtures ---------------------------------------------------------------
 
 
@@ -477,9 +492,16 @@ async def test_http_list_envelope(client: httpx.AsyncClient) -> None:
         rsx.get("/api/admin/devices").mock(
             return_value=httpx.Response(200, json={"devices": []})
         )
+        rsx.get("/api/admin/discovery").mock(
+            return_value=httpx.Response(200, json=_hub_discovery_response())
+        )
         r = await client.get("/api/devices")
     assert r.status_code == 200
-    assert r.json() == {"devices": [], "hub_available": True}
+    assert r.json() == {
+        "devices": [],
+        "hub_available": True,
+        "discovery": _hub_discovery_response(),
+    }
 
 
 async def test_http_list_envelope_when_hub_down(
@@ -492,6 +514,7 @@ async def test_http_list_envelope_when_hub_down(
     body = r.json()
     assert body["devices"] == []
     assert body["hub_available"] is False
+    assert body["discovery"] is None
 
 
 async def test_http_bind_400_for_missing_agent(

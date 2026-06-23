@@ -32,6 +32,20 @@ export interface DeviceView {
 export interface DeviceListResponse {
   devices: DeviceView[]
   hub_available: boolean
+  discovery: DiscoveryStatus | null
+}
+
+export interface DiscoveryStatus {
+  service_type: string
+  service_name: string
+  hostname: string
+  port: number
+  registered: boolean
+  ip: string
+  config_url: string
+  last_registered_at: string | null
+  last_updated_at: string | null
+  last_error: string
 }
 
 export interface UnregisterResponse {

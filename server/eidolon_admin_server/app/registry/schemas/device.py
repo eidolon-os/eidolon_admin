@@ -101,8 +101,22 @@ class UnbindDeviceResponse(BaseModel):
     previously_bound_agent_id: str | None
 
 
+class DiscoveryStatus(BaseModel):
+    service_type: str
+    service_name: str
+    hostname: str
+    port: int
+    registered: bool
+    ip: str = ""
+    config_url: str = ""
+    last_registered_at: str | None = None
+    last_updated_at: str | None = None
+    last_error: str = ""
+
+
 class DeviceListResponse(BaseModel):
     devices: list[DeviceView]
     # Hub reachability. False → devices list is empty + admin should
     # surface a banner. Distinct from "no devices discovered yet".
     hub_available: bool
+    discovery: DiscoveryStatus | None = None

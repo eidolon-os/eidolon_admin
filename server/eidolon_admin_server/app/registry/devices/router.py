@@ -28,7 +28,7 @@ def _orchestrator(request: Request) -> DeviceOrchestrator:
             status_code=503,
             detail=(
                 "device orchestrator unavailable — admin booted without "
-                "the hub service URL or NATS is down"
+                "the hub service URL or registry DB"
             ),
         )
     return orch
@@ -39,10 +39,19 @@ async def list_devices(request: Request) -> DeviceListResponse:
     orch = _orchestrator(request)
     try:
         devices = await orch.list_devices()
-        return DeviceListResponse(devices=devices, hub_available=True)
+        discovery = await orch.get_discovery_status()
+        return DeviceListResponse(
+            devices=devices,
+            hub_available=True,
+            discovery=discovery,
+        )
     except DeviceError as exc:
         if exc.status_code == 503:
-            return DeviceListResponse(devices=[], hub_available=False)
+            return DeviceListResponse(
+                devices=[],
+                hub_available=False,
+                discovery=None,
+            )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 

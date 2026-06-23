@@ -42,6 +42,10 @@ class HubDeviceClient(ServiceHTTPClient):
         body = r.json()
         return body.get("devices", [])
 
+    async def get_discovery_status(self) -> dict[str, Any]:
+        r = await self._request("GET", "/api/admin/discovery")
+        return r.json()
+
     async def get_device(self, device_id: str) -> dict[str, Any]:
         r = await self._request("GET", f"/api/admin/devices/{device_id}")
         return r.json()

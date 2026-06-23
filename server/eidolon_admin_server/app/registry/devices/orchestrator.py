@@ -28,6 +28,7 @@ from .._shared import unwrap_detail
 from ..schemas.device import (
     BindDeviceRequest,
     DeviceBinding,
+    DiscoveryStatus,
     DeviceView,
 )
 from .repository import (
@@ -178,6 +179,15 @@ class DeviceOrchestrator:
                 )
             )
         return out
+
+    async def get_discovery_status(self) -> DiscoveryStatus:
+        try:
+            record = await self._hub.get_discovery_status()
+        except ServiceUnavailable as exc:
+            raise DeviceHubDown(str(exc)) from exc
+        except ServiceUpstreamError as exc:
+            self._map_hub_error(exc)
+        return DiscoveryStatus.model_validate(record)
 
     async def get_device(self, device_id: str) -> DeviceView:
         try:
