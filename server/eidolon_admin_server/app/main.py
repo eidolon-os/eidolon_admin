@@ -182,6 +182,14 @@ def create_app(
             app.state.tenant_orchestrator.set_user_refcount_provider(
                 user_orch.count_users_for_tenant
             )
+
+            async def _delete_user_voiceprint(tenant_id: str, user_id: str) -> bool:
+                return app.state.voiceprint_store.delete_profile(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
+
+            user_orch.set_voiceprint_delete_provider(_delete_user_voiceprint)
             logger.info("user orchestrator ready (memory=%s)", memory_admin_url)
         else:
             logger.warning(
@@ -241,6 +249,9 @@ def create_app(
             )
             user_orch_ready.set_agent_delete_provider(
                 lambda aid: app.state.agent_orchestrator.delete_agent(aid)
+            )
+            user_orch_ready.set_agent_user_data_delete_provider(
+                lambda uid: app.state.agent_orchestrator.delete_user_data(uid)
             )
 
             logger.info(

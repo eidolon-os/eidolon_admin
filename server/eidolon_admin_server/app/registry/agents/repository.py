@@ -136,6 +136,17 @@ class AgentProjectClient(ServiceHTTPClient):
         )
         return r.json()
 
+    async def delete_user_data(self, user_id: str) -> dict[str, Any]:
+        """Hard-delete agent-owned persistent data for one user."""
+        from urllib.parse import quote
+
+        r = await self._request(
+            "DELETE",
+            f"/api/admin/users/{quote(user_id, safe='')}/data",
+            timeout=120.0,
+        )
+        return r.json()
+
 
 # ===== admin's per-agent metadata registry =================================
 

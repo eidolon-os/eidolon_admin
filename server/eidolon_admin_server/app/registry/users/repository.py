@@ -77,6 +77,7 @@ class MemoryUserClient(ServiceHTTPClient):
         r = await self._request(
             "DELETE",
             f"/api/admin/users/{user_id}",
+            params={"purge": "true"},
             timeout=120.0,
         )
         return r.json()

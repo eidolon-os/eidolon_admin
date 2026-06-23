@@ -239,23 +239,38 @@ async function toggleUserEnabled(row: UserView, enabled: boolean) {
 }
 
 async function remove(row: UserView) {
+  const userId = row.spec.user_id
   try {
     await ElMessageBox.confirm(
-      `确认删除用户 "${row.spec.user_id}"? 系统会先删除该用户的 Agent 并解绑相关设备, 再删除 memory 用户并归档 palace。`,
+      `确认删除用户 "${userId}"? 系统会删除该用户的 Agent、设备绑定、声纹、Agent 运行历史, 再删除 memory 用户并归档 palace。`,
       '删除用户',
       { type: 'warning' },
+    )
+    await ElMessageBox.prompt(
+      `此操作不可恢复。请输入用户 ID "${userId}" 以确认完整擦除。`,
+      '二次确认',
+      {
+        confirmButtonText: '完整删除',
+        cancelButtonText: '取消',
+        inputValue: '',
+        inputValidator: (value: string) => value === userId || '用户 ID 不匹配',
+      },
     )
   } catch {
     return
   }
   try {
-    const res = await deleteUser(row.spec.user_id)
+    const res = await deleteUser(userId)
     const deletedAgents = res.deleted_agents?.length ?? 0
     const agentSuffix = deletedAgents ? `, 已清理 ${deletedAgents} 个 Agent` : ''
+    const voiceprintSuffix = res.voiceprint_deleted ? ', 已删除声纹' : ''
+    const palaceSuffix = res.palace_deleted
+      ? ', palace 已删除'
+      : res.palace_trashed_to
+        ? `, palace 已归档至 ${res.palace_trashed_to}`
+        : ''
     ElMessage.success(
-      res.palace_trashed_to
-        ? `已删除${agentSuffix}, palace 已归档至 ${res.palace_trashed_to}`
-        : `已删除${agentSuffix}`,
+      `已删除${agentSuffix}${voiceprintSuffix}${palaceSuffix}`,
     )
     await refresh()
   } catch (e: any) {

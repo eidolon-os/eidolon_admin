@@ -117,6 +117,8 @@ class UserOrchestrator:
     # circular import between users/agents).
     AgentIdsProvider = Callable[[str], Awaitable[list[str]]]
     AgentDeleteProvider = Callable[[str], Awaitable[dict[str, Any]]]
+    AgentUserDataDeleteProvider = Callable[[str], Awaitable[dict[str, Any]]]
+    VoiceprintDeleteProvider = Callable[[str, str], Awaitable[bool]]
 
     def __init__(
         self,
@@ -133,6 +135,12 @@ class UserOrchestrator:
         # once AgentOrchestrator is built.
         self._agent_ids_provider: UserOrchestrator.AgentIdsProvider | None = None
         self._agent_delete_provider: UserOrchestrator.AgentDeleteProvider | None = None
+        self._agent_user_data_delete_provider: (
+            UserOrchestrator.AgentUserDataDeleteProvider | None
+        ) = None
+        self._voiceprint_delete_provider: (
+            UserOrchestrator.VoiceprintDeleteProvider | None
+        ) = None
 
     def set_agent_ids_provider(
         self, provider: AgentIdsProvider
@@ -154,6 +162,18 @@ class UserOrchestrator:
         callback instead of importing Agents directly.
         """
         self._agent_delete_provider = provider
+
+    def set_agent_user_data_delete_provider(
+        self, provider: AgentUserDataDeleteProvider
+    ) -> None:
+        """Inject agent-project hard deletion for all user-owned data."""
+        self._agent_user_data_delete_provider = provider
+
+    def set_voiceprint_delete_provider(
+        self, provider: VoiceprintDeleteProvider
+    ) -> None:
+        """Inject voiceprint profile/enrollment deletion."""
+        self._voiceprint_delete_provider = provider
 
     # ---- internal helpers ----------------------------------------------
 
@@ -437,41 +457,66 @@ class UserOrchestrator:
           1. Delete all agents owned by this user via AgentOrchestrator.
              That existing path clears user.active_agent references and
              unbinds devices pointing at those agents.
-          2. DELETE memory user (terminates worker, trashes palace).
-          3. DELETE admin metadata (cleanup).
+          2. Delete agent-project data keyed directly by user_id
+             (conversation history, long tasks, orphan persona rows, etc.).
+          3. Delete voiceprint enrollment/profile data.
+          4. DELETE memory user (terminates worker, trashes palace).
+          5. DELETE admin metadata (cleanup).
 
         Returns memory's response envelope (includes ``palace_trashed_to``
         so admin UI can show "moved to ~/.eidolon-trash/...").
         """
-        deleted_agents: list[dict[str, Any]] = []
-        if self._agent_ids_provider is not None:
-            try:
-                agent_ids = await self._agent_ids_provider(user_id)
-            except Exception as exc:  # noqa: BLE001 - aborts destructive delete
-                raise UserError(
-                    f"failed to enumerate agents for user {user_id!r}; "
-                    "aborting user delete"
-                ) from exc
-            if agent_ids and self._agent_delete_provider is None:
-                raise UserError(
-                    f"user {user_id!r} owns agents but agent delete cascade "
-                    "is not wired; aborting user delete"
-                )
-            agent_delete_provider = self._agent_delete_provider
-            for agent_id in agent_ids:
-                try:
-                    if agent_delete_provider is None:
-                        continue
-                    deleted_agents.append(await agent_delete_provider(agent_id))
-                except Exception as exc:  # noqa: BLE001 - abort before memory delete
-                    raise UserError(
-                        f"failed to delete owned agent {agent_id!r} before "
-                        f"deleting user {user_id!r}; aborting user delete"
-                    ) from exc
-
         current = await self._meta.get(user_id)
         if current is None:
             raise UserNotFound(f"user {user_id!r} not found")
+
+        if (
+            self._agent_ids_provider is None
+            or self._agent_delete_provider is None
+            or self._agent_user_data_delete_provider is None
+            or self._voiceprint_delete_provider is None
+        ):
+            raise UserError(
+                "full user delete is not fully wired; refusing to delete "
+                f"user {user_id!r} because related data could be orphaned"
+            )
+
+        deleted_agents: list[dict[str, Any]] = []
+        try:
+            agent_ids = await self._agent_ids_provider(user_id)
+        except Exception as exc:  # noqa: BLE001 - aborts destructive delete
+            raise UserError(
+                f"failed to enumerate agents for user {user_id!r}; "
+                "aborting user delete"
+            ) from exc
+        agent_delete_provider = self._agent_delete_provider
+        for agent_id in agent_ids:
+            try:
+                deleted_agents.append(await agent_delete_provider(agent_id))
+            except Exception as exc:  # noqa: BLE001 - abort before memory delete
+                raise UserError(
+                    f"failed to delete owned agent {agent_id!r} before "
+                    f"deleting user {user_id!r}; aborting user delete"
+                ) from exc
+
+        try:
+            agent_data_result = await self._agent_user_data_delete_provider(user_id)
+        except Exception as exc:  # noqa: BLE001 - abort before memory delete
+            raise UserError(
+                f"failed to delete agent-owned data for user {user_id!r}; "
+                "aborting user delete"
+            ) from exc
+
+        try:
+            voiceprint_deleted = await self._voiceprint_delete_provider(
+                current.tenant_id,
+                user_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - abort before memory delete
+            raise UserError(
+                f"failed to delete voiceprint data for user {user_id!r}; "
+                "aborting user delete"
+            ) from exc
 
         # Disable first in the admin registry. Memory only executes the
         # registry state, so this is the single project-wide stop switch.
@@ -503,4 +548,6 @@ class UserOrchestrator:
             r.get("agent_id") for r in deleted_agents if r.get("agent_id")
         ]
         memory_result["agent_delete_results"] = deleted_agents
+        memory_result["agent_user_data_delete_result"] = agent_data_result
+        memory_result["voiceprint_deleted"] = voiceprint_deleted
         return memory_result

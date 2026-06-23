@@ -63,8 +63,12 @@ export interface DeleteUserResponse {
   user_id: string
   deleted: boolean
   palace_trashed_to: string | null
+  palace_deleted?: boolean
+  logs_deleted?: string[]
   deleted_agents?: string[]
   agent_delete_results?: Array<Record<string, any>>
+  agent_user_data_delete_result?: Record<string, any>
+  voiceprint_deleted?: boolean
 }
 
 export interface VoiceprintProfile {

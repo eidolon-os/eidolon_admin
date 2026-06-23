@@ -465,6 +465,24 @@ class AgentOrchestrator:
             "unbound_devices": unbound_devices,
         }
 
+    async def revoke_user_sessions(self, user_id: str) -> dict[str, Any]:
+        """Invalidate active runtime tokens for ``user_id`` via agent."""
+        try:
+            return await self._agent.revoke_user_sessions(user_id)
+        except ServiceUnavailable as exc:
+            raise AgentProjectDown(str(exc)) from exc
+        except ServiceUpstreamError as exc:
+            self._map_agent_error(exc)
+
+    async def delete_user_data(self, user_id: str) -> dict[str, Any]:
+        """Hard-delete agent-owned persistent data for ``user_id``."""
+        try:
+            return await self._agent.delete_user_data(user_id)
+        except ServiceUnavailable as exc:
+            raise AgentProjectDown(str(exc)) from exc
+        except ServiceUpstreamError as exc:
+            self._map_agent_error(exc)
+
     # ---- evolution history --------------------------------------------
 
     async def get_evolution_history(

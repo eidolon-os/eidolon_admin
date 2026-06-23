@@ -95,11 +95,29 @@ async def orchestrator(
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
     metadata_repo = UserRepository(store)
-    yield UserOrchestrator(
+    orch = UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=metadata_repo,
         tenant_orchestrator=tenant_orch,
     )
+
+    async def no_agent_ids(user_id: str) -> list[str]:
+        return []
+
+    async def delete_agent(agent_id: str) -> dict:
+        return {"agent_id": agent_id, "deleted": True}
+
+    async def delete_agent_user_data(user_id: str) -> dict:
+        return {"user_id": user_id, "deleted": True, "counts": {}}
+
+    async def delete_voiceprint(tenant_id: str, user_id: str) -> bool:
+        return False
+
+    orch.set_agent_ids_provider(no_agent_ids)
+    orch.set_agent_delete_provider(delete_agent)
+    orch.set_agent_user_data_delete_provider(delete_agent_user_data)
+    orch.set_voiceprint_delete_provider(delete_voiceprint)
+    yield orch
 
 
 # ---- metadata repository ----------------------------------------------------
@@ -482,6 +500,50 @@ async def test_delete_user_deletes_owned_agents_before_memory(
     assert calls == ["list:alice", "delete-agent:ag-1", "delete-agent:ag-2"]
     assert result["deleted_agents"] == ["ag-1", "ag-2"]
     assert await orchestrator._meta.get("alice") is None
+
+
+async def test_delete_user_deletes_agent_user_data_and_voiceprint(
+    orchestrator: UserOrchestrator,
+) -> None:
+    await orchestrator._meta.put(
+        _user_record("alice", display_name="A", enabled=False)
+    )
+    calls: list[str] = []
+
+    async def delete_agent_user_data(user_id: str) -> dict:
+        calls.append(f"agent-data:{user_id}")
+        return {
+            "user_id": user_id,
+            "deleted": True,
+            "counts": {"conversations": 2},
+        }
+
+    async def delete_voiceprint(tenant_id: str, user_id: str) -> bool:
+        calls.append(f"voiceprint:{tenant_id}:{user_id}")
+        return True
+
+    orchestrator.set_agent_user_data_delete_provider(delete_agent_user_data)
+    orchestrator.set_voiceprint_delete_provider(delete_voiceprint)
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        rsx.delete("/api/admin/users/alice").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "user_id": "alice",
+                    "deleted": True,
+                    "palace_trashed_to": "/tmp/trash/alice_xxx",
+                },
+            )
+        )
+        result = await orchestrator.delete_user("alice")
+
+    assert calls == ["agent-data:alice", "voiceprint:default:alice"]
+    assert result["agent_user_data_delete_result"]["counts"] == {"conversations": 2}
+    assert result["voiceprint_deleted"] is True
 
 
 async def test_delete_user_aborts_if_owned_agent_delete_fails(
