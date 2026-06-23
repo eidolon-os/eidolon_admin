@@ -48,6 +48,8 @@ from eidolon_admin_server.app.registry.users.orchestrator import (
     TenantNotFoundForUser,
     UserAlreadyExists,
     UserError,
+    UserLifecycleVerifyFailed,
+    UserMemoryDown,
     UserNotFound,
 )
 
@@ -341,6 +343,92 @@ async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
     assert meta.memory_port == 8030
 
 
+async def test_create_user_waits_for_memory_health(
+    orchestrator: UserOrchestrator,
+) -> None:
+    calls = {"get": 0}
+
+    def _memory_response(_request):
+        calls["get"] += 1
+        if calls["get"] == 1:
+            return httpx.Response(
+                200,
+                json=_memory_user_record(
+                    user_id="alice",
+                    worker_running=False,
+                    mcp_reachable=False,
+                    palace_initialized=False,
+                ),
+            )
+        return httpx.Response(200, json=_memory_user_record(user_id="alice"))
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        rsx.get("/api/admin/users/alice").mock(side_effect=_memory_response)
+        view = await orchestrator.create_user(
+            CreateUserRequest(
+                user_id="alice",
+                tenant_id="default",
+                display_name="Alice",
+                enabled=True,
+            )
+        )
+
+    assert calls["get"] >= 2
+    assert view.health.worker_running is True
+
+
+async def test_create_user_fails_when_reconcile_fails(
+    orchestrator: UserOrchestrator,
+) -> None:
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(side_effect=httpx.ConnectError("down"))
+        with pytest.raises(UserMemoryDown):
+            await orchestrator.create_user(
+                CreateUserRequest(
+                    user_id="alice",
+                    tenant_id="default",
+                    display_name="Alice",
+                )
+            )
+
+    assert await orchestrator._meta.get("alice") is not None
+
+
+async def test_create_user_verify_timeout(
+    orchestrator: UserOrchestrator,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "eidolon_admin_server.app.registry.users.orchestrator."
+        "_USER_LIFECYCLE_VERIFY_TIMEOUT_S",
+        0.0,
+    )
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        rsx.get("/api/admin/users/alice").mock(
+            return_value=httpx.Response(
+                200,
+                json=_memory_user_record(
+                    user_id="alice",
+                    palace_initialized=False,
+                ),
+            )
+        )
+        with pytest.raises(UserLifecycleVerifyFailed):
+            await orchestrator.create_user(
+                CreateUserRequest(
+                    user_id="alice",
+                    tenant_id="default",
+                    display_name="Alice",
+                )
+            )
+
+
 async def test_create_user_with_missing_tenant_returns_409(
     orchestrator: UserOrchestrator,
 ) -> None:
@@ -448,6 +536,11 @@ async def test_delete_user_calls_memory_then_cleans_metadata(
                 },
             )
         )
+        rsx.get("/api/admin/users").mock(
+            return_value=httpx.Response(
+                200, json={"users": [], "memory_available": True}
+            )
+        )
         result = await orchestrator.delete_user("alice")
     assert result["deleted"] is True
     assert result["palace_trashed_to"] == "/tmp/trash/alice_xxx"
@@ -464,13 +557,19 @@ async def test_delete_user_deletes_owned_agents_before_memory(
         _user_record("alice", display_name="A", enabled=False)
     )
     calls: list[str] = []
+    deleted_agent_ids: set[str] = set()
 
     async def fake_agent_ids(user_id: str) -> list[str]:
         calls.append(f"list:{user_id}")
-        return ["ag-1", "ag-2"]
+        return [
+            agent_id
+            for agent_id in ["ag-1", "ag-2"]
+            if agent_id not in deleted_agent_ids
+        ]
 
     async def fake_delete_agent(agent_id: str) -> dict:
         calls.append(f"delete-agent:{agent_id}")
+        deleted_agent_ids.add(agent_id)
         return {
             "agent_id": agent_id,
             "deleted": True,
@@ -495,9 +594,19 @@ async def test_delete_user_deletes_owned_agents_before_memory(
                 },
             )
         )
+        rsx.get("/api/admin/users").mock(
+            return_value=httpx.Response(
+                200, json={"users": [], "memory_available": True}
+            )
+        )
         result = await orchestrator.delete_user("alice")
 
-    assert calls == ["list:alice", "delete-agent:ag-1", "delete-agent:ag-2"]
+    assert calls == [
+        "list:alice",
+        "delete-agent:ag-1",
+        "delete-agent:ag-2",
+        "list:alice",
+    ]
     assert result["deleted_agents"] == ["ag-1", "ag-2"]
     assert await orchestrator._meta.get("alice") is None
 
@@ -539,11 +648,75 @@ async def test_delete_user_deletes_agent_user_data_and_voiceprint(
                 },
             )
         )
+        rsx.get("/api/admin/users").mock(
+            return_value=httpx.Response(
+                200, json={"users": [], "memory_available": True}
+            )
+        )
         result = await orchestrator.delete_user("alice")
 
     assert calls == ["agent-data:alice", "voiceprint:default:alice"]
     assert result["agent_user_data_delete_result"]["counts"] == {"conversations": 2}
     assert result["voiceprint_deleted"] is True
+
+
+async def test_delete_user_aborts_if_memory_cleanup_fails(
+    orchestrator: UserOrchestrator,
+) -> None:
+    await orchestrator._meta.put(
+        _user_record("alice", display_name="A", enabled=False)
+    )
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.delete("/api/admin/users/alice").mock(
+            return_value=httpx.Response(503, json={"detail": "palace busy"})
+        )
+        with pytest.raises(UserError, match="memory cleanup failed"):
+            await orchestrator.delete_user("alice")
+
+    assert await orchestrator._meta.get("alice") is not None
+
+
+async def test_delete_user_verify_timeout_keeps_failure_visible(
+    orchestrator: UserOrchestrator,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "eidolon_admin_server.app.registry.users.orchestrator."
+        "_USER_LIFECYCLE_VERIFY_TIMEOUT_S",
+        0.0,
+    )
+    await orchestrator._meta.put(
+        _user_record("alice", display_name="A", enabled=False)
+    )
+
+    with respx.mock(base_url=MEMORY_URL) as rsx:
+        rsx.post("/api/admin/reconcile").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        rsx.delete("/api/admin/users/alice").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "user_id": "alice",
+                    "deleted": True,
+                    "palace_trashed_to": None,
+                },
+            )
+        )
+        rsx.get("/api/admin/users").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "users": [_memory_user_record(user_id="alice")],
+                    "memory_available": True,
+                },
+            )
+        )
+        with pytest.raises(UserLifecycleVerifyFailed):
+            await orchestrator.delete_user("alice")
+
+    assert await orchestrator._meta.get("alice") is None
 
 
 async def test_delete_user_aborts_if_owned_agent_delete_fails(

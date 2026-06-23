@@ -59,15 +59,15 @@ class MemoryUserClient(ServiceHTTPClient):
             body["consolidator"] = consolidator
         # memory's CreateUserRequest has no display_name field — that's
         # an admin-side concept. We send only the fields memory accepts.
-        # Create can block on memory's reconcile/palace init path
-        # (60s palace init + worker wait). Keep this longer than the
+        # Create can block on memory's reconcile/palace init path.
+        # Keep this longer than the
         # normal control-plane timeout so admin doesn't report failure
         # after memory already reconciled the registry.
         r = await self._request(
             "POST",
             "/api/admin/users",
             json=body,
-            timeout=120.0,
+            timeout=600.0,
         )
         return r.json()
 
@@ -78,13 +78,13 @@ class MemoryUserClient(ServiceHTTPClient):
             "DELETE",
             f"/api/admin/users/{user_id}",
             params={"purge": "true"},
-            timeout=120.0,
+            timeout=600.0,
         )
         return r.json()
 
     async def reconcile(self) -> dict[str, Any]:
         """Ask memory-supervisor to re-read the admin registry DB."""
-        r = await self._request("POST", "/api/admin/reconcile", timeout=120.0)
+        r = await self._request("POST", "/api/admin/reconcile", timeout=600.0)
         return r.json()
 
     async def rebuild_index(self, user_id: str) -> dict[str, Any]:

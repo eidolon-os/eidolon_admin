@@ -6,7 +6,9 @@ views with memory health.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
@@ -28,6 +30,9 @@ from ..tenants.orchestrator import TenantNotFound, TenantOrchestrator
 from .repository import MemoryUserClient
 
 logger = logging.getLogger(__name__)
+
+_USER_LIFECYCLE_VERIFY_TIMEOUT_S = 600.0
+_USER_LIFECYCLE_VERIFY_POLL_S = 1.0
 
 
 # ---- exceptions ------------------------------------------------------------
@@ -54,6 +59,12 @@ class TenantNotFoundForUser(UserError):
 class UserMemoryDown(UserError):
     """Memory's admin API is unreachable. Distinct from 503 'orchestrator
     missing' so the operator can tell it apart in error toasts."""
+
+    status_code = 503
+
+
+class UserLifecycleVerifyFailed(UserError):
+    """Create/delete did not converge to the expected final state."""
 
     status_code = 503
 
@@ -244,14 +255,112 @@ class UserOrchestrator:
                 continue
         return out
 
-    async def _reconcile_memory(self) -> None:
+    async def _reconcile_memory(self, *, strict: bool = False) -> None:
         try:
             await self._mem.reconcile()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            if strict:
+                raise UserMemoryDown(
+                    "memory reconcile request failed; user lifecycle did not converge"
+                ) from exc
             logger.warning(
                 "users: memory reconcile request failed; supervisor will catch up on restart/reload",
                 exc_info=True,
             )
+
+    def _create_health_failures(
+        self, *, record: dict[str, Any], enabled: bool
+    ) -> list[str]:
+        health = record.get("health") or {}
+        failures: list[str] = []
+        if not health.get("palace_initialized"):
+            failures.append("palace_initialized=false")
+        if enabled:
+            if not health.get("worker_running"):
+                failures.append("worker_running=false")
+            if not health.get("mcp_reachable"):
+                failures.append("mcp_reachable=false")
+        return failures
+
+    async def _wait_for_user_create_verified(
+        self,
+        user_id: str,
+        *,
+        enabled: bool,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        if timeout_s is None:
+            timeout_s = _USER_LIFECYCLE_VERIFY_TIMEOUT_S
+        deadline = time.monotonic() + timeout_s
+        last_detail = "not checked"
+        while True:
+            if await self._meta.get(user_id) is None:
+                last_detail = "admin registry row missing"
+            else:
+                try:
+                    record = await self._mem.get_user(user_id)
+                    failures = self._create_health_failures(
+                        record=record,
+                        enabled=enabled,
+                    )
+                    if not failures:
+                        return record
+                    last_detail = ", ".join(failures)
+                except ServiceUnavailable as exc:
+                    last_detail = f"memory unavailable: {exc}"
+                except ServiceUpstreamError as exc:
+                    last_detail = f"memory returned {exc.status_code}: {exc.message}"
+
+            if time.monotonic() >= deadline:
+                raise UserLifecycleVerifyFailed(
+                    f"user {user_id!r} create did not verify within "
+                    f"{timeout_s:.0f}s: {last_detail}"
+                )
+            await asyncio.sleep(_USER_LIFECYCLE_VERIFY_POLL_S)
+
+    async def _wait_for_user_delete_verified(
+        self,
+        user_id: str,
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        if timeout_s is None:
+            timeout_s = _USER_LIFECYCLE_VERIFY_TIMEOUT_S
+        deadline = time.monotonic() + timeout_s
+        last_detail = "not checked"
+        while True:
+            admin_missing = await self._meta.get(user_id) is None
+            if not admin_missing:
+                last_detail = "admin registry row still exists"
+            else:
+                try:
+                    envelope = await self._mem.list_users()
+                    users = envelope.get("users", []) or []
+                    memory_ids = {
+                        str((record.get("spec") or {}).get("user_id"))
+                        for record in users
+                        if isinstance(record, dict)
+                    }
+                    if user_id in memory_ids:
+                        last_detail = "memory registry still lists user"
+                    else:
+                        provider = self._agent_ids_provider
+                        agent_ids = await provider(user_id) if provider else []
+                        if agent_ids:
+                            last_detail = f"owned agents still exist: {agent_ids}"
+                        else:
+                            return
+                except ServiceUnavailable as exc:
+                    last_detail = f"memory unavailable: {exc}"
+                except ServiceUpstreamError as exc:
+                    last_detail = f"memory returned {exc.status_code}: {exc.message}"
+
+            if time.monotonic() >= deadline:
+                raise UserLifecycleVerifyFailed(
+                    f"user {user_id!r} delete did not verify within "
+                    f"{timeout_s:.0f}s: {last_detail}"
+                )
+            await asyncio.sleep(_USER_LIFECYCLE_VERIFY_POLL_S)
 
     def _copy_record(
         self, record: UserRegistryRecord, **updates: Any
@@ -404,7 +513,11 @@ class UserOrchestrator:
             created_at=_now_iso(),
         )
         await self._meta.put(record)
-        await self._reconcile_memory()
+        await self._reconcile_memory(strict=True)
+        await self._wait_for_user_create_verified(
+            body.user_id,
+            enabled=body.enabled,
+        )
 
         return await self.get_user(body.user_id)
 
@@ -524,26 +637,25 @@ class UserOrchestrator:
             await self._meta.put(self._copy_record(current, enabled=False))
             await self._reconcile_memory()
 
-        # Ask memory to clean up memory-owned data. This is best-effort; the
-        # registry delete still proceeds so admin remains the source of truth.
-        memory_result: dict[str, Any] = {
-            "user_id": user_id,
-            "deleted": True,
-            "palace_trashed_to": None,
-        }
+        # Ask memory to clean up memory-owned data. This is a lifecycle
+        # barrier: if purge fails, keep admin metadata so the operator can
+        # retry without losing the source-of-truth row.
         try:
             memory_result = await self._mem.delete_user(user_id)
         except ServiceUnavailable as exc:
-            logger.warning("user_delete: memory unavailable for cleanup: %s", exc)
+            raise UserMemoryDown(
+                f"memory unavailable while deleting user {user_id!r}; "
+                "admin metadata was kept so delete can be retried"
+            ) from exc
         except ServiceUpstreamError as exc:
-            logger.warning(
-                "user_delete: memory cleanup returned %s: %s",
-                exc.status_code,
-                exc.message,
-            )
+            raise UserError(
+                f"memory cleanup failed while deleting user {user_id!r}: "
+                f"{exc.status_code}: {unwrap_detail(exc.message)}"
+            ) from exc
 
         await self._meta.delete(user_id)
-        await self._reconcile_memory()
+        await self._reconcile_memory(strict=True)
+        await self._wait_for_user_delete_verified(user_id)
         memory_result["deleted_agents"] = [
             r.get("agent_id") for r in deleted_agents if r.get("agent_id")
         ]
