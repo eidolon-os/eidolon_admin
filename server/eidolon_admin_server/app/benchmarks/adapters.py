@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,18 @@ KNOWN_EMPTY_SUITES: dict[str, tuple[tuple[str, str], ...]] = {
     "admin": (("smoke", "Smoke"),),
     "hub": (("smoke", "Smoke"),),
     "client-web": (("web", "Web"),),
+}
+
+SUITE_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("agent", "realtime"): "实时语音 Agent 端到端 benchmark，关注首包、转写、回复和工具调用链路。",
+    ("agent", "replay"): "离线回放 benchmark，用固定样本复现 Agent 行为并检查回归。",
+    ("channel", "voice"): "语音通道 benchmark，关注房间、音频流、runner 和报告产物。",
+    ("memory", "memory_perf"): "Memory 服务链路 benchmark：读召回、NATS 写入、memory-agent 落库和 MCP 可见性。",
+    ("memory", "memory_quality"): "Memory 质量 benchmark：召回命中率、隔离、泄漏和语义质量。",
+    ("memory", "memory_readable"): "人工可读的 Memory benchmark 结论报告，汇总最终可信 run、历史异常和产品判断。",
+    ("admin", "smoke"): "Admin 基础 smoke benchmark，用于确认管理后台核心页面和 API 可用。",
+    ("hub", "smoke"): "Hub 基础 smoke benchmark，用于确认服务入口和关键 API 可用。",
+    ("client-web", "web"): "Client Web benchmark，用于检查前端页面、构建和浏览器交互。",
 }
 
 
@@ -100,6 +113,7 @@ def known_suites() -> dict[str, dict[str, str]]:
         "memory": {
             "memory_perf": "Memory Perf",
             "memory_quality": "Memory Quality",
+            "memory_readable": "Memory Readable",
         },
     }
     for project, entries in KNOWN_EMPTY_SUITES.items():
@@ -246,6 +260,43 @@ def _memory_records() -> list[RunRecord]:
             root=root,
         )
         records.append(record)
+    for report_path in sorted(root.glob("memory_benchmark_readable_*.md"), key=_mtime, reverse=True):
+        text = _read_text(report_path)
+        if not text:
+            continue
+        passed = _infer_readable_memory_passed(text)
+        records.append(
+            RunRecord(
+                summary=BenchmarkRunSummary(
+                    project="memory",
+                    project_label=registry.PROJECT_LABELS["memory"],
+                    suite="memory_readable",
+                    suite_label="Memory Readable",
+                    run_id=report_path.name,
+                    title=report_path.stem,
+                    generated_at=None,
+                    modified_at=_modified_at(report_path),
+                    status=_status(passed),
+                    passed=passed,
+                    git_sha=None,
+                    summary={
+                        "kind": "readable_report",
+                        "source": report_path.name,
+                    },
+                    metrics={},
+                    artifacts=[_artifact(report_path)],
+                    deletable=True,
+                    delete_hint=None,
+                ),
+                payload={
+                    "kind": "readable_report",
+                    "path": str(report_path),
+                },
+                markdown=text,
+                source_path=report_path,
+                root=root,
+            )
+        )
     return records
 
 
@@ -450,11 +501,42 @@ def _memory_summary(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def _infer_memory_passed(metrics: dict[str, Any], markdown: str | None) -> bool | None:
+    if markdown:
+        statuses = _markdown_status_cells(markdown)
+        if statuses:
+            if any(status in {"fail", "failed"} for status in statuses):
+                return False
+            if any(status in {"pass", "passed"} for status in statuses):
+                return True
     text = markdown or json.dumps(metrics, ensure_ascii=False)
     lowered = text.lower()
-    if any(token in lowered for token in ("fail", "failed", "❌")):
+    if any(token in lowered for token in (" fail ", " failed ", "❌")):
         return False
     if any(token in lowered for token in ("pass", "passed", "✅")):
+        return True
+    return None
+
+
+def _markdown_status_cells(markdown: str) -> list[str]:
+    statuses: list[str] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|") or "|" not in line[1:]:
+            continue
+        cells = [cell.strip().lower() for cell in line.strip("|").split("|")]
+        for cell in cells:
+            plain = re.sub(r"[^a-z-]+", "", cell)
+            if plain in {"pass", "passed", "fail", "failed", "skipped", "unknown"}:
+                statuses.append(plain)
+    return statuses
+
+
+def _infer_readable_memory_passed(markdown: str) -> bool | None:
+    """Infer status from the conclusion section, not historical bug notes."""
+    head = markdown.split("## 本轮发现并修复的问题", 1)[0].lower()
+    if any(token in head for token in ("未通过", "不通过", "最终 run 失败")):
+        return False
+    if any(token in head for token in ("通过", "没有超时", "leakage | 0", "稳定")):
         return True
     return None
 

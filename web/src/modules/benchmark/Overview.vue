@@ -40,6 +40,10 @@ const activeProject = computed(() =>
 const activeSuite = computed(() =>
   activeProject.value?.suites.find((suite) => suite.id === selectedSuiteId.value) || null,
 )
+const activeSuiteDescription = computed(() => activeSuite.value?.description || suiteFallbackDescription(
+  activeProjectId.value,
+  selectedSuiteId.value,
+))
 
 const visibleCases = computed(() => (detail.value?.cases || []).slice(0, 200))
 const metricRows = computed(() => buildMetricRows(detail.value))
@@ -251,6 +255,22 @@ function artifactTag(kind: string): 'success' | 'warning' | 'info' {
   return 'info'
 }
 
+function suiteFallbackDescription(project: string, suite: string) {
+  const key = `${project}/${suite}`
+  const descriptions: Record<string, string> = {
+    'agent/realtime': '实时语音 Agent 端到端 benchmark，关注首包、转写、回复和工具调用链路。',
+    'agent/replay': '离线回放 benchmark，用固定样本复现 Agent 行为并检查回归。',
+    'channel/voice': '语音通道 benchmark，关注房间、音频流、runner 和报告产物。',
+    'memory/memory_perf': 'Memory 服务链路 benchmark：读召回、NATS 写入、memory-agent 落库和 MCP 可见性。',
+    'memory/memory_quality': 'Memory 质量 benchmark：召回命中率、隔离、泄漏和语义质量。',
+    'memory/memory_readable': '人工可读的 Memory benchmark 结论报告，汇总最终可信 run、历史异常和产品判断。',
+    'admin/smoke': 'Admin 基础 smoke benchmark，用于确认管理后台核心页面和 API 可用。',
+    'hub/smoke': 'Hub 基础 smoke benchmark，用于确认服务入口和关键 API 可用。',
+    'client-web/web': 'Client Web benchmark，用于检查前端页面、构建和浏览器交互。',
+  }
+  return descriptions[key] || ''
+}
+
 function escapeHtml(value: string) {
   return value
     .replace(/&/g, '&amp;')
@@ -262,17 +282,65 @@ function escapeHtml(value: string) {
 
 function renderMarkdown(value: string | null) {
   if (!value) return ''
-  return value
-    .split(/\r?\n/)
-    .map((line) => {
-      if (line.startsWith('### ')) return `<h5>${escapeHtml(line.slice(4))}</h5>`
-      if (line.startsWith('## ')) return `<h4>${escapeHtml(line.slice(3))}</h4>`
-      if (line.startsWith('# ')) return `<h3>${escapeHtml(line.slice(2))}</h3>`
-      if (line.startsWith('- ')) return `<p class="bullet">• ${escapeHtml(line.slice(2))}</p>`
-      if (!line.trim()) return ''
-      return `<p>${escapeHtml(line)}</p>`
-    })
-    .join('')
+  const lines = value.split(/\r?\n/)
+  const html: string[] = []
+  let inCode = false
+  let tableRows: string[][] = []
+
+  const flushTable = () => {
+    if (!tableRows.length) return
+    const [head, ...body] = tableRows
+    html.push('<table><thead><tr>')
+    for (const cell of head) html.push(`<th>${inlineMarkdown(cell)}</th>`)
+    html.push('</tr></thead><tbody>')
+    for (const row of body) {
+      html.push('<tr>')
+      for (const cell of row) html.push(`<td>${inlineMarkdown(cell)}</td>`)
+      html.push('</tr>')
+    }
+    html.push('</tbody></table>')
+    tableRows = []
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.trimEnd()
+    if (line.startsWith('```')) {
+      flushTable()
+      html.push(inCode ? '</code></pre>' : '<pre><code>')
+      inCode = !inCode
+      continue
+    }
+    if (inCode) {
+      html.push(`${escapeHtml(rawLine)}\n`)
+      continue
+    }
+    if (/^\|.*\|$/.test(line)) {
+      const cells = line
+        .split('|')
+        .slice(1, -1)
+        .map((cell) => cell.trim())
+      if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) continue
+      tableRows.push(cells)
+      continue
+    }
+    flushTable()
+    if (line.startsWith('### ')) html.push(`<h5>${inlineMarkdown(line.slice(4))}</h5>`)
+    else if (line.startsWith('## ')) html.push(`<h4>${inlineMarkdown(line.slice(3))}</h4>`)
+    else if (line.startsWith('# ')) html.push(`<h3>${inlineMarkdown(line.slice(2))}</h3>`)
+    else if (line.startsWith('- ')) html.push(`<p class="bullet">• ${inlineMarkdown(line.slice(2))}</p>`)
+    else if (!line.trim()) html.push('')
+    else html.push(`<p>${inlineMarkdown(line)}</p>`)
+  }
+  flushTable()
+  if (inCode) html.push('</code></pre>')
+  return html.join('')
+}
+
+function inlineMarkdown(value: string) {
+  const escaped = escapeHtml(value)
+  return escaped
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
 }
 </script>
 
@@ -332,6 +400,9 @@ function renderMarkdown(value: string | null) {
             <span>{{ suite.label }}</span>
             <small>{{ suite.run_count }}</small>
           </button>
+        </div>
+        <div v-if="activeSuiteDescription" class="suite-description">
+          {{ activeSuiteDescription }}
         </div>
 
         <div v-if="!loadingRuns && runs.length === 0" class="empty-state">
@@ -415,6 +486,11 @@ function renderMarkdown(value: string | null) {
             </div>
           </section>
 
+          <section v-if="detail.markdown" class="content-block report-block">
+            <h4>Readable Report</h4>
+            <article class="markdown-body" v-html="renderMarkdown(detail.markdown)" />
+          </section>
+
           <section class="content-block">
             <h4>Summary</h4>
             <el-table :data="summaryRows" size="small" border>
@@ -446,11 +522,6 @@ function renderMarkdown(value: string | null) {
                 <template #default="{ row }">{{ fmt(row.value) }}</template>
               </el-table-column>
             </el-table>
-          </section>
-
-          <section v-if="detail.markdown" class="content-block">
-            <h4>Report</h4>
-            <article class="markdown-body" v-html="renderMarkdown(detail.markdown)" />
           </section>
 
           <section class="content-block">
@@ -603,7 +674,6 @@ function renderMarkdown(value: string | null) {
   flex-wrap: wrap;
   gap: 8px;
   padding: 12px;
-  border-bottom: 1px solid var(--eid-border);
 }
 
 .suite-button {
@@ -621,8 +691,20 @@ function renderMarkdown(value: string | null) {
   color: var(--eid-text-muted);
 }
 
+.suite-description {
+  margin: 0 12px 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--eid-border);
+  border-radius: var(--eid-radius);
+  background: var(--eid-bg-inset);
+  color: var(--eid-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .run-list {
   padding: 8px;
+  border-top: 1px solid var(--eid-border);
 }
 
 .run-row {
@@ -699,10 +781,14 @@ function renderMarkdown(value: string | null) {
   font-size: 14px;
 }
 
+.report-block {
+  background: color-mix(in srgb, var(--eid-bg-inset) 45%, transparent);
+}
+
 .markdown-body {
   color: var(--eid-text);
-  line-height: 1.55;
-  font-size: 13px;
+  line-height: 1.62;
+  font-size: 14px;
 }
 
 .markdown-body :deep(h3),
@@ -713,6 +799,54 @@ function renderMarkdown(value: string | null) {
 
 .markdown-body :deep(p) {
   margin: 5px 0;
+}
+
+.markdown-body :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 14px;
+  overflow: hidden;
+  border: 1px solid var(--eid-border);
+  border-radius: var(--eid-radius);
+  font-size: 13px;
+}
+
+.markdown-body :deep(th),
+.markdown-body :deep(td) {
+  border-bottom: 1px solid var(--eid-border);
+  padding: 7px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body :deep(th) {
+  background: var(--eid-bg-inset);
+  color: var(--eid-text-muted);
+  font-weight: 600;
+}
+
+.markdown-body :deep(code) {
+  border: 1px solid var(--eid-border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: var(--eid-bg-inset);
+  font-family: var(--eid-font-mono);
+  font-size: 0.92em;
+}
+
+.markdown-body :deep(pre) {
+  overflow: auto;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--eid-border);
+  border-radius: var(--eid-radius);
+  background: var(--eid-bg-inset);
+}
+
+.markdown-body :deep(pre code) {
+  border: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .mono {

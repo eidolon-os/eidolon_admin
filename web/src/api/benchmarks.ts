@@ -37,6 +37,7 @@ export interface BenchmarkRunDetail extends BenchmarkRunSummary {
 export interface BenchmarkSuiteSummary {
   id: string
   label: string
+  description: string | null
   run_count: number
   latest_status: BenchmarkStatus
   latest_modified_at: string | null

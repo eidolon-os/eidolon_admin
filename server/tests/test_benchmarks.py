@@ -137,6 +137,19 @@ def _write_memory_report(root: Path) -> Path:
     return report_dir
 
 
+def _write_memory_readable_report(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "memory_benchmark_readable_20260624.md"
+    path.write_text(
+        "# Eidolon Memory Benchmark 中文报告\n\n"
+        "## 一句话结论\n\n"
+        "- 最终 run 通过。\n"
+        "- 没有 other-device leakage。\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_benchmark_projects_include_empty_projects(app, tmp_path, monkeypatch):
     _isolate_benchmark_roots(monkeypatch, tmp_path)
 
@@ -148,6 +161,9 @@ def test_benchmark_projects_include_empty_projects(app, tmp_path, monkeypatch):
     assert {"agent", "channel", "memory", "admin", "hub", "client-web"} <= set(projects)
     assert projects["admin"]["run_count"] == 0
     assert projects["hub"]["suites"][0]["id"] == "smoke"
+    memory_suites = {suite["id"]: suite for suite in projects["memory"]["suites"]}
+    assert memory_suites["memory_perf"]["description"]
+    assert memory_suites["memory_readable"]["description"]
 
 
 def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path, monkeypatch):
@@ -156,6 +172,7 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     _write_agent_report(roots["agent_reports"])
     _write_agent_project_file_run(roots["agent_runs"])
     _write_memory_report(roots["memory_reports"])
+    _write_memory_readable_report(roots["memory_reports"])
 
     client = TestClient(app)
     runs_resp = client.get("/api/benchmarks/runs")
@@ -167,6 +184,7 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     assert ("agent", "realtime", "latest.json") in by_key
     assert ("agent", "live-memory-e2e", "manson.json") in by_key
     assert ("memory", "memory_perf", "memory_perf_20260623_120000") in by_key
+    assert ("memory", "memory_readable", "memory_benchmark_readable_20260624.md") in by_key
     assert by_key[("channel", "voice", "run-a")]["deletable"] is True
     assert by_key[("agent", "live-memory-e2e", "manson.json")]["deletable"] is True
     assert by_key[("agent", "realtime", "latest.json")]["deletable"] is True
@@ -179,6 +197,15 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     assert detail["git_sha"] == "abc123"
     assert detail["summary"]["total"] == 2
     assert detail["cases"][0]["case_id"] == "case_001"
+
+    readable_resp = client.get(
+        "/api/benchmarks/runs/memory/memory_readable/memory_benchmark_readable_20260624.md"
+    )
+    assert readable_resp.status_code == 200
+    readable = readable_resp.json()
+    assert readable["status"] == "passed"
+    assert readable["markdown"].startswith("# Eidolon Memory Benchmark 中文报告")
+    assert readable["summary"]["kind"] == "readable_report"
 
 
 def test_delete_benchmark_run_moves_directory_to_trash(app, tmp_path, monkeypatch):

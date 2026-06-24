@@ -33,6 +33,7 @@ def list_projects() -> BenchmarkProjectsResponse:
                 BenchmarkSuiteSummary(
                     id=suite_id,
                     label=suite_label,
+                    description=adapters.SUITE_DESCRIPTIONS.get((project.id, suite_id)),
                     run_count=len(suite_runs),
                     latest_status=latest.status if latest else "unknown",
                     latest_modified_at=latest.modified_at if latest else None,

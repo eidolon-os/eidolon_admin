@@ -45,6 +45,7 @@ class BenchmarkRunDetail(BenchmarkRunSummary):
 class BenchmarkSuiteSummary(BaseModel):
     id: str
     label: str
+    description: str | None = None
     run_count: int = 0
     latest_status: BenchmarkStatus = "unknown"
     latest_modified_at: datetime | None = None
