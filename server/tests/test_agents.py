@@ -80,7 +80,8 @@ async def http_client() -> AsyncIterator[httpx.AsyncClient]:
 def _memory_user_record(user_id: str = "alice") -> dict:
     return {
         "spec": {
-            "user_id": user_id,
+            # memory keys its records by memory_space_id, not bare user_id.
+            "user_id": f"default.{user_id}.default",
             "tenant_id": "default",
             "display_name": user_id,
             "palace_path": "",
@@ -207,17 +208,17 @@ async def test_list_filters_by_user(orchestrator: AgentOrchestrator) -> None:
         ),
     )
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
-        rsx.get("/api/admin/users/bob").mock(
+        rsx.get("/api/admin/users/default.bob.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("bob"))
         )
         all_agents = await orchestrator.list_agents()
     assert {a.agent_id for a in all_agents} == {"ag-1", "ag-2", "ag-3"}
 
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         alice_agents = await orchestrator.list_agents(user_id="alice")
@@ -250,7 +251,7 @@ async def test_create_with_missing_template_returns_bad_request(
 ) -> None:
     """Template MUST exist (per template_exists_check)."""
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         with pytest.raises(AgentBadRequest, match="template 'unknown' not found") as exc_info:
@@ -264,7 +265,7 @@ async def test_create_happy_path(orchestrator: AgentOrchestrator) -> None:
     """End-to-end: user check OK, template check OK, agent project responds,
     admin metadata is written. By default it does not become active."""
     with respx.mock() as rsx:
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         # The agent_id is generated inside the orchestrator (uuid). Match
@@ -299,13 +300,13 @@ async def test_create_can_explicitly_set_active(
     orchestrator: AgentOrchestrator,
 ) -> None:
     with respx.mock() as rsx:
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         rsx.post(f"{AGENT_URL}/api/admin/personas/instances").mock(
             return_value=httpx.Response(201, json=_persona_instance(user_id="alice"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         ref = await orchestrator.create_agent(
@@ -336,7 +337,7 @@ async def test_create_rolls_back_persona_on_metadata_failure(
     deletes_seen: list[str] = []
 
     with respx.mock() as rsx:
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record("alice"))
         )
         rsx.post(f"{AGENT_URL}/api/admin/personas/instances").mock(
@@ -439,7 +440,7 @@ async def test_list_tolerates_memory_down_with_warning(
     with respx.mock(base_url=MEMORY_URL) as rsx:
         # ConnectError simulates "memory down" → maps to UserMemoryDown
         # in the user orchestrator's translation layer.
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             side_effect=httpx.ConnectError("memory down")
         )
         agents = await orchestrator.list_agents()

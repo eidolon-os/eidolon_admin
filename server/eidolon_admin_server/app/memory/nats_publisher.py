@@ -1,8 +1,8 @@
 """NATS JetStream publisher for conversation turns.
 
-memory's worker subscribes to ``agent.memory.conversation.turn.<user_id>`` to
-ingest turns. We publish there from POST /api/memory/memories. Fire-and-forget;
-the worker's ack is its own business.
+memory's worker subscribes to ``eidolon.memory.turn.<memory_space_id>`` to ingest
+turns. We publish there from POST /api/memory/memories. Fire-and-forget; the
+worker's ack is its own business.
 """
 from __future__ import annotations
 
@@ -14,7 +14,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from eidolon_sdk.memory import ConversationTurnPayload, conversation_turn_subject
+from eidolon_sdk.memory import (
+    ConversationTurnPayload,
+    MemoryActorContext,
+    conversation_turn_subject,
+)
 
 import nats
 from nats.errors import TimeoutError as NatsTimeoutError
@@ -28,10 +32,6 @@ _DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
 
 def nats_url() -> str:
     return os.environ.get("EIDOLON_MEMORY_NATS_URL", _DEFAULT_NATS_URL)
-
-
-def turn_subject(user_id: str) -> str:
-    return conversation_turn_subject(user_id)
 
 
 def _now_iso() -> str:
@@ -64,30 +64,33 @@ class JetStreamPublisher:
     async def publish_turn(
         self,
         *,
-        user_id: str,
+        context: MemoryActorContext,
         user_text: str,
         assistant_text: str,
-        session_id: str = "",
         metadata: dict[str, Any] | None = None,
         timeout_seconds: float = 5.0,
     ) -> str:
-        """Publish a ConversationTurnPayload. Returns the generated turn_id."""
+        """Publish a ConversationTurnPayload. Returns the generated turn_id.
+
+        ``context`` carries the resolved actor identity; its derived
+        ``memory_space_id`` selects the JetStream subject the per-space worker
+        subscribes to.
+        """
         await self._ensure_connected()
         assert self._js is not None
         turn_id = uuid.uuid4().hex
         payload = ConversationTurnPayload(
             turn_id=turn_id,
+            context=context,
             user_text=user_text,
             assistant_text=assistant_text,
             timestamp=_now_iso(),
-            session_id=session_id,
-            user_id=user_id,
             metadata=metadata or {},
         )
         body = json.dumps(payload.model_dump(mode="json"), ensure_ascii=False).encode(
             "utf-8"
         )
-        subject = turn_subject(user_id)
+        subject = conversation_turn_subject(context.memory_space_id)
         try:
             await asyncio.wait_for(
                 self._js.publish(subject, body), timeout=timeout_seconds

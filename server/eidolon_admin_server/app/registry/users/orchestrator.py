@@ -14,6 +14,7 @@ from typing import Any, Awaitable, Callable
 
 from eidolon_sdk.adapters.registry_sqlite import UserRepository
 from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.memory import derive_memory_space_id
 from eidolon_sdk.registry.models import UserRegistryRecord
 
 from .._shared import unwrap_detail
@@ -116,6 +117,28 @@ def _parse_dt(value: str | None) -> datetime:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Admin has no persona concept yet; memory derives the space for an
+# admin-registered user with this default persona. Keep in lockstep with
+# memory-supervisor's space derivation for admin users.
+_DEFAULT_PERSONA_ID = "default"
+
+
+def _memory_space_id(tenant_id: str, user_id: str) -> str:
+    """Forward join key: admin keys users by bare ``user_id``; memory-supervisor
+    keys its runtime/health records by ``memory_space_id``
+    (``<tenant>.<owner_user>.<persona>``). Use this whenever we address a single
+    user on memory's admin surface."""
+    return derive_memory_space_id(tenant_id, user_id, _DEFAULT_PERSONA_ID)
+
+
+def _owner_user_id_from_space(space_id: str) -> str | None:
+    """Reverse join key: extract ``owner_user_id`` from a ``memory_space_id``.
+    Used when reading memory records back (we don't have the persona/tenant of a
+    just-deleted user, and this needs no persona assumption)."""
+    parts = (space_id or "").split(".")
+    return parts[1] if len(parts) == 3 else None
 
 
 # ---- orchestrator ----------------------------------------------------------
@@ -250,7 +273,12 @@ class UserOrchestrator:
         out: dict[str, dict[str, Any]] = {}
         for record in envelope.get("users", []) or []:
             try:
-                out[record["spec"]["user_id"]] = record
+                # memory keys ``spec.user_id`` by memory_space_id; admin joins
+                # by bare owner_user_id.
+                owner = _owner_user_id_from_space(record["spec"]["user_id"])
+                if owner is None:
+                    continue
+                out[owner] = record
             except Exception:  # noqa: BLE001
                 continue
         return out
@@ -294,11 +322,14 @@ class UserOrchestrator:
         deadline = time.monotonic() + timeout_s
         last_detail = "not checked"
         while True:
-            if await self._meta.get(user_id) is None:
+            meta = await self._meta.get(user_id)
+            if meta is None:
                 last_detail = "admin registry row missing"
             else:
                 try:
-                    record = await self._mem.get_user(user_id)
+                    record = await self._mem.get_user(
+                        _memory_space_id(meta.tenant_id, user_id)
+                    )
                     failures = self._create_health_failures(
                         record=record,
                         enabled=enabled,
@@ -336,12 +367,16 @@ class UserOrchestrator:
                 try:
                     envelope = await self._mem.list_users()
                     users = envelope.get("users", []) or []
-                    memory_ids = {
-                        str((record.get("spec") or {}).get("user_id"))
+                    # memory keys ``spec.user_id`` by memory_space_id; reduce to
+                    # owner_user_id to compare against admin's bare user_id.
+                    memory_owner_ids = {
+                        _owner_user_id_from_space(
+                            str((record.get("spec") or {}).get("user_id"))
+                        )
                         for record in users
                         if isinstance(record, dict)
                     }
-                    if user_id in memory_ids:
+                    if user_id in memory_owner_ids:
                         last_detail = "memory registry still lists user"
                     else:
                         provider = self._agent_ids_provider
@@ -458,7 +493,7 @@ class UserOrchestrator:
             raise UserNotFound(f"user {user_id!r} not found")
         record: dict[str, Any] | None = None
         try:
-            record = await self._mem.get_user(user_id)
+            record = await self._mem.get_user(_memory_space_id(meta.tenant_id, user_id))
         except ServiceUnavailable as exc:
             logger.info("users: memory get unavailable for %s: %s", user_id, exc)
         except ServiceUpstreamError as exc:
@@ -641,7 +676,9 @@ class UserOrchestrator:
         # barrier: if purge fails, keep admin metadata so the operator can
         # retry without losing the source-of-truth row.
         try:
-            memory_result = await self._mem.delete_user(user_id)
+            memory_result = await self._mem.delete_user(
+                _memory_space_id(current.tenant_id, user_id)
+            )
         except ServiceUnavailable as exc:
             raise UserMemoryDown(
                 f"memory unavailable while deleting user {user_id!r}; "

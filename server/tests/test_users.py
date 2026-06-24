@@ -168,7 +168,8 @@ def _memory_user_record(
         }
     return {
         "spec": {
-            "user_id": user_id,
+            # memory keys its records by memory_space_id, not bare user_id.
+            "user_id": f"default.{user_id}.default",
             "tenant_id": "default",
             "display_name": user_id,
             "enabled": enabled,
@@ -323,7 +324,7 @@ async def test_create_user_happy_path(orchestrator: UserOrchestrator) -> None:
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
         view = await orchestrator.create_user(
@@ -366,7 +367,7 @@ async def test_create_user_waits_for_memory_health(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.get("/api/admin/users/alice").mock(side_effect=_memory_response)
+        rsx.get("/api/admin/users/default.alice.default").mock(side_effect=_memory_response)
         view = await orchestrator.create_user(
             CreateUserRequest(
                 user_id="alice",
@@ -410,7 +411,7 @@ async def test_create_user_verify_timeout(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200,
                 json=_memory_user_record(
@@ -490,7 +491,7 @@ async def test_update_only_changes_admin_owned_fields(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
         view = await orchestrator.update_user(
@@ -506,7 +507,7 @@ async def test_set_active_agent_persists_to_admin_kv(
 ) -> None:
     await orchestrator._meta.put(_user_record("alice", display_name="A"))
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
         view = await orchestrator.set_active_agent(
@@ -526,7 +527,7 @@ async def test_delete_user_calls_memory_then_cleans_metadata(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.delete("/api/admin/users/alice").mock(
+        rsx.delete("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -584,7 +585,7 @@ async def test_delete_user_deletes_owned_agents_before_memory(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.delete("/api/admin/users/alice").mock(
+        rsx.delete("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -638,7 +639,7 @@ async def test_delete_user_deletes_agent_user_data_and_voiceprint(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.delete("/api/admin/users/alice").mock(
+        rsx.delete("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -668,7 +669,7 @@ async def test_delete_user_aborts_if_memory_cleanup_fails(
     )
 
     with respx.mock(base_url=MEMORY_URL) as rsx:
-        rsx.delete("/api/admin/users/alice").mock(
+        rsx.delete("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(503, json={"detail": "palace busy"})
         )
         with pytest.raises(UserError, match="memory cleanup failed"):
@@ -694,7 +695,7 @@ async def test_delete_user_verify_timeout_keeps_failure_visible(
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.delete("/api/admin/users/alice").mock(
+        rsx.delete("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200,
                 json={
@@ -797,7 +798,7 @@ async def test_http_create_201(client: httpx.AsyncClient) -> None:
         rsx.post("/api/admin/reconcile").mock(
             return_value=httpx.Response(200, json={"ok": True})
         )
-        rsx.get("/api/admin/users/alice").mock(
+        rsx.get("/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user_record(user_id="alice"))
         )
         r = await client.post(

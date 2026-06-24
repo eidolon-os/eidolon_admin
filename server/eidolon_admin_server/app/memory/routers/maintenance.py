@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
 
 from ...registry.users.repository import MemoryUserClient
+from ..space import memory_space_id_for_user
 from ..schemas import RebuildIndexJob, RebuildIndexJobsResponse
 
 router = APIRouter()
@@ -40,8 +41,9 @@ def _map_upstream(exc: ServiceUpstreamError) -> HTTPException:
 )
 async def rebuild_user_index(user_id: str, request: Request) -> RebuildIndexJob:
     try:
+        space_id = await memory_space_id_for_user(request, user_id)
         return RebuildIndexJob.model_validate(
-            await _memory_client(request).rebuild_index(user_id)
+            await _memory_client(request).rebuild_index(space_id)
         )
     except ServiceUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -70,8 +72,9 @@ async def list_user_rebuild_index_jobs(
     request: Request,
 ) -> RebuildIndexJobsResponse:
     try:
+        space_id = await memory_space_id_for_user(request, user_id)
         return RebuildIndexJobsResponse.model_validate(
-            await _memory_client(request).list_rebuild_index_jobs(user_id)
+            await _memory_client(request).list_rebuild_index_jobs(space_id)
         )
     except ServiceUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc

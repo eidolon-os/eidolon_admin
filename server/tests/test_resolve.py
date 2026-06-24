@@ -104,7 +104,9 @@ def _memory_user(
 ) -> dict:
     return {
         "spec": {
-            "user_id": user_id, "tenant_id": "default", "display_name": user_id,
+            # memory keys its records by memory_space_id, not bare user_id.
+            "user_id": f"default.{user_id}.default",
+            "tenant_id": "default", "display_name": user_id,
             "enabled": enabled,
             "palace_path": "",
             "consolidator": {
@@ -255,7 +257,7 @@ async def test_resolve_device_happy_path(
         rsx.get(f"{HUB_URL}/api/admin/devices/esp-1").mock(
             return_value=httpx.Response(200, json=_hub_device("esp-1"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user("alice"))
         )
         rsx.get(
@@ -306,7 +308,7 @@ async def test_resolve_device_carries_interaction_mode_override(
         rsx.get(f"{HUB_URL}/api/admin/devices/esp-mode").mock(
             return_value=httpx.Response(200, json=_hub_device("esp-mode"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user("alice"))
         )
         rsx.get(
@@ -340,7 +342,7 @@ async def test_resolve_device_rejects_disabled_user(
         rsx.get(f"{HUB_URL}/api/admin/devices/esp-disabled-user").mock(
             return_value=httpx.Response(200, json=_hub_device("esp-disabled-user"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200, json=_memory_user("alice", enabled=False),
             )
@@ -373,7 +375,7 @@ async def test_resolve_device_rejects_worker_down_user(
         rsx.get(f"{HUB_URL}/api/admin/devices/esp-worker-down").mock(
             return_value=httpx.Response(200, json=_hub_device("esp-worker-down"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(
                 200,
                 json=_memory_user(
@@ -429,7 +431,7 @@ async def test_resolve_device_includes_voiceprint_summary(
         rsx.get(f"{HUB_URL}/api/admin/devices/esp-voice").mock(
             return_value=httpx.Response(200, json=_hub_device("esp-voice"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user("alice"))
         )
         rsx.get(
@@ -471,7 +473,7 @@ async def test_resolve_propagates_empty_mcp_url_when_memory_omits_it(
         rsx.get(f"{HUB_URL}/api/admin/devices/esp-stale").mock(
             return_value=httpx.Response(200, json=_hub_device("esp-stale"))
         )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/bob").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.bob.default").mock(
             return_value=httpx.Response(200, json=bare)
         )
         rsx.get(
@@ -520,7 +522,7 @@ async def test_resolve_user_happy_path(
         ),
     )
     with respx.mock() as rsx:
-        rsx.get(f"{MEMORY_URL}/api/admin/users/alice").mock(
+        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
             return_value=httpx.Response(200, json=_memory_user("alice"))
         )
         rsx.get(

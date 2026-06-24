@@ -112,12 +112,28 @@ def _load_users_from_registry(db_path: Path) -> list[UserEntry]:
     ]
 
 
+def _owner_user_id(value: str | None) -> str | None:
+    """Reduce a runner id to the bare owner_user_id admin keys by. The agent
+    runner is launched with ``--memory-space-id <tenant>.<owner_user>.<persona>``;
+    extract the middle segment so it maps back to admin's registry user. Plain
+    ids (legacy ``--user-id``) pass through unchanged."""
+    if not value:
+        return None
+    parts = value.split(".")
+    if len(parts) == 3:
+        return parts[1]
+    return value
+
+
 def _user_id_from_cmdline(cmd: list[str]) -> str | None:
-    for i, token in enumerate(cmd):
-        if token == "--user-id" and i + 1 < len(cmd):
-            return cmd[i + 1]
-        if token.startswith("--user-id="):
-            return token.split("=", 1)[1]
+    # Agent runners use ``--memory-space-id``; consolidators (and legacy
+    # processes) use ``--user-id``. Accept both and normalise to owner_user_id.
+    for flag in ("--memory-space-id", "--user-id"):
+        for i, token in enumerate(cmd):
+            if token == flag and i + 1 < len(cmd):
+                return _owner_user_id(cmd[i + 1])
+            if token.startswith(f"{flag}="):
+                return _owner_user_id(token.split("=", 1)[1])
     return None
 
 

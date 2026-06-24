@@ -144,7 +144,8 @@ async def test_rebuild_index_routes_proxy_to_memory_supervisor(app):
         listed = await ac.get("/api/memory/users/alice/rebuild-index")
 
     assert created.status_code == 202
-    assert created.json()["job_id"] == "job-alice"
+    # admin addresses memory-supervisor by memory_space_id, not bare user_id.
+    assert created.json()["job_id"] == "job-default.alice.default"
     assert status.status_code == 200
     assert status.json()["status"] == "succeeded"
     assert listed.status_code == 200
@@ -420,7 +421,10 @@ async def test_create_memory_publishes_turn(app):
 
     publisher.publish_turn.assert_awaited_once()
     kwargs = publisher.publish_turn.await_args.kwargs
-    assert kwargs["user_id"] == "alice"
+    ctx = kwargs["context"]
+    assert ctx.owner_user_id == "alice"
+    # Admin manual writes resolve to the user's default-persona memory space.
+    assert ctx.memory_space_id.split(".")[1] == "alice"
     assert kwargs["user_text"] == "Alice likes tea."
     assert kwargs["metadata"]["wing"] == "Wing_Profile"
     assert kwargs["metadata"]["src"] == "test"

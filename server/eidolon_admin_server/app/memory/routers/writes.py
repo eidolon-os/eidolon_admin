@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from eidolon_sdk.memory import conversation_turn_subject
+from eidolon_sdk.memory import MemoryActorContext, conversation_turn_subject
 
 from ..mcp_client import call_tool
+from ..space import DEFAULT_PERSONA_ID, tenant_for_user
 from ..schemas import (
     KgInvalidateRequest,
     KgTripleAddRequest,
@@ -25,6 +26,10 @@ from ..schemas import (
 )
 
 router = APIRouter()
+
+# This manual-injection path has no real agent/device/instance/session; tag the
+# actor provenance honestly so downstream can distinguish UI writes.
+_ADMIN_UI_SENTINEL = "admin_ui"
 
 
 @router.post(
@@ -36,9 +41,22 @@ async def create_memory(body: MemoryCreateRequest, request: Request) -> MemoryWr
     publisher = request.app.state.memory_publisher
     if publisher is None:
         raise HTTPException(503, "memory NATS publisher not initialised")
+    tenant_id = await tenant_for_user(request, body.user_id)
+    try:
+        context = MemoryActorContext(
+            tenant_id=tenant_id,
+            owner_user_id=body.user_id,
+            persona_id=DEFAULT_PERSONA_ID,
+            agent_id=_ADMIN_UI_SENTINEL,
+            device_id=_ADMIN_UI_SENTINEL,
+            instance_id=_ADMIN_UI_SENTINEL,
+            session_id=_ADMIN_UI_SENTINEL,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, f"invalid memory actor context: {exc}") from exc
     try:
         turn_id = await publisher.publish_turn(
-            user_id=body.user_id,
+            context=context,
             user_text=body.text,
             assistant_text="",
             metadata={
@@ -50,7 +68,7 @@ async def create_memory(body: MemoryCreateRequest, request: Request) -> MemoryWr
         )
     except Exception as exc:  # noqa: BLE001 — wrap any NATS failure
         raise HTTPException(502, f"NATS publish failed: {exc}") from exc
-    subject = conversation_turn_subject(body.user_id)
+    subject = conversation_turn_subject(context.memory_space_id)
     return MemoryWriteAccepted(
         detail=f"Published to {subject}; turn_id={turn_id}",
     )
