@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.memory import runners as runners_mod
 from eidolon_admin_server.app.settings import (
@@ -15,7 +14,6 @@ from eidolon_admin_server.app.settings import (
     GatewayConfig,
     Settings,
 )
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -60,10 +58,11 @@ def _write_registry(tmp_path: Path, *, missing: bool = False) -> Path:
     return db_path
 
 
-async def test_user_id_from_cmdline_supports_both_forms():
+async def test_user_id_from_cmdline_requires_memory_space_id():
     f = runners_mod._user_id_from_cmdline
-    assert f(["x", "--user-id", "alice", "--port", "8030"]) == "alice"
-    assert f(["x", "--user-id=bob"]) == "bob"
+    assert f(["x", "--memory-space-id", "default.alice.default", "--port", "8030"]) == "alice"
+    assert f(["x", "--memory-space-id=default.bob.default"]) == "bob"
+    assert f(["x", "--memory-space-id=alice"]) is None
     assert f(["x", "--port", "8030"]) is None
 
 

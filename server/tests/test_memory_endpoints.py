@@ -11,14 +11,12 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.settings import (
     AdminBindConfig,
     GatewayConfig,
     Settings,
 )
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -169,9 +167,12 @@ async def test_memories_search(app):
 
     assert resp.status_code == 200
     assert resp.json()["records"] == fake["records"]
-    mock.assert_awaited_once_with(
-        "alice", "eidolon_memory_search", {"query": "hi", "top_k": 3}
-    )
+    args = mock.await_args.args
+    assert args[0] == "alice"
+    assert args[1] == "eidolon_memory_search"
+    assert args[2]["query"] == "hi"
+    assert args[2]["top_k"] == 3
+    assert args[2]["context"]["memory_space_id"] == "default.alice.default"
 
 
 async def test_memories_list_returns_total_hint(app):
@@ -369,6 +370,7 @@ async def test_recall(app):
     assert args[0] == "alice"
     assert args[1] == "eidolon_memory_recall_context"
     assert args[2]["query"] == "what does alice like?"
+    assert args[2]["context"]["memory_space_id"] == "default.alice.default"
 
 
 # -- mcp tools ----------------------------------------------------------------

@@ -1,18 +1,16 @@
-"""Admin↔memory join-key helpers.
+"""Admin-memory identity helpers.
 
-memory-supervisor keys users by ``memory_space_id``
-(``<tenant>.<owner_user>.<persona>``); admin keys by bare ``user_id``. Any admin
-code that addresses a single user on memory's surface must translate. Admin has
-no persona concept yet, so admin-registered users live in the default-persona
-space — matching memory-supervisor's own derivation.
+Admin product surfaces use ``companion_id``. The memory wire contract still
+uses ``persona_id`` for the same product concept.
 """
 from __future__ import annotations
 
+from eidolon_sdk.memory import MemoryActorContext, derive_memory_space_id
 from fastapi import Request
 
-from eidolon_sdk.memory import derive_memory_space_id
-
-DEFAULT_PERSONA_ID = "default"
+DEFAULT_COMPANION_ID = "default"
+DEFAULT_PERSONA_ID = DEFAULT_COMPANION_ID
+ADMIN_MEMORY_ACTOR_ID = "admin_ui"
 
 
 async def tenant_for_user(
@@ -32,7 +30,40 @@ async def tenant_for_user(
     return spec.tenant_id if spec else default
 
 
-async def memory_space_id_for_user(request: Request, user_id: str) -> str:
-    """The memory_space_id memory-supervisor keys ``user_id`` by."""
+async def memory_space_id_for_user(
+    request: Request,
+    user_id: str,
+    *,
+    companion_id: str | None = None,
+) -> str:
+    """Return the memory-space id for an admin-addressed user."""
     tenant_id = await tenant_for_user(request, user_id)
-    return derive_memory_space_id(tenant_id, user_id, DEFAULT_PERSONA_ID)
+    return derive_memory_space_id(
+        tenant_id,
+        user_id,
+        companion_id or DEFAULT_COMPANION_ID,
+    )
+
+
+async def memory_actor_context_for_user(
+    request: Request,
+    user_id: str,
+    *,
+    companion_id: str | None = None,
+    agent_id: str = ADMIN_MEMORY_ACTOR_ID,
+    device_id: str = ADMIN_MEMORY_ACTOR_ID,
+    instance_id: str = ADMIN_MEMORY_ACTOR_ID,
+    session_id: str = ADMIN_MEMORY_ACTOR_ID,
+) -> MemoryActorContext:
+    """Build the canonical memory context for admin read/write calls."""
+
+    tenant_id = await tenant_for_user(request, user_id)
+    return MemoryActorContext(
+        tenant_id=tenant_id,
+        owner_user_id=user_id,
+        persona_id=companion_id or DEFAULT_COMPANION_ID,
+        agent_id=agent_id,
+        device_id=device_id,
+        instance_id=instance_id,
+        session_id=session_id,
+    )

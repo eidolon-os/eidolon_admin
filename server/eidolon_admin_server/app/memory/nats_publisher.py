@@ -1,6 +1,6 @@
 """NATS JetStream publisher for conversation turns.
 
-memory's worker subscribes to ``eidolon.memory.turn.<memory_space_id>`` to ingest
+memory's worker subscribes to ``eidolon.memory.turn.<memory_space_token>`` to ingest
 turns. We publish there from POST /api/memory/memories. Fire-and-forget; the
 worker's ack is its own business.
 """
@@ -14,13 +14,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+import nats
 from eidolon_sdk.memory import (
     ConversationTurnPayload,
     MemoryActorContext,
     conversation_turn_subject,
 )
-
-import nats
 from nats.errors import TimeoutError as NatsTimeoutError
 from nats.js.errors import APIError
 

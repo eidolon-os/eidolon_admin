@@ -5,17 +5,29 @@ and user_id is a query parameter. Read-like, no NATS / yaml side effects.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from ..mcp_client import call_tool
 from ..schemas import KgTripleOut, RecallRequest, RecallResponse
+from ..space import memory_actor_context_for_user
 
 router = APIRouter()
 
 
 @router.post("/recall", response_model=RecallResponse)
-async def recall(body: RecallRequest, user_id: str = Query(...)) -> RecallResponse:
+async def recall(
+    body: RecallRequest,
+    request: Request,
+    user_id: str = Query(...),
+    companion_id: str | None = None,
+) -> RecallResponse:
     args = body.model_dump(exclude_none=True)
+    context = await memory_actor_context_for_user(
+        request,
+        user_id,
+        companion_id=companion_id,
+    )
+    args["context"] = context.model_dump(mode="json")
     result = await call_tool(user_id, "eidolon_memory_recall_context", args)
     if not isinstance(result, dict):
         return RecallResponse(context=str(result) if result else "")

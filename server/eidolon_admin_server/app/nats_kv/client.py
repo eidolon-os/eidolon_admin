@@ -7,7 +7,7 @@ plus an ``ensure_bucket`` that idempotently creates a bucket with the
 caller-specified storage / size / history policy.
 
 Why a separate client (not reusing ``JetStreamPublisher``):
-    The publisher is hardcoded to publish to ``agent.memory.conversation.turn.*``
+    The publisher is hardcoded to publish to ``eidolon.memory.turn.*``
     subjects with the memory-turn payload shape. Bending it to also do
     generic KV ops would force it to grow two unrelated responsibilities.
     A dedicated client keeps each module honest about its surface area.

@@ -1,23 +1,35 @@
 """Memory list / search read endpoints (writes live in writes.py)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 
 from ..mcp_client import call_tool
 from ..schemas import MemoryListResponse, MemorySearchResponse
+from ..space import memory_actor_context_for_user
 
 router = APIRouter()
 
 
 @router.get("/memories/search", response_model=MemorySearchResponse)
 async def search_memories(
+    request: Request,
     user_id: str = Query(...),
     query: str = Query(..., min_length=1),
     top_k: int = Query(8, ge=1, le=100),
     wing: str | None = None,
     room: str | None = None,
+    companion_id: str | None = None,
 ) -> MemorySearchResponse:
-    args: dict[str, object] = {"query": query, "top_k": top_k}
+    context = await memory_actor_context_for_user(
+        request,
+        user_id,
+        companion_id=companion_id,
+    )
+    args: dict[str, object] = {
+        "query": query,
+        "context": context.model_dump(mode="json"),
+        "top_k": top_k,
+    }
     if wing:
         args["wing"] = wing
     if room:

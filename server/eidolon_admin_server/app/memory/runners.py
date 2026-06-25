@@ -1,11 +1,11 @@
-"""Per-user agent_runner and consolidator discovery.
+"""Per-user memory runner and consolidator discovery.
 
 memory-supervisor spawns ``eidolon-memory-agent`` and (opt-in)
 ``eidolon-memory-consolidator`` per enabled user in admin's registry DB.
 supervisord cannot see those grandchildren, so we surface them here by:
 
 1. Reading admin's local user registry.
-2. Scanning processes via psutil for each CLI, binding ``--user-id``.
+2. Scanning processes via psutil for each CLI, binding ``--memory-space-id``.
 3. TCP-probing each user's agent port.
 """
 from __future__ import annotations
@@ -113,27 +113,25 @@ def _load_users_from_registry(db_path: Path) -> list[UserEntry]:
 
 
 def _owner_user_id(value: str | None) -> str | None:
-    """Reduce a runner id to the bare owner_user_id admin keys by. The agent
-    runner is launched with ``--memory-space-id <tenant>.<owner_user>.<persona>``;
-    extract the middle segment so it maps back to admin's registry user. Plain
-    ids (legacy ``--user-id``) pass through unchanged."""
+    """Reduce a memory_space_id to the owner_user_id admin keys by.
+
+    Runners launch with ``--memory-space-id <tenant>.<owner_user>.<persona>``;
+    extract the middle segment so it maps back to admin's registry user.
+    """
     if not value:
         return None
     parts = value.split(".")
     if len(parts) == 3:
         return parts[1]
-    return value
+    return None
 
 
 def _user_id_from_cmdline(cmd: list[str]) -> str | None:
-    # Agent runners use ``--memory-space-id``; consolidators (and legacy
-    # processes) use ``--user-id``. Accept both and normalise to owner_user_id.
-    for flag in ("--memory-space-id", "--user-id"):
-        for i, token in enumerate(cmd):
-            if token == flag and i + 1 < len(cmd):
-                return _owner_user_id(cmd[i + 1])
-            if token.startswith(f"{flag}="):
-                return _owner_user_id(token.split("=", 1)[1])
+    for i, token in enumerate(cmd):
+        if token == "--memory-space-id" and i + 1 < len(cmd):
+            return _owner_user_id(cmd[i + 1])
+        if token.startswith("--memory-space-id="):
+            return _owner_user_id(token.split("=", 1)[1])
     return None
 
 

@@ -10,7 +10,7 @@ This test proves the fix by going through the runtime path:
   1. Mint a Phase 32-style device JWT for two distinct user_ids
      using the same shared secret + payload schema agent's
      PairingTokenVerifier expects.
-  2. Subscribe to ``agent.memory.conversation.turn.>`` on NATS.
+  2. Subscribe to ``eidolon.memory.turn.*`` on NATS.
   3. Send a ChatOnce gRPC to agent with each token.
   4. Assert each turn lands on its own user-suffixed subject — and
      nothing else.
@@ -101,6 +101,8 @@ async def _grpc_chat_once(
     try:
         from eidolon_agent.app.transport.grpc.proto import (  # type: ignore[import-not-found]
             eidolon_pb2 as pb,
+        )
+        from eidolon_agent.app.transport.grpc.proto import (
             eidolon_pb2_grpc as pb_grpc,
         )
     except ImportError:
@@ -133,7 +135,7 @@ async def test_two_users_write_to_isolated_nats_subjects() -> None:
     Why this nails the 32 series: before Phase 32, channel's static
     token had ``user_id=alice`` baked in. Every web session — no
     matter what name the user typed — produced turns on
-    ``agent.memory.conversation.turn.alice``. This test confirms that
+    ``eidolon.memory.turn.<space_token>``. This test confirms that
     after 32.A-D the per-session token's user_id reaches the agent
     and routes the turn to the right NATS subject.
     """
@@ -160,7 +162,7 @@ async def test_two_users_write_to_isolated_nats_subjects() -> None:
         async def _on_msg(msg) -> None:  # type: ignore[no-untyped-def]
             observed_subjects.append(msg.subject)
 
-        sub = await nc.subscribe("agent.memory.conversation.turn.>", cb=_on_msg)
+        sub = await nc.subscribe("eidolon.memory.turn.*", cb=_on_msg)
 
         # Pick two user_ids that admin already has worker palaces for
         # on the dev stack. ``default`` is seeded; manson is created
@@ -193,10 +195,10 @@ async def test_two_users_write_to_isolated_nats_subjects() -> None:
     finally:
         await nc.close()
 
-    manson_hits = [s for s in observed_subjects if s.endswith(".manson")]
-    default_hits = [s for s in observed_subjects if s.endswith(".default")]
+    manson_hits = [s for s in observed_subjects if ".manson." in s]
+    default_hits = [s for s in observed_subjects if s.endswith(".default.default")]
     cross_hits = [
-        s for s in observed_subjects if not (s.endswith(".manson") or s.endswith(".default"))
+        s for s in observed_subjects if not (".manson." in s or s.endswith(".default.default"))
     ]
 
     # The contract: exactly one turn per user, ZERO turns on any other

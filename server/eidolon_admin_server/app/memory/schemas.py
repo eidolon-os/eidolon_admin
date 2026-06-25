@@ -11,7 +11,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # -- Users --------------------------------------------------------------------
 
 
@@ -103,6 +102,7 @@ class MemoryListResponse(BaseModel):
 
 class MemoryCreateRequest(BaseModel):
     user_id: str
+    companion_id: str | None = None
     wing: str = "Wing_Profile"
     room: str = "profile_core"
     text: str = Field(..., min_length=1)
@@ -210,6 +210,7 @@ class KgTimelineResponse(BaseModel):
 
 class KgTripleAddRequest(BaseModel):
     user_id: str
+    companion_id: str | None = None
     subject: str = Field(..., min_length=1)
     predicate: str = Field(..., min_length=1)
     object: str = Field(..., min_length=1)
@@ -221,6 +222,7 @@ class KgTripleAddRequest(BaseModel):
 
 class KgInvalidateRequest(BaseModel):
     user_id: str
+    companion_id: str | None = None
     subject: str = Field(..., min_length=1)
     predicate: str = Field(..., min_length=1)
     object: str = Field(..., min_length=1)

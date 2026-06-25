@@ -11,12 +11,10 @@ tool call → typed response.
 """
 from __future__ import annotations
 
+from eidolon_sdk.memory import conversation_turn_subject
 from fastapi import APIRouter, HTTPException, Request, status
 
-from eidolon_sdk.memory import MemoryActorContext, conversation_turn_subject
-
 from ..mcp_client import call_tool
-from ..space import DEFAULT_PERSONA_ID, tenant_for_user
 from ..schemas import (
     KgInvalidateRequest,
     KgTripleAddRequest,
@@ -24,13 +22,9 @@ from ..schemas import (
     MemoryCreateRequest,
     MemoryWriteAccepted,
 )
+from ..space import memory_actor_context_for_user
 
 router = APIRouter()
-
-# This manual-injection path has no real agent/device/instance/session; tag the
-# actor provenance honestly so downstream can distinguish UI writes.
-_ADMIN_UI_SENTINEL = "admin_ui"
-
 
 @router.post(
     "/memories",
@@ -41,16 +35,11 @@ async def create_memory(body: MemoryCreateRequest, request: Request) -> MemoryWr
     publisher = request.app.state.memory_publisher
     if publisher is None:
         raise HTTPException(503, "memory NATS publisher not initialised")
-    tenant_id = await tenant_for_user(request, body.user_id)
     try:
-        context = MemoryActorContext(
-            tenant_id=tenant_id,
-            owner_user_id=body.user_id,
-            persona_id=DEFAULT_PERSONA_ID,
-            agent_id=_ADMIN_UI_SENTINEL,
-            device_id=_ADMIN_UI_SENTINEL,
-            instance_id=_ADMIN_UI_SENTINEL,
-            session_id=_ADMIN_UI_SENTINEL,
+        context = await memory_actor_context_for_user(
+            request,
+            body.user_id,
+            companion_id=body.companion_id,
         )
     except ValueError as exc:
         raise HTTPException(422, f"invalid memory actor context: {exc}") from exc
@@ -90,7 +79,7 @@ def _kg_result(payload: object) -> KgWriteResult:
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def add_kg_triple(body: KgTripleAddRequest) -> KgWriteResult:
-    args = body.model_dump(exclude={"user_id"}, exclude_none=True)
+    args = body.model_dump(exclude={"user_id", "companion_id"}, exclude_none=True)
     payload = await call_tool(body.user_id, "eidolon_memory_kg_add_triple", args)
     return _kg_result(payload)
 
@@ -101,6 +90,6 @@ async def add_kg_triple(body: KgTripleAddRequest) -> KgWriteResult:
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def invalidate_kg(body: KgInvalidateRequest) -> KgWriteResult:
-    args = body.model_dump(exclude={"user_id"}, exclude_none=True)
+    args = body.model_dump(exclude={"user_id", "companion_id"}, exclude_none=True)
     payload = await call_tool(body.user_id, "eidolon_memory_kg_invalidate", args)
     return _kg_result(payload)
