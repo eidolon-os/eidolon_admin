@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 
 from .._shared import unwrap_detail
 from ..agents.repository import AgentMetadataRepository

@@ -27,10 +27,10 @@ from typing import Any
 from eidolon_sdk.adapters.registry_sqlite import (
     AgentMetadataRepository as SqliteAgentMetadataRepository,
 )
-from eidolon_sdk.http import (
+from eidolon_sdk.core.http import (
     ServiceHTTPClient,
 )
-from eidolon_sdk.registry.models import AgentMetadataRecord
+from eidolon_sdk.biz.registry.models import AgentMetadataRecord
 
 logger = logging.getLogger(__name__)
 

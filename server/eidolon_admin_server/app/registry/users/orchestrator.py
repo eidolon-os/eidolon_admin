@@ -13,9 +13,9 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from eidolon_sdk.adapters.registry_sqlite import UserRepository
-from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 from eidolon_sdk.memory import derive_memory_space_id
-from eidolon_sdk.registry.models import UserRegistryRecord
+from eidolon_sdk.biz.registry.models import UserRegistryRecord
 
 from .._shared import unwrap_detail
 from ..schemas.user import (

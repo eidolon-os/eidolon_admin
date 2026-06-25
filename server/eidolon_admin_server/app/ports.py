@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from eidolon_sdk.registry import resolve_registry_db_path
+from eidolon_sdk.biz.registry import resolve_registry_db_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"

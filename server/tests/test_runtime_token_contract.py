@@ -2,7 +2,7 @@
 
 The Phase 32 plan-D runtime path has channel signing a device JWT that
 agent's verifier consumes. The canonical implementation now lives in
-``eidolon_sdk.runtime`` and runtime callers import it directly.
+``eidolon_sdk.biz.runtime`` and runtime callers import it directly.
 
 This test pins that contract end-to-end:
   - Use SDK ``sign_device_token`` to mint a JWT with known fields
@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from eidolon_sdk.runtime import (
+from eidolon_sdk.biz.runtime import (
     PairingTokenVerifier,
     RuntimeUnauthenticatedError,
     sign_device_token,

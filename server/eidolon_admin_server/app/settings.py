@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from eidolon_sdk.registry import resolve_registry_db_path
+from eidolon_sdk.biz.registry import resolve_registry_db_path
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

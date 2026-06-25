@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
-from eidolon_sdk.registry.ids import validate_registry_id
-from eidolon_sdk.registry.models import TenantSpec
+from eidolon_sdk.biz.registry.ids import validate_registry_id
+from eidolon_sdk.biz.registry.models import TenantSpec
 
 
 class CreateTenantRequest(BaseModel):

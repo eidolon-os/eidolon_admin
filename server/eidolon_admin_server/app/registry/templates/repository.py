@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from eidolon_sdk.http import (
+from eidolon_sdk.core.http import (
     ServiceHTTPClient,
 )
 

@@ -7,7 +7,7 @@ classes.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
-from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 
 from ..schemas.user import (
     CreateUserRequest,

@@ -27,7 +27,7 @@ from typing import AsyncIterator
 import httpx
 import pytest
 import respx
-from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 from fastapi import FastAPI
 
 from eidolon_admin_server.app.registry.templates import (

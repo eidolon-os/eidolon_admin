@@ -19,10 +19,10 @@ from typing import Any
 from eidolon_sdk.adapters.registry_sqlite import (
     DeviceBindingRepository as SqliteDeviceBindingRepository,
 )
-from eidolon_sdk.http import (
+from eidolon_sdk.core.http import (
     ServiceHTTPClient,
 )
-from eidolon_sdk.registry.models import DeviceBindingRecord
+from eidolon_sdk.biz.registry.models import DeviceBindingRecord
 
 from ..schemas.device import DeviceBinding
 

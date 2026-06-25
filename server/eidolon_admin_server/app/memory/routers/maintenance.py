@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 
 from ...registry.users.repository import MemoryUserClient
 from ..space import memory_space_id_for_user

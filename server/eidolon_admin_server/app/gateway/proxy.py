@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import suppress
 
 import httpx
-from eidolon_sdk.streaming import SSE_HEARTBEAT_BYTES
+from eidolon_sdk.core.streaming import SSE_HEARTBEAT_BYTES
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 

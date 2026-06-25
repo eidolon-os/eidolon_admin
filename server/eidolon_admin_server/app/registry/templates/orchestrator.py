@@ -40,7 +40,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from eidolon_sdk.http import ServiceUnavailable, ServiceUpstreamError
+from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 
 from .._shared import unwrap_detail
 from ..schemas.template import (

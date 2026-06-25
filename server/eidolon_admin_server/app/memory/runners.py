@@ -19,7 +19,7 @@ from typing import Any
 
 import psutil
 from eidolon_sdk.adapters.registry_sqlite import list_memory_user_records_sync
-from eidolon_sdk.registry import resolve_registry_db_path
+from eidolon_sdk.biz.registry import resolve_registry_db_path
 
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"

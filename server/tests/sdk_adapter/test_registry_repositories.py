@@ -7,7 +7,7 @@ from eidolon_sdk.adapters.registry_sqlite import (
     TenantRepository,
     UserRepository,
 )
-from eidolon_sdk.registry.models import (
+from eidolon_sdk.biz.registry.models import (
     ConsolidatorConfig,
     TenantSpec,
     UserRegistryRecord,

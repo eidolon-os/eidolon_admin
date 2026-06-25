@@ -24,7 +24,7 @@ from eidolon_sdk.adapters.registry_sqlite import (
     TenantRepository,
     UserRepository,
 )
-from eidolon_sdk.registry.models import UserRegistryRecord
+from eidolon_sdk.biz.registry.models import UserRegistryRecord
 
 from eidolon_admin_server.app.registry.agents.repository import (
     AgentMetadata,
