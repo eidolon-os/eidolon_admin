@@ -59,7 +59,7 @@ eidolon-admin = "eidolon_admin_server.app.cli:main"
 find-links = ["https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html"]
 
 [tool.uv.sources]
-eidolon-sdk = { path = "../eidolon_sdk" }
+eidolon-sdk = { path = "../eidolon_sdk", editable = true }
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -528,7 +528,7 @@ dev = [
 requires-dist = [
     { name = "addict", specifier = ">=2.4" },
     { name = "datasets", specifier = ">=4.0" },
-    { name = "eidolon-sdk", directory = "../eidolon_sdk" },
+    { name = "eidolon-sdk", editable = "../eidolon_sdk" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "livekit-agents", marker = "extra == 'dev'", specifier = ">=1.5" },
@@ -557,7 +557,7 @@ provides-extras = ["dev"]
 [[package]]
 name = "eidolon-sdk"
 version = "0.1.0"
-source = { directory = "../eidolon_sdk" }
+source = { editable = "../eidolon_sdk" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "cryptography" },
