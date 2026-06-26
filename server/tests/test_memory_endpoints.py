@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from eidolon_admin_server.app.main import create_app
+from eidolon_admin_server.app.memory.routers.users import _default_user_id
+from eidolon_admin_server.app.memory.runners import UserEntry
 from eidolon_admin_server.app.settings import (
     AdminBindConfig,
     GatewayConfig,
@@ -101,6 +103,15 @@ async def test_users_list(app):
     assert alice["mcp_http_url"].endswith(":8030/mcp")
     # bob is disabled — no probe attempted.
     assert data["users"][1]["agent_reachable"] is False
+
+
+async def test_users_list_default_user_prefers_enabled_default():
+    entries = [
+        UserEntry(id="benchmark", port=8033, enabled=True),
+        UserEntry(id="default", port=8030, enabled=True),
+        UserEntry(id="manson", port=8031, enabled=True),
+    ]
+    assert _default_user_id(entries) == "default"
 
 
 class _FakeMemorySupervisorClient:

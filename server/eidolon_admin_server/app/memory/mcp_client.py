@@ -18,6 +18,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
+import httpx
 from fastapi import HTTPException
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
@@ -72,6 +73,20 @@ def _bearer_token() -> str | None:
     return token or None
 
 
+def _local_http_client(
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        headers=headers,
+        timeout=timeout,
+        auth=auth,
+        follow_redirects=True,
+        trust_env=False,
+    )
+
+
 @asynccontextmanager
 async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]:
     """Open a fresh MCP session for ``user_id``. Yields (session, url).
@@ -103,7 +118,11 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
         headers["Authorization"] = f"Bearer {token}"
 
     try:
-        async with streamablehttp_client(url, headers=headers or None) as (
+        async with streamablehttp_client(
+            url,
+            headers=headers or None,
+            httpx_client_factory=_local_http_client,
+        ) as (
             read,
             write,
             _get_session_id,

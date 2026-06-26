@@ -15,7 +15,6 @@ init handshake path that wedges in production.
 """
 from __future__ import annotations
 
-import asyncio
 from contextlib import asynccontextmanager
 
 import pytest

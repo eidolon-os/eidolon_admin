@@ -19,6 +19,16 @@ from ..schemas import UserDetail, UsersListResponse
 router = APIRouter()
 
 
+def _default_user_id(entries: list[UserEntry]) -> str:
+    if not entries:
+        return ""
+    default_entry = next((e for e in entries if e.id == "default" and e.enabled), None)
+    if default_entry:
+        return default_entry.id
+    enabled_entry = next((e for e in entries if e.enabled), None)
+    return (enabled_entry or entries[0]).id
+
+
 async def _build_detail(
     entry: UserEntry,
     *,
@@ -78,5 +88,5 @@ async def list_memory_users() -> UsersListResponse:
     return UsersListResponse(
         users_source=str(users_source_path()),
         users=details,
-        default_user_id=entries[0].id if entries else "",
+        default_user_id=_default_user_id(entries),
     )

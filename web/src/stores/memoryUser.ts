@@ -23,10 +23,19 @@ export const useMemoryUserStore = defineStore('memoryUser', () => {
     try {
       const data = await listMemoryUsers()
       users.value = data.users
-      // Pick a sensible default: persisted choice if still valid, else first enabled.
-      if (!currentId.value || !data.users.some((u) => u.user_id === currentId.value)) {
-        const enabled = data.users.find((u) => u.enabled)
-        currentId.value = (enabled || data.users[0])?.user_id || ''
+      // Pick a sensible default: persisted choice if still valid, else backend default.
+      const currentValid = data.users.some((u) => u.user_id === currentId.value)
+      const backendDefault = data.users.find((u) => u.user_id === data.default_user_id && u.enabled)
+      const enabled = data.users.find((u) => u.enabled)
+      const staleAutoPick = Boolean(
+        currentId.value
+        && backendDefault
+        && enabled
+        && currentId.value === enabled.user_id
+        && currentId.value !== backendDefault.user_id,
+      )
+      if (!currentId.value || !currentValid || staleAutoPick) {
+        currentId.value = (backendDefault || enabled || data.users[0])?.user_id || ''
         if (currentId.value) localStorage.setItem(STORAGE_KEY, currentId.value)
       }
       loaded.value = true
