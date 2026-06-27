@@ -274,7 +274,7 @@ function consolidatorTagType(c: ConsolidatorStatus | null | undefined) {
   return 'warning'
 }
 
-const usersFile = computed(() => store.users.length ? '~/eidolon/db/registry.sqlite3' : '')
+const usersFile = computed(() => store.users.length ? '~/eidolon/data/eidolon.sqlite3' : '')
 </script>
 
 <template>

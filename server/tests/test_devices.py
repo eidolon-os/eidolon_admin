@@ -17,18 +17,15 @@ from typing import AsyncIterator
 import httpx
 import pytest
 import respx
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.adapters.admin_registry import EidolonDataDeviceBindingRepository
 from fastapi import FastAPI
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    DeviceBindingRepository as SqliteDeviceBindingRepository,
-    RegistrySqliteStore,
-)
 from eidolon_admin_server.app.registry.agents.repository import AgentMetadata
 from eidolon_admin_server.app.registry.devices import (
     DeviceBadRequest,
     DeviceBindingRepository,
     DeviceDisabled,
-    DeviceError,
     DeviceHubDown,
     DeviceNotApproved,
     DeviceNotFound,
@@ -99,10 +96,10 @@ def _hub_discovery_response() -> dict:
 
 
 @pytest.fixture
-async def registry_store(tmp_path) -> AsyncIterator[RegistrySqliteStore]:
-    store = RegistrySqliteStore(tmp_path / "registry.sqlite3")
+async def data_store(tmp_path) -> AsyncIterator[DataStore]:
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
     yield store
-    await store.dispose()
+    await store.close()
 
 
 @pytest.fixture
@@ -113,12 +110,12 @@ async def http_client() -> AsyncIterator[httpx.AsyncClient]:
 
 @pytest.fixture
 async def orchestrator(
-    registry_store: RegistrySqliteStore,
+    data_store: DataStore,
     http_client: httpx.AsyncClient,
 ) -> AsyncIterator[DeviceOrchestrator]:
     hub_client = HubDeviceClient(http_client, HUB_URL)
     binding_repo = DeviceBindingRepository(
-        SqliteDeviceBindingRepository(registry_store)
+        EidolonDataDeviceBindingRepository(data_store)
     )
 
     # Stub agent_lookup. Returns AgentMetadata for known ids, None for others.

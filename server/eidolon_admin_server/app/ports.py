@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from eidolon_sdk.biz.registry import resolve_registry_db_path
+from eidolon_data.settings import default_sqlite_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"
@@ -231,14 +231,13 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
         _env(name, text)
 
     admin = p["admin"]
-    registry_db_path = resolve_registry_db_path()
     put("EIDOLON_ADMIN_API_HOST", admin["api"]["host"])
     put("EIDOLON_ADMIN_API_PORT", admin["api"]["port"])
     put(
         "EIDOLON_ADMIN_API_URL",
         f"http://{admin['api']['host']}:{admin['api']['port']}",
     )
-    put("EIDOLON_REGISTRY_DB_PATH", registry_db_path)
+    put("EIDOLON_DATA_SQLITE_PATH", default_sqlite_path())
     put("EIDOLON_ADMIN_WEB_PORT", admin["web"]["port"])
 
     hub = p["hub"]

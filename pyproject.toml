@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.5",
     "pyyaml>=6.0",
     "eidolon-sdk",
+    "eidolon-data",
     "supervisor>=4.2.5",
     "psutil>=6.0",
     "mcp>=1.2.0",
@@ -30,6 +31,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "ruff>=0.4",
     "respx>=0.21",
     # PyJWT — admin doesn't sign tokens itself, but the cross-project
     # contract test (server/tests/test_runtime_token_contract.py)
@@ -60,6 +62,7 @@ find-links = ["https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html
 
 [tool.uv.sources]
 eidolon-sdk = { path = "../eidolon_sdk", editable = true }
+eidolon-data = { path = "../eidolon_data", editable = true }
 
 [build-system]
 requires = ["setuptools>=68"]

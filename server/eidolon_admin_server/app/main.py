@@ -19,6 +19,13 @@ for _proxy_var in (
 from contextlib import asynccontextmanager
 
 import httpx
+from eidolon_data import DataStore, load_settings
+from eidolon_data.adapters import (
+    EidolonDataAgentMetadataRepository,
+    EidolonDataDeviceBindingRepository,
+    EidolonDataTenantRepository,
+    EidolonDataUserRepository,
+)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -105,33 +112,22 @@ def create_app(
 
         tenant_repo = None
         user_repo = None
-        registry_store = None
+        data_store = None
         ag_repo = None
         binding_repo = None
         hub_client = None
 
-        # Control-plane registry data lives in the shared SQLite DB. Seed the
-        # default tenant regardless of NATS state so user CRUD can still
-        # validate tenant ownership when the bus is down.
+        # Control-plane registry data lives in eidolon_data's sovereign DB.
+        # Seed the default tenant regardless of NATS state so user CRUD can
+        # still validate tenant ownership when the bus is down.
         try:
-            from eidolon_sdk.adapters.registry_sqlite import (
-                AgentMetadataRepository as SqliteAgentMetadataRepository,
-                DeviceBindingRepository as SqliteDeviceBindingRepository,
-                RegistrySqliteStore,
-                TenantRepository,
-                UserRepository,
-            )
-
-            registry_store = RegistrySqliteStore(settings.registry_db_path)
-            app.state.registry_store = registry_store
-            tenant_repo = TenantRepository(registry_store)
-            user_repo = UserRepository(registry_store)
-            ag_repo = AgentMetadataRepository(
-                SqliteAgentMetadataRepository(registry_store)
-            )
-            binding_repo = DeviceBindingRepository(
-                SqliteDeviceBindingRepository(registry_store)
-            )
+            data_store = DataStore.open(load_settings())
+            await data_store.init_schema()
+            app.state.data_store = data_store
+            tenant_repo = EidolonDataTenantRepository(data_store)
+            user_repo = EidolonDataUserRepository(data_store)
+            ag_repo = AgentMetadataRepository(EidolonDataAgentMetadataRepository(data_store))
+            binding_repo = DeviceBindingRepository(EidolonDataDeviceBindingRepository(data_store))
             tenant_orch = TenantOrchestrator(tenant_repo)
             app.state.tenant_orchestrator = tenant_orch
             created = await seed_default_tenant(tenant_orch)
@@ -142,7 +138,7 @@ def create_app(
         except Exception:  # noqa: BLE001
             logger.exception(
                 "tenant registry init failed; /api/tenants will return 503 "
-                "until the local registry DB is available",
+                "until eidolon_data is available",
             )
 
         # Templates module — purely an HTTP proxy to agent. Doesn't need
@@ -325,8 +321,8 @@ def create_app(
                 await app.state.memory_publisher.aclose()
             if app.state.nats_kv is not None:
                 await app.state.nats_kv.close()
-            if app.state.registry_store is not None:
-                await app.state.registry_store.dispose()
+            if app.state.data_store is not None:
+                await app.state.data_store.close()
 
     app = FastAPI(
         title="Eidolon Admin Gateway",
@@ -355,7 +351,7 @@ def create_app(
     app.state.memory_publisher = JetStreamPublisher()
     # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
-    app.state.registry_store = None
+    app.state.data_store = None
     # Each entity module (Tenants/Templates/Users/Agents/Devices) +
     # the Resolve aggregator gets its own orchestrator slot. Routers
     # check the slot before serving and emit 503 if absent.

@@ -96,9 +96,9 @@ function consolidatorTag(c: {
       style="margin-bottom: 16px"
     >
       <template #title>
-        用户注册表不可用：<code>{{ data.users_source }}</code>
+        用户数据源不可用：<code>{{ data.users_source }}</code>
         ——
-        确认 admin registry DB 和 admin-api 正常
+        确认 Eidolon Data SQLite 和 admin-api 正常
       </template>
     </el-alert>
 
@@ -178,7 +178,7 @@ function consolidatorTag(c: {
       <template #header>
         <span style="color: var(--eid-warning)">⚠ 孤儿进程</span>
         <span class="hint">
-          进程在运行但 admin registry 无对应条目（通常需触发 memory-supervisor reconcile）
+          进程在运行但 Eidolon Data 无对应 owner（通常需触发 memory-supervisor reconcile）
         </span>
       </template>
       <el-table

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from eidolon_sdk.biz.registry import resolve_registry_db_path
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -137,11 +136,6 @@ def default_voiceprint_root() -> Path:
     return Path.home() / "eidolon" / "voiceprints"
 
 
-def default_registry_db_path() -> Path:
-    """Default location for admin-owned shared registry data."""
-    return resolve_registry_db_path()
-
-
 def default_3dspeaker_model_dir() -> Path:
     """Default repository-managed 3D-Speaker model bundle path."""
     env = os.environ.get("EIDOLON_3DSPEAKER_MODEL_DIR", "").strip()
@@ -164,7 +158,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EIDOLON_ADMIN_", extra="ignore")
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
-    registry_db_path: Path = Field(default_factory=default_registry_db_path)
     voiceprint_root: Path = Field(default_factory=default_voiceprint_root)
     speaker_model_dir: Path = Field(default_factory=default_3dspeaker_model_dir)
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf

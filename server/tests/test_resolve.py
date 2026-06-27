@@ -15,15 +15,15 @@ import wave
 import httpx
 import pytest
 import respx
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.adapters.admin_registry import (
+    EidolonDataAgentMetadataRepository,
+    EidolonDataDeviceBindingRepository,
+    EidolonDataTenantRepository,
+    EidolonDataUserRepository,
+)
 from fastapi import FastAPI
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    AgentMetadataRepository as SqliteAgentMetadataRepository,
-    DeviceBindingRepository as SqliteDeviceBindingRepository,
-    RegistrySqliteStore,
-    TenantRepository,
-    UserRepository,
-)
 from eidolon_sdk.biz.registry.models import UserRegistryRecord
 
 from eidolon_admin_server.app.registry.agents.repository import (
@@ -156,22 +156,21 @@ async def orchestrator(
     tmp_path,
 ) -> AsyncIterator[ResolveOrchestrator]:
     # Tenants → Users → Agents → Templates → Devices wiring (subset).
-    registry_db = tmp_path / "registry.sqlite3"
-    store = RegistrySqliteStore(registry_db)
-    tenant_orch = TenantOrchestrator(TenantRepository(store))
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    tenant_orch = TenantOrchestrator(EidolonDataTenantRepository(store))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     user_orch = UserOrchestrator(
         memory_client=MemoryUserClient(http_client, MEMORY_URL),
-        metadata_repo=UserRepository(store),
+        metadata_repo=EidolonDataUserRepository(store),
         tenant_orchestrator=tenant_orch,
     )
     template_orch = TemplateOrchestrator(
         TemplateAgentClient(http_client, AGENT_URL)
     )
-    agent_meta_repo = AgentMetadataRepository(SqliteAgentMetadataRepository(store))
-    binding_repo = DeviceBindingRepository(SqliteDeviceBindingRepository(store))
+    agent_meta_repo = AgentMetadataRepository(EidolonDataAgentMetadataRepository(store))
+    binding_repo = DeviceBindingRepository(EidolonDataDeviceBindingRepository(store))
 
     yield ResolveOrchestrator(
         binding_repo=binding_repo,
@@ -181,7 +180,7 @@ async def orchestrator(
         template_orchestrator=template_orch,
         voiceprint_store=VoiceprintStore(tmp_path),
     )
-    await store.dispose()
+    await store.close()
 
 
 # ---- resolve_device --------------------------------------------------------

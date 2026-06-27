@@ -1,31 +1,32 @@
 """Per-user memory runner and consolidator discovery.
 
 memory-supervisor spawns ``eidolon-memory-agent`` and (opt-in)
-``eidolon-memory-consolidator`` per enabled user in admin's registry DB.
+``eidolon-memory-consolidator`` per enabled user in Eidolon Data.
 supervisord cannot see those grandchildren, so we surface them here by:
 
-1. Reading admin's local user registry.
+1. Reading `eidolon_data`'s owners table.
 2. Scanning processes via psutil for each CLI, binding ``--memory-space-id``.
 3. TCP-probing each user's agent port.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import psutil
-from eidolon_sdk.adapters.registry_sqlite import list_memory_user_records_sync
-from eidolon_sdk.biz.registry import resolve_registry_db_path
+from eidolon_data import load_settings
 
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"
 
 def users_source_path() -> Path:
-    return resolve_registry_db_path().resolve()
+    return Path(load_settings().sqlite_path).expanduser().resolve()
 
 
 def memory_log_dir() -> Path:
@@ -90,26 +91,62 @@ class UserEntry:
 
 
 def load_users() -> list[UserEntry]:
-    return _load_users_from_registry(users_source_path())
+    return _load_users_from_eidolon_data(users_source_path())
 
 
-def _load_users_from_registry(db_path: Path) -> list[UserEntry]:
-    return [
-        UserEntry(
-            id=record.user_id,
-            port=int(record.memory_port or 0),
-            enabled=record.enabled,
-            palace_path=record.palace_path,
-            consolidator=ConsolidatorConfig(
-                enabled=record.consolidator.enabled,
-                interval_hours=record.consolidator.interval_hours,
-                window_days=record.consolidator.window_days,
-                min_drawers=record.consolidator.min_drawers,
-                min_confidence=record.consolidator.min_confidence,
-            ),
+def _load_users_from_eidolon_data(db_path: Path) -> list[UserEntry]:
+    if not db_path.is_file():
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+    except sqlite3.Error:
+        return []
+    try:
+        rows = conn.execute(
+            """
+            SELECT owner_id, display_name, profile_json, settings_json
+            FROM owners
+            WHERE kind = 'person'
+            ORDER BY created_at
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+    entries: list[UserEntry] = []
+    for row in rows:
+        profile = _json_dict(row["profile_json"])
+        settings = _json_dict(row["settings_json"])
+        registry = profile.get("registry") if isinstance(profile.get("registry"), dict) else {}
+        user_id = str(registry.get("user_id") or row["owner_id"])
+        if user_id.startswith("tenant:"):
+            continue
+        consolidator = ConsolidatorConfig.from_yaml(settings.get("consolidator")) or ConsolidatorConfig()
+        entries.append(
+            UserEntry(
+                id=user_id,
+                port=int(settings.get("memory_port") or 0),
+                enabled=bool(registry.get("enabled", True)),
+                palace_path=str(settings.get("palace_path") or ""),
+                consolidator=consolidator,
+            )
         )
-        for record in list_memory_user_records_sync(db_path)
-    ]
+    return entries
+
+
+def _json_dict(value: object) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if value in (None, ""):
+        return {}
+    try:
+        data = json.loads(str(value))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _owner_user_id(value: str | None) -> str | None:
@@ -266,7 +303,7 @@ async def list_runners() -> dict[str, Any]:
 
     return {
         "users_source": str(source_path),
-        "users_source_type": "admin_registry",
+        "users_source_type": "eidolon_data",
         "users_source_exists": source_path.exists(),
         "runners": results,
         "orphans": orphans,

@@ -16,9 +16,9 @@ from typing import AsyncIterator
 
 import httpx
 import pytest
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.adapters.admin_registry import EidolonDataTenantRepository
 from fastapi import FastAPI
-
-from eidolon_sdk.adapters.registry_sqlite import RegistrySqliteStore, TenantRepository
 
 from eidolon_admin_server.app.registry.schemas.tenant import (
     CreateTenantRequest,
@@ -40,26 +40,29 @@ from eidolon_admin_server.app.registry.tenants import (
 
 
 @pytest.fixture
-async def repo(tmp_path) -> TenantRepository:
-    """Repo backed by a per-test registry DB so parallel runs / re-runs
-    never see leaked state from prior tests."""
-    return TenantRepository(RegistrySqliteStore(tmp_path / "registry.sqlite3"))
+async def repo(tmp_path) -> AsyncIterator[EidolonDataTenantRepository]:
+    """Repo backed by a per-test Eidolon Data DB."""
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    yield EidolonDataTenantRepository(store)
+    await store.close()
 
 
 @pytest.fixture
-async def orchestrator(repo: TenantRepository) -> TenantOrchestrator:
+async def orchestrator(repo: EidolonDataTenantRepository) -> TenantOrchestrator:
     return TenantOrchestrator(repo)
 
 
 # ---- repository ------------------------------------------------------------
 
 
-async def test_repository_get_returns_none_for_missing_key(repo: TenantRepository) -> None:
+async def test_repository_get_returns_none_for_missing_key(
+    repo: EidolonDataTenantRepository,
+) -> None:
     assert await repo.get("ghost") is None
 
 
 async def test_repository_put_then_get_round_trip(
-    repo: TenantRepository,
+    repo: EidolonDataTenantRepository,
 ) -> None:
     from datetime import datetime, timezone
 
@@ -73,7 +76,7 @@ async def test_repository_put_then_get_round_trip(
     assert fetched == spec
 
 
-async def test_repository_count_and_list_all(repo: TenantRepository) -> None:
+async def test_repository_count_and_list_all(repo: EidolonDataTenantRepository) -> None:
     from datetime import datetime, timedelta, timezone
 
     base = datetime.now(timezone.utc)
@@ -90,7 +93,9 @@ async def test_repository_count_and_list_all(repo: TenantRepository) -> None:
     assert {t.tenant_id for t in listed} == {"a", "b"}
 
 
-async def test_repository_delete_is_idempotent(repo: TenantRepository) -> None:
+async def test_repository_delete_is_idempotent(
+    repo: EidolonDataTenantRepository,
+) -> None:
     """Two deletes of the same key must not raise — admin's cascade retry
     relies on this idempotency."""
     await repo.delete("ghost")

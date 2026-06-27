@@ -23,13 +23,15 @@ def test_apply_ports_exports_hub_port(monkeypatch) -> None:
     assert os.environ.get("EIDOLON_HUB_API_PORT") == "8082"
 
 
-def test_apply_ports_exports_admin_registry(monkeypatch) -> None:
+def test_apply_ports_exports_eidolon_data_path(monkeypatch) -> None:
     monkeypatch.delenv("EIDOLON_ADMIN_API_URL", raising=False)
+    monkeypatch.delenv("EIDOLON_DATA_SQLITE_PATH", raising=False)
     monkeypatch.delenv("EIDOLON_REGISTRY_DB_PATH", raising=False)
     apply_ports_to_environ()
     assert os.environ.get("EIDOLON_ADMIN_API_URL") == "http://127.0.0.1:9000"
-    shared = os.environ.get("EIDOLON_REGISTRY_DB_PATH", "")
-    assert shared.endswith("eidolon/db/registry.sqlite3")
+    shared = os.environ.get("EIDOLON_DATA_SQLITE_PATH", "")
+    assert shared.endswith("eidolon/data/eidolon.sqlite3")
+    assert os.environ.get("EIDOLON_REGISTRY_DB_PATH") is None
 
 
 def test_gateway_config_uses_port_registry(monkeypatch) -> None:

@@ -55,7 +55,7 @@ class DeviceView(BaseModel):
     Sources:
         - device fact (id, kind, name, approved, last_seen, status):
           hub /api/admin/devices
-        - binding (agent_id + bound_at): admin registry DB (None if not
+        - binding (agent_id + bound_at): Eidolon Data grant metadata (None if not
           bound yet)
         - resolved_user_id / resolved_template_id (optional):
           orchestrator joins binding → agent → user. UI shows these

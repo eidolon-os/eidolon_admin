@@ -12,7 +12,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
-from eidolon_sdk.adapters.registry_sqlite import UserRepository
 from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 from eidolon_sdk.memory import derive_memory_space_id
 from eidolon_sdk.biz.registry.models import UserRegistryRecord
@@ -158,7 +157,7 @@ class UserOrchestrator:
         self,
         *,
         memory_client: MemoryUserClient,
-        metadata_repo: UserRepository,
+        metadata_repo: Any,
         tenant_orchestrator: TenantOrchestrator,
     ) -> None:
         self._mem = memory_client

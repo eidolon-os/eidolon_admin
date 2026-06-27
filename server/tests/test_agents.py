@@ -16,14 +16,14 @@ from typing import AsyncIterator
 import httpx
 import pytest
 import respx
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.adapters.admin_registry import (
+    EidolonDataAgentMetadataRepository,
+    EidolonDataTenantRepository,
+    EidolonDataUserRepository,
+)
 from fastapi import FastAPI
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    AgentMetadataRepository as SqliteAgentMetadataRepository,
-    RegistrySqliteStore,
-    TenantRepository,
-    UserRepository,
-)
 from eidolon_sdk.biz.registry.models import UserRegistryRecord
 
 from eidolon_admin_server.app.registry.agents import (
@@ -135,14 +135,13 @@ async def orchestrator(
     tmp_path,
 ) -> AsyncIterator[AgentOrchestrator]:
     # Build all the underpinnings the agent orchestrator depends on.
-    registry_db = tmp_path / "registry.sqlite3"
-    store = RegistrySqliteStore(registry_db)
-    tenant_orch = TenantOrchestrator(TenantRepository(store))
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    tenant_orch = TenantOrchestrator(EidolonDataTenantRepository(store))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    user_repo = UserRepository(store)
+    user_repo = EidolonDataUserRepository(store)
     user_orch = UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=user_repo,
@@ -159,7 +158,7 @@ async def orchestrator(
         return template_id in known_templates
 
     agent_client = AgentProjectClient(http_client, AGENT_URL)
-    agent_repo = AgentMetadataRepository(SqliteAgentMetadataRepository(store))
+    agent_repo = AgentMetadataRepository(EidolonDataAgentMetadataRepository(store))
     orch = AgentOrchestrator(
         agent_client=agent_client,
         metadata_repo=agent_repo,
@@ -170,7 +169,7 @@ async def orchestrator(
     orch._test_known_templates = known_templates  # type: ignore[attr-defined]
     orch._test_user_orch = user_orch  # type: ignore[attr-defined]
     yield orch
-    await store.dispose()
+    await store.close()
 
 
 # ---- list / get -----------------------------------------------------------

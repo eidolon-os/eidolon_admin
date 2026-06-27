@@ -16,9 +16,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    DeviceBindingRepository as SqliteDeviceBindingRepository,
-)
 from eidolon_sdk.core.http import (
     ServiceHTTPClient,
 )
@@ -115,7 +112,7 @@ class DeviceBindingRepository:
     flat pointer.
     """
 
-    def __init__(self, repository: SqliteDeviceBindingRepository) -> None:
+    def __init__(self, repository: Any) -> None:
         self._repo = repository
 
     async def get(self, device_id: str) -> DeviceBinding | None:

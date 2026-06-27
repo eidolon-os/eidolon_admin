@@ -24,9 +24,6 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    AgentMetadataRepository as SqliteAgentMetadataRepository,
-)
 from eidolon_sdk.core.http import (
     ServiceHTTPClient,
 )
@@ -192,7 +189,7 @@ class AgentMetadata:
 class AgentMetadataRepository:
     """SQLite-backed store for per-agent admin metadata."""
 
-    def __init__(self, repository: SqliteAgentMetadataRepository) -> None:
+    def __init__(self, repository: Any) -> None:
         self._repo = repository
 
     async def get(self, agent_id: str) -> AgentMetadata | None:

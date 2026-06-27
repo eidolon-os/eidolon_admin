@@ -1,6 +1,7 @@
 """Tests for the /api/memory/runners endpoint."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import patch
@@ -18,40 +19,49 @@ from eidolon_admin_server.app.settings import (
 pytestmark = pytest.mark.asyncio
 
 
-def _write_registry(tmp_path: Path, *, missing: bool = False) -> Path:
-    db_path = tmp_path / "registry.sqlite3"
+def _write_eidolon_data(tmp_path: Path, *, missing: bool = False) -> Path:
+    db_path = tmp_path / "eidolon.sqlite3"
     if missing:
         return db_path
     conn = sqlite3.connect(db_path)
     with conn:
         conn.execute(
             """
-            CREATE TABLE users (
-                user_id TEXT PRIMARY KEY,
-                enabled INTEGER NOT NULL,
-                palace_path TEXT NOT NULL DEFAULT '',
-                memory_port INTEGER NOT NULL DEFAULT 0,
-                consolidator_enabled INTEGER NOT NULL DEFAULT 1,
-                consolidator_interval_hours REAL NOT NULL DEFAULT 6.0,
-                consolidator_window_days INTEGER NOT NULL DEFAULT 30,
-                consolidator_min_drawers INTEGER NOT NULL DEFAULT 3,
-                consolidator_min_confidence REAL NOT NULL DEFAULT 0.6
+            CREATE TABLE owners (
+                owner_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'person',
+                profile_json TEXT NOT NULL DEFAULT '{}',
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         conn.executemany(
             """
-            INSERT INTO users (
-                user_id, enabled, palace_path, memory_port,
-                consolidator_enabled, consolidator_interval_hours,
-                consolidator_window_days, consolidator_min_drawers,
-                consolidator_min_confidence
-            ) VALUES (?, ?, '', ?, 1, 6.0, 30, 3, 0.6)
+            INSERT INTO owners (
+                owner_id, display_name, kind, profile_json, settings_json
+            ) VALUES (?, ?, 'person', ?, ?)
             """,
             [
-                ("alice", 1, 8030),
-                ("bob", 1, 8031),
-                ("disabled-carol", 0, 8032),
+                (
+                    "alice",
+                    "Alice",
+                    json.dumps({"registry": {"enabled": True}}),
+                    json.dumps({"memory_port": 8030, "consolidator": {"enabled": True}}),
+                ),
+                (
+                    "bob",
+                    "Bob",
+                    json.dumps({"registry": {"enabled": True}}),
+                    json.dumps({"memory_port": 8031, "consolidator": {"enabled": True}}),
+                ),
+                (
+                    "disabled-carol",
+                    "Carol",
+                    json.dumps({"registry": {"enabled": False}}),
+                    json.dumps({"memory_port": 8032, "consolidator": {"enabled": True}}),
+                ),
             ],
         )
     conn.close()
@@ -70,7 +80,7 @@ async def _http(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
 
 
-def _app(tmp_path, registry_db: Path):
+def _app(tmp_path):
     settings = Settings(
         services_file=tmp_path / "svc.yaml",
         supervisor_socket=tmp_path / "missing.sock",
@@ -87,9 +97,9 @@ def _app(tmp_path, registry_db: Path):
 
 
 async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
-    registry_db = _write_registry(tmp_path)
-    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
-    app = _app(tmp_path, registry_db)
+    data_db = _write_eidolon_data(tmp_path)
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
+    app = _app(tmp_path)
 
     with (
         patch.object(runners_mod, "find_agent_processes", return_value={}),
@@ -101,7 +111,8 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     assert data["users_source_exists"] is True
-    assert data["users_source"].endswith("registry.sqlite3")
+    assert data["users_source"].endswith("eidolon.sqlite3")
+    assert data["users_source_type"] == "eidolon_data"
     ids = [r["user_id"] for r in data["runners"]]
     assert ids == ["alice", "bob", "disabled-carol"]
     # None of them are running.
@@ -115,9 +126,9 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
 
 
 async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
-    registry_db = _write_registry(tmp_path)
-    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
-    app = _app(tmp_path, registry_db)
+    data_db = _write_eidolon_data(tmp_path)
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
+    app = _app(tmp_path)
 
     class FakeProc:
         def __init__(self, pid: int, create_time: float):
@@ -164,10 +175,10 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
     assert [o["user_id"] for o in data["orphans"]] == ["ghost"]
 
 
-async def test_endpoint_when_registry_missing(tmp_path, monkeypatch):
-    registry_db = _write_registry(tmp_path, missing=True)
-    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(registry_db))
-    app = _app(tmp_path, registry_db)
+async def test_endpoint_when_eidolon_data_missing(tmp_path, monkeypatch):
+    data_db = _write_eidolon_data(tmp_path, missing=True)
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
+    app = _app(tmp_path)
 
     with (
         patch.object(runners_mod, "find_agent_processes", return_value={}),

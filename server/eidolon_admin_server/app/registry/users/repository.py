@@ -83,7 +83,7 @@ class MemoryUserClient(ServiceHTTPClient):
         return r.json()
 
     async def reconcile(self) -> dict[str, Any]:
-        """Ask memory-supervisor to re-read the admin registry DB."""
+        """Ask memory-supervisor to re-read Eidolon Data owner state."""
         r = await self._request("POST", "/api/admin/reconcile", timeout=600.0)
         return r.json()
 

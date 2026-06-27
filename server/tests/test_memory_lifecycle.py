@@ -1,8 +1,8 @@
 """Tests for legacy memory user lifecycle endpoints."""
 from __future__ import annotations
 
+import json
 import sqlite3
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -20,45 +20,45 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-def registry_db(tmp_path):
-    db_path = tmp_path / "registry.sqlite3"
-    palace = tmp_path / "alice_palace"
+def palace_dir(tmp_path):
+    return tmp_path / "alice_palace"
+
+
+@pytest.fixture
+def eidolon_data_db(tmp_path, palace_dir):
+    db_path = tmp_path / "eidolon.sqlite3"
     conn = sqlite3.connect(db_path)
     with conn:
         conn.execute(
             """
-            CREATE TABLE users (
-                user_id TEXT PRIMARY KEY,
-                enabled INTEGER NOT NULL,
-                palace_path TEXT NOT NULL DEFAULT '',
-                memory_port INTEGER NOT NULL DEFAULT 0,
-                consolidator_enabled INTEGER NOT NULL DEFAULT 1,
-                consolidator_interval_hours REAL NOT NULL DEFAULT 6.0,
-                consolidator_window_days INTEGER NOT NULL DEFAULT 30,
-                consolidator_min_drawers INTEGER NOT NULL DEFAULT 3,
-                consolidator_min_confidence REAL NOT NULL DEFAULT 0.6
+            CREATE TABLE owners (
+                owner_id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'person',
+                profile_json TEXT NOT NULL DEFAULT '{}',
+                settings_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         conn.execute(
             """
-            INSERT INTO users (
-                user_id, enabled, palace_path, memory_port,
-                consolidator_enabled, consolidator_interval_hours,
-                consolidator_window_days, consolidator_min_drawers,
-                consolidator_min_confidence
-            ) VALUES ('alice', 1, ?, 8030, 1, 6.0, 30, 3, 0.6)
+            INSERT INTO owners (
+                owner_id, display_name, kind, profile_json, settings_json
+            ) VALUES ('alice', 'Alice', 'person', ?, ?)
             """,
-            (str(palace),),
+            (
+                json.dumps({"registry": {"enabled": True}}),
+                json.dumps({"memory_port": 8030, "palace_path": str(palace_dir)}),
+            ),
         )
     conn.close()
-    return db_path, palace
+    return db_path
 
 
 @pytest.fixture
-def app(tmp_path, registry_db, monkeypatch):
-    db_path, _palace = registry_db
-    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(db_path))
+def app(tmp_path, eidolon_data_db, monkeypatch):
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(eidolon_data_db))
     settings = Settings(
         services_file=tmp_path / "svc.yaml",
         supervisor_socket=tmp_path / "missing.sock",
@@ -100,8 +100,7 @@ async def test_enable_start_stop_rejected(app, endpoint):
     assert "memory no longer owns enabled" in resp.json()["detail"]
 
 
-async def test_init_creates_palace_dir(app, registry_db):
-    _db_path, palace = registry_db
+async def test_init_creates_palace_dir(app, palace_dir):
     with (
         patch(
             "eidolon_admin_server.app.memory.routers.lifecycle.sighup_memory_supervisor",
@@ -116,7 +115,7 @@ async def test_init_creates_palace_dir(app, registry_db):
             resp = await ac.post("/api/memory/users/alice/init")
 
     assert resp.status_code == 200
-    assert palace.exists() and palace.is_dir()
+    assert palace_dir.exists() and palace_dir.is_dir()
 
 
 async def test_init_unknown_user_404(app):

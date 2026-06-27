@@ -19,13 +19,13 @@ from typing import AsyncIterator
 import httpx
 import pytest
 import respx
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.adapters.admin_registry import (
+    EidolonDataTenantRepository,
+    EidolonDataUserRepository,
+)
 from fastapi import FastAPI
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    RegistrySqliteStore,
-    TenantRepository,
-    UserRepository,
-)
 from eidolon_sdk.biz.registry.models import UserRegistryRecord
 
 from eidolon_admin_server.app.registry.schemas.tenant import (
@@ -86,17 +86,16 @@ async def orchestrator(
     http_client: httpx.AsyncClient,
     tmp_path,
 ) -> AsyncIterator[UserOrchestrator]:
-    """Real tenant repository + SQLite user metadata + respx-mockable
+    """Real tenant repository + Eidolon Data user metadata + respx-mockable
     memory client. The default tenant is seeded so create-user happy path
     doesn't need extra setup."""
-    registry_db = tmp_path / "registry.sqlite3"
-    store = RegistrySqliteStore(registry_db)
-    tenant_orch = TenantOrchestrator(TenantRepository(store))
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    tenant_orch = TenantOrchestrator(EidolonDataTenantRepository(store))
     await tenant_orch.create(
         CreateTenantRequest(tenant_id="default", display_name="Default")
     )
     memory_client = MemoryUserClient(http_client, MEMORY_URL)
-    metadata_repo = UserRepository(store)
+    metadata_repo = EidolonDataUserRepository(store, auto_port_min=8030, auto_port_max=8040)
     orch = UserOrchestrator(
         memory_client=memory_client,
         metadata_repo=metadata_repo,
@@ -120,19 +119,22 @@ async def orchestrator(
     orch.set_agent_user_data_delete_provider(delete_agent_user_data)
     orch.set_voiceprint_delete_provider(delete_voiceprint)
     yield orch
+    await store.close()
 
 
 # ---- metadata repository ----------------------------------------------------
 
 
-async def test_sdk_user_repository_uses_local_sqlite(tmp_path) -> None:
-    repo = UserRepository(RegistrySqliteStore(tmp_path / "registry.sqlite3"))
+async def test_user_repository_uses_eidolon_data(tmp_path) -> None:
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    repo = EidolonDataUserRepository(store)
 
     assert await repo.get("alice") is None
     record = _user_record(
         "alice",
         active_agent_id="ag-1",
         display_name="Alice",
+        created_at="2026-06-15T00:00:00+00:00",
     )
     await repo.put(record)
 
@@ -142,6 +144,7 @@ async def test_sdk_user_repository_uses_local_sqlite(tmp_path) -> None:
 
     await repo.delete("alice")
     assert await repo.get("alice") is None
+    await store.close()
 
 
 # ---- memory wire shape helper ----------------------------------------------

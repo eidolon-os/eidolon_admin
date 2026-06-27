@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from eidolon_sdk.adapters.registry_sqlite import (
-    RegistrySqliteStore,
-    TenantRepository,
-    UserRepository,
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.adapters.admin_registry import (
+    EidolonDataTenantRepository,
+    EidolonDataUserRepository,
 )
 from eidolon_sdk.biz.registry.models import (
     ConsolidatorConfig,
@@ -15,8 +15,8 @@ from eidolon_sdk.biz.registry.models import (
 
 
 async def test_admin_can_use_sdk_tenant_repository_directly(tmp_path) -> None:
-    store = RegistrySqliteStore(tmp_path / "registry.sqlite3")
-    repo = TenantRepository(store)
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    repo = EidolonDataTenantRepository(store)
     spec = TenantSpec(
         tenant_id="default",
         display_name="Default",
@@ -28,11 +28,12 @@ async def test_admin_can_use_sdk_tenant_repository_directly(tmp_path) -> None:
     assert await repo.get("default") == spec
     assert await repo.count() == 1
     assert await repo.list_all() == [spec]
+    await store.close()
 
 
 async def test_admin_can_use_sdk_user_repository_directly(tmp_path) -> None:
-    store = RegistrySqliteStore(tmp_path / "registry.sqlite3")
-    repo = UserRepository(store)
+    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    repo = EidolonDataUserRepository(store, auto_port_min=8030, auto_port_max=8040)
     record = UserRegistryRecord(
         user_id="alice",
         tenant_id="default",
@@ -56,3 +57,4 @@ async def test_admin_can_use_sdk_user_repository_directly(tmp_path) -> None:
     assert await repo.get("alice") == record
     assert await repo.list_all() == {"alice": record}
     assert await repo.allocate_memory_port() == 8031
+    await store.close()

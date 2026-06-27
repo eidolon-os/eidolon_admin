@@ -25,9 +25,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Optional
-
-from eidolon_sdk.adapters.registry_sqlite import TenantRepository
+from typing import Any, Awaitable, Callable, Optional
 
 from ..schemas.tenant import (
     CreateTenantRequest,
@@ -95,7 +93,7 @@ class TenantOrchestrator:
     Tenants needs Users for delete-tenant's cascade check).
     """
 
-    def __init__(self, repo: TenantRepository) -> None:
+    def __init__(self, repo: Any) -> None:
         self._repo = repo
         self._user_refcount_provider: Optional[UserRefcountProvider] = None
 

@@ -1,25 +1,19 @@
 from __future__ import annotations
 
-from eidolon_admin_server.app.settings import (
-    Settings,
-    default_registry_db_path,
-    default_voiceprint_root,
-)
+from eidolon_data.settings import default_sqlite_path
+from eidolon_admin_server.app.ports import apply_ports_to_environ
+from eidolon_admin_server.app.settings import Settings, default_voiceprint_root
 
 
-def test_default_registry_db_path_uses_eidolon_home(monkeypatch) -> None:
-    monkeypatch.delenv("EIDOLON_REGISTRY_DB_PATH", raising=False)
-    db_path = default_registry_db_path()
-    assert db_path.name == "registry.sqlite3"
-    assert db_path.parent.name == "db"
-    assert db_path.parent.parent.name == "eidolon"
+def test_ports_export_eidolon_data_sqlite_path(monkeypatch) -> None:
+    monkeypatch.delenv("EIDOLON_DATA_SQLITE_PATH", raising=False)
+    exported = apply_ports_to_environ()
+    assert exported["EIDOLON_DATA_SQLITE_PATH"] == str(default_sqlite_path())
+    assert "EIDOLON_REGISTRY_DB_PATH" not in exported
 
 
-def test_default_registry_db_path_honors_shared_env(monkeypatch, tmp_path) -> None:
-    target = tmp_path / "registry.sqlite3"
-    monkeypatch.setenv("EIDOLON_REGISTRY_DB_PATH", str(target))
-    assert default_registry_db_path() == target
-    assert Settings().registry_db_path == target
+def test_settings_no_longer_exposes_registry_db_path() -> None:
+    assert not hasattr(Settings(), "registry_db_path")
 
 
 def test_default_voiceprint_root_uses_eidolon_home(monkeypatch) -> None:
