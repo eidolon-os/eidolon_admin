@@ -81,6 +81,7 @@ from .supervisor.client import SupervisorClient
 from .supervisor.config import ConfigStore
 from .supervisor.router import router as supervisor_router
 from .system_health import router as system_health_router
+from .tools.esp32 import Esp32ToolService, router as esp32_tools_router
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +361,7 @@ def create_app(
     app.state.resolve_orchestrator = None
     app.state.voiceprint_store = VoiceprintStore(settings.voiceprint_root)
     app.state.voiceprint_model_dir = settings.speaker_model_dir
+    app.state.esp32_tools = Esp32ToolService(catalog_file=settings.esp32_tools_file)
 
     app.add_middleware(
         CORSMiddleware,
@@ -387,6 +389,7 @@ def create_app(
     app.include_router(resolve_router, prefix="/api")
     app.include_router(bootstrap_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
+    app.include_router(esp32_tools_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
     # registered AFTER /api/services so the catalog endpoint wins for the
     # exact path GET /api/services.

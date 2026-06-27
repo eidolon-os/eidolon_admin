@@ -14,11 +14,14 @@ export type DevicePresenceStatus = 'online' | 'degraded' | 'offline' | 'unknown'
 export interface AdminDevice {
   device_id: string
   name?: string
+  kind?: string
   enabled?: boolean
   paired?: boolean
+  approved?: boolean
   status?: DevicePresenceStatus
   room_name?: string
   participant_sid?: string
+  last_seen?: string | null
   last_seen_at?: string | null
   missed_probes?: number
   created_at?: string
@@ -60,7 +63,8 @@ export interface AdminCommand {
 }
 
 export interface CommandSendBody {
-  topic: string
+  topic?: string
+  op?: string
   payload: Record<string, any>
 }
 

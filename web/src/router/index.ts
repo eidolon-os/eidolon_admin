@@ -47,6 +47,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/benchmark/Overview.vue'),
       },
       {
+        path: 'tools/esp32',
+        name: 'tool-esp32',
+        component: () => import('@/modules/tools/Esp32.vue'),
+      },
+      {
         path: 'devices',
         name: 'devices',
         redirect: {

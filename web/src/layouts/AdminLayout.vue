@@ -65,6 +65,7 @@ const activeKey = computed(() => {
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
   if (route.name === 'benchmarks') return 'benchmark'
+  if (route.name === 'tool-esp32') return 'tools::esp32'
   if (route.params.serviceId && route.params.feature) {
     return `${route.params.serviceId}::${route.params.feature}`
   }
@@ -114,6 +115,15 @@ const staticCommands = computed<CommandItem[]>(() => [
     route: { name: 'benchmarks', params: { project: 'agent' } },
     scope: 'benchmark',
   },
+  {
+    id: 'tool-esp32',
+    label: 'ESP32',
+    group: 'Tools',
+    hint: 'Serial logs, build, flash, erase, diagnostics',
+    icon: 'Tools',
+    route: { name: 'tool-esp32' },
+    scope: 'tools',
+  },
 ])
 
 const serviceCommands = computed<CommandItem[]>(() =>
@@ -138,6 +148,7 @@ const currentTitle = computed(() => {
   if (route.name === 'supervisor') return 'Supervisor'
   if (route.name === 'configs') return 'Configs'
   if (route.name === 'benchmarks') return `Benchmark / ${route.params.project || 'agent'}`
+  if (route.name === 'tool-esp32') return 'Tools / ESP32'
   if (route.params.serviceId) {
     const serviceName = store.findService(route.params.serviceId as string)?.name || route.params.serviceId
     return `${serviceName} / ${route.params.feature}`
@@ -150,6 +161,7 @@ const scopeLabel = computed(() => {
   if (commandScope.value === 'owners') return 'Owners'
   if (commandScope.value === 'core') return 'Core'
   if (commandScope.value === 'benchmark') return 'Benchmark'
+  if (commandScope.value === 'tools') return 'Tools'
   return store.findService(commandScope.value)?.name || commandScope.value
 })
 
@@ -179,6 +191,7 @@ const railItems = computed(() => [
   { id: 'owners', label: 'Owners', code: 'OWN', icon: 'UserFilled', active: activeKey.value === 'owners' },
   { id: 'core', label: 'Core', code: 'SYS', icon: 'Monitor', active: ['supervisor', 'configs'].includes(activeKey.value) },
   { id: 'benchmark', label: 'Benchmark', code: 'BMK', icon: 'DataAnalysis', active: activeKey.value === 'benchmark' },
+  { id: 'tools', label: 'Tools', code: 'TLS', icon: 'Tools', active: typeof activeKey.value === 'string' && activeKey.value.startsWith('tools::') },
   ...navigableServices.value.map((svc) => ({
     id: svc.id,
     label: svc.name,
@@ -250,6 +263,20 @@ const menuGroups = computed<MenuGroup[]>(() => [
       },
     ],
   },
+  {
+    id: 'tools',
+    label: 'Tools',
+    items: [
+      {
+        id: 'tool-esp32',
+        label: 'ESP32',
+        hint: 'Serial / flash',
+        icon: 'Tools',
+        route: { name: 'tool-esp32' },
+        active: route.name === 'tool-esp32',
+      },
+    ],
+  },
   ...navigableServices.value.map((svc) => ({
     id: svc.id,
     label: svc.name,
@@ -305,7 +332,7 @@ function toggleSidebar() {
 }
 
 function handleRailClick(id: string) {
-  if (id === 'owners' || id === 'core' || id === 'benchmark') {
+  if (id === 'owners' || id === 'core' || id === 'benchmark' || id === 'tools') {
     openCommand(id)
     return
   }
@@ -418,6 +445,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <button :class="{ active: commandScope === 'owners' }" @click="openCommand('owners')">Owners</button>
           <button :class="{ active: commandScope === 'core' }" @click="openCommand('core')">Core</button>
           <button :class="{ active: commandScope === 'benchmark' }" @click="openCommand('benchmark')">Benchmark</button>
+          <button :class="{ active: commandScope === 'tools' }" @click="openCommand('tools')">Tools</button>
           <button
             v-for="svc in navigableServices"
             :key="svc.id"

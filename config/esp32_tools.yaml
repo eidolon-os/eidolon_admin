@@ -1,0 +1,48 @@
+# ESP32 tools catalog for Eidolon Admin.
+#
+# Paths support:
+#   $EIDOLON_ROOT  monorepo root, defaults to the parent directory of eidolon_admin
+#   $CLIENT_ROOT   value of client_root below
+
+version: 1
+client_root: $EIDOLON_ROOT/eidolon-client-esp32
+
+toolchain:
+  idf_export: /Users/manson/.espressif/v5.5.4/esp-idf/export.sh
+  idf_path: /Users/manson/.espressif/v5.5.4/esp-idf
+  idf_py: /Users/manson/.espressif/v5.5.4/esp-idf/tools/idf.py
+  esptool: /Users/manson/.espressif/python_env/idf5.5_py3.13_env/bin/esptool.py
+
+boards:
+  - id: waveshare-esp32-s3-touch-amoled-206
+    label: Waveshare ESP32-S3 Touch AMOLED 2.06
+    vendor: Waveshare
+    target: esp32s3
+    board_type: waveshare/esp32-s3-touch-amoled-2.06
+    script_path: $CLIENT_ROOT/scripts/eidolon/eidolon-esp32-s3-touch-amoled-2.06.sh
+    build_dir: $CLIENT_ROOT/build
+    sdkconfig: $CLIENT_ROOT/sdkconfig
+    partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon.csv
+    default_baud: 115200
+
+  - id: atk-dnesp32s3
+    label: 正点原子 ATK-DNESP32S3
+    vendor: ALIENTEK
+    target: esp32s3
+    board_type: atk-dnesp32s3
+    script_path: $CLIENT_ROOT/scripts/eidolon/eidolon-atk-dnesp32s3.sh
+    build_dir: $CLIENT_ROOT/build/eidolon/atk-dnesp32s3
+    sdkconfig: $CLIENT_ROOT/build/eidolon/atk-dnesp32s3/sdkconfig.atk-dnesp32s3
+    partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon_box3.csv
+    default_baud: 115200
+
+  - id: esp-box-3
+    label: ESP-BOX-3
+    vendor: Espressif
+    target: esp32s3
+    board_type: esp-box-3
+    script_path: $CLIENT_ROOT/scripts/eidolon/eidolon-esp-box-3.sh
+    build_dir: $CLIENT_ROOT/build/eidolon/esp-box-3
+    sdkconfig: $CLIENT_ROOT/build/eidolon/esp-box-3/sdkconfig.esp-box-3
+    partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon_box3.csv
+    default_baud: 115200
