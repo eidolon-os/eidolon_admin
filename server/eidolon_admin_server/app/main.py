@@ -35,6 +35,7 @@ from .benchmarks import router as benchmarks_router
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
+from .data import router as data_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.nats_publisher import JetStreamPublisher
@@ -62,7 +63,6 @@ from .registry.templates.orchestrator import TemplateNotFound
 from .registry.tenants import (
     TenantOrchestrator,
     router as tenants_router,
-    seed_default as seed_default_tenant,
 )
 from .registry.users import (
     MemoryUserClient,
@@ -130,11 +130,7 @@ def create_app(
             binding_repo = DeviceBindingRepository(EidolonDataDeviceBindingRepository(data_store))
             tenant_orch = TenantOrchestrator(tenant_repo)
             app.state.tenant_orchestrator = tenant_orch
-            created = await seed_default_tenant(tenant_orch)
-            if created:
-                logger.info("registry: seeded default tenant on first start")
-            else:
-                logger.debug("registry: default tenant already present")
+            logger.info("eidolon_data owner registry ready")
         except Exception:  # noqa: BLE001
             logger.exception(
                 "tenant registry init failed; /api/tenants will return 503 "
@@ -381,6 +377,7 @@ def create_app(
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
+    app.include_router(data_router, prefix="/api")
     app.include_router(tenants_router, prefix="/api")
     app.include_router(templates_router, prefix="/api")
     app.include_router(users_router, prefix="/api")

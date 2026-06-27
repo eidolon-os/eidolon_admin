@@ -2,8 +2,8 @@
 /**
  * First-run onboarding banner.
  *
- * Polls /api/bootstrap/state on mount; if any catalog step is empty,
- * renders a strip with the 5-entity progress and a CTA that jumps to
+ * Polls /api/bootstrap/state on mount; if any setup step is empty,
+ * renders a strip with the owner-first progress and a CTA that jumps to
  * the next empty step. Auto-hides once everything is ``ok``.
  *
  * The probe is deliberately silent on failure — a NATS blip during
@@ -27,11 +27,11 @@ const dismissed = ref<boolean>(
 let timer: ReturnType<typeof setInterval> | null = null
 
 const STEPS: { name: BootstrapStepName; label: string; route: string; hint: string }[] = [
-  { name: 'tenants', label: 'Tenant', route: 'tenants', hint: '默认租户已自动创建' },
-  { name: 'templates', label: 'Template', route: 'templates', hint: '从 agent 内置模板挑一个或新建' },
-  { name: 'users', label: 'User', route: 'users', hint: '为这个 tenant 创建至少一个 user' },
-  { name: 'agents', label: 'Agent', route: 'agents', hint: '把 user 和 template 拼成一个 agent' },
-  { name: 'devices', label: 'Device', route: 'devices', hint: '让设备发现 hub 后批准并绑定 agent' },
+  { name: 'tenants', label: 'Owner', route: 'owners', hint: '创建主权 owner' },
+  { name: 'templates', label: 'Workspace', route: 'owners', hint: '初始化 companion / genome / memory realm' },
+  { name: 'users', label: 'Persona', route: 'owners', hint: '确认当前 persona genome' },
+  { name: 'agents', label: 'Companion', route: 'owners', hint: '确认长期 companion 主体' },
+  { name: 'devices', label: 'Device', route: 'devices', hint: '批准设备并绑定 companion' },
 ]
 
 async function refresh() {
@@ -95,7 +95,7 @@ function dismiss() {
       <div>
         <h4>👋 还差一点就能跑起来</h4>
         <p class="hint">
-          按下面顺序补齐 5 个实体后,设备就可以开始对话了。
+          按 owner-first 流程补齐工作区后,设备就可以开始对话了。
         </p>
       </div>
       <div class="head-actions">

@@ -92,6 +92,25 @@ class HubDeviceClient(ServiceHTTPClient):
         )
         return r.json()
 
+    async def send_identify(self, device_id: str) -> dict[str, Any]:
+        r = await self._request(
+            "POST",
+            f"/api/admin/devices/{device_id}/commands",
+            json={
+                "topic": "eidolon.control",
+                "op": "device.identify",
+                "payload": {
+                    "sound": "bi",
+                    "label": "BI",
+                    "reason": "admin_identify",
+                },
+                "ttl_ms": 10000,
+                "qos": "ack",
+                "priority": "high",
+            },
+        )
+        return r.json()
+
     async def unregister_device(self, device_id: str) -> dict[str, Any]:
         """Returns hub's envelope (existed + presence_cleared flags)."""
         r = await self._request("DELETE", f"/api/admin/devices/{device_id}")

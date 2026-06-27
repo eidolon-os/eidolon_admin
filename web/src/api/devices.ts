@@ -111,5 +111,36 @@ export async function unregisterDevice(id: string): Promise<UnregisterResponse> 
   return data
 }
 
-// Note: timestamp formatting lives in @/utils/format — keeping the
-// API client free of presentation concerns.
+export function formatTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return [
+    date.getFullYear(),
+    '-',
+    pad(date.getMonth() + 1),
+    '-',
+    pad(date.getDate()),
+    ' ',
+    pad(date.getHours()),
+    ':',
+    pad(date.getMinutes()),
+    ':',
+    pad(date.getSeconds()),
+  ].join('')
+}
+
+export function deriveDeviceStatusLabel(device: any): { label: string; tone: 'success' | 'warning' | 'info' } {
+  if (!device.approved) {
+    return { label: 'discovered', tone: 'info' }
+  }
+  const binding = device.binding
+  const agents = binding?.agents || []
+  if (!binding || agents.length === 0) {
+    return { label: 'approved (no agents)', tone: 'warning' }
+  }
+  const active = agents.find((agent: any) => agent.agent_id === binding.active_agent_id) || agents[0]
+  const template = active?.template_id || active?.agent_id || binding.active_agent_id || 'agent'
+  return { label: `bound · ${agents.length} · ${template}`, tone: 'success' }
+}

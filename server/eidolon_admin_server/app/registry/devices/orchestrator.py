@@ -334,6 +334,18 @@ class DeviceOrchestrator:
         except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
 
+    async def identify_device(self, device_id: str) -> dict[str, Any]:
+        """Ask a visible runtime device to play a short identify sound."""
+        view = await self.get_device(device_id)
+        if not view.enabled:
+            raise DeviceDisabled(f"device {device_id!r} is disabled")
+        try:
+            return await self._hub.send_identify(device_id)
+        except ServiceUnavailable as exc:
+            raise DeviceHubDown(str(exc)) from exc
+        except ServiceUpstreamError as exc:
+            self._map_hub_error(exc)
+
     async def unregister_device(self, device_id: str) -> dict[str, Any]:
         """Cascade: clean admin's binding + tell hub to forget the device.
 

@@ -2,18 +2,24 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useServicesStore } from '@/stores/services'
+import { useOwnersStore } from '@/stores/owners'
 
 const store = useServicesStore()
+const ownersStore = useOwnersStore()
 const route = useRoute()
 const router = useRouter()
 
 const MemoryUserSelector = defineAsyncComponent(
   () => import('@/modules/memory/components/UserSelector.vue'),
 )
+const OwnerSelector = defineAsyncComponent(
+  () => import('@/modules/owners/OwnerSelector.vue'),
+)
 
 const commandOpen = ref(false)
 const commandQuery = ref('')
 const commandScope = ref<string | null>(null)
+const sidebarOpen = ref(localStorage.getItem('eidolon-admin.sidebar_open') !== '0')
 
 type CommandItem = {
   id: string
@@ -25,8 +31,24 @@ type CommandItem = {
   scope: string
 }
 
+type MenuItem = {
+  id: string
+  label: string
+  hint?: string
+  icon: string
+  route: Record<string, unknown>
+  active: boolean
+}
+
+type MenuGroup = {
+  id: string
+  label: string
+  items: MenuItem[]
+}
+
 onMounted(() => {
   store.load()
+  ownersStore.load()
   window.addEventListener('keydown', handleGlobalKeydown)
 })
 
@@ -38,17 +60,11 @@ const isMemoryRoute = computed(() => {
   return route.name === 'feature' && route.params.serviceId === 'memory'
 })
 
-// Catalog routes (Phase 29) share a flat namespace with the legacy
-// pages — each route name maps 1:1 to its menu index. Devices live under
-// Hub because approval, binding and command delivery are hub operations.
-const CATALOG_KEYS = ['tenants', 'templates', 'users', 'agents'] as const
 const activeKey = computed(() => {
+  if (route.name === 'owners' || route.name === 'owner-workspace') return 'owners'
   if (route.name === 'supervisor') return 'supervisor'
   if (route.name === 'configs') return 'configs'
   if (route.name === 'benchmarks') return 'benchmark'
-  if (typeof route.name === 'string' && (CATALOG_KEYS as readonly string[]).includes(route.name)) {
-    return route.name
-  }
   if (route.params.serviceId && route.params.feature) {
     return `${route.params.serviceId}::${route.params.feature}`
   }
@@ -62,6 +78,15 @@ const navigableServices = computed(() =>
 )
 
 const staticCommands = computed<CommandItem[]>(() => [
+  {
+    id: 'owners',
+    label: 'Owners',
+    group: 'Owners',
+    hint: 'Select or create a sovereign owner workspace',
+    icon: 'UserFilled',
+    route: { name: 'owners' },
+    scope: 'owners',
+  },
   {
     id: 'supervisor',
     label: 'Supervisor',
@@ -79,42 +104,6 @@ const staticCommands = computed<CommandItem[]>(() => [
     icon: 'Document',
     route: { name: 'configs' },
     scope: 'core',
-  },
-  {
-    id: 'tenants',
-    label: 'Tenants',
-    group: 'Catalog',
-    hint: 'Tenant registry',
-    icon: 'OfficeBuilding',
-    route: { name: 'tenants' },
-    scope: 'catalog',
-  },
-  {
-    id: 'templates',
-    label: 'Templates',
-    group: 'Catalog',
-    hint: 'Persona and agent templates',
-    icon: 'Collection',
-    route: { name: 'templates' },
-    scope: 'catalog',
-  },
-  {
-    id: 'users',
-    label: 'Users',
-    group: 'Catalog',
-    hint: 'Registered users and voiceprints',
-    icon: 'User',
-    route: { name: 'users' },
-    scope: 'catalog',
-  },
-  {
-    id: 'agents',
-    label: 'Agents',
-    group: 'Catalog',
-    hint: 'Agent instances and bindings',
-    icon: 'Avatar',
-    route: { name: 'agents' },
-    scope: 'catalog',
   },
   {
     id: 'benchmark-agent',
@@ -144,12 +133,10 @@ const serviceCommands = computed<CommandItem[]>(() =>
 const commandItems = computed(() => [...staticCommands.value, ...serviceCommands.value])
 
 const currentTitle = computed(() => {
+  if (route.name === 'owners') return 'Owners'
+  if (route.name === 'owner-workspace') return `Owner / ${route.params.ownerId || ''}`
   if (route.name === 'supervisor') return 'Supervisor'
   if (route.name === 'configs') return 'Configs'
-  if (route.name === 'tenants') return 'Catalog / Tenants'
-  if (route.name === 'templates') return 'Catalog / Templates'
-  if (route.name === 'users') return 'Catalog / Users'
-  if (route.name === 'agents') return 'Catalog / Agents'
   if (route.name === 'benchmarks') return `Benchmark / ${route.params.project || 'agent'}`
   if (route.params.serviceId) {
     const serviceName = store.findService(route.params.serviceId as string)?.name || route.params.serviceId
@@ -160,8 +147,8 @@ const currentTitle = computed(() => {
 
 const scopeLabel = computed(() => {
   if (!commandScope.value) return 'All systems'
+  if (commandScope.value === 'owners') return 'Owners'
   if (commandScope.value === 'core') return 'Core'
-  if (commandScope.value === 'catalog') return 'Catalog'
   if (commandScope.value === 'benchmark') return 'Benchmark'
   return store.findService(commandScope.value)?.name || commandScope.value
 })
@@ -189,8 +176,8 @@ const groupedCommands = computed(() => {
 })
 
 const railItems = computed(() => [
+  { id: 'owners', label: 'Owners', code: 'OWN', icon: 'UserFilled', active: activeKey.value === 'owners' },
   { id: 'core', label: 'Core', code: 'SYS', icon: 'Monitor', active: ['supervisor', 'configs'].includes(activeKey.value) },
-  { id: 'catalog', label: 'Catalog', code: 'CAT', icon: 'Files', active: (CATALOG_KEYS as readonly string[]).includes(activeKey.value) },
   { id: 'benchmark', label: 'Benchmark', code: 'BMK', icon: 'DataAnalysis', active: activeKey.value === 'benchmark' },
   ...navigableServices.value.map((svc) => ({
     id: svc.id,
@@ -198,6 +185,84 @@ const railItems = computed(() => [
     code: serviceCode(svc.id),
     icon: serviceIcon(svc.id),
     active: typeof activeKey.value === 'string' && activeKey.value.startsWith(`${svc.id}::`),
+  })),
+])
+
+const ownerWorkspaceMenu = computed<MenuItem[]>(() => {
+  return [
+    {
+      id: 'owners-list',
+      label: 'Owner Directory',
+      hint: 'All owners',
+      icon: 'UserFilled',
+      route: { name: 'owners' },
+      active: route.name === 'owners',
+    },
+    {
+      id: 'owners-create',
+      label: 'Create Owner',
+      hint: 'New sovereignty root',
+      icon: 'CirclePlus',
+      route: { name: 'owners', query: { create: '1' } },
+      active: route.name === 'owners' && route.query.create === '1',
+    },
+  ]
+})
+
+const menuGroups = computed<MenuGroup[]>(() => [
+  {
+    id: 'owners',
+    label: 'Owners',
+    items: ownerWorkspaceMenu.value,
+  },
+  {
+    id: 'system',
+    label: 'System',
+    items: [
+      {
+        id: 'supervisor',
+        label: 'Supervisor',
+        hint: 'Processes and health',
+        icon: 'Cpu',
+        route: { name: 'supervisor' },
+        active: route.name === 'supervisor',
+      },
+      {
+        id: 'configs',
+        label: 'Configs',
+        hint: 'Runtime configuration',
+        icon: 'Document',
+        route: { name: 'configs' },
+        active: route.name === 'configs',
+      },
+    ],
+  },
+  {
+    id: 'benchmark',
+    label: 'Benchmark',
+    items: [
+      {
+        id: 'benchmark-agent',
+        label: 'Benchmark Center',
+        icon: 'DataAnalysis',
+        route: { name: 'benchmarks', params: { project: 'agent' } },
+        active: route.name === 'benchmarks',
+      },
+    ],
+  },
+  ...navigableServices.value.map((svc) => ({
+    id: svc.id,
+    label: svc.name,
+    items: svc.features.map((feature) => ({
+      id: `${svc.id}-${feature.key}`,
+      label: feature.label,
+      hint: feature.key,
+      icon: serviceIcon(svc.id),
+      route: { name: 'feature', params: { serviceId: svc.id, feature: feature.key } },
+      active: route.name === 'feature'
+        && route.params.serviceId === svc.id
+        && route.params.feature === feature.key,
+    })),
   })),
 ])
 
@@ -230,8 +295,17 @@ function runCommand(item: CommandItem) {
   router.push(item.route)
 }
 
+function runMenuItem(item: MenuItem) {
+  router.push(item.route)
+}
+
+function toggleSidebar() {
+  sidebarOpen.value = !sidebarOpen.value
+  localStorage.setItem('eidolon-admin.sidebar_open', sidebarOpen.value ? '1' : '0')
+}
+
 function handleRailClick(id: string) {
-  if (id === 'core' || id === 'catalog' || id === 'benchmark') {
+  if (id === 'owners' || id === 'core' || id === 'benchmark') {
     openCommand(id)
     return
   }
@@ -248,11 +322,15 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 <template>
   <el-container class="admin-shell">
-    <el-aside width="72px" class="aside">
+    <el-aside :width="sidebarOpen ? '272px' : '72px'" class="aside" :class="{ expanded: sidebarOpen }">
       <div class="logo">
         <span class="logo-dot" />
+        <span v-if="sidebarOpen" class="logo-word">Eidolon Admin</span>
+        <button class="sidebar-toggle" :title="sidebarOpen ? 'Collapse menu' : 'Expand menu'" @click="toggleSidebar">
+          <el-icon><Fold v-if="sidebarOpen" /><Expand v-else /></el-icon>
+        </button>
       </div>
-      <nav class="rail">
+      <nav v-if="!sidebarOpen" class="rail">
         <button
           v-for="item in railItems"
           :key="item.id"
@@ -265,8 +343,27 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <span>{{ item.code }}</span>
         </button>
       </nav>
+      <nav v-else class="expanded-menu">
+        <section v-for="group in menuGroups" :key="group.id" class="menu-group">
+          <h3>{{ group.label }}</h3>
+          <button
+            v-for="item in group.items"
+            :key="item.id"
+            class="menu-item"
+            :class="{ active: item.active }"
+            @click="runMenuItem(item)"
+          >
+            <span class="menu-icon"><el-icon><component :is="item.icon" /></el-icon></span>
+            <span class="menu-copy">
+              <strong>{{ item.label }}</strong>
+              <small v-if="item.hint">{{ item.hint }}</small>
+            </span>
+          </button>
+        </section>
+      </nav>
       <button class="rail-command" title="Command Center" @click="openCommand(null)">
         <el-icon><Search /></el-icon>
+        <span v-if="sidebarOpen">Command Center</span>
       </button>
     </el-aside>
     <el-container class="workspace">
@@ -278,6 +375,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <kbd>⌘K</kbd>
         </button>
         <div class="header-actions">
+          <OwnerSelector />
           <MemoryUserSelector v-if="isMemoryRoute" />
           <el-button size="small" @click="store.load(true)">刷新菜单</el-button>
         </div>
@@ -317,8 +415,8 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
         <div class="scope-strip">
           <button :class="{ active: commandScope === null }" @click="openCommand(null)">All</button>
+          <button :class="{ active: commandScope === 'owners' }" @click="openCommand('owners')">Owners</button>
           <button :class="{ active: commandScope === 'core' }" @click="openCommand('core')">Core</button>
-          <button :class="{ active: commandScope === 'catalog' }" @click="openCommand('catalog')">Catalog</button>
           <button :class="{ active: commandScope === 'benchmark' }" @click="openCommand('benchmark')">Benchmark</button>
           <button
             v-for="svc in navigableServices"
@@ -367,6 +465,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  transition: width 0.16s ease;
 }
 .aside::after {
   content: "";
@@ -397,7 +496,9 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px 0;
+  gap: 10px;
+  min-height: 57px;
+  padding: 0 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--eid-accent) 18%, var(--eid-border));
 }
 .logo::after {
@@ -411,12 +512,44 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   opacity: 0.7;
 }
 .logo-dot {
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--eid-accent);
   align-self: center;
   box-shadow: 0 0 10px var(--eid-accent), 0 0 28px rgba(34, 211, 238, 0.45);
+}
+.logo-word {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--eid-text-primary);
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.sidebar-toggle {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--eid-border-strong) 72%, transparent);
+  border-radius: 8px;
+  background: rgba(13, 17, 20, 0.74);
+  color: var(--eid-text-muted);
+  cursor: pointer;
+}
+.aside:not(.expanded) .sidebar-toggle {
+  position: absolute;
+  right: 8px;
+}
+.sidebar-toggle:hover {
+  border-color: color-mix(in srgb, var(--eid-accent) 48%, var(--eid-border));
+  color: var(--eid-accent-hover);
+  background: var(--eid-bg-elev);
 }
 .rail {
   flex: 1;
@@ -442,6 +575,85 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   color: var(--eid-text-muted);
   cursor: pointer;
   transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease;
+}
+.expanded-menu {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 10px 8px;
+}
+.menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+.menu-group h3 {
+  margin: 0 0 4px;
+  padding: 0 8px;
+  color: var(--eid-text-muted);
+  font-family: var(--eid-font-mono);
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+.menu-item {
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--eid-text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.menu-item:hover,
+.menu-item.active {
+  border-color: color-mix(in srgb, var(--eid-accent) 34%, var(--eid-border));
+  background:
+    linear-gradient(90deg, rgba(34, 211, 238, 0.10), rgba(251, 191, 36, 0.025), transparent),
+    rgba(13, 17, 20, 0.72);
+  color: var(--eid-text-primary);
+}
+.menu-item.active {
+  box-shadow: inset 2px 0 0 var(--eid-accent);
+}
+.menu-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: inherit;
+}
+.menu-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.menu-copy strong,
+.menu-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-copy strong {
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.25;
+}
+.menu-copy small {
+  color: var(--eid-text-muted);
+  font-size: 10px;
+  line-height: 1.2;
 }
 .rail-button span {
   max-width: 44px;
@@ -475,6 +687,16 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 .rail-command {
   margin: 10px;
   color: var(--eid-accent);
+}
+.aside.expanded .rail-command {
+  width: auto;
+  height: 38px;
+  flex-direction: row;
+  gap: 8px;
+  justify-content: flex-start;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 650;
 }
 .header {
   position: relative;

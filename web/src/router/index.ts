@@ -6,39 +6,36 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: AdminLayout,
     children: [
-      { path: '', redirect: { name: 'supervisor' } },
+      { path: '', redirect: { name: 'owners' } },
       {
         path: 'supervisor',
         name: 'supervisor',
         component: () => import('@/modules/supervisor/Overview.vue'),
       },
       {
+        path: 'owners',
+        name: 'owners',
+        component: () => import('@/modules/owners/Overview.vue'),
+      },
+      {
+        path: 'owners/:ownerId/:section?',
+        name: 'owner-workspace',
+        component: () => import('@/modules/owners/Workspace.vue'),
+      },
+      {
         path: 'configs',
         name: 'configs',
         component: () => import('@/modules/configs/Overview.vue'),
       },
-      // Phase 29 catalog: Tenant → Template → User → Agent.
-      // Order in the menu matches the dependency chain so operators
-      // build top-down.
-      {
-        path: 'tenants',
-        name: 'tenants',
-        component: () => import('@/modules/tenants/Overview.vue'),
-      },
-      {
-        path: 'templates',
-        name: 'templates',
-        component: () => import('@/modules/templates/Overview.vue'),
-      },
-      {
-        path: 'users',
-        name: 'users',
-        component: () => import('@/modules/users/Overview.vue'),
-      },
+      { path: 'tenants', redirect: { name: 'owners' } },
+      { path: 'templates', redirect: { name: 'owners' } },
+      { path: 'users', redirect: { name: 'owners' } },
       {
         path: 'agents',
-        name: 'agents',
-        component: () => import('@/modules/agents/Overview.vue'),
+        redirect: {
+          name: 'feature',
+          params: { serviceId: 'agent', feature: 'conversations' },
+        },
       },
       {
         path: 'benchmarks',
