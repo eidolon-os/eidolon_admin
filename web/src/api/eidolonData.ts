@@ -84,7 +84,7 @@ export interface WorkspaceInitializeResponse {
 
 export interface DeviceView {
   device_id: string
-  owner_id: string
+  owner_id: string | null
   name: string
   kind: string
   status: string
@@ -121,6 +121,7 @@ export interface NearbyDeviceListResponse {
 }
 
 export interface DeviceAddToOwnerRequest {
+  name?: string | null
   companion_id?: string | null
   interaction_mode?: string | null
   access_policy_json?: JsonDict
@@ -289,7 +290,7 @@ export async function addNearbyDeviceToOwner(
   body: DeviceAddToOwnerRequest = {},
 ): Promise<DeviceView> {
   const { data } = await client.post<DeviceView>(
-    `/owners/${encodeURIComponent(ownerId)}/nearby-devices/${encodeURIComponent(deviceId)}/add-to-owner`,
+    `/owners/${encodeURIComponent(ownerId)}/nearby-devices/${encodeURIComponent(deviceId)}/claim`,
     body,
   )
   return data

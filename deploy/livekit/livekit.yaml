@@ -3,6 +3,9 @@
 # Owned by eidolon_admin; started via deploy/supervisor/available/livekit.conf.
 # Keys here must match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in hub and channel
 # config/.env.
+# Hub uses this server as token issuer + room controller; Channel uses it as an
+# agent worker + voice room participant. Do not treat either project as the sole
+# LiveKit owner.
 
 port: 7880
 bind_addresses:
@@ -17,6 +20,11 @@ turn:
   udp_port: 3478
 
 rtc:
+  # LAN devices must receive a reachable RTC candidate. LiveKit auto-detection
+  # can pick a stale/inactive interface on macOS, which makes ESP32 data-only
+  # pending rooms close immediately during ICE negotiation.
+  node_ip: 192.168.100.5
+  use_external_ip: false
   port_range_start: 50000
   port_range_end: 60000
 

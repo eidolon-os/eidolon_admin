@@ -12,7 +12,6 @@ const moduleMap: Record<string, Record<string, Component>> = {
     'personas-templates': defineAsyncComponent(() => import('./agent/PersonasTemplates.vue')),
     'personas-instances': defineAsyncComponent(() => import('./agent/PersonasInstances.vue')),
     'persona-lab': defineAsyncComponent(() => import('./agent/PersonaInstanceLab.vue')),
-    devices: defineAsyncComponent(() => import('./agent/Devices.vue')),
     pairing: defineAsyncComponent(() => import('./agent/Pairing.vue')),
     'chat-stream': defineAsyncComponent(() => import('./agent/ChatStream.vue')),
     'chat-test': defineAsyncComponent(() => import('./agent/ChatTest.vue')),
@@ -22,6 +21,7 @@ const moduleMap: Record<string, Record<string, Component>> = {
   },
   hub: {
     devices: defineAsyncComponent(() => import('./hub/Devices.vue')),
+    discovery: defineAsyncComponent(() => import('./hub/Discovery.vue')),
     commands: defineAsyncComponent(() => import('./hub/Commands.vue')),
     events: defineAsyncComponent(() => import('./hub/Events.vue')),
     metrics: defineAsyncComponent(() => import('./hub/Metrics.vue')),

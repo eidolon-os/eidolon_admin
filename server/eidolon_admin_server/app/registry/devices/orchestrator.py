@@ -346,6 +346,10 @@ class DeviceOrchestrator:
         except ServiceUpstreamError as exc:
             self._map_hub_error(exc)
 
+    async def refresh_device_config(self, device_id: str) -> None:
+        """Best-effort request for a connected device to pull fresh config."""
+        await self._notify_config_refresh(device_id)
+
     async def unregister_device(self, device_id: str) -> dict[str, Any]:
         """Cascade: clean admin's binding + tell hub to forget the device.
 

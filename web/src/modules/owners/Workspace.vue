@@ -209,13 +209,14 @@ async function submitDeviceAction() {
     const companionId = deviceActionCompanionId.value || null
     if (deviceActionMode.value === 'add') {
       await addNearbyDeviceToOwner(ownerId.value, deviceActionId.value, {
+        name: deviceActionName.value,
         companion_id: companionId,
         interaction_mode: companionId ? 'voice' : null,
         access_policy_json: companionId
           ? { conversation: true, voice_input: true, voice_output: true, memory_recall: true }
           : {},
       })
-      ElMessage.success('设备已添加到当前 Owner')
+      ElMessage.success('设备已认领并绑定到当前 Owner')
     } else {
       await bindOwnerDevice(ownerId.value, deviceActionId.value, companionId)
       ElMessage.success(companionId ? '设备已绑定 Companion' : '设备已解绑 Companion')
@@ -526,7 +527,7 @@ function defaultPromptMarkdown(name: string): string {
         <div class="section-head">
           <div>
             <h3>Nearby Devices</h3>
-            <p>LiveKit/mDNS 已发现但还未添加到任何 Owner 的设备</p>
+            <p>已连接 Hub 但还未归属任何 Owner 的设备</p>
           </div>
           <el-tag :type="nearbyHubAvailable ? 'success' : 'warning'" size="small">
             {{ nearbyHubAvailable ? 'Hub online' : 'Hub unavailable' }}
@@ -553,7 +554,7 @@ function defaultPromptMarkdown(name: string): string {
                   点名
                 </el-button>
                 <el-button size="small" type="primary" :icon="Plus" @click="openAddDevice(row)">
-                  Add
+                  Claim
                 </el-button>
               </div>
             </template>
@@ -604,7 +605,7 @@ function defaultPromptMarkdown(name: string): string {
 
     <el-dialog
       v-model="deviceActionOpen"
-      :title="deviceActionMode === 'add' ? 'Add Device to Owner' : 'Bind Device'"
+      :title="deviceActionMode === 'add' ? 'Claim + Bind Device' : 'Bind Device'"
       width="520px"
     >
       <el-form label-position="top">
@@ -616,7 +617,7 @@ function defaultPromptMarkdown(name: string): string {
             v-model="deviceActionCompanionId"
             clearable
             filterable
-            placeholder="不绑定 Companion"
+            placeholder="选择 Companion"
             style="width: 100%"
           >
             <el-option
@@ -634,7 +635,7 @@ function defaultPromptMarkdown(name: string): string {
       <template #footer>
         <el-button @click="deviceActionOpen = false">取消</el-button>
         <el-button type="primary" :loading="deviceActionLoading" @click="submitDeviceAction">
-          {{ deviceActionMode === 'add' ? 'Add to Owner' : '保存绑定' }}
+          {{ deviceActionMode === 'add' ? 'Claim + Bind' : '保存绑定' }}
         </el-button>
       </template>
     </el-dialog>

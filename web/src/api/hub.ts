@@ -2,8 +2,9 @@
  * Hub admin client — thin typed wrapper around the gateway proxy.
  *
  * All requests go through /api/services/hub/* which the eidolon_admin gateway
- * forwards to hub's :8082/api/admin/* endpoints. The hub project itself owns
- * the implementation; we just shape inputs/outputs here.
+ * forwards to hub's :8082/api/admin/* endpoints. Keep this client for Hub
+ * diagnostics/raw control surfaces. The business Devices page uses /api/devices
+ * via api/devices.ts.
  */
 import client from './client'
 
@@ -44,6 +45,26 @@ export async function getDevice(deviceId: string): Promise<AdminDevice> {
   const { data } = await client.get<AdminDevice>(
     `/services/hub/devices/${encodeURIComponent(deviceId)}`,
   )
+  return data
+}
+
+// ── Discovery ───────────────────────────────────────────────────────────────
+
+export interface HubDiscoveryStatus {
+  service_type: string
+  service_name: string
+  hostname: string
+  port: number
+  registered: boolean
+  ip: string
+  config_url: string
+  last_registered_at: string | null
+  last_updated_at: string | null
+  last_error: string
+}
+
+export async function getDiscoveryStatus(): Promise<HubDiscoveryStatus> {
+  const { data } = await client.get<HubDiscoveryStatus>('/services/hub/discovery')
   return data
 }
 

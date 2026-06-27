@@ -99,6 +99,7 @@ class ResolveOrchestrator:
         user_orchestrator: UserOrchestrator,
         template_orchestrator: TemplateOrchestrator,
         voiceprint_store: VoiceprintStore | None = None,
+        data_store=None,
     ) -> None:
         self._bindings = binding_repo
         self._hub = hub_client
@@ -106,6 +107,7 @@ class ResolveOrchestrator:
         self._users = user_orchestrator
         self._templates = template_orchestrator
         self._voiceprints = voiceprint_store
+        self._data_store = data_store
 
     # ---- private helpers ----------------------------------------------
 
@@ -245,6 +247,10 @@ class ResolveOrchestrator:
           - binding present but agent gone (drift) → 404 with diagnostic
           - underlying lookups fail (memory/agent down) → 503
         """
+        data_context = await self._resolve_device_from_data(device_id)
+        if data_context is not None:
+            return data_context
+
         binding = await self._bindings.get(device_id)
         if binding is None:
             raise ResolveDeviceNotBound(
@@ -256,6 +262,42 @@ class ResolveOrchestrator:
             agent_id=binding.agent_id,
             device_id=device_id,
             interaction_mode=binding.interaction_mode,
+        )
+
+    async def _resolve_device_from_data(self, device_id: str) -> ResolvedContext | None:
+        if self._data_store is None:
+            return None
+        device = await self._data_store.devices.get_device(device_id)
+        if device is None:
+            return None
+        if device.owner_id is None:
+            raise ResolveDeviceNotBound(f"device {device_id!r} is not claimed")
+        if device.status in {"disabled", "revoked"}:
+            raise ResolveDeviceUnavailable(f"device {device_id!r} is {device.status}")
+        if not device.bound_companion_id:
+            raise ResolveDeviceNotBound(f"device {device_id!r} is not bound to a companion")
+
+        companion = await self._data_store.companions.get(device.bound_companion_id)
+        if companion is None:
+            raise ResolveError404(f"companion {device.bound_companion_id!r} not found")
+        if companion.owner_id != device.owner_id:
+            raise ResolveDeviceUnavailable(
+                f"device {device_id!r} is bound outside owner {device.owner_id!r}"
+            )
+
+        genome = await self._data_store.persona.get_current_genome(companion.companion_id)
+        soul_preview = (genome.prompt_markdown or "")[:_SOUL_PREVIEW_CHARS] if genome else ""
+        return ResolvedContext(
+            tenant_id=device.owner_id,
+            user_id=device.owner_id,
+            agent_id=companion.companion_id,
+            template_id=companion.current_genome_id or "",
+            template_revision=genome.version if genome else 1,
+            agent_runtime_url="",
+            memory_mcp_url="",
+            soul_preview=soul_preview,
+            device_id=device_id,
+            interaction_mode=device.interaction_mode,
         )
 
     async def resolve_user(self, user_id: str) -> ResolvedContext:

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from eidolon_admin_server.app.data import router as data_router
 
 
-def _runtime_device(device_id: str, *, name: str = "ESP Device") -> SimpleNamespace:
+def _runtime_device(device_id: str, *, name: str = "ESP Device", status: str = "online") -> SimpleNamespace:
     return SimpleNamespace(
         device_id=device_id,
         name=name,
@@ -21,7 +21,7 @@ def _runtime_device(device_id: str, *, name: str = "ESP Device") -> SimpleNamesp
         approved=False,
         approved_at=None,
         last_seen=datetime.now(timezone.utc),
-        status="online",
+        status=status,
         room_name=f"{device_id}-control",
         missed_probes=0,
     )
@@ -32,6 +32,7 @@ class FakeDeviceOrchestrator:
         self.devices = {
             "esp-near": _runtime_device("esp-near", name="Nearby ESP"),
             "esp-owned": _runtime_device("esp-owned", name="Owned ESP"),
+            "esp-ghost": _runtime_device("esp-ghost", name="Ghost ESP", status="offline"),
         }
         self.approved: list[str] = []
 
@@ -54,6 +55,9 @@ class FakeDeviceOrchestrator:
             "op": "device.identify",
             "status": "sent",
         }
+
+    async def refresh_device_config(self, device_id: str) -> None:
+        return None
 
 
 @pytest.fixture
@@ -198,8 +202,9 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert identify.json()["op"] == "device.identify"
 
         added = await client.post(
-            "/api/owners/owner-devices/nearby-devices/esp-near/add-to-owner",
+            "/api/owners/owner-devices/nearby-devices/esp-near/claim",
             json={
+                "name": "Nearby ESP",
                 "companion_id": "c:owner-devices:default",
                 "interaction_mode": "voice",
             },
@@ -220,7 +225,7 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
             subject_type="device",
             subject_id="esp-near",
         )
-        assert [event.event_type for event in events] == ["device.added_to_owner"]
+        assert [event.event_type for event in events] == ["device.claimed", "device.bound_companion"]
 
 
 async def test_data_router_returns_503_without_datastore() -> None:

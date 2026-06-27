@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// Hub > Devices is the product entry for device access/reachability. The data
+// and business orchestration still come from Admin's /api/devices aggregate:
+// Hub device facts + Admin binding + Agent metadata.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from eidolon_data import DataStore
@@ -256,8 +255,10 @@ async def list_nearby_owner_devices(owner_id: str, request: Request) -> NearbyDe
 
     nearby: list[NearbyDeviceView] = []
     for device in runtime_devices:
+        if (device.status or "").lower() == "offline":
+            continue
         stored = await store.devices.get_device(device.device_id)
-        if stored is not None:
+        if stored is not None and stored.owner_id is not None:
             continue
         nearby.append(_nearby_device(device))
     return NearbyDeviceListResponse(devices=nearby, hub_available=True)
@@ -273,8 +274,13 @@ async def identify_nearby_owner_device(owner_id: str, device_id: str, request: R
         raise HTTPException(exc.status_code, str(exc)) from exc
 
 
-@router.post("/owners/{owner_id}/nearby-devices/{device_id}/add-to-owner", response_model=DeviceView)
-async def add_nearby_device_to_owner(
+@router.post("/owners/{owner_id}/nearby-devices/{device_id}/claim", response_model=DeviceView)
+@router.post(
+    "/owners/{owner_id}/nearby-devices/{device_id}/add-to-owner",
+    response_model=DeviceView,
+    include_in_schema=False,
+)
+async def claim_nearby_device(
     owner_id: str,
     device_id: str,
     payload: DeviceAddToOwnerRequest,
@@ -286,7 +292,8 @@ async def add_nearby_device_to_owner(
     if existing is not None:
         if existing.owner_id == owner_id:
             return _device(existing)
-        raise HTTPException(status.HTTP_409_CONFLICT, "device already belongs to another owner")
+        if existing.owner_id is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "device already belongs to another owner")
 
     if payload.companion_id:
         companion = await store.companions.get(payload.companion_id)
@@ -301,43 +308,61 @@ async def add_nearby_device_to_owner(
     except DeviceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
-    now = datetime.now(timezone.utc)
-    row = await store.devices.create_device(
-        device_id=runtime_device.device_id,
+    metadata_json = {
+        **payload.metadata_json,
+        "source": "hub_runtime",
+        "hub_approved": runtime_device.approved,
+        "hub_enabled": runtime_device.enabled,
+    }
+    network_json = {
+        "runtime_status": runtime_device.status,
+        "room_name": runtime_device.room_name,
+        "missed_probes": runtime_device.missed_probes,
+    }
+    if existing is None:
+        row = await store.devices.create_device(
+            device_id=runtime_device.device_id,
+            owner_id=None,
+            name=runtime_device.name or runtime_device.device_id,
+            kind=runtime_device.kind or "unknown",
+            status="discovered",
+            network_json=network_json,
+            metadata_json=metadata_json,
+            last_seen_at=runtime_device.last_seen,
+        )
+    row = await store.devices.claim_device(
+        runtime_device.device_id,
         owner_id=owner_id,
-        name=runtime_device.name or runtime_device.device_id,
+        name=payload.name or runtime_device.name or runtime_device.device_id,
         kind=runtime_device.kind or "unknown",
-        status="active" if runtime_device.enabled else "suspended",
-        approved_at=now,
-        approved_by="admin",
-        bound_companion_id=payload.companion_id,
+        companion_id=payload.companion_id,
         interaction_mode=payload.interaction_mode,
-        network_json={
-            "runtime_status": runtime_device.status,
-            "room_name": runtime_device.room_name,
-            "missed_probes": runtime_device.missed_probes,
-        },
+        network_json=network_json,
         access_policy_json=payload.access_policy_json,
-        metadata_json={
-            **payload.metadata_json,
-            "source": "hub_runtime",
-            "hub_approved": runtime_device.approved,
-            "hub_enabled": runtime_device.enabled,
-        },
-        last_seen_at=runtime_device.last_seen,
+        metadata_json=metadata_json,
     )
     await store.events.append(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
         subject_id=device_id,
-        event_type="device.added_to_owner",
+        event_type="device.claimed",
+        actor_type="admin",
+        payload_json={"previous_owner_id": None},
+    )
+    await store.events.append(
+        event_id=_event_id(),
+        owner_id=owner_id,
+        subject_type="device",
+        subject_id=device_id,
+        event_type="device.bound_companion",
         actor_type="admin",
         payload_json={
             "companion_id": payload.companion_id,
             "interaction_mode": payload.interaction_mode,
         },
     )
+    await orch.refresh_device_config(device_id)
     return _device(row)
 
 

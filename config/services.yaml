@@ -57,7 +57,6 @@ services:
       - { key: personas-templates, label: "Persona 模板" }
       - { key: personas-instances, label: "Persona 实例" }
       - { key: persona-lab,        label: "Persona Lab" }
-      - { key: devices,            label: "Devices" }
       - { key: pairing,            label: "Pairing" }
       - { key: chat-stream,        label: "Chat", stream: true }
       - { key: chat-test,          label: "Chat (events)", stream: true }
@@ -96,7 +95,8 @@ services:
     ports:
       declared: [$EIDOLON_HUB_API_PORT]
     features:
-      - { key: devices,  label: "Devices" }
+      - { key: devices,   label: "Devices" }
+      - { key: discovery, label: "Discovery" }
       - { key: commands, label: "Commands" }
       - { key: events,   label: "Events", stream: true }
       - { key: metrics,  label: "Metrics" }

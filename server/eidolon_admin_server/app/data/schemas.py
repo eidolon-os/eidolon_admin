@@ -98,7 +98,7 @@ class PersonaGenomeListResponse(BaseModel):
 
 class DeviceView(BaseModel):
     device_id: str
-    owner_id: str
+    owner_id: str | None = None
     name: str
     kind: str
     status: str
@@ -138,11 +138,15 @@ class NearbyDeviceListResponse(BaseModel):
     hub_available: bool = True
 
 
-class DeviceAddToOwnerRequest(BaseModel):
+class DeviceClaimRequest(BaseModel):
+    name: str | None = None
     companion_id: str | None = None
     interaction_mode: str | None = None
     access_policy_json: JsonDict = Field(default_factory=dict)
     metadata_json: JsonDict = Field(default_factory=dict)
+
+
+DeviceAddToOwnerRequest = DeviceClaimRequest
 
 
 class ConversationView(BaseModel):

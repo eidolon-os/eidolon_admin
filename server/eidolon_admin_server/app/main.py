@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 # Process-wide proxy scrub. The admin gateway only talks to localhost
 # sub-projects; a system HTTP_PROXY (e.g. Clash on :7890) silently intercepts
@@ -261,10 +262,12 @@ def create_app(
         # for the device→agent binding pointer.
         hub_url = _resolve_service_base_url(cfg, "hub")
         ag_repo_for_devices = ag_repo
-        if (
-            hub_url
-            and ag_repo_for_devices is not None
-            and binding_repo is not None
+        agent_orch_for_devices = app.state.agent_orchestrator
+        if _device_orchestrator_dependencies_ready(
+            hub_url=hub_url,
+            agent_repo=ag_repo_for_devices,
+            binding_repo=binding_repo,
+            agent_orchestrator=agent_orch_for_devices,
         ):
             hub_client = HubDeviceClient(app.state.http_client, hub_url)
             device_orch = DeviceOrchestrator(
@@ -276,7 +279,7 @@ def create_app(
             # Cascade hook: when an agent is deleted, unbind every device
             # pointing at it (mirrors Tenant→User cascade in 29.E.1 and
             # Agent→User.active_agent in 29.F).
-            app.state.agent_orchestrator.set_device_cascade_hook(
+            agent_orch_for_devices.set_device_cascade_hook(
                 device_orch.unbind_all_referring_to
             )
             logger.info("device orchestrator ready (hub=%s)", hub_url)
@@ -302,6 +305,7 @@ def create_app(
                 user_orchestrator=app.state.user_orchestrator,
                 template_orchestrator=app.state.template_orchestrator,
                 voiceprint_store=app.state.voiceprint_store,
+                data_store=data_store,
             )
             logger.info("resolve orchestrator ready")
         else:
@@ -408,6 +412,26 @@ def _resolve_service_base_url(cfg: GatewayConfig, service_id: str) -> str | None
     if svc is None or not svc.base_url:
         return None
     return svc.base_url
+
+
+def _device_orchestrator_dependencies_ready(
+    *,
+    hub_url: str | None,
+    agent_repo: Any | None,
+    binding_repo: Any | None,
+    agent_orchestrator: Any | None,
+) -> bool:
+    """Devices need Admin's agent orchestrator for the delete-cascade hook.
+
+    Without it, leave device/resolve orchestrators unset so their routers return
+    503 instead of crashing lifespan while wiring ``set_device_cascade_hook``.
+    """
+    return (
+        bool(hub_url)
+        and agent_repo is not None
+        and binding_repo is not None
+        and agent_orchestrator is not None
+    )
 
 
 def _resolve_memory_supervisor_url() -> str | None:

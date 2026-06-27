@@ -21,6 +21,7 @@ from eidolon_data import DataSettings, DataStore
 from eidolon_data.adapters.admin_registry import EidolonDataDeviceBindingRepository
 from fastapi import FastAPI
 
+from eidolon_admin_server.app.main import _device_orchestrator_dependencies_ready
 from eidolon_admin_server.app.registry.agents.repository import AgentMetadata
 from eidolon_admin_server.app.registry.devices import (
     DeviceBadRequest,
@@ -37,6 +38,23 @@ from eidolon_admin_server.app.registry.schemas.device import BindDeviceRequest
 
 
 HUB_URL = "http://hub.test"
+
+
+def test_device_orchestrator_guard_requires_agent_orchestrator() -> None:
+    sentinel = object()
+
+    assert _device_orchestrator_dependencies_ready(
+        hub_url=HUB_URL,
+        agent_repo=sentinel,
+        binding_repo=sentinel,
+        agent_orchestrator=sentinel,
+    )
+    assert not _device_orchestrator_dependencies_ready(
+        hub_url=HUB_URL,
+        agent_repo=sentinel,
+        binding_repo=sentinel,
+        agent_orchestrator=None,
+    )
 
 
 def _hub_device_record(

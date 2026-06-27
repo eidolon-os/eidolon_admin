@@ -266,22 +266,6 @@ export function pairingQrUrl(code: string): string {
   return `/api/services/agent/pairing/codes/${encodeURIComponent(code)}.png`
 }
 
-// ── Devices ─────────────────────────────────────────────────────────────────
-
-export interface AgentDevice {
-  device_id: string
-  [k: string]: any
-}
-
-export async function listAgentDevices(): Promise<AgentDevice[]> {
-  const { data } = await client.get<AgentDevice[] | { devices: AgentDevice[] }>('/services/agent/devices')
-  return Array.isArray(data) ? data : (data as any).devices || []
-}
-
-export async function revokeAgentDevice(deviceId: string): Promise<void> {
-  await client.delete(`/services/agent/devices/${encodeURIComponent(deviceId)}`)
-}
-
 // ── Chat test SSE ──────────────────────────────────────────────────────────
 
 export function chatTestUrl(): string {
