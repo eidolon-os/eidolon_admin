@@ -164,6 +164,67 @@ boards:
     assert chip_id.args[0] == str(esptool.resolve())
 
 
+def test_local_catalog_override_and_action_overrides(tmp_path: Path) -> None:
+    client_root = tmp_path / "esp32-client"
+    script = client_root / "scripts/custom.sh"
+    partition = client_root / "partitions/custom.csv"
+    esptool = tmp_path / "tools/esptool.py"
+    script.parent.mkdir(parents=True)
+    partition.parent.mkdir(parents=True)
+    esptool.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    esptool.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+    partition.write_text(
+        "# Name, Type, SubType, Offset, Size, Flags\n"
+        "nvs,data,nvs,0x9000,0x4000,\n",
+        encoding="utf-8",
+    )
+    catalog_file = tmp_path / "esp32_tools.yaml"
+    catalog_file.write_text(
+        f"""\
+version: 1
+client_root: {client_root}
+toolchain:
+  esptool:
+actions:
+  flash_app:
+    label: App Only
+    requires_port: true
+boards:
+  - id: custom-devkit
+    label: Custom DevKit
+    vendor: Local
+    target: esp32s3
+    board_type: custom/devkit
+    script_path: $CLIENT_ROOT/scripts/custom.sh
+    build_dir: $CLIENT_ROOT/build
+    sdkconfig: $CLIENT_ROOT/sdkconfig
+    partition_csv: $CLIENT_ROOT/partitions/custom.csv
+    capabilities: [flash_app]
+    action_overrides:
+      flash_app: [flash, --app-only]
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "esp32_tools.local.yaml").write_text(
+        f"""\
+toolchain:
+  esptool: {esptool}
+""",
+        encoding="utf-8",
+    )
+
+    svc = Esp32ToolService(jobs_root=tmp_path / "jobs", catalog_file=catalog_file)
+    board = svc.board("custom-devkit")
+    assert [cap.action for cap in board.capabilities] == ["flash_app"]
+    assert svc.environment().esptool_path == str(esptool.resolve())
+    step = svc._steps(
+        board,
+        Esp32JobRequest(board_id=board.id, action="flash_app", port="/dev/cu.usbmodem1101"),
+    )[0]
+    assert step.args == [str(script.resolve()), "flash", "--app-only"]
+
+
 @pytest.mark.asyncio
 async def test_diagnose_job_streams_log_lines(tmp_path: Path) -> None:
     svc = _service(tmp_path)
@@ -183,6 +244,22 @@ async def test_diagnose_job_streams_log_lines(tmp_path: Path) -> None:
     assert any("script_exists:" in line for line in lines)
 
 
+@pytest.mark.asyncio
+async def test_job_history_survives_service_restart(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    job = await svc.create_job(Esp32JobRequest(board_id="esp-box-3", action="diagnose"))
+    for _ in range(30):
+        current = svc.get_job(job.id)
+        if current.status in {"succeeded", "failed", "cancelled"}:
+            break
+        await asyncio.sleep(0.05)
+
+    restarted = _service(tmp_path)
+    jobs = restarted.list_jobs()
+    assert jobs[0].id == job.id
+    assert jobs[0].status == "succeeded"
+
+
 def test_port_scan_deduplicates_and_marks_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def fake_glob(pattern: str) -> list[str]:
         return {
@@ -195,7 +272,9 @@ def test_port_scan_deduplicates_and_marks_first(monkeypatch: pytest.MonkeyPatch,
         }.get(pattern, [])
 
     monkeypatch.setattr(glob, "glob", fake_glob)
-    ports = _service(tmp_path).ports()
+    svc = _service(tmp_path)
+    monkeypatch.setattr(svc, "_pyserial_ports", lambda: [])
+    ports = svc.ports()
     assert [port.path for port in ports] == [
         "/dev/cu.usbmodem1101",
         "/dev/cu.wchusbserial2101",
@@ -222,6 +301,37 @@ def test_erase_nvs_maps_only_to_nvs_partition(tmp_path: Path) -> None:
     assert "0x4000" in args
     assert "0x8C0000" not in args
     assert "erase_flash" not in args
+
+
+def test_backup_and_restore_nvs_use_partition_bounds_and_latest_backup(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    board = svc.board("waveshare-esp32-s3-touch-amoled-206")
+    req = Esp32JobRequest(
+        board_id=board.id,
+        action="backup_nvs",
+        port="/dev/cu.usbmodem1101",
+    )
+    backup = svc._steps(board, req)[0]
+    assert "read_flash" in backup.args
+    assert "0x9000" in backup.args
+    assert "0x4000" in backup.args
+    assert backup.args[-1].endswith(".bin")
+
+    backup_path = svc.backups_root / board.id / "nvs-20260101-000000.bin"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path.write_bytes(b"nvs")
+    restore = svc._steps(
+        board,
+        Esp32JobRequest(
+            board_id=board.id,
+            action="restore_nvs",
+            port="/dev/cu.usbmodem1101",
+            confirm_token="RESTORE NVS",
+        ),
+    )[0]
+    assert "write_flash" in restore.args
+    assert "0x9000" in restore.args
+    assert str(backup_path) in restore.args
 
 
 def test_action_mapping_ignores_user_supplied_shell_options(tmp_path: Path) -> None:
@@ -268,3 +378,17 @@ def test_same_port_running_job_conflicts(tmp_path: Path) -> None:
     svc._jobs[existing.model.id] = existing
     with pytest.raises(Esp32JobConflict):
         svc._assert_no_conflict(incoming)
+
+
+@pytest.mark.asyncio
+async def test_serial_session_blocks_jobs_on_same_port(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    svc._serial_sessions["/dev/cu.usbmodem1101"] = None
+    with pytest.raises(Esp32JobConflict):
+        await svc.create_job(
+            Esp32JobRequest(
+                board_id="esp-box-3",
+                action="flash",
+                port="/dev/cu.usbmodem1101",
+            )
+        )

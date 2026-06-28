@@ -46,9 +46,16 @@ COMMON_CAPABILITIES: list[Esp32Capability] = [
     _cap("erase_nvs", "擦除 NVS / 长期记忆", requires_port=True, dangerous=True, confirm_token="ERASE NVS"),
     _cap("erase_config", "擦除配置分区", requires_port=True, dangerous=True, confirm_token="ERASE CONFIG"),
     _cap("erase_assets", "擦除 assets", requires_port=True, dangerous=True, confirm_token="ERASE ASSETS"),
+    _cap("backup_nvs", "备份 NVS", requires_port=True),
+    _cap("backup_config", "备份配置分区", requires_port=True),
+    _cap("backup_assets", "备份 assets", requires_port=True),
+    _cap("restore_nvs", "恢复 NVS 备份", requires_port=True, dangerous=True, confirm_token="RESTORE NVS"),
     _cap("erase_flash", "擦除整片 Flash", requires_port=True, dangerous=True, confirm_token="ERASE FLASH"),
     _cap("chip_id", "读取 chip_id", requires_port=True),
     _cap("flash_id", "读取 flash_id", requires_port=True),
+    _cap("read_mac", "读取 MAC", requires_port=True),
+    _cap("image_info", "固件信息"),
+    _cap("reset_device", "重启设备", requires_port=True),
     _cap("diagnose", "环境诊断"),
 ]
 
@@ -56,6 +63,7 @@ COMMON_CAPABILITIES: list[Esp32Capability] = [
 def board_profiles(catalog_file: Path | None = None) -> list[Esp32BoardProfile]:
     raw = load_catalog(catalog_file)
     client_root = catalog_client_root(raw)
+    action_catalog = _action_catalog(raw)
     boards = raw.get("boards")
     if not isinstance(boards, list):
         raise ValueError(f"ESP32 tools catalog has no boards list: {_catalog_path(catalog_file)}")
@@ -67,7 +75,15 @@ def board_profiles(catalog_file: Path | None = None) -> list[Esp32BoardProfile]:
         normalized = dict(entry)
         for key in ("script_path", "build_dir", "sdkconfig", "partition_csv"):
             normalized[key] = _expand_path(str(normalized.get(key, "")), client_root)
-        normalized["capabilities"] = COMMON_CAPABILITIES
+        capability_ids = normalized.get("capabilities")
+        if not isinstance(capability_ids, list):
+            capability_ids = list(action_catalog)
+        normalized["capabilities"] = [
+            action_catalog[action_id]
+            for action_id in capability_ids
+            if isinstance(action_id, str) and action_id in action_catalog
+        ]
+        normalized["action_overrides"] = _normalize_action_overrides(normalized.get("action_overrides"))
         profiles.append(Esp32BoardProfile.model_validate(normalized))
     return profiles
 
@@ -81,6 +97,12 @@ def load_catalog(catalog_file: Path | None = None) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(data, dict):
         raise ValueError(f"ESP32 tools catalog must be a mapping: {path}")
+    local_path = _local_catalog_path(path)
+    if local_path.exists():
+        local = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(local, dict):
+            raise ValueError(f"ESP32 tools local catalog must be a mapping: {local_path}")
+        data = _deep_merge(data, local)
     return data
 
 
@@ -205,6 +227,51 @@ def configured_esptool(catalog_file: Path | None = None) -> str | None:
 
 def _catalog_path(catalog_file: Path | None = None) -> Path:
     return (catalog_file or DEFAULT_CATALOG_FILE).expanduser().resolve()
+
+
+def _local_catalog_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.local{path.suffix}")
+
+
+def _action_catalog(raw: dict[str, Any]) -> dict[str, Esp32Capability]:
+    defaults = {cap.action: cap for cap in COMMON_CAPABILITIES}
+    configured = raw.get("actions")
+    if not isinstance(configured, dict):
+        return dict(defaults)
+    out = dict(defaults)
+    for action, value in configured.items():
+        if not isinstance(action, str) or not isinstance(value, dict):
+            continue
+        base = out.get(action)
+        merged: dict[str, Any] = base.model_dump() if base else {"action": action, "label": action}
+        merged.update(value)
+        merged["action"] = action
+        out[action] = Esp32Capability.model_validate(merged)
+    return out
+
+
+def _normalize_action_overrides(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for action, args in value.items():
+        if not isinstance(action, str):
+            continue
+        if isinstance(args, str):
+            out[action] = [args]
+        elif isinstance(args, list) and all(isinstance(item, str) for item in args):
+            out[action] = list(args)
+    return out
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _expand_path(value: str, client_root: Path) -> str:

@@ -10,6 +10,7 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.5",
     "pyyaml>=6.0",
+    "pyserial>=3.5",
     "eidolon-sdk",
     "eidolon-data",
     "supervisor>=4.2.5",

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
+import hashlib
+import json
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -11,6 +15,8 @@ from typing import AsyncIterator
 from . import catalog
 from .schemas import (
     Esp32Action,
+    Esp32Artifact,
+    Esp32Backup,
     Esp32BoardInfo,
     Esp32BoardProfile,
     Esp32EnvironmentStatus,
@@ -19,6 +25,7 @@ from .schemas import (
     Esp32JobStatus,
     Esp32Partition,
     Esp32Port,
+    Esp32ProbeResult,
 )
 
 
@@ -71,9 +78,14 @@ class Esp32ToolService:
         self.client_root = catalog.catalog_client_root(catalog_file=catalog_file)
         self.jobs_root = jobs_root or catalog.ADMIN_ROOT / "var/esp32-tools/jobs"
         self.jobs_root.mkdir(parents=True, exist_ok=True)
+        self.backups_root = self.jobs_root / "backups"
+        self.backups_root.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.jobs_root / "index.jsonl"
         self._jobs: dict[str, JobRecord] = {}
         self._order: list[str] = []
+        self._serial_sessions: dict[str, asyncio.subprocess.Process | None] = {}
         self._lock = asyncio.Lock()
+        self._load_history()
 
     def boards(self) -> list[Esp32BoardProfile]:
         return catalog.board_profiles(self.catalog_file)
@@ -85,6 +97,11 @@ class Esp32ToolService:
         return board
 
     def ports(self) -> list[Esp32Port]:
+        detected = self._pyserial_ports()
+        if detected:
+            busy = self._busy_ports()
+            return [port.model_copy(update={"selected": index == 0, "busy": port.path in busy}) for index, port in enumerate(detected)]
+
         seen: set[str] = set()
         paths: list[str] = []
         import glob
@@ -100,7 +117,7 @@ class Esp32ToolService:
                 seen.add(candidate)
                 paths.append(candidate)
         return [
-            Esp32Port(path=path, selected=index == 0)
+            Esp32Port(path=path, selected=index == 0, busy=path in self._busy_ports())
             for index, path in enumerate(paths)
         ]
 
@@ -147,7 +164,8 @@ class Esp32ToolService:
             sdkconfig_exists=Path(board.sdkconfig).exists(),
             partition_csv_exists=Path(board.partition_csv).exists(),
             partitions=partitions,
-            artifacts=self._artifacts(Path(board.build_dir)),
+            artifacts=self._artifacts(Path(board.build_dir), board.id),
+            backups=self._backups(board.id),
         )
 
     async def create_job(self, req: Esp32JobRequest) -> Esp32Job:
@@ -162,8 +180,11 @@ class Esp32ToolService:
             board_id=board.id,
             action=req.action,
             status="queued",
+            port=req.port,
             command_preview=preview,
             log_path=str(log_path),
+            phase="queued",
+            progress_total=max(len(steps), 1),
         )
         record = JobRecord(model=model, steps=steps, port=req.port)
         async with self._lock:
@@ -171,6 +192,7 @@ class Esp32ToolService:
             self._jobs[job_id] = record
             self._order.insert(0, job_id)
             self._order = self._order[:100]
+            self._persist_job(record)
         asyncio.create_task(self._run_job(record, board, req))
         return record.model
 
@@ -190,6 +212,7 @@ class Esp32ToolService:
         record.cancel_requested = True
         if record.process and record.process.returncode is None:
             record.process.terminate()
+        self._persist_job(record)
         return record.model
 
     async def stream_job(self, job_id: str) -> AsyncIterator[str]:
@@ -226,28 +249,74 @@ class Esp32ToolService:
         if len(steps) != 1:
             raise Esp32ToolError("monitor action resolved to multiple commands")
         step = steps[0]
-        yield f">> {' '.join(_quote(a) for a in step.args)}"
-        process = await asyncio.create_subprocess_exec(
-            *step.args,
-            cwd=str(step.cwd),
-            env={**os.environ, **step.env},
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        assert process.stdout is not None
+        async with self._lock:
+            self._assert_port_available(board.id, port)
+            self._serial_sessions[port] = None
+        process: asyncio.subprocess.Process | None = None
         try:
+            yield f">> {' '.join(_quote(a) for a in step.args)}"
+            process = await asyncio.create_subprocess_exec(
+                *step.args,
+                cwd=str(step.cwd),
+                env={**os.environ, **step.env},
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            async with self._lock:
+                self._serial_sessions[port] = process
+            assert process.stdout is not None
             while True:
                 raw = await process.stdout.readline()
                 if not raw:
                     break
                 yield raw.decode(errors="replace").rstrip("\n")
         finally:
-            if process.returncode is None:
+            async with self._lock:
+                self._serial_sessions.pop(port, None)
+            if process and process.returncode is None:
                 process.terminate()
                 try:
                     await asyncio.wait_for(process.wait(), timeout=3)
                 except asyncio.TimeoutError:
                     process.kill()
+
+    async def probe_device(self, board_id: str, port: str, baud: int | None) -> Esp32ProbeResult:
+        board = self.board(board_id)
+        req = Esp32JobRequest(board_id=board_id, action="chip_id", port=port, baud=baud or board.default_baud)
+        async with self._lock:
+            self._assert_port_available(board.id, port)
+            self._serial_sessions[port] = None
+        try:
+            raw_log: list[str] = []
+            chip_id = await self._capture_esptool_value(board, req, "chip_id", raw_log)
+            flash_id = await self._capture_esptool_value(board, req, "flash_id", raw_log)
+            mac = await self._capture_esptool_value(board, req, "read_mac", raw_log)
+            return Esp32ProbeResult(
+                board_id=board_id,
+                port=port,
+                baud=baud or board.default_baud,
+                chip_id=_last_hexish(chip_id),
+                flash_id=_last_hexish(flash_id),
+                mac=_last_mac(mac),
+                raw_log=raw_log[-120:],
+            )
+        finally:
+            async with self._lock:
+                self._serial_sessions.pop(port, None)
+
+    def artifact_path(self, board_id: str, artifact_id: str) -> Path:
+        board = self.board(board_id)
+        for artifact in self._artifacts(Path(board.build_dir), board.id):
+            if artifact.id == artifact_id:
+                return Path(artifact.path)
+        raise Esp32NotFound(f"ESP32 artifact not found: {artifact_id}")
+
+    def backup_path(self, board_id: str, backup_id: str) -> Path:
+        self.board(board_id)
+        for backup in self._backups(board_id):
+            if backup.id == backup_id:
+                return Path(backup.path)
+        raise Esp32NotFound(f"ESP32 backup not found: {backup_id}")
 
     def _validate_request(self, board: Esp32BoardProfile, req: Esp32JobRequest) -> None:
         known = {cap.action: cap for cap in board.capabilities}
@@ -258,7 +327,23 @@ class Esp32ToolService:
             raise Esp32ToolError(f"action {req.action!r} requires a serial port")
         if cap.dangerous and req.confirm_token != cap.confirm_token:
             raise Esp32ToolError(f"confirmation token required: {cap.confirm_token}")
-        if not Path(board.script_path).exists() and req.action not in {"chip_id", "flash_id", "diagnose"}:
+        no_script_actions = {
+            "backup_nvs",
+            "backup_config",
+            "backup_assets",
+            "restore_nvs",
+            "erase_flash",
+            "erase_nvs",
+            "erase_config",
+            "erase_assets",
+            "chip_id",
+            "flash_id",
+            "read_mac",
+            "image_info",
+            "reset_device",
+            "diagnose",
+        }
+        if not Path(board.script_path).exists() and req.action not in no_script_actions:
             raise Esp32ToolError(f"script not found: {board.script_path}")
 
     def _steps(self, board: Esp32BoardProfile, req: Esp32JobRequest) -> list[CommandStep]:
@@ -273,12 +358,12 @@ class Esp32ToolService:
         if req.action == "flash":
             return [CommandStep([script, "flash"], cwd, port_env)]
         if req.action == "flash_app":
-            if board.id == "waveshare-esp32-s3-touch-amoled-206":
-                return [CommandStep([script, "flash", "--app-only"], cwd, port_env)]
+            if override := board.action_overrides.get("flash_app"):
+                return [CommandStep([script, *override], cwd, port_env)]
             return [self._idf_step(board, req, "app-flash")]
         if req.action == "flash_assets":
-            if board.id == "waveshare-esp32-s3-touch-amoled-206":
-                return [CommandStep([script, "flash", "-p", "assets"], cwd, port_env)]
+            if override := board.action_overrides.get("flash_assets"):
+                return [CommandStep([script, *override], cwd, port_env)]
             return [self._idf_step(board, req, "flash", "--only-flash-partition=assets")]
         if req.action == "run":
             return [
@@ -298,10 +383,24 @@ class Esp32ToolService:
             return [self._erase_partition_step(board, req, "nvs"), self._erase_partition_step(board, req, "otadata")]
         if req.action == "erase_assets":
             return [self._erase_partition_step(board, req, "assets")]
+        if req.action == "backup_nvs":
+            return [self._backup_partition_step(board, req, "nvs")]
+        if req.action == "backup_config":
+            return [self._backup_partition_step(board, req, "nvs", label="config-nvs"), self._backup_partition_step(board, req, "otadata", label="config-otadata")]
+        if req.action == "backup_assets":
+            return [self._backup_partition_step(board, req, "assets")]
+        if req.action == "restore_nvs":
+            return [self._restore_partition_step(board, req, "nvs")]
         if req.action == "chip_id":
             return [self._esptool_step(board, req, "chip_id")]
         if req.action == "flash_id":
             return [self._esptool_step(board, req, "flash_id")]
+        if req.action == "read_mac":
+            return [self._esptool_step(board, req, "read_mac")]
+        if req.action == "image_info":
+            return [self._image_info_step(board)]
+        if req.action == "reset_device":
+            return [self._esptool_step(board, req, "--after", "hard_reset", "chip_id")]
         if req.action == "diagnose":
             return []
         raise Esp32ToolError(f"unsupported action: {req.action}")
@@ -347,6 +446,56 @@ class Esp32ToolService:
         ]
         return CommandStep(args, self.client_root, self._tool_env())
 
+    def _backup_partition_step(
+        self,
+        board: Esp32BoardProfile,
+        req: Esp32JobRequest,
+        name: str,
+        *,
+        label: str | None = None,
+    ) -> CommandStep:
+        partition = self._partition(board, name)
+        backup_path = self._new_backup_path(board.id, label or name)
+        esptool = catalog.configured_esptool(self.catalog_file) or "esptool.py"
+        args = [
+            esptool,
+            "--chip",
+            board.target,
+            "-p",
+            req.port or "",
+            "-b",
+            "460800",
+            "read_flash",
+            partition.offset,
+            partition.size,
+            str(backup_path),
+        ]
+        return CommandStep(args, self.client_root, self._tool_env())
+
+    def _restore_partition_step(self, board: Esp32BoardProfile, req: Esp32JobRequest, name: str) -> CommandStep:
+        partition = self._partition(board, name)
+        backup_id = str(req.options.get("backup_id") or "").strip()
+        backup = self.backup_path(board.id, backup_id) if backup_id else self._latest_backup(board.id, name)
+        esptool = catalog.configured_esptool(self.catalog_file) or "esptool.py"
+        args = [
+            esptool,
+            "--chip",
+            board.target,
+            "-p",
+            req.port or "",
+            "-b",
+            "460800",
+            "write_flash",
+            partition.offset,
+            str(backup),
+        ]
+        return CommandStep(args, self.client_root, self._tool_env())
+
+    def _image_info_step(self, board: Esp32BoardProfile) -> CommandStep:
+        artifact = self._latest_firmware_artifact(board)
+        esptool = catalog.configured_esptool(self.catalog_file) or "esptool.py"
+        return CommandStep([esptool, "image_info", str(artifact)], self.client_root, self._tool_env())
+
     def _tool_env(self) -> dict[str, str]:
         env: dict[str, str] = {}
         idf_export = catalog.configured_idf_export(self.catalog_file)
@@ -377,31 +526,42 @@ class Esp32ToolService:
     async def _run_job(self, record: JobRecord, board: Esp32BoardProfile, req: Esp32JobRequest) -> None:
         record.model.status = "running"
         record.model.started_at = _now()
+        record.model.phase = "running"
+        self._persist_job(record)
         await self._append(record, f">> job {record.model.id} started: {record.model.action}")
         try:
             if req.action == "diagnose":
+                record.model.phase = "diagnose"
+                record.model.progress_index = 1
                 await self._write_diagnose(record, board)
                 record.model.exit_code = 0
             else:
-                for step in record.steps:
+                for index, step in enumerate(record.steps, start=1):
                     if record.cancel_requested:
                         raise asyncio.CancelledError()
+                    record.model.progress_index = index
+                    record.model.phase = self._phase_name(record.model.action, step, index)
+                    self._persist_job(record)
                     await self._run_step(record, step)
             if record.cancel_requested:
                 record.model.status = "cancelled"
             else:
                 record.model.status = "succeeded"
+            record.model.phase = record.model.status
             await self._append(record, f">> job {record.model.status}")
         except asyncio.CancelledError:
             record.model.status = "cancelled"
             record.model.error = "cancelled"
+            record.model.phase = "cancelled"
             await self._append(record, ">> job cancelled")
         except Exception as exc:  # noqa: BLE001
             record.model.status = "failed"
             record.model.error = str(exc)
+            record.model.phase = "failed"
             await self._append(record, f">> job failed: {exc}")
         finally:
             record.model.finished_at = _now()
+            self._persist_job(record)
             for queue in list(record.subscribers):
                 await queue.put(None)
 
@@ -426,6 +586,7 @@ class Esp32ToolService:
         record.process = None
         if code != 0:
             raise Esp32ToolError(f"command exited with code {code}")
+        self._persist_job(record)
 
     async def _append(self, record: JobRecord, line: str) -> None:
         path = Path(record.model.log_path)
@@ -463,11 +624,35 @@ class Esp32ToolService:
                 raise Esp32JobConflict(f"board {record.model.board_id} is busy")
             if record.port and new_record.port and record.port == new_record.port:
                 raise Esp32JobConflict(f"serial port {record.port} is busy")
+        if new_record.port and new_record.port in self._serial_sessions:
+            raise Esp32JobConflict(f"serial port {new_record.port} is busy")
 
-    def _artifacts(self, build_dir: Path) -> list[dict[str, str | int | float | bool]]:
+    def _assert_port_available(self, board_id: str, port: str) -> None:
+        probe = JobRecord(
+            model=Esp32Job(
+                id="probe",
+                board_id=board_id,
+                action="monitor",
+                status="queued",
+                command_preview="probe",
+                log_path="",
+            ),
+            steps=[],
+            port=port,
+        )
+        self._assert_no_conflict(probe)
+
+    def _busy_ports(self) -> set[str]:
+        busy = set(self._serial_sessions)
+        for record in self._jobs.values():
+            if record.port and record.model.status in ("queued", "running"):
+                busy.add(record.port)
+        return busy
+
+    def _artifacts(self, build_dir: Path, board_id: str | None = None) -> list[Esp32Artifact]:
         if not build_dir.exists():
             return []
-        artifacts: list[dict[str, str | int | float | bool]] = []
+        artifacts: list[Esp32Artifact] = []
         for path in sorted(build_dir.glob("**/*")):
             if path.suffix.lower() not in {".bin", ".elf", ".map", ".csv"}:
                 continue
@@ -475,16 +660,157 @@ class Esp32ToolService:
                 stat = path.stat()
             except OSError:
                 continue
+            kind = _artifact_kind(path)
+            artifact_id = _file_id(path)
             artifacts.append(
-                {
-                    "path": str(path),
-                    "name": path.name,
-                    "size": stat.st_size,
-                    "modified_at": stat.st_mtime,
-                    "is_firmware": path.suffix.lower() in {".bin", ".elf"},
-                }
+                Esp32Artifact(
+                    id=artifact_id,
+                    path=str(path),
+                    name=path.name,
+                    size=stat.st_size,
+                    modified_at=stat.st_mtime,
+                    is_firmware=path.suffix.lower() in {".bin", ".elf"},
+                    kind=kind,
+                    download_url=f"/api/tools/esp32/boards/{board_id or '-'}/artifacts/{artifact_id}/download",
+                )
             )
         return artifacts[-40:]
+
+    def _backups(self, board_id: str) -> list[Esp32Backup]:
+        root = self.backups_root / _safe_name(board_id)
+        if not root.exists():
+            return []
+        backups: list[Esp32Backup] = []
+        for path in sorted(root.glob("*.bin")):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            backup_id = _file_id(path)
+            partition = path.name.split("-", 1)[0]
+            backups.append(
+                Esp32Backup(
+                    id=backup_id,
+                    partition=partition,
+                    path=str(path),
+                    name=path.name,
+                    size=stat.st_size,
+                    created_at=stat.st_mtime,
+                    download_url=f"/api/tools/esp32/boards/{board_id}/backups/{backup_id}/download",
+                )
+            )
+        return backups[-80:]
+
+    def _new_backup_path(self, board_id: str, partition: str) -> Path:
+        root = self.backups_root / _safe_name(board_id)
+        root.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        return root / f"{_safe_name(partition)}-{stamp}.bin"
+
+    def _latest_backup(self, board_id: str, partition: str) -> Path:
+        matches = [backup for backup in self._backups(board_id) if backup.partition == partition]
+        if not matches:
+            raise Esp32ToolError(f"no {partition} backup found for {board_id}")
+        return Path(max(matches, key=lambda backup: backup.created_at).path)
+
+    def _latest_firmware_artifact(self, board: Esp32BoardProfile) -> Path:
+        artifacts = [
+            artifact
+            for artifact in self._artifacts(Path(board.build_dir), board.id)
+            if artifact.name.endswith(".bin") and artifact.kind in {"app", "firmware", "bin"}
+        ]
+        if not artifacts:
+            raise Esp32ToolError(f"no firmware .bin artifact found in {board.build_dir}")
+        return Path(max(artifacts, key=lambda artifact: artifact.modified_at).path)
+
+    def _pyserial_ports(self) -> list[Esp32Port]:
+        try:
+            from serial.tools import list_ports  # type: ignore[import-not-found]
+        except Exception:
+            return []
+        ports: list[Esp32Port] = []
+        for item in sorted(list_ports.comports(), key=lambda p: p.device):
+            if not _is_usb_serial_candidate(item.device, item.description or "", item.manufacturer or "", item.vid):
+                continue
+            vid = f"0x{item.vid:04X}" if item.vid is not None else None
+            pid = f"0x{item.pid:04X}" if item.pid is not None else None
+            ports.append(
+                Esp32Port(
+                    path=item.device,
+                    description=item.description,
+                    manufacturer=item.manufacturer,
+                    serial_number=item.serial_number,
+                    vid=vid,
+                    pid=pid,
+                    location=item.location,
+                    likely_board_id=_guess_board_id(item.description or "", item.manufacturer or "", vid, pid),
+                )
+            )
+        return ports
+
+    async def _capture_esptool_value(
+        self,
+        board: Esp32BoardProfile,
+        req: Esp32JobRequest,
+        action: str,
+        raw_log: list[str],
+    ) -> str:
+        step = self._esptool_step(board, req, action)
+        raw_log.append(f">> {' '.join(_quote(a) for a in step.args)}")
+        process = await asyncio.create_subprocess_exec(
+            *step.args,
+            cwd=str(step.cwd),
+            env={**os.environ, **step.env},
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(process.communicate(), timeout=20)
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            raise Esp32ToolError(f"{action} timed out") from exc
+        text = out.decode(errors="replace")
+        raw_log.extend(line.rstrip("\n") for line in text.splitlines())
+        if process.returncode:
+            raise Esp32ToolError(f"{action} failed with code {process.returncode}")
+        return text
+
+    def _phase_name(self, action: Esp32Action, step: CommandStep, index: int) -> str:
+        args = " ".join(step.args)
+        if "read_flash" in args:
+            return "backup"
+        if "write_flash" in args:
+            return "restore"
+        if "erase" in args:
+            return "erase"
+        if "monitor" in args:
+            return "monitor"
+        if "flash" in args:
+            return "flash"
+        if "build" in args:
+            return "build"
+        return f"{action}:{index}"
+
+    def _load_history(self) -> None:
+        if not self.index_path.exists():
+            return
+        seen: dict[str, Esp32Job] = {}
+        for line in self.index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                job = Esp32Job.model_validate(json.loads(line))
+            except Exception:
+                continue
+            if job.status in ("queued", "running"):
+                job = job.model_copy(update={"status": "cancelled", "error": "admin restarted", "phase": "cancelled"})
+            seen[job.id] = job
+        for job in sorted(seen.values(), key=lambda item: item.started_at or item.finished_at or "", reverse=True)[:100]:
+            self._jobs[job.id] = JobRecord(model=job, steps=[], port=None)
+            self._order.append(job.id)
+
+    def _persist_job(self, record: JobRecord) -> None:
+        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.index_path.open("a", encoding="utf-8") as fh:
+            fh.write(record.model.model_dump_json() + "\n")
 
 
 def _quote(value: str) -> str:
@@ -493,3 +819,63 @@ def _quote(value: str) -> str:
     if all(ch.isalnum() or ch in "/._:-=+" for ch in value):
         return value
     return repr(value)
+
+
+def _file_id(path: Path) -> str:
+    return hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
+
+
+def _safe_name(value: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+    return clean.strip("-") or "item"
+
+
+def _artifact_kind(path: Path) -> str:
+    name = path.name.lower()
+    if name.endswith(".elf"):
+        return "elf"
+    if name.endswith(".map"):
+        return "map"
+    if "partition" in name and name.endswith(".bin"):
+        return "partition-table"
+    if "bootloader" in name and name.endswith(".bin"):
+        return "bootloader"
+    if name.endswith(".bin"):
+        return "app" if "app" in name or name not in {"bootloader.bin", "partition-table.bin"} else "bin"
+    if name.endswith(".csv"):
+        return "csv"
+    return path.suffix.lower().lstrip(".") or "file"
+
+
+def _guess_board_id(description: str, manufacturer: str, vid: str | None, pid: str | None) -> str | None:
+    text = f"{description} {manufacturer} {vid or ''} {pid or ''}".lower()
+    if "esp-box" in text or "box" in text:
+        return "esp-box-3"
+    if "alientek" in text or "atk" in text or "dnesp32" in text:
+        return "atk-dnesp32s3"
+    if "waveshare" in text or "amoled" in text:
+        return "waveshare-esp32-s3-touch-amoled-206"
+    if vid in {"0x303A", "0x10C4", "0x1A86"}:
+        return None
+    return None
+
+
+def _is_usb_serial_candidate(device: str, description: str, manufacturer: str, vid: int | None) -> bool:
+    if vid is not None:
+        return True
+    if any(fnmatch.fnmatch(device, pattern) for pattern in SERIAL_PATTERNS):
+        return True
+    text = f"{device} {description} {manufacturer}".lower()
+    allow = ("usb", "uart", "serial", "cp210", "ch340", "wch", "silicon labs", "espressif", "esp32")
+    deny = ("bluetooth", "debug-console", "wlan-debug")
+    return any(token in text for token in allow) and not any(token in text for token in deny)
+
+
+def _last_hexish(text: str) -> str | None:
+    matches = re.findall(r"0x[0-9A-Fa-f]+", text)
+    return matches[-1] if matches else None
+
+
+def _last_mac(text: str) -> str | None:
+    matches = re.findall(r"(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", text)
+    return matches[-1].lower() if matches else None

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from .schemas import (
     Esp32BoardInfo,
@@ -13,6 +13,7 @@ from .schemas import (
     Esp32JobRequest,
     Esp32JobsResponse,
     Esp32PortsResponse,
+    Esp32ProbeResult,
 )
 from .service import Esp32JobConflict, Esp32NotFound, Esp32ToolError, Esp32ToolService
 
@@ -44,6 +45,41 @@ async def get_board_info(board_id: str, request: Request) -> Esp32BoardInfo:
         return _service(request).board_info(board_id)
     except Esp32NotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/boards/{board_id}/probe", response_model=Esp32ProbeResult)
+async def probe_board(
+    board_id: str,
+    request: Request,
+    port: str = Query(...),
+    baud: int | None = Query(default=None, ge=1, le=2_000_000),
+) -> Esp32ProbeResult:
+    try:
+        return await _service(request).probe_device(board_id, port, baud)
+    except Esp32NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Esp32JobConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Esp32ToolError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/boards/{board_id}/artifacts/{artifact_id}/download")
+async def download_artifact(board_id: str, artifact_id: str, request: Request) -> FileResponse:
+    try:
+        path = _service(request).artifact_path(board_id, artifact_id)
+    except Esp32NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name)
+
+
+@router.get("/boards/{board_id}/backups/{backup_id}/download")
+async def download_backup(board_id: str, backup_id: str, request: Request) -> FileResponse:
+    try:
+        path = _service(request).backup_path(board_id, backup_id)
+    except Esp32NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name)
 
 
 @router.post("/jobs", response_model=Esp32Job, status_code=202)
@@ -113,4 +149,3 @@ async def serial_stream(
 def _sse(line: str) -> bytes:
     safe = line.replace("\r", "").replace("\n", "\\n")
     return f"data: {safe}\n\n".encode()
-

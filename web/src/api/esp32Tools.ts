@@ -13,8 +13,15 @@ export type Esp32Action =
   | 'erase_nvs'
   | 'erase_config'
   | 'erase_assets'
+  | 'backup_nvs'
+  | 'backup_config'
+  | 'backup_assets'
+  | 'restore_nvs'
   | 'chip_id'
   | 'flash_id'
+  | 'read_mac'
+  | 'image_info'
+  | 'reset_device'
   | 'diagnose'
 
 export type Esp32JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
@@ -25,6 +32,7 @@ export interface Esp32Capability {
   requires_port: boolean
   dangerous: boolean
   confirm_token?: string | null
+  description?: string | null
 }
 
 export interface Esp32BoardProfile {
@@ -39,12 +47,21 @@ export interface Esp32BoardProfile {
   partition_csv: string
   default_baud: number
   capabilities: Esp32Capability[]
+  action_overrides: Record<string, string[]>
 }
 
 export interface Esp32Port {
   path: string
   selected: boolean
   source: 'detected' | 'manual'
+  description?: string | null
+  manufacturer?: string | null
+  serial_number?: string | null
+  vid?: string | null
+  pid?: string | null
+  location?: string | null
+  likely_board_id?: string | null
+  busy: boolean
 }
 
 export interface Esp32EnvironmentStatus {
@@ -74,7 +91,29 @@ export interface Esp32BoardInfo {
   sdkconfig_exists: boolean
   partition_csv_exists: boolean
   partitions: Esp32Partition[]
-  artifacts: Array<{ path: string; name: string; size: number; modified_at: number; is_firmware: boolean }>
+  artifacts: Esp32Artifact[]
+  backups: Esp32Backup[]
+}
+
+export interface Esp32Artifact {
+  id: string
+  path: string
+  name: string
+  size: number
+  modified_at: number
+  is_firmware: boolean
+  kind: string
+  download_url: string
+}
+
+export interface Esp32Backup {
+  id: string
+  partition: string
+  path: string
+  name: string
+  size: number
+  created_at: number
+  download_url: string
 }
 
 export interface Esp32JobRequest {
@@ -91,12 +130,26 @@ export interface Esp32Job {
   board_id: string
   action: Esp32Action
   status: Esp32JobStatus
+  port?: string | null
   started_at?: string | null
   finished_at?: string | null
   exit_code?: number | null
   command_preview: string
   log_path: string
   error?: string | null
+  phase?: string | null
+  progress_index: number
+  progress_total: number
+}
+
+export interface Esp32ProbeResult {
+  board_id: string
+  port: string
+  baud: number
+  chip_id?: string | null
+  flash_id?: string | null
+  mac?: string | null
+  raw_log: string[]
 }
 
 export async function listEsp32Boards(): Promise<Esp32BoardProfile[]> {
@@ -139,6 +192,14 @@ export async function getEsp32Job(jobId: string): Promise<Esp32Job> {
 
 export async function cancelEsp32Job(jobId: string): Promise<Esp32Job> {
   const { data } = await client.post<Esp32Job>(`/tools/esp32/jobs/${encodeURIComponent(jobId)}/cancel`)
+  return data
+}
+
+export async function probeEsp32Board(boardId: string, port: string, baud: number): Promise<Esp32ProbeResult> {
+  const params = new URLSearchParams({ port, baud: String(baud) })
+  const { data } = await client.post<Esp32ProbeResult>(
+    `/tools/esp32/boards/${encodeURIComponent(boardId)}/probe?${params.toString()}`,
+  )
   return data
 }
 

@@ -3,15 +3,41 @@
 # Paths support:
 #   $EIDOLON_ROOT  monorepo root, defaults to the parent directory of eidolon_admin
 #   $CLIENT_ROOT   value of client_root below
+#
+# Put machine-local ESP-IDF / esptool paths in config/esp32_tools.local.yaml.
 
 version: 1
 client_root: $EIDOLON_ROOT/eidolon-client-esp32
 
 toolchain:
-  idf_export: /Users/manson/.espressif/v5.5.4/esp-idf/export.sh
-  idf_path: /Users/manson/.espressif/v5.5.4/esp-idf
-  idf_py: /Users/manson/.espressif/v5.5.4/esp-idf/tools/idf.py
-  esptool: /Users/manson/.espressif/python_env/idf5.5_py3.13_env/bin/esptool.py
+  idf_export:
+  idf_path:
+  idf_py:
+  esptool:
+
+actions:
+  build: { label: 编译 }
+  build_clean: { label: 清理后编译 }
+  flash: { label: 完整烧录, requires_port: true }
+  flash_app: { label: 仅烧录 app, requires_port: true }
+  flash_assets: { label: 仅烧录 assets, requires_port: true }
+  run: { label: 编译 + 烧录 + 监控, requires_port: true }
+  monitor: { label: 串口监控, requires_port: true }
+  clean: { label: 清理 build }
+  backup_nvs: { label: 备份 NVS, requires_port: true }
+  backup_config: { label: 备份配置分区, requires_port: true }
+  backup_assets: { label: 备份 assets, requires_port: true }
+  restore_nvs: { label: 恢复 NVS 备份, requires_port: true, dangerous: true, confirm_token: RESTORE NVS }
+  erase_nvs: { label: 擦除 NVS / 长期记忆, requires_port: true, dangerous: true, confirm_token: ERASE NVS }
+  erase_config: { label: 擦除配置分区, requires_port: true, dangerous: true, confirm_token: ERASE CONFIG }
+  erase_assets: { label: 擦除 assets, requires_port: true, dangerous: true, confirm_token: ERASE ASSETS }
+  erase_flash: { label: 擦除整片 Flash, requires_port: true, dangerous: true, confirm_token: ERASE FLASH }
+  chip_id: { label: 读取 chip_id, requires_port: true }
+  flash_id: { label: 读取 flash_id, requires_port: true }
+  read_mac: { label: 读取 MAC, requires_port: true }
+  image_info: { label: 固件信息 }
+  reset_device: { label: 重启设备, requires_port: true }
+  diagnose: { label: 环境诊断 }
 
 boards:
   - id: waveshare-esp32-s3-touch-amoled-206
@@ -24,6 +50,9 @@ boards:
     sdkconfig: $CLIENT_ROOT/sdkconfig
     partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon.csv
     default_baud: 115200
+    action_overrides:
+      flash_app: [flash, --app-only]
+      flash_assets: [flash, -p, assets]
 
   - id: atk-dnesp32s3
     label: 正点原子 ATK-DNESP32S3

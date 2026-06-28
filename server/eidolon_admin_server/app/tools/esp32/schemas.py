@@ -18,8 +18,15 @@ Esp32Action = Literal[
     "erase_nvs",
     "erase_config",
     "erase_assets",
+    "backup_nvs",
+    "backup_config",
+    "backup_assets",
+    "restore_nvs",
     "chip_id",
     "flash_id",
+    "read_mac",
+    "image_info",
+    "reset_device",
     "diagnose",
 ]
 
@@ -32,6 +39,7 @@ class Esp32Capability(BaseModel):
     requires_port: bool = False
     dangerous: bool = False
     confirm_token: str | None = None
+    description: str | None = None
 
 
 class Esp32Partition(BaseModel):
@@ -53,12 +61,21 @@ class Esp32BoardProfile(BaseModel):
     partition_csv: str
     default_baud: int = 115200
     capabilities: list[Esp32Capability]
+    action_overrides: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class Esp32Port(BaseModel):
     path: str
     selected: bool = False
     source: Literal["detected", "manual"] = "detected"
+    description: str | None = None
+    manufacturer: str | None = None
+    serial_number: str | None = None
+    vid: str | None = None
+    pid: str | None = None
+    location: str | None = None
+    likely_board_id: str | None = None
+    busy: bool = False
 
 
 class Esp32EnvironmentStatus(BaseModel):
@@ -81,7 +98,29 @@ class Esp32BoardInfo(BaseModel):
     sdkconfig_exists: bool
     partition_csv_exists: bool
     partitions: list[Esp32Partition]
-    artifacts: list[dict[str, str | int | float | bool]]
+    artifacts: list["Esp32Artifact"]
+    backups: list["Esp32Backup"]
+
+
+class Esp32Artifact(BaseModel):
+    id: str
+    path: str
+    name: str
+    size: int
+    modified_at: float
+    is_firmware: bool
+    kind: str
+    download_url: str
+
+
+class Esp32Backup(BaseModel):
+    id: str
+    partition: str
+    path: str
+    name: str
+    size: int
+    created_at: float
+    download_url: str
 
 
 class Esp32JobRequest(BaseModel):
@@ -98,12 +137,26 @@ class Esp32Job(BaseModel):
     board_id: str
     action: Esp32Action
     status: Esp32JobStatus
+    port: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
     exit_code: int | None = None
     command_preview: str
     log_path: str
     error: str | None = None
+    phase: str | None = None
+    progress_index: int = 0
+    progress_total: int = 0
+
+
+class Esp32ProbeResult(BaseModel):
+    board_id: str
+    port: str
+    baud: int
+    chip_id: str | None = None
+    flash_id: str | None = None
+    mac: str | None = None
+    raw_log: list[str] = Field(default_factory=list)
 
 
 class Esp32JobsResponse(BaseModel):

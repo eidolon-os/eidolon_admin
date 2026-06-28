@@ -6,8 +6,11 @@ import {
   Connection,
   Cpu,
   Delete,
+  Download,
   Promotion,
   Refresh,
+  Search,
+  SwitchButton,
   Tools,
   VideoPlay,
   Warning,
@@ -23,6 +26,7 @@ import {
   listEsp32Boards,
   listEsp32Jobs,
   listEsp32Ports,
+  probeEsp32Board,
   type Esp32Action,
   type Esp32BoardInfo,
   type Esp32BoardProfile,
@@ -30,6 +34,7 @@ import {
   type Esp32EnvironmentStatus,
   type Esp32Job,
   type Esp32Port,
+  type Esp32ProbeResult,
 } from '@/api/esp32Tools'
 import { listDevices, sendCommand, type AdminDevice } from '@/api/hub'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
@@ -55,6 +60,9 @@ const drawerJob = ref<Esp32Job | null>(null)
 const serialFilter = ref('')
 const serialFollow = ref(true)
 const jobFollow = ref(true)
+const probeResult = ref<Esp32ProbeResult | null>(null)
+const probing = ref(false)
+const hubRoomDraft = ref<Record<string, string>>({})
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -74,6 +82,9 @@ const capabilityMap = computed(() => {
 
 const selectedBoardEnv = computed(() =>
   environment.value?.boards.find((board) => board.id === selectedBoardId.value) || null,
+)
+const selectedPortInfo = computed(() =>
+  ports.value.find((port) => port.path === selectedPort.value) || null,
 )
 
 const hasPort = computed(() => !!selectedPort.value)
@@ -101,12 +112,18 @@ const visibleSerialLines = computed(() => {
   const lines = serialStream.lines.value.slice(-600)
   return q ? lines.filter((line) => line.toLowerCase().includes(q)) : lines
 })
+const highlightedJobLines = computed(() => jobStream.lines.value.slice(-200))
+const lastSuccessfulPort = computed(() => {
+  const key = `eidolon-admin.esp32.last-success.${selectedBoardId.value}`
+  return localStorage.getItem(key) || ''
+})
 
 const actionGroups: Array<{ title: string; hint: string; actions: Esp32Action[] }> = [
   { title: '常用流程', hint: '日常固件迭代优先从这里走', actions: ['build', 'flash', 'run'] },
-  { title: '串口调试', hint: '看日志、确认启动和运行状态', actions: ['monitor'] },
-  { title: '维护', hint: '处理脏 build 或只烧录部分产物', actions: ['clean', 'build_clean', 'flash_app', 'flash_assets'] },
-  { title: '诊断', hint: '不改变设备状态的检查', actions: ['diagnose', 'chip_id', 'flash_id'] },
+  { title: '串口调试', hint: '看日志、确认启动和运行状态', actions: ['monitor', 'reset_device'] },
+  { title: '维护', hint: '处理脏 build 或只烧录部分产物', actions: ['clean', 'build_clean', 'flash_app', 'flash_assets', 'image_info'] },
+  { title: '备份恢复', hint: '动持久分区前先留退路', actions: ['backup_nvs', 'backup_config', 'backup_assets', 'restore_nvs'] },
+  { title: '诊断', hint: '不改变设备状态的检查', actions: ['diagnose', 'chip_id', 'flash_id', 'read_mac'] },
 ]
 const dangerousActions: Esp32Action[] = ['erase_nvs', 'erase_config', 'erase_assets', 'erase_flash']
 
@@ -184,6 +201,7 @@ async function refreshLight() {
     hubDevices.value = nextDevices.filter((device) => device.kind === 'esp32' || device.device_id.startsWith('esp32'))
     if (currentJob.value) {
       currentJob.value = nextJobs.find((job) => job.id === currentJob.value?.id) || currentJob.value
+      rememberSuccessfulPort(currentJob.value)
     }
   } catch {
     // Polling stays quiet; explicit refresh surfaces errors.
@@ -217,12 +235,24 @@ function canRun(action: Esp32Action) {
   const cap = capabilityMap.value.get(action)
   if (!cap || actionBusy.value) return false
   if (runningJob.value && action !== 'monitor') return false
-  if (!contextReady.value && action !== 'diagnose') return false
+  if (requiresScript(action) && !contextReady.value) return false
+  if (requiresPartition(action) && !selectedBoardEnv.value?.partition_csv_exists) return false
   if (cap.requires_port && !hasPort.value) return false
+  if (cap.requires_port && selectedPortInfo.value?.busy) return false
+  if (action === 'restore_nvs' && !boardInfo.value?.backups.some((backup) => backup.partition === 'nvs')) return false
+  if (action === 'image_info' && !boardInfo.value?.artifacts.some((artifact) => artifact.name.endsWith('.bin'))) return false
   return true
 }
 
-async function startJob(action: Esp32Action) {
+function requiresScript(action: Esp32Action) {
+  return ['build', 'build_clean', 'flash', 'flash_app', 'flash_assets', 'run', 'monitor', 'clean'].includes(action)
+}
+
+function requiresPartition(action: Esp32Action) {
+  return action.includes('erase') || action.includes('backup') || action === 'restore_nvs'
+}
+
+async function startJob(action: Esp32Action, options: Record<string, string | number | boolean | null> = {}) {
   const board = selectedBoard.value
   const cap = capabilityMap.value.get(action)
   if (!board || !cap || !canRun(action)) return
@@ -253,6 +283,7 @@ async function startJob(action: Esp32Action) {
       port: cap.requires_port ? selectedPort.value : null,
       baud: baud.value,
       confirm_token: confirmToken,
+      options,
     })
     currentJob.value = job
     activeTab.value = action === 'monitor' ? 'serial' : 'actions'
@@ -264,6 +295,19 @@ async function startJob(action: Esp32Action) {
     ElMessage.error(extractErrorMessage(err))
   } finally {
     actionBusy.value = false
+  }
+}
+
+async function probeSelectedPort() {
+  if (!selectedBoard.value || !selectedPort.value) return
+  probing.value = true
+  try {
+    probeResult.value = await probeEsp32Board(selectedBoard.value.id, selectedPort.value, baud.value)
+    ElMessage.success('设备识别完成')
+  } catch (err: unknown) {
+    ElMessage.error(extractErrorMessage(err))
+  } finally {
+    probing.value = false
   }
 }
 
@@ -288,6 +332,16 @@ function stopSerial() {
   serialStream.close()
 }
 
+function exportLines(lines: string[], filename: string) {
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 function openJobLog(job: Esp32Job) {
   drawerJob.value = job
   drawerOpen.value = true
@@ -302,15 +356,34 @@ function closeDrawer() {
 
 async function sendDeviceOp(device: AdminDevice, op: 'config.refresh' | 'playback.stop' | 'room.join') {
   try {
+    const room = hubRoomDraft.value[device.device_id] || device.room_name || ''
     await sendCommand(device.device_id, {
       topic: 'eidolon.control',
       op,
-      payload: { source: 'admin_esp32_tools' },
+      payload: { source: 'admin_esp32_tools', ...(op === 'room.join' && room ? { room } : {}) },
     } as any)
     ElMessage.success(`已发送 ${op}`)
   } catch (err: unknown) {
     ElMessage.error(extractErrorMessage(err))
   }
+}
+
+function retryWithRepair(job: Esp32Job) {
+  if (job.action === 'build') void startJob('build_clean')
+  else void startJob(job.action)
+}
+
+function restoreLatestNvs() {
+  const latest = [...(boardInfo.value?.backups || [])]
+    .filter((backup) => backup.partition === 'nvs')
+    .sort((a, b) => b.created_at - a.created_at)[0]
+  void startJob('restore_nvs', latest ? { backup_id: latest.id } : {})
+}
+
+function rememberSuccessfulPort(job: Esp32Job) {
+  if (job.status !== 'succeeded' || !job.port) return
+  if (!job.action.includes('flash') && job.action !== 'run') return
+  localStorage.setItem(`eidolon-admin.esp32.last-success.${job.board_id}`, job.port)
 }
 
 function actionLabel(action: Esp32Action) {
@@ -328,6 +401,7 @@ function dangerMessage(action: Esp32Action) {
   if (action === 'erase_nvs') {
     return '这会擦除 NVS，也就是首版定义的长期记忆/本机配置分区：设备身份、Wi-Fi、激活/绑定状态都会被清空。'
   }
+  if (action === 'restore_nvs') return '这会把最近的 NVS 备份写回设备，请确认设备和备份来源正确。'
   if (action === 'erase_flash') return '这会擦除整片 Flash，设备需要重新烧录后才能启动。'
   if (action === 'erase_assets') return '这会擦除 assets 分区，模型、主题、资源文件可能丢失。'
   return '这会擦除设备持久配置，请确认设备和串口选择无误。'
@@ -349,6 +423,22 @@ function sizeText(value: number) {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
+
+function lineClass(line: string) {
+  const lower = line.toLowerCase()
+  if (lower.includes('error') || lower.includes('failed') || lower.includes('assert')) return 'log-line error-line'
+  if (lower.includes('warn')) return 'log-line warn-line'
+  if (lower.startsWith('>>')) return 'log-line command-line'
+  return 'log-line'
+}
+
+function phaseText(job: Esp32Job | null) {
+  if (!job) return '-'
+  if (!job.phase) return job.status
+  const total = job.progress_total || 1
+  const index = job.progress_index || (job.status === 'queued' ? 0 : total)
+  return `${job.phase} ${index}/${total}`
+}
 </script>
 
 <template>
@@ -368,7 +458,12 @@ function sizeText(value: number) {
       <div class="selector">
         <span>串口</span>
         <el-select v-model="selectedPort" filterable allow-create placeholder="未检测到串口">
-          <el-option v-for="port in ports" :key="port.path" :label="port.path" :value="port.path" />
+          <el-option
+            v-for="port in ports"
+            :key="port.path"
+            :label="`${port.path}${port.busy ? ' · busy' : ''}${port.likely_board_id ? ' · ' + port.likely_board_id : ''}`"
+            :value="port.path"
+          />
         </el-select>
       </div>
       <div class="baud">
@@ -408,7 +503,27 @@ function sizeText(value: number) {
               <dt>Board Type</dt><dd class="mono">{{ selectedBoard?.board_type || '-' }}</dd>
               <dt>Script</dt><dd class="mono">{{ selectedBoard?.script_path || '-' }}</dd>
               <dt>Client Root</dt><dd class="mono">{{ environment?.client_root || '-' }}</dd>
+              <dt>Port</dt><dd class="mono">{{ selectedPort || '-' }}</dd>
+              <dt>USB</dt>
+              <dd>
+                {{ selectedPortInfo?.description || selectedPortInfo?.manufacturer || '-' }}
+                <el-tag v-if="selectedPortInfo?.busy" type="warning" size="small">busy</el-tag>
+              </dd>
+              <dt>上次成功</dt><dd class="mono">{{ lastSuccessfulPort || '-' }}</dd>
             </dl>
+            <div class="context-actions">
+              <el-button :icon="Search" :loading="probing" :disabled="!selectedBoard || !selectedPort || !!runningJob" @click="probeSelectedPort">
+                识别设备
+              </el-button>
+              <el-button :icon="SwitchButton" :disabled="!canRun('reset_device')" @click="startJob('reset_device')">
+                重启
+              </el-button>
+            </div>
+            <div v-if="probeResult" class="probe-result">
+              <span>Chip <b class="mono">{{ probeResult.chip_id || '-' }}</b></span>
+              <span>Flash <b class="mono">{{ probeResult.flash_id || '-' }}</b></span>
+              <span>MAC <b class="mono">{{ probeResult.mac || '-' }}</b></span>
+            </div>
           </section>
 
           <section class="panel">
@@ -470,8 +585,29 @@ function sizeText(value: number) {
             <div class="artifact-list">
               <div v-if="!boardInfo?.artifacts.length" class="empty">暂无 build 产物</div>
               <div v-for="artifact in boardInfo?.artifacts || []" :key="artifact.path" class="artifact">
-                <span class="mono">{{ artifact.name }}</span>
-                <small>{{ sizeText(artifact.size) }}</small>
+                <div>
+                  <span class="mono">{{ artifact.name }}</span>
+                  <small>{{ artifact.kind }} · {{ sizeText(artifact.size) }}</small>
+                </div>
+                <a class="icon-link" :href="artifact.download_url" target="_blank" rel="noreferrer">
+                  <el-icon><Download /></el-icon>
+                </a>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head"><h2>备份</h2></div>
+            <div class="artifact-list">
+              <div v-if="!boardInfo?.backups.length" class="empty">暂无分区备份</div>
+              <div v-for="backup in boardInfo?.backups || []" :key="backup.path" class="artifact">
+                <div>
+                  <span class="mono">{{ backup.name }}</span>
+                  <small>{{ backup.partition }} · {{ sizeText(backup.size) }}</small>
+                </div>
+                <a class="icon-link" :href="backup.download_url" target="_blank" rel="noreferrer">
+                  <el-icon><Download /></el-icon>
+                </a>
               </div>
             </div>
           </section>
@@ -496,7 +632,7 @@ function sizeText(value: number) {
                   :icon="action === 'monitor' ? Connection : action === 'run' ? Promotion : VideoPlay"
                   :disabled="!canRun(action)"
                   :loading="actionBusy"
-                  @click="action === 'monitor' ? startSerial() : startJob(action)"
+                  @click="action === 'monitor' ? startSerial() : action === 'restore_nvs' ? restoreLatestNvs() : startJob(action)"
                 >
                   {{ actionLabel(action) }}
                 </el-button>
@@ -538,10 +674,24 @@ function sizeText(value: number) {
             <div v-if="currentJob" class="job-summary">
               <el-tag :type="statusType(currentJob.status)" effect="dark">{{ currentJob.status }}</el-tag>
               <span>{{ actionLabel(currentJob.action) }}</span>
+              <span>{{ phaseText(currentJob) }}</span>
               <small class="mono">{{ currentJob.id }}</small>
             </div>
+            <el-progress
+              v-if="currentJob"
+              :percentage="Math.round(((currentJob.progress_index || 0) / (currentJob.progress_total || 1)) * 100)"
+              :status="currentJob.status === 'failed' ? 'exception' : currentJob.status === 'succeeded' ? 'success' : undefined"
+            />
             <el-alert v-if="failureHint(currentJob)" type="warning" :title="failureHint(currentJob)" show-icon :closable="false" />
-            <pre ref="jobLogPane" class="log-pane">{{ jobStream.lines.value.slice(-200).join('\n') }}</pre>
+            <div class="log-actions">
+              <el-button size="small" :icon="Download" @click="exportLines(jobStream.lines.value, `esp32-job-${currentJob?.id || 'current'}.log`)">导出日志</el-button>
+              <el-button v-if="currentJob?.status === 'failed'" size="small" @click="retryWithRepair(currentJob)">下一步</el-button>
+            </div>
+            <div ref="jobLogPane" class="log-pane">
+              <div v-for="(line, index) in highlightedJobLines" :key="`${index}-${line}`" :class="lineClass(line)">
+                {{ line }}
+              </div>
+            </div>
           </section>
         </div>
       </el-tab-pane>
@@ -556,12 +706,17 @@ function sizeText(value: number) {
               </el-tag>
               <el-input v-model="serialFilter" placeholder="过滤日志" clearable />
               <el-checkbox v-model="serialFollow" size="small">跟随</el-checkbox>
-              <el-button :icon="Connection" :disabled="!hasPort || !selectedBoard" @click="startSerial">开始监控</el-button>
+              <el-button :icon="Connection" :disabled="!hasPort || !selectedBoard || !!selectedPortInfo?.busy" @click="startSerial">开始监控</el-button>
               <el-button :icon="CircleClose" @click="stopSerial">停止</el-button>
               <el-button @click="serialStream.clear">清空</el-button>
+              <el-button :icon="Download" @click="exportLines(visibleSerialLines, 'esp32-serial.log')">导出</el-button>
             </div>
           </div>
-          <pre ref="serialPane" class="log-pane serial-log">{{ visibleSerialLines.join('\n') }}</pre>
+          <div ref="serialPane" class="log-pane serial-log">
+            <div v-for="(line, index) in visibleSerialLines" :key="`${index}-${line}`" :class="lineClass(line)">
+              {{ line }}
+            </div>
+          </div>
         </section>
       </el-tab-pane>
 
@@ -588,7 +743,7 @@ function sizeText(value: number) {
             <el-table-column label="操作" width="180">
               <template #default="{ row }">
                 <el-button size="small" link @click="openJobLog(row)">日志</el-button>
-                <el-button size="small" link :disabled="!canRun(row.action)" @click="startJob(row.action)">重试</el-button>
+                <el-button size="small" link :disabled="!canRun(row.action)" @click="retryWithRepair(row)">重试</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -610,7 +765,12 @@ function sizeText(value: number) {
             <el-table-column label="Last Seen" width="180">
               <template #default="{ row }">{{ row.last_seen_at || row.last_seen ? formatTimestamp(row.last_seen_at || row.last_seen) : '-' }}</template>
             </el-table-column>
-            <el-table-column label="控制" width="270">
+            <el-table-column label="Room" min-width="180">
+              <template #default="{ row }">
+                <el-input v-model="hubRoomDraft[row.device_id]" :placeholder="row.room_name || 'room'" size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column label="控制" width="290">
               <template #default="{ row }">
                 <el-button size="small" @click="sendDeviceOp(row, 'config.refresh')">刷新配置</el-button>
                 <el-button size="small" @click="sendDeviceOp(row, 'playback.stop')">停止播放</el-button>
@@ -731,6 +891,27 @@ function sizeText(value: number) {
   color: var(--eid-text-primary);
   font-size: 12px;
 }
+.context-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.probe-result {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.probe-result span {
+  min-width: 0;
+  padding: 8px;
+  overflow-wrap: anywhere;
+  color: var(--eid-text-muted);
+  background: var(--eid-bg-inset);
+  border: 1px solid var(--eid-border);
+  border-radius: 6px;
+  font-size: 12px;
+}
 .mono {
   font-family: var(--eid-font-mono);
 }
@@ -778,6 +959,25 @@ function sizeText(value: number) {
   border: 1px solid var(--eid-border);
   border-radius: 6px;
   background: var(--eid-bg-inset);
+}
+.artifact > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--eid-text-muted);
+  border-radius: 6px;
+}
+.icon-link:hover {
+  color: var(--el-color-primary);
+  background: var(--eid-bg-panel);
 }
 .artifact small,
 .job-summary small {
@@ -831,6 +1031,11 @@ function sizeText(value: number) {
   flex-direction: column;
   min-height: 520px;
 }
+.log-actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
 .serial-panel {
   min-height: 620px;
 }
@@ -850,6 +1055,18 @@ function sizeText(value: number) {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.log-line {
+  min-height: 18px;
+}
+.command-line {
+  color: var(--el-color-primary);
+}
+.warn-line {
+  color: var(--el-color-warning);
+}
+.error-line {
+  color: var(--el-color-danger);
 }
 .serial-log {
   min-height: 540px;
