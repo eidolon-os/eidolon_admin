@@ -114,7 +114,7 @@ class AgentProjectClient(ServiceHTTPClient):
 
     async def revoke_user_sessions(self, user_id: str) -> dict[str, Any]:
         """Phase 33.B1: ask agent to write ``revoked.user.<user_id>`` to
-        the DEVICE_REVOCATIONS NATS KV bucket. ``PairingTokenVerifier``
+        the DEVICE_REVOCATIONS NATS KV bucket. ``RuntimeTokenVerifier``
         rejects every JWT carrying that user_id on next ``verify()``,
         cutting active LK sessions at their next chat() turn.
 

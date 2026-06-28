@@ -1,575 +1,122 @@
-"""Tests for /api/resolve/* aggregator (Phase 29.G).
-
-Verifies the cross-entity join: device→binding→agent→user→memory_url
-and user→active_agent→agent→user→memory_url. The whole point of
-resolve is "channel asks once, admin joins" — so the tests are
-structured to pin what channel sees.
-"""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from io import BytesIO
-from typing import AsyncIterator
-import wave
-
-import httpx
 import pytest
-import respx
-from eidolon_data import DataSettings, DataStore
-from eidolon_data.adapters.admin_registry import (
-    EidolonDataAgentMetadataRepository,
-    EidolonDataDeviceBindingRepository,
-    EidolonDataTenantRepository,
-    EidolonDataUserRepository,
-)
-from fastapi import FastAPI
+from sqlalchemy import update
 
-from eidolon_sdk.biz.registry.models import UserRegistryRecord
-
-from eidolon_admin_server.app.registry.agents.repository import (
-    AgentMetadata,
-    AgentMetadataRepository,
-)
-from eidolon_admin_server.app.registry.devices.repository import (
-    DeviceBindingRepository,
-    HubDeviceClient,
-)
-from eidolon_admin_server.app.registry.resolve import (
+from eidolon_admin_server.app.registry.resolve.orchestrator import (
     ResolveDeviceNotBound,
     ResolveDeviceUnavailable,
     ResolveOrchestrator,
-    ResolveUserUnavailable,
-    ResolveUserNoActiveAgent,
-    router as resolve_router,
 )
-from eidolon_admin_server.app.registry.resolve.orchestrator import (
-    ResolveError404,
-    ResolveUpstreamDown,
-)
-from eidolon_admin_server.app.registry.schemas.device import DeviceBinding
-from eidolon_admin_server.app.registry.schemas.tenant import CreateTenantRequest
-from eidolon_admin_server.app.registry.templates import (
-    TemplateAgentClient,
-    TemplateOrchestrator,
-)
-from eidolon_admin_server.app.registry.tenants import (
-    TenantOrchestrator,
-)
-from eidolon_admin_server.app.registry.users import (
-    MemoryUserClient,
-    UserOrchestrator,
-)
-from eidolon_admin_server.app.registry.voiceprints import VoiceprintStore
+from eidolon_data import DataSettings, DataStore
+from eidolon_data.schema.models import DeviceRow
+
+pytestmark = pytest.mark.asyncio
 
 
-MEMORY_URL = "http://memory.test"
-AGENT_URL = "http://agent.test"
-HUB_URL = "http://hub.test"
-
-
-def _user_record(user_id: str, **updates) -> UserRegistryRecord:
-    data = {
-        "user_id": user_id,
-        "tenant_id": "default",
-        "active_agent_id": None,
-        "display_name": "",
-        "enabled": True,
-        "palace_path": "",
-        "memory_port": 0,
-        "created_at": "",
-    }
-    data.update(updates)
-    return UserRegistryRecord(**data)
-
-
-def _hub_device(device_id: str, *, enabled: bool = True, approved: bool = True) -> dict:
-    return {
-        "device_id": device_id,
-        "name": device_id,
-        "kind": "esp32",
-        "enabled": enabled,
-        "approved": approved,
-        "approved_at": datetime.now(timezone.utc).isoformat() if approved else None,
-        "last_seen": datetime.now(timezone.utc).isoformat(),
-        "status": "online",
-    }
-
-
-def _memory_user(
-    user_id: str = "alice",
-    *,
-    enabled: bool = True,
-    worker_running: bool = True,
-    mcp_reachable: bool = True,
-) -> dict:
-    return {
-        "spec": {
-            # memory keys its records by memory_space_id, not bare user_id.
-            "user_id": f"default.{user_id}.default",
-            "tenant_id": "default", "display_name": user_id,
-            "enabled": enabled,
-            "palace_path": "",
-            "consolidator": {
-                "enabled": True, "interval_hours": 6.0, "window_days": 30,
-                "min_drawers": 3, "min_confidence": 0.6,
-            },
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        },
-        "health": {
-            "worker_running": worker_running, "mcp_reachable": mcp_reachable,
-            "palace_initialized": True, "note": "",
-        },
-        "active_agent_id": None, "agent_ids": [],
-        # 29.K: memory now exposes the per-user MCP URL on its view
-        # envelope, so resolve no longer synthesizes from convention.
-        "mcp_http_url": "http://127.0.0.1:8030/mcp",
-    }
-
-
-_TEMPLATE_YAML = (
-    "metadata:\n  template_id: caretaker_jiezhi\n  name: J\n  archetype: c"
-)
-
-
-def _wav_bytes() -> bytes:
-    buf = BytesIO()
-    with wave.open(buf, "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(16000)
-        wav.writeframes(b"\x00\x00" * 1600)
-    return buf.getvalue()
-
-
-# ---- fixtures ---------------------------------------------------------------
-
-
-@pytest.fixture
-async def http_client() -> AsyncIterator[httpx.AsyncClient]:
-    async with httpx.AsyncClient() as c:
-        yield c
-
-
-@pytest.fixture
-async def orchestrator(
-    http_client: httpx.AsyncClient,
-    tmp_path,
-) -> AsyncIterator[ResolveOrchestrator]:
-    # Tenants → Users → Agents → Templates → Devices wiring (subset).
+async def _store(tmp_path) -> DataStore:
     store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
-    tenant_orch = TenantOrchestrator(EidolonDataTenantRepository(store))
-    await tenant_orch.create(
-        CreateTenantRequest(tenant_id="default", display_name="Default")
+    await store.init_schema()
+    return store
+
+
+async def _workspace(store: DataStore, *, owner_id: str = "owner-a"):
+    await store.owner_service.create_owner(owner_id=owner_id, display_name=owner_id)
+    return await store.companion_workspace.initialize_workspace(
+        owner_id=owner_id,
+        companion_id=f"c:{owner_id}:main",
+        genome_id=f"g:{owner_id}:main:v1",
+        realm_id=f"r:{owner_id}:main",
     )
-    user_orch = UserOrchestrator(
-        memory_client=MemoryUserClient(http_client, MEMORY_URL),
-        metadata_repo=EidolonDataUserRepository(store),
-        tenant_orchestrator=tenant_orch,
-    )
-    template_orch = TemplateOrchestrator(
-        TemplateAgentClient(http_client, AGENT_URL)
-    )
-    agent_meta_repo = AgentMetadataRepository(EidolonDataAgentMetadataRepository(store))
-    binding_repo = DeviceBindingRepository(EidolonDataDeviceBindingRepository(store))
-
-    yield ResolveOrchestrator(
-        binding_repo=binding_repo,
-        hub_client=HubDeviceClient(http_client, HUB_URL),
-        agent_meta_repo=agent_meta_repo,
-        user_orchestrator=user_orch,
-        template_orchestrator=template_orch,
-        voiceprint_store=VoiceprintStore(tmp_path),
-    )
-    await store.close()
 
 
-# ---- resolve_device --------------------------------------------------------
-
-
-async def test_resolve_device_unbound_returns_412(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    with pytest.raises(ResolveDeviceNotBound) as exc_info:
-        await orchestrator.resolve_device("esp-not-bound")
-    assert exc_info.value.status_code == 412
-
-
-async def test_resolve_device_drift_agent_gone_returns_404(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    """Device has a binding but the agent_id it points at is gone from
-    admin's registry. We return 404 with a precise diagnostic."""
-    await orchestrator._bindings.put(
-        "esp-drift",
-        DeviceBinding(agent_id="ag-deleted", bound_at=datetime.now(timezone.utc)),
-    )
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-drift").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-drift"))
+async def test_resolve_device_returns_owner_companion_runtime_identity(tmp_path) -> None:
+    store = await _store(tmp_path)
+    try:
+        workspace = await _workspace(store)
+        await store.devices.create_device(
+            device_id="dev-1",
+            owner_id="owner-a",
+            status="approved",
+            bound_companion_id=workspace.companion.companion_id,
+            interaction_mode="voice",
         )
-        with pytest.raises(ResolveError404, match="ag-deleted") as exc_info:
-            await orchestrator.resolve_device("esp-drift")
-    assert exc_info.value.status_code == 404
+
+        ctx = await ResolveOrchestrator(data_store=store).resolve_device("dev-1")
+
+        assert ctx.owner_id == "owner-a"
+        assert ctx.companion_id == workspace.companion.companion_id
+        assert ctx.memory_realm_id == workspace.memory_realm.realm_id
+        assert ctx.genome_id == workspace.persona_genome.genome_id
+        assert ctx.device_id == "dev-1"
+        assert ctx.interaction_mode == "voice"
+    finally:
+        await store.close()
 
 
-async def test_resolve_device_disabled_returns_412(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    await orchestrator._bindings.put(
-        "esp-disabled",
-        DeviceBinding(agent_id="ag-1", bound_at=datetime.now(timezone.utc)),
-    )
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-disabled").mock(
-            return_value=httpx.Response(
-                200, json=_hub_device("esp-disabled", enabled=False),
+async def test_resolve_device_rejects_unregistered_device(tmp_path) -> None:
+    store = await _store(tmp_path)
+    try:
+        with pytest.raises(ResolveDeviceNotBound):
+            await ResolveOrchestrator(data_store=store).resolve_device("missing")
+    finally:
+        await store.close()
+
+
+async def test_resolve_device_rejects_unbound_device(tmp_path) -> None:
+    store = await _store(tmp_path)
+    try:
+        await _workspace(store)
+        await store.devices.create_device(
+            device_id="dev-1",
+            owner_id="owner-a",
+            status="approved",
+            bound_companion_id=None,
+        )
+
+        with pytest.raises(ResolveDeviceNotBound):
+            await ResolveOrchestrator(data_store=store).resolve_device("dev-1")
+    finally:
+        await store.close()
+
+
+async def test_resolve_device_rejects_disabled_device(tmp_path) -> None:
+    store = await _store(tmp_path)
+    try:
+        workspace = await _workspace(store)
+        await store.devices.create_device(
+            device_id="dev-1",
+            owner_id="owner-a",
+            status="disabled",
+            bound_companion_id=workspace.companion.companion_id,
+        )
+
+        with pytest.raises(ResolveDeviceUnavailable):
+            await ResolveOrchestrator(data_store=store).resolve_device("dev-1")
+    finally:
+        await store.close()
+
+
+async def test_resolve_device_rejects_cross_owner_companion_binding(tmp_path) -> None:
+    store = await _store(tmp_path)
+    try:
+        await _workspace(store, owner_id="owner-a")
+        other = await _workspace(store, owner_id="owner-b")
+        await store.devices.create_device(
+            device_id="dev-1",
+            owner_id="owner-a",
+            status="approved",
+            bound_companion_id=None,
+        )
+        async with store.session_factory() as session:
+            await session.execute(
+                update(DeviceRow)
+                .where(DeviceRow.device_id == "dev-1")
+                .values(bound_companion_id=other.companion.companion_id)
             )
-        )
-        with pytest.raises(ResolveDeviceUnavailable) as exc_info:
-            await orchestrator.resolve_device("esp-disabled")
-    assert exc_info.value.status_code == 412
+            await session.commit()
 
-
-async def test_resolve_device_happy_path(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    """All the pieces are in place — channel gets one envelope."""
-    # Set up registry state: binding -> agent -> user metadata
-    base = datetime.now(timezone.utc).isoformat()
-    await orchestrator._bindings.put(
-        "esp-1",
-        DeviceBinding(agent_id="ag-1", bound_at=datetime.now(timezone.utc)),
-    )
-    await orchestrator._agents.put(
-        "ag-1",
-        AgentMetadata(
-            tenant_id="default", user_id="alice",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="Caretaker for Alice", created_at=base,
-        ),
-    )
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", display_name="Alice")
-    )
-
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-1").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-1"))
-        )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
-            return_value=httpx.Response(200, json=_memory_user("alice"))
-        )
-        rsx.get(
-            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
-        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
-        ctx = await orchestrator.resolve_device("esp-1")
-    assert ctx.tenant_id == "default"
-    assert ctx.user_id == "alice"
-    assert ctx.agent_id == "ag-1"
-    assert ctx.template_id == "caretaker_jiezhi"
-    assert ctx.device_id == "esp-1"
-    # 29.K: memory_mcp_url comes from memory's user view, not synth.
-    # The test fixture pins the value memory would return.
-    assert ctx.memory_mcp_url == "http://127.0.0.1:8030/mcp"
-    assert ctx.soul_preview.startswith("metadata:")
-    assert ctx.voiceprint.enabled is False
-    # Phase 6: no per-device override set on the binding → None.
-    assert ctx.interaction_mode is None
-
-
-async def test_resolve_device_carries_interaction_mode_override(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    """Phase 6: a per-device interaction_mode on the binding flows into the
-    resolved context (hub gives it priority over the device header)."""
-    base = datetime.now(timezone.utc).isoformat()
-    await orchestrator._bindings.put(
-        "esp-mode",
-        DeviceBinding(
-            agent_id="ag-1",
-            bound_at=datetime.now(timezone.utc),
-            interaction_mode="full_duplex",
-        ),
-    )
-    await orchestrator._agents.put(
-        "ag-1",
-        AgentMetadata(
-            tenant_id="default", user_id="alice",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="Caretaker for Alice", created_at=base,
-        ),
-    )
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", display_name="Alice")
-    )
-
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-mode").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-mode"))
-        )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
-            return_value=httpx.Response(200, json=_memory_user("alice"))
-        )
-        rsx.get(
-            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
-        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
-        ctx = await orchestrator.resolve_device("esp-mode")
-    assert ctx.interaction_mode == "full_duplex"
-
-
-async def test_resolve_device_rejects_disabled_user(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    base = datetime.now(timezone.utc).isoformat()
-    await orchestrator._bindings.put(
-        "esp-disabled-user",
-        DeviceBinding(agent_id="ag-disabled-user", bound_at=datetime.now(timezone.utc)),
-    )
-    await orchestrator._agents.put(
-        "ag-disabled-user",
-        AgentMetadata(
-            tenant_id="default", user_id="alice",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="Caretaker for Alice", created_at=base,
-        ),
-    )
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", display_name="Alice", enabled=False)
-    )
-
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-disabled-user").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-disabled-user"))
-        )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
-            return_value=httpx.Response(
-                200, json=_memory_user("alice", enabled=False),
-            )
-        )
-        with pytest.raises(ResolveUserUnavailable):
-            await orchestrator.resolve_device("esp-disabled-user")
-
-
-async def test_resolve_device_rejects_worker_down_user(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    base = datetime.now(timezone.utc).isoformat()
-    await orchestrator._bindings.put(
-        "esp-worker-down",
-        DeviceBinding(agent_id="ag-worker-down", bound_at=datetime.now(timezone.utc)),
-    )
-    await orchestrator._agents.put(
-        "ag-worker-down",
-        AgentMetadata(
-            tenant_id="default", user_id="alice",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="Caretaker for Alice", created_at=base,
-        ),
-    )
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", display_name="Alice")
-    )
-
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-worker-down").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-worker-down"))
-        )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
-            return_value=httpx.Response(
-                200,
-                json=_memory_user(
-                    "alice", worker_running=False, mcp_reachable=False,
-                ),
-            )
-        )
-        with pytest.raises(ResolveUpstreamDown):
-            await orchestrator.resolve_device("esp-worker-down")
-
-
-async def test_resolve_device_includes_voiceprint_summary(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    base = datetime.now(timezone.utc).isoformat()
-    await orchestrator._bindings.put(
-        "esp-voice",
-        DeviceBinding(agent_id="ag-voice", bound_at=datetime.now(timezone.utc)),
-    )
-    await orchestrator._agents.put(
-        "ag-voice",
-        AgentMetadata(
-            tenant_id="default", user_id="alice",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="Caretaker for Alice", created_at=base,
-        ),
-    )
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", display_name="Alice")
-    )
-
-    store = orchestrator._voiceprints  # type: ignore[attr-defined]
-    enrollment = store.create_enrollment(
-        tenant_id="default",
-        user_id="alice",
-        provider="noop",
-        model="noop",
-        sample_rate=16000,
-    )
-    store.add_sample(
-        enrollment_id=enrollment.enrollment_id,
-        tenant_id="default",
-        user_id="alice",
-        wav_bytes=_wav_bytes(),
-    )
-    profile = store.complete_enrollment(
-        enrollment_id=enrollment.enrollment_id,
-        tenant_id="default",
-        user_id="alice",
-    )
-
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-voice").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-voice"))
-        )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
-            return_value=httpx.Response(200, json=_memory_user("alice"))
-        )
-        rsx.get(
-            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
-        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
-        ctx = await orchestrator.resolve_device("esp-voice")
-
-    assert ctx.voiceprint.enabled is True
-    assert ctx.voiceprint.profile_id == profile.profile_id
-    assert ctx.voiceprint.provider == "noop"
-
-
-async def test_resolve_propagates_empty_mcp_url_when_memory_omits_it(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    """If memory's user view doesn't carry ``mcp_http_url`` (e.g.
-    pre-29.K memory build), resolve propagates the empty string rather
-    than fabricating one. Channel will then refuse to dial — preferable
-    to silently pointing at a stale port. Pinned because the old code
-    synthesized; we don't want that to creep back."""
-    base_iso = datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat()
-    base_dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    await orchestrator._agents.put(  # type: ignore[attr-defined]
-        "ag-stale", AgentMetadata(
-            tenant_id="default", user_id="bob",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="for Bob", created_at=base_iso,
-        ),
-    )
-    await orchestrator._bindings.put(  # type: ignore[attr-defined]
-        "esp-stale", DeviceBinding(agent_id="ag-stale", bound_at=base_dt),
-    )
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("bob", display_name="Bob")
-    )
-    bare = _memory_user("bob")
-    bare.pop("mcp_http_url")  # simulate old memory
-    with respx.mock() as rsx:
-        rsx.get(f"{HUB_URL}/api/admin/devices/esp-stale").mock(
-            return_value=httpx.Response(200, json=_hub_device("esp-stale"))
-        )
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.bob.default").mock(
-            return_value=httpx.Response(200, json=bare)
-        )
-        rsx.get(
-            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
-        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
-        ctx = await orchestrator.resolve_device("esp-stale")
-    assert ctx.memory_mcp_url == ""
-
-
-# ---- resolve_user ---------------------------------------------------------
-
-
-async def test_resolve_user_no_metadata_returns_404(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    with pytest.raises(ResolveError404) as exc_info:
-        await orchestrator.resolve_user("unknown")
-    assert exc_info.value.status_code == 404
-
-
-async def test_resolve_user_no_active_agent_returns_412(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    """User exists in admin metadata but no active_agent_id set."""
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", active_agent_id=None)
-    )
-    with pytest.raises(ResolveUserNoActiveAgent) as exc_info:
-        await orchestrator.resolve_user("alice")
-    assert exc_info.value.status_code == 412
-
-
-async def test_resolve_user_happy_path(
-    orchestrator: ResolveOrchestrator,
-) -> None:
-    base = datetime.now(timezone.utc).isoformat()
-    await orchestrator._users._meta.put(  # type: ignore[attr-defined]
-        _user_record("alice", active_agent_id="ag-1")
-    )
-    await orchestrator._agents.put(
-        "ag-1",
-        AgentMetadata(
-            tenant_id="default", user_id="alice",
-            template_id="caretaker_jiezhi", template_revision=1,
-            display_name="A", created_at=base,
-        ),
-    )
-    with respx.mock() as rsx:
-        rsx.get(f"{MEMORY_URL}/api/admin/users/default.alice.default").mock(
-            return_value=httpx.Response(200, json=_memory_user("alice"))
-        )
-        rsx.get(
-            f"{AGENT_URL}/api/admin/personas/templates/caretaker_jiezhi/raw"
-        ).mock(return_value=httpx.Response(200, text=_TEMPLATE_YAML))
-        ctx = await orchestrator.resolve_user("alice")
-    assert ctx.user_id == "alice"
-    assert ctx.agent_id == "ag-1"
-    assert ctx.device_id is None  # user-path doesn't carry a device
-
-
-# ---- router HTTP ---------------------------------------------------------
-
-
-@pytest.fixture
-async def client(
-    orchestrator: ResolveOrchestrator,
-) -> AsyncIterator[httpx.AsyncClient]:
-    app = FastAPI()
-    app.state.resolve_orchestrator = orchestrator
-    app.include_router(resolve_router, prefix="/api")
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://test", trust_env=False
-    ) as c:
-        yield c
-
-
-async def test_http_resolve_device_412_when_unbound(
-    client: httpx.AsyncClient,
-) -> None:
-    r = await client.get("/api/resolve/device/ghost")
-    assert r.status_code == 412
-    assert "not bound" in r.json()["detail"]
-
-
-async def test_http_resolve_user_404_when_unregistered(
-    client: httpx.AsyncClient,
-) -> None:
-    r = await client.get("/api/resolve/user/unknown")
-    assert r.status_code == 404
-
-
-async def test_http_503_when_orchestrator_missing() -> None:
-    app = FastAPI()
-    app.state.resolve_orchestrator = None
-    app.include_router(resolve_router, prefix="/api")
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-        r = await c.get("/api/resolve/device/x")
-    assert r.status_code == 503
+        with pytest.raises(ResolveDeviceUnavailable):
+            await ResolveOrchestrator(data_store=store).resolve_device("dev-1")
+    finally:
+        await store.close()

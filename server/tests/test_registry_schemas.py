@@ -1,224 +1,49 @@
-"""Tests for ``app.registry.schemas`` — the wire shapes for Phase 29.
-
-Most fields are plain Pydantic and don't need tests, but we DO want to
-pin down:
-
-  1. The ID validation regex (used identically across Tenant / Template /
-     User / Agent — they must all reject the same garbage and accept the
-     same valid characters).
-  2. The few cross-field invariants (knob overlay value bounds, the
-     ConsolidatorConfig sane defaults, the immutability declarations
-     baked into UpdateXRequest models).
-"""
 from __future__ import annotations
-
-from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
 
 from eidolon_admin_server.app.registry.schemas import (
-    AgentRef,
-    BindDeviceRequest,
-    ConsolidatorConfig,
-    CreateAgentRequest,
-    CreateTemplateRequest,
-    CreateTenantRequest,
-    CreateUserRequest,
-    DeviceView,
-    ForkTemplateRequest,
-    KnobOverlay,
     ResolvedContext,
-    TenantSpec,
-    UserSpec,
+    ResolveDeviceResponse,
 )
 
 
-# ---- ID validation (shared regex across entities) ---------------------------
-
-
-@pytest.mark.parametrize(
-    "good_id",
-    ["default", "alice", "user_1", "Test-Tenant", "a", "x" * 64, "MIX_ed-19"],
-)
-def test_id_validators_accept_valid_ids(good_id: str) -> None:
-    """All four ID-bearing creates must accept the same valid charset."""
-    now = datetime.now(timezone.utc)
-    # Tenant
-    CreateTenantRequest(tenant_id=good_id, display_name="x")
-    # Template uses tenant_id + template_id
-    CreateTemplateRequest(
-        template_id=good_id, tenant_id="default", display_name="x", yaml_body="a: 1"
-    )
-    # User
-    CreateUserRequest(user_id=good_id, display_name="x")
-    # Agent (user_id + template_id)
-    CreateAgentRequest(user_id=good_id, template_id="caretaker_jiezhi")
-
-
-@pytest.mark.parametrize(
-    "bad_id",
-    [
-        "",                # empty
-        "with space",      # space
-        "has.dot",         # dot — reserved for NATS key separator
-        "has/slash",       # slash
-        "中文",             # non-ASCII
-        "x" * 65,          # too long
-        "with$dollar",     # special
-    ],
-)
-def test_id_validators_reject_bad_ids(bad_id: str) -> None:
-    with pytest.raises(ValidationError):
-        CreateTenantRequest(tenant_id=bad_id, display_name="x")
-
-
-# ---- ConsolidatorConfig defaults --------------------------------------------
-
-
-def test_consolidator_defaults_match_memory_project() -> None:
-    """Keep in sync with memory's DefaultConsolidatorConfig.
-
-    These four values are the contract — if memory ever changes its
-    defaults we need to bump these explicitly to keep admin's UI
-    consistent.
-    """
-    c = ConsolidatorConfig()
-    assert c.enabled is True
-    assert c.interval_hours == 6.0
-    assert c.window_days == 30
-    assert c.min_drawers == 3
-    assert c.min_confidence == 0.6
-
-
-def test_consolidator_rejects_non_positive_interval() -> None:
-    with pytest.raises(ValidationError):
-        ConsolidatorConfig(interval_hours=0)
-    with pytest.raises(ValidationError):
-        ConsolidatorConfig(interval_hours=-1)
-
-
-# ---- KnobOverlay bounds -----------------------------------------------------
-
-
-def test_knob_overlay_accepts_values_in_unit_range() -> None:
-    KnobOverlay(root={"warmth": 0.0, "formality": 0.5, "humor": 1.0})
-
-
-@pytest.mark.parametrize("bad", [-0.1, 1.1, 2.0])
-def test_knob_overlay_rejects_out_of_range(bad: float) -> None:
-    with pytest.raises(ValidationError):
-        KnobOverlay(root={"warmth": bad})
-
-
-# ---- CreateAgentRequest set_active default ---------------------------------
-
-
-def test_create_agent_set_active_defaults_false() -> None:
-    """Creating an agent is separate from routing future sessions to it."""
-    req = CreateAgentRequest(user_id="default", template_id="caretaker_jiezhi")
-    assert req.set_active is False
-
-
-def test_create_user_enabled_defaults_false() -> None:
-    """Creating a catalog user should not start dynamic memory resources."""
-    req = CreateUserRequest(user_id="default", display_name="Default")
-    assert req.enabled is False
-
-
-# ---- ForkTemplateRequest validation -----------------------------------------
-
-
-def test_fork_template_request_validates_both_ids() -> None:
-    """Fork takes a new template id AND a target tenant — both must be valid."""
-    ForkTemplateRequest(
-        new_template_id="caretaker_custom_v1",
-        target_tenant_id="default",
-        new_display_name="My Caretaker",
-    )
-    with pytest.raises(ValidationError):
-        ForkTemplateRequest(
-            new_template_id="bad space",
-            target_tenant_id="default",
-            new_display_name="x",
-        )
-    with pytest.raises(ValidationError):
-        ForkTemplateRequest(
-            new_template_id="ok",
-            target_tenant_id="bad/slash",
-            new_display_name="x",
-        )
-
-
-# ---- ResolvedContext shape --------------------------------------------------
-
-
-def test_resolved_context_requires_runtime_essentials() -> None:
-    """The channel/livekit caller depends on these being present.
-
-    If we ever drop a field, channel code that hardcodes the name
-    breaks loudly — exactly what we want.
-    """
+def test_resolved_context_requires_runtime_identity_tuple() -> None:
     ctx = ResolvedContext(
-        tenant_id="default",
-        user_id="alice",
-        agent_id="ag_abc",
-        template_id="caretaker_jiezhi",
-        template_revision=1,
-        memory_mcp_url="http://127.0.0.1:8030/mcp",
-        soul_preview="# you are ...",
+        owner_id="owner-1",
+        companion_id="companion-1",
+        device_id="dev-1",
+        memory_realm_id="realm-1",
+        genome_id="genome-1",
     )
-    assert ctx.tenant_id == "default"
-    assert ctx.memory_mcp_url.endswith("/mcp")
-    assert ctx.device_id is None  # optional, default
+
+    assert ctx.owner_id == "owner-1"
+    assert ctx.companion_id == "companion-1"
+    assert ctx.device_id == "dev-1"
+    assert ctx.memory_realm_id == "realm-1"
+    assert ctx.genome_id == "genome-1"
 
 
-def test_resolved_context_rejects_missing_required() -> None:
+def test_resolved_context_rejects_missing_required_field() -> None:
     with pytest.raises(ValidationError):
-        ResolvedContext(  # missing memory_mcp_url
-            tenant_id="default",
-            user_id="alice",
-            agent_id="ag_abc",
-            template_id="caretaker_jiezhi",
-            template_revision=1,
-            soul_preview="...",
+        ResolvedContext(
+            owner_id="owner-1",
+            companion_id="companion-1",
+            device_id="dev-1",
+            genome_id="genome-1",
         )
 
 
-# ---- DeviceView optional binding -------------------------------------------
-
-
-def test_device_view_unbound_has_none_binding() -> None:
-    """approved-but-not-bound: binding is None, resolved fields also None."""
-    v = DeviceView(
-        device_id="esp32-foo",
-        name="Living room",
-        kind="esp32",
-        approved=True,
-        approved_at=datetime.now(timezone.utc),
-        last_seen=None,
-        status="offline",
+def test_resolve_device_response_wraps_context() -> None:
+    response = ResolveDeviceResponse(
+        context=ResolvedContext(
+            owner_id="owner-1",
+            companion_id="companion-1",
+            device_id="dev-1",
+            memory_realm_id="realm-1",
+            genome_id="genome-1",
+        )
     )
-    assert v.binding is None
-    assert v.resolved_user_id is None
-    assert v.resolved_template_id is None
 
-
-# ---- TenantSpec / UserSpec round trip --------------------------------------
-
-
-def test_tenant_spec_round_trip_through_json() -> None:
-    """Persistence test — Spec → JSON → Spec must be identity (datetimes
-    survive ISO formatting)."""
-    now = datetime.now(timezone.utc).replace(microsecond=0)  # JSON loses µs
-    original = TenantSpec(tenant_id="default", display_name="Default", created_at=now)
-    payload = original.model_dump_json()
-    restored = TenantSpec.model_validate_json(payload)
-    assert restored == original
-
-
-def test_user_spec_defaults_to_default_tenant() -> None:
-    """A bare CreateUserRequest implicitly lands in the default tenant —
-    keeps the single-tenant operator experience clean."""
-    req = CreateUserRequest(user_id="alice", display_name="Alice")
-    assert req.tenant_id == "default"
+    assert response.context.companion_id == "companion-1"
