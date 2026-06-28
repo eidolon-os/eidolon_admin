@@ -7,35 +7,32 @@ import { Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   approveDevice,
-  bindDevice,
+  identifyDevice,
   listDevices,
+  refreshDeviceConfig,
   setDeviceEnabled,
-  unbindDevice,
   unregisterDevice,
   wakeDevice,
   type DeviceListResponse,
   type DeviceView,
 } from '@/api/devices'
-import { listAgents, type AgentRef } from '@/api/agents'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
 import JsonViewer from '@/modules/common/JsonViewer.vue'
 
 type RuntimeFilter = 'all' | 'online' | 'degraded' | 'offline' | 'unknown'
+type BadgeState = 'online' | 'offline' | 'warning' | 'unknown'
+type DetailTab = 'overview' | 'access' | 'routing' | 'rooms' | 'raw'
 
 const status = ref<RuntimeFilter>('all')
 const devices = ref<DeviceView[]>([])
-const agents = ref<AgentRef[]>([])
 const hubAvailable = ref(true)
 const loading = ref(false)
 const detail = ref<DeviceView | null>(null)
+const detailTab = ref<DetailTab>('overview')
 let timer: ReturnType<typeof setInterval> | null = null
 
-const bindDialogOpen = ref(false)
-const bindTarget = ref<DeviceView | null>(null)
-const bindAgentId = ref('')
-const submitting = ref(false)
-const togglingDeviceId = ref('')
+const busyDeviceId = ref('')
 
 const filteredDevices = computed(() => {
   if (status.value === 'all') return devices.value
@@ -43,7 +40,9 @@ const filteredDevices = computed(() => {
 })
 
 const pendingCount = computed(() => devices.value.filter((d) => !d.approved).length)
-const unboundCount = computed(() => devices.value.filter((d) => d.approved && !d.binding).length)
+const routingGapCount = computed(() => devices.value.filter((d) => d.enabled && d.approved && !d.binding).length)
+const voiceCount = computed(() => devices.value.filter((d) => inVoiceRoom(d)).length)
+const standbyCount = computed(() => devices.value.filter((d) => inControlRoom(d)).length)
 const lastDiscovery = ref<DeviceListResponse['discovery'] | null>(null)
 const discoveryBadge = computed(() => {
   if (!hubAvailable.value) return { label: 'Hub unreachable', type: 'danger' as const }
@@ -55,11 +54,10 @@ const discoveryBadge = computed(() => {
 async function refresh() {
   loading.value = true
   try {
-    const [d, a] = await Promise.all([listDevices(), listAgents()])
+    const d = await listDevices()
     devices.value = d.devices
     hubAvailable.value = d.hub_available
     lastDiscovery.value = d.discovery
-    agents.value = a.agents
   } catch (e: any) {
     ElMessage.error(`加载失败: ${extractErrorMessage(e)}`)
   } finally {
@@ -73,13 +71,6 @@ onMounted(async () => {
 })
 onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 
-function badgeState(s?: string): 'online' | 'offline' | 'warning' | 'unknown' {
-  if (s === 'online') return 'online'
-  if (s === 'degraded') return 'warning'
-  if (s === 'offline') return 'offline'
-  return 'unknown'
-}
-
 function inControlRoom(d: DeviceView): boolean {
   return d.status === 'online' && !!d.room_name && d.room_name.endsWith('-control')
 }
@@ -88,48 +79,120 @@ function inVoiceRoom(d: DeviceView): boolean {
   return d.status === 'online' && !!d.room_name && !d.room_name.endsWith('-control')
 }
 
-function productState(d: DeviceView): { label: string; state: 'online' | 'offline' | 'warning' | 'unknown' } {
-  if (!d.enabled) return { label: '已停用', state: 'offline' }
-  if (!d.approved) return { label: '待批准', state: 'warning' }
-  if (!d.binding) return { label: '待绑定', state: 'warning' }
-  if (inVoiceRoom(d)) return { label: '通话中', state: 'online' }
-  if (inControlRoom(d)) return { label: '待机在线', state: 'online' }
-  if (d.status === 'degraded') return { label: '连接不稳', state: 'warning' }
-  if (d.status === 'offline') return { label: '离线', state: 'offline' }
-  return { label: d.status || '未知', state: 'unknown' }
+function accessState(d: DeviceView): { label: string; state: BadgeState } {
+  if (!d.enabled) return { label: 'disabled', state: 'offline' }
+  if (!d.approved) return { label: 'pending approval', state: 'warning' }
+  return { label: 'approved', state: 'online' }
 }
 
-function pairingTag(d: DeviceView): { label: string; type: 'success' | 'warning' | 'info' | 'danger' } {
-  if (!d.enabled) return { label: 'disabled', type: 'info' }
-  if (!d.approved) return { label: 'pending', type: 'warning' }
-  if (d.binding) return { label: 'bound', type: 'success' }
-  return { label: 'unbound', type: 'info' }
+function reachabilityState(d: DeviceView): { label: string; state: BadgeState } {
+  if (!d.enabled) return { label: 'disabled', state: 'offline' }
+  if (inVoiceRoom(d)) return { label: 'in voice room', state: 'online' }
+  if (inControlRoom(d)) return { label: 'standby online', state: 'online' }
+  if (d.status === 'degraded') return { label: 'degraded', state: 'warning' }
+  if (d.status === 'offline') return { label: 'offline', state: 'offline' }
+  if (d.status === 'online') return { label: 'online', state: 'online' }
+  return { label: d.status || 'unknown', state: 'unknown' }
+}
+
+function roomKind(d: DeviceView): { label: string; type: 'success' | 'warning' | 'info' } {
+  const room = d.room_name || ''
+  if (!room) return { label: 'none', type: 'info' }
+  if (room.includes('pending')) return { label: 'pending', type: 'warning' }
+  if (room.endsWith('-control')) return { label: 'control', type: 'success' }
+  return { label: 'voice', type: 'success' }
+}
+
+function routeState(d: DeviceView): { label: string; type: 'success' | 'warning' | 'info' } {
+  if (!d.approved) return { label: 'not routed', type: 'info' }
+  if (!d.binding) return { label: 'routing missing', type: 'warning' }
+  return { label: 'bound', type: 'success' }
+}
+
+function routingText(d: DeviceView): string {
+  if (!d.binding) return 'Admin routing required'
+  return d.binding.agent_id
+}
+
+function primaryAction(d: DeviceView): { label: string; type: 'primary' | 'default'; disabled?: boolean; run: () => void } {
+  if (!d.enabled) {
+    return { label: '启用', type: 'default', run: () => void onToggleEnabled(d, true) }
+  }
+  if (!d.approved) {
+    return { label: '批准', type: 'primary', run: () => void onApprove(d) }
+  }
+  if (inControlRoom(d)) {
+    return { label: '唤醒', type: 'primary', run: () => void onWake(d) }
+  }
+  if (d.status === 'online') {
+    return { label: '识别', type: 'default', run: () => void onIdentify(d) }
+  }
+  if (!d.binding) {
+    return { label: '路由状态', type: 'default', run: () => openDetail(d, 'routing') }
+  }
+  return { label: '详情', type: 'default', run: () => openDetail(d) }
+}
+
+function openDetail(d: DeviceView, tab: DetailTab = 'overview') {
+  detail.value = d
+  detailTab.value = tab
+}
+
+async function withBusy(d: DeviceView, fn: () => Promise<void>) {
+  busyDeviceId.value = d.device_id
+  try {
+    await fn()
+  } finally {
+    busyDeviceId.value = ''
+  }
 }
 
 async function onWake(d: DeviceView) {
-  try {
-    await wakeDevice(d.device_id)
-    ElMessage.success('已下发唤醒')
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(`唤醒失败: ${extractErrorMessage(e)}`)
-  }
+  await withBusy(d, async () => {
+    try {
+      await wakeDevice(d.device_id)
+      ElMessage.success('已下发唤醒')
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`唤醒失败: ${extractErrorMessage(e)}`)
+    }
+  })
 }
 
-function agentLabel(agentId: string): string {
-  const a = agents.value.find((x) => x.agent_id === agentId)
-  if (!a) return agentId.slice(0, 12) + '...'
-  return `${a.display_name || a.agent_id.slice(0, 8)} (${a.user_id})`
+async function onIdentify(d: DeviceView) {
+  await withBusy(d, async () => {
+    try {
+      await identifyDevice(d.device_id)
+      ElMessage.success('已下发识别命令')
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`识别失败: ${extractErrorMessage(e)}`)
+    }
+  })
+}
+
+async function onRefreshConfig(d: DeviceView) {
+  await withBusy(d, async () => {
+    try {
+      await refreshDeviceConfig(d.device_id)
+      ElMessage.success('已请求设备刷新配置')
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`刷新配置失败: ${extractErrorMessage(e)}`)
+    }
+  })
 }
 
 async function onApprove(d: DeviceView) {
-  try {
-    await approveDevice(d.device_id)
-    ElMessage.success(`已批准 ${d.device_id}`)
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(`批准失败: ${extractErrorMessage(e)}`)
-  }
+  await withBusy(d, async () => {
+    try {
+      await approveDevice(d.device_id)
+      ElMessage.success(`已批准 ${d.device_id}`)
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`批准失败: ${extractErrorMessage(e)}`)
+    }
+  })
 }
 
 async function onToggleEnabled(d: DeviceView, enabled: boolean | string | number) {
@@ -137,85 +200,56 @@ async function onToggleEnabled(d: DeviceView, enabled: boolean | string | number
   if (nextEnabled === d.enabled) return
   const title = nextEnabled ? '启用设备' : '停用设备'
   const message = nextEnabled
-    ? `确认启用 ${d.device_id}? 启用后可批准、绑定并参与运行时调度。`
-    : `确认停用 ${d.device_id}? 设备记录和绑定会保留，但不会参与运行时使用。`
+    ? `确认启用 ${d.device_id}? 启用后可批准并参与 Hub 接入流程。`
+    : `确认停用 ${d.device_id}? 设备记录和 Admin routing 会保留，但不会参与运行时使用。`
   try {
     await ElMessageBox.confirm(message, title, { type: nextEnabled ? 'info' : 'warning' })
   } catch {
     return
   }
-  togglingDeviceId.value = d.device_id
-  try {
-    await setDeviceEnabled(d.device_id, nextEnabled)
-    ElMessage.success(nextEnabled ? '已启用' : '已停用')
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(`${nextEnabled ? '启用' : '停用'}失败: ${extractErrorMessage(e)}`)
-  } finally {
-    togglingDeviceId.value = ''
-  }
-}
-
-function onEnabledSwitchChange(d: DeviceView, value: boolean | string | number) {
-  void onToggleEnabled(d, value)
-}
-
-function openBind(d: DeviceView) {
-  bindTarget.value = d
-  bindAgentId.value = d.binding?.agent_id || agents.value[0]?.agent_id || ''
-  bindDialogOpen.value = true
-}
-
-async function submitBind() {
-  if (!bindTarget.value || !bindAgentId.value) {
-    ElMessage.warning('请选择 agent')
-    return
-  }
-  submitting.value = true
-  try {
-    await bindDevice(bindTarget.value.device_id, bindAgentId.value)
-    ElMessage.success('已绑定')
-    bindDialogOpen.value = false
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(`绑定失败: ${extractErrorMessage(e)}`)
-  } finally {
-    submitting.value = false
-  }
-}
-
-async function onUnbind(d: DeviceView) {
-  try {
-    await ElMessageBox.confirm(`确认解绑 ${d.device_id}?`, '解绑', { type: 'warning' })
-  } catch {
-    return
-  }
-  try {
-    await unbindDevice(d.device_id)
-    ElMessage.success('已解绑')
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(`解绑失败: ${extractErrorMessage(e)}`)
-  }
+  await withBusy(d, async () => {
+    try {
+      await setDeviceEnabled(d.device_id, nextEnabled)
+      ElMessage.success(nextEnabled ? '已启用' : '已停用')
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`${nextEnabled ? '启用' : '停用'}失败: ${extractErrorMessage(e)}`)
+    }
+  })
 }
 
 async function onUnregister(d: DeviceView) {
   try {
     await ElMessageBox.confirm(
-      `确认注销 ${d.device_id}? 这会清除 hub 记录和 admin 绑定；设备重新发现后会回到待批准状态。`,
+      `确认注销 ${d.device_id}? 这会清除 Hub 记录和 Admin routing；设备重新发现后会回到待批准状态。`,
       '注销 / 撤销设备',
       { type: 'warning' },
     )
   } catch {
     return
   }
-  try {
-    await unregisterDevice(d.device_id)
-    ElMessage.success('已注销，设备重新发现后需重新批准')
-    await refresh()
-  } catch (e: any) {
-    ElMessage.error(`注销失败: ${extractErrorMessage(e)}`)
-  }
+  await withBusy(d, async () => {
+    try {
+      await unregisterDevice(d.device_id)
+      ElMessage.success('已注销，设备重新发现后需重新批准')
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`注销失败: ${extractErrorMessage(e)}`)
+    }
+  })
+}
+
+async function onMoreCommand(command: string, d: DeviceView) {
+  if (command === 'detail') openDetail(d)
+  if (command === 'access') openDetail(d, 'access')
+  if (command === 'routing') openDetail(d, 'routing')
+  if (command === 'rooms') openDetail(d, 'rooms')
+  if (command === 'raw') openDetail(d, 'raw')
+  if (command === 'identify') await onIdentify(d)
+  if (command === 'refresh-config') await onRefreshConfig(d)
+  if (command === 'enable') await onToggleEnabled(d, true)
+  if (command === 'disable') await onToggleEnabled(d, false)
+  if (command === 'unregister') await onUnregister(d)
 }
 </script>
 
@@ -225,19 +259,25 @@ async function onUnregister(d: DeviceView) {
       <div>
         <h2 class="title">Devices</h2>
         <div class="subtitle">
-          {{ devices.length }} 设备 · 10 秒自动刷新
+          {{ devices.length }} devices · access and reachability via Hub
           <span v-if="!hubAvailable" class="warn">Hub 不可达, 状态可能过期</span>
         </div>
       </div>
       <div class="actions">
-        <el-tag v-if="pendingCount > 0" size="small" type="warning" effect="dark">
-          {{ pendingCount }} 待批准
+        <el-tag v-if="voiceCount > 0" size="small" type="success" effect="dark">
+          {{ voiceCount }} in voice
         </el-tag>
-        <el-tag v-if="unboundCount > 0" size="small" type="info">
-          {{ unboundCount }} 待绑定
+        <el-tag v-if="standbyCount > 0" size="small" type="success">
+          {{ standbyCount }} standby
+        </el-tag>
+        <el-tag v-if="pendingCount > 0" size="small" type="warning" effect="dark">
+          {{ pendingCount }} pending
+        </el-tag>
+        <el-tag v-if="routingGapCount > 0" size="small" type="info">
+          {{ routingGapCount }} routing gaps
         </el-tag>
         <el-radio-group v-model="status" size="small">
-          <el-radio-button value="all">全部</el-radio-button>
+          <el-radio-button value="all">all</el-radio-button>
           <el-radio-button value="online">online</el-radio-button>
           <el-radio-button value="degraded">degraded</el-radio-button>
           <el-radio-button value="offline">offline</el-radio-button>
@@ -251,7 +291,7 @@ async function onUnregister(d: DeviceView) {
       <el-tag size="small" :type="discoveryBadge.type" effect="dark">
         {{ discoveryBadge.label }}
       </el-tag>
-      <span v-if="lastDiscovery?.config_url" class="mono">
+      <span v-if="lastDiscovery?.config_url" class="mono compact">
         {{ lastDiscovery.config_url }}
       </span>
       <span v-if="lastDiscovery?.ip" class="muted">
@@ -263,79 +303,87 @@ async function onUnregister(d: DeviceView) {
     </div>
 
     <el-table :data="filteredDevices" v-loading="loading && devices.length === 0" size="small" stripe>
-      <el-table-column label="Device ID" min-width="180">
-        <template #default="{ row }"><code class="mono">{{ row.device_id }}</code></template>
-      </el-table-column>
-      <el-table-column label="名称" prop="name" min-width="140" />
-      <el-table-column label="类型" prop="kind" width="100" />
-      <el-table-column label="配对" width="110">
+      <el-table-column label="Device" min-width="240">
         <template #default="{ row }">
-          <el-tag :type="pairingTag(row).type" size="small" effect="dark">
-            {{ pairingTag(row).label }}
-          </el-tag>
+          <div class="device-cell">
+            <strong>{{ row.name || row.device_id }}</strong>
+            <span class="mono">{{ row.device_id }}</span>
+            <el-tag size="small" type="info">{{ row.kind || 'unknown' }}</el-tag>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="设备状态" width="130">
+
+      <el-table-column label="Access" width="170">
         <template #default="{ row }">
-          <StatusBadge :state="productState(row).state" :label="productState(row).label" />
+          <StatusBadge :state="accessState(row).state" :label="accessState(row).label" />
         </template>
       </el-table-column>
-      <el-table-column label="启用" width="86" align="center">
+
+      <el-table-column label="Reachability" width="180">
         <template #default="{ row }">
-          <el-switch
-            :model-value="row.enabled"
-            :loading="togglingDeviceId === row.device_id"
-            @change="onEnabledSwitchChange(row, $event)"
-          />
+          <StatusBadge :state="reachabilityState(row).state" :label="reachabilityState(row).label" />
         </template>
       </el-table-column>
-      <el-table-column label="实时通道" width="130">
+
+      <el-table-column label="Routing" min-width="240">
         <template #default="{ row }">
-          <StatusBadge :state="badgeState(row.status)" :label="row.status || 'unknown'" />
+          <div class="routing-cell">
+            <el-tag :type="routeState(row).type" size="small" effect="dark">
+              {{ routeState(row).label }}
+            </el-tag>
+            <span class="mono">{{ routingText(row) }}</span>
+            <span v-if="row.resolved_user_id || row.resolved_template_id" class="muted">
+              {{ row.resolved_user_id || '—' }} / {{ row.resolved_template_id || '—' }}
+            </span>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="绑定 Agent" min-width="220">
+
+      <el-table-column label="Room" min-width="220">
         <template #default="{ row }">
-          <span v-if="row.binding" class="mono">{{ agentLabel(row.binding.agent_id) }}</span>
-          <span v-else class="muted">—</span>
+          <div class="room-cell">
+            <el-tag :type="roomKind(row).type" size="small">{{ roomKind(row).label }}</el-tag>
+            <span class="mono">{{ row.room_name || '—' }}</span>
+          </div>
         </template>
       </el-table-column>
+
       <el-table-column label="Last seen" width="170">
         <template #default="{ row }">
           <span class="muted">{{ formatTimestamp(row.last_seen) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="320" align="right">
+
+      <el-table-column label="Action" width="230" align="right" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.enabled && !row.approved" size="small" type="primary" @click="onApprove(row)">
-            批准
-          </el-button>
-          <el-button
-            v-if="row.enabled && row.approved && row.binding"
-            size="small"
-            type="primary"
-            :icon="VideoPlay"
-            :disabled="!inControlRoom(row)"
-            @click="onWake(row)"
-          >
-            唤醒
-          </el-button>
-          <el-button v-if="row.enabled && row.approved" size="small" @click="openBind(row)">
-            {{ row.binding ? '改绑' : '绑定 Agent' }}
-          </el-button>
-          <el-button
-            v-if="row.binding"
-            size="small"
-            type="warning"
-            link
-            @click="onUnbind(row)"
-          >
-            解绑
-          </el-button>
-          <el-button size="small" link @click="detail = row">详情</el-button>
-          <el-button size="small" type="danger" link @click="onUnregister(row)">
-            注销/撤销
-          </el-button>
+          <div class="row-actions">
+            <el-button
+              size="small"
+              :type="primaryAction(row).type"
+              :icon="primaryAction(row).label === '唤醒' ? VideoPlay : undefined"
+              :loading="busyDeviceId === row.device_id"
+              @click="primaryAction(row).run()"
+            >
+              {{ primaryAction(row).label }}
+            </el-button>
+            <el-dropdown size="small" trigger="click" @command="(cmd: string) => onMoreCommand(cmd, row)">
+              <el-button size="small">更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="detail">查看详情</el-dropdown-item>
+                  <el-dropdown-item command="rooms">Room 状态</el-dropdown-item>
+                  <el-dropdown-item command="routing">Routing 状态</el-dropdown-item>
+                  <el-dropdown-item command="raw">Raw JSON</el-dropdown-item>
+                  <el-dropdown-item command="identify" :disabled="!row.enabled">设备识别</el-dropdown-item>
+                  <el-dropdown-item command="refresh-config" :disabled="!row.enabled">刷新配置</el-dropdown-item>
+                  <el-dropdown-item :command="row.enabled ? 'disable' : 'enable'">
+                    {{ row.enabled ? '停用' : '启用' }}
+                  </el-dropdown-item>
+                  <el-dropdown-item divided command="unregister">注销 / 撤销</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -348,42 +396,115 @@ async function onUnregister(d: DeviceView) {
       :model-value="!!detail"
       @update:model-value="(v: boolean) => { if (!v) detail = null }"
       :title="detail ? `Device · ${detail.device_id}` : ''"
-      size="50%"
+      size="56%"
       direction="rtl"
     >
-      <JsonViewer v-if="detail" :data="detail" />
-    </el-drawer>
+      <el-tabs v-if="detail" v-model="detailTab" class="detail-tabs">
+        <el-tab-pane label="Overview" name="overview">
+          <div class="detail-grid">
+            <div class="detail-box">
+              <span class="label">Access</span>
+              <StatusBadge :state="accessState(detail).state" :label="accessState(detail).label" />
+            </div>
+            <div class="detail-box">
+              <span class="label">Reachability</span>
+              <StatusBadge :state="reachabilityState(detail).state" :label="reachabilityState(detail).label" />
+            </div>
+            <div class="detail-box">
+              <span class="label">Last seen</span>
+              <span class="mono">{{ formatTimestamp(detail.last_seen) }}</span>
+            </div>
+            <div class="detail-box">
+              <span class="label">Device kind</span>
+              <span class="mono">{{ detail.kind || 'unknown' }}</span>
+            </div>
+          </div>
+        </el-tab-pane>
 
-    <el-dialog v-model="bindDialogOpen" title="绑定 Agent" width="480px" :close-on-click-modal="false">
-      <p class="dialog-hint">
-        Device <code class="mono">{{ bindTarget?.device_id }}</code>
-      </p>
-      <el-select v-model="bindAgentId" placeholder="选择 agent" style="width: 100%">
-        <el-option
-          v-for="a in agents"
-          :key="a.agent_id"
-          :label="`${a.display_name || a.agent_id.slice(0, 8)} - ${a.user_id} / ${a.template_id}`"
-          :value="a.agent_id"
-        />
-      </el-select>
-      <template #footer>
-        <el-button @click="bindDialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitBind">绑定</el-button>
-      </template>
-    </el-dialog>
+        <el-tab-pane label="Access" name="access">
+          <div class="detail-grid">
+            <div class="detail-box"><span class="label">Enabled</span><span>{{ detail.enabled ? 'yes' : 'no' }}</span></div>
+            <div class="detail-box"><span class="label">Approved</span><span>{{ detail.approved ? 'yes' : 'no' }}</span></div>
+            <div class="detail-box"><span class="label">Approved at</span><span class="mono">{{ formatTimestamp(detail.approved_at) }}</span></div>
+            <div class="detail-box"><span class="label">Missed probes</span><span class="mono">{{ detail.missed_probes ?? 0 }}</span></div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="Routing" name="routing">
+          <div class="detail-grid">
+            <div class="detail-box wide"><span class="label">Admin routing</span><span class="mono">{{ detail.binding?.agent_id || 'not configured' }}</span></div>
+            <div class="detail-box"><span class="label">User</span><span class="mono">{{ detail.resolved_user_id || '—' }}</span></div>
+            <div class="detail-box"><span class="label">Template</span><span class="mono">{{ detail.resolved_template_id || '—' }}</span></div>
+            <div class="detail-box"><span class="label">Configured at</span><span class="mono">{{ formatTimestamp(detail.binding?.bound_at) }}</span></div>
+            <div class="detail-box wide">
+              <span class="label">Ownership</span>
+              <span class="muted">Routing is resolved by Admin. Hub Devices only displays this state for runtime diagnosis.</span>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="Rooms" name="rooms">
+          <div class="detail-grid">
+            <div class="detail-box"><span class="label">Runtime status</span><span class="mono">{{ detail.status || 'unknown' }}</span></div>
+            <div class="detail-box"><span class="label">Room kind</span><span class="mono">{{ roomKind(detail).label }}</span></div>
+            <div class="detail-box wide"><span class="label">Room name</span><span class="mono">{{ detail.room_name || '—' }}</span></div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="Raw" name="raw">
+          <JsonViewer :data="detail" />
+        </el-tab-pane>
+      </el-tabs>
+    </el-drawer>
   </div>
 </template>
 
 <style scoped>
 .page { display: flex; flex-direction: column; }
-.topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.topbar { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 16px; }
 .title { margin: 0; font-size: 18px; font-weight: 600; }
 .subtitle { font-size: 12px; color: var(--eid-text-muted); margin-top: 4px; }
 .warn { color: var(--eid-warning); margin-left: 8px; }
-.actions { display: flex; gap: 12px; align-items: center; }
+.actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .discovery-row { display: flex; gap: 10px; align-items: center; min-height: 30px; margin: -4px 0 12px; flex-wrap: wrap; }
-.mono { font-family: var(--eid-font-mono); font-size: 12px; padding: 1px 6px; background: var(--eid-bg-canvas); border-radius: 3px; }
+.mono {
+  font-family: var(--eid-font-mono);
+  font-size: 12px;
+  padding: 1px 6px;
+  background: var(--eid-bg-canvas);
+  border-radius: 3px;
+  overflow-wrap: anywhere;
+}
+.mono.compact { max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .muted { color: var(--eid-text-muted); font-size: 12px; }
-.empty { padding: 32px; text-align: center; color: var(--eid-text-muted); font-size: 12px; background: var(--eid-bg-panel); border: 1px dashed var(--eid-border); border-radius: var(--eid-radius); }
-.dialog-hint { margin: 0 0 12px; font-size: 12px; color: var(--eid-text-muted); }
+.device-cell, .routing-cell, .room-cell { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.row-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--eid-text-muted);
+  font-size: 12px;
+  background: var(--eid-bg-panel);
+  border: 1px dashed var(--eid-border);
+  border-radius: var(--eid-radius);
+}
+.detail-tabs { min-height: 360px; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.detail-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--eid-border);
+  border-radius: var(--eid-radius);
+  background: var(--eid-bg-panel);
+}
+.detail-box.wide { grid-column: 1 / -1; }
+.label {
+  color: var(--eid-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
 </style>

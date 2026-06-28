@@ -116,6 +116,27 @@ async def wake_device(device_id: str, request: Request) -> dict:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.post("/{device_id}/identify", status_code=200)
+async def identify_device(device_id: str, request: Request) -> dict:
+    """Ask an online/reachable device to identify itself."""
+    orch = _orchestrator(request)
+    try:
+        return await orch.identify_device(device_id)
+    except DeviceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.post("/{device_id}/refresh-config", status_code=200)
+async def refresh_device_config(device_id: str, request: Request) -> dict:
+    """Ask a connected device to pull fresh Hub/Admin runtime config."""
+    orch = _orchestrator(request)
+    try:
+        await orch.refresh_device_config(device_id)
+        return {"device_id": device_id, "status": "sent"}
+    except DeviceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 @router.delete("/{device_id}", status_code=200)
 async def unregister_device(device_id: str, request: Request) -> dict:
     """Cascade: drop admin's binding + tell hub to forget the device.

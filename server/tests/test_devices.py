@@ -564,6 +564,38 @@ async def test_http_set_enabled(client: httpx.AsyncClient) -> None:
     assert r.json()["enabled"] is False
 
 
+async def test_http_identify_device(client: httpx.AsyncClient) -> None:
+    with respx.mock(base_url=HUB_URL) as rsx:
+        rsx.get("/api/admin/devices/esp-1").mock(
+            return_value=httpx.Response(200, json=_hub_device_record("esp-1"))
+        )
+        identify = rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    **_hub_command_response("esp-1"),
+                    "op": "device.identify",
+                    "payload": {"reason": "admin_identify"},
+                },
+            )
+        )
+        r = await client.post("/api/devices/esp-1/identify")
+    assert r.status_code == 200
+    assert identify.called
+    assert r.json()["op"] == "device.identify"
+
+
+async def test_http_refresh_device_config(client: httpx.AsyncClient) -> None:
+    with respx.mock(base_url=HUB_URL) as rsx:
+        refresh = rsx.post("/api/admin/devices/esp-1/commands").mock(
+            return_value=httpx.Response(200, json=_hub_command_response("esp-1"))
+        )
+        r = await client.post("/api/devices/esp-1/refresh-config")
+    assert r.status_code == 200
+    assert refresh.called
+    assert r.json() == {"device_id": "esp-1", "status": "sent"}
+
+
 async def test_http_503_when_orchestrator_missing() -> None:
     app = FastAPI()
     app.state.device_orchestrator = None

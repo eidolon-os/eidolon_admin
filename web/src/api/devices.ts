@@ -104,6 +104,20 @@ export async function wakeDevice(id: string): Promise<Record<string, any>> {
   return data
 }
 
+export async function identifyDevice(id: string): Promise<Record<string, any>> {
+  const { data } = await client.post<Record<string, any>>(
+    `/devices/${encodeURIComponent(id)}/identify`,
+  )
+  return data
+}
+
+export async function refreshDeviceConfig(id: string): Promise<Record<string, any>> {
+  const { data } = await client.post<Record<string, any>>(
+    `/devices/${encodeURIComponent(id)}/refresh-config`,
+  )
+  return data
+}
+
 export async function unregisterDevice(id: string): Promise<UnregisterResponse> {
   const { data } = await client.delete<UnregisterResponse>(
     `/devices/${encodeURIComponent(id)}`,
