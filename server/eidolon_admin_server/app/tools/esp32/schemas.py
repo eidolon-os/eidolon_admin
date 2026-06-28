@@ -76,6 +76,10 @@ class Esp32Port(BaseModel):
     location: str | None = None
     likely_board_id: str | None = None
     busy: bool = False
+    busy_reason: str | None = None
+    busy_owner: str | None = None
+    busy_since: str | None = None
+    can_takeover: bool = False
 
 
 class Esp32EnvironmentStatus(BaseModel):

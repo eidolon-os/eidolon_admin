@@ -37,6 +37,8 @@ SERIAL_PATTERNS = (
     "/dev/ttyUSB*",
     "/dev/ttyACM*",
 )
+SERIAL_TAKEOVER_TIMEOUT_SECONDS = 3
+STALE_SERIAL_RESERVATION_SECONDS = 15
 
 
 class Esp32ToolError(Exception):
@@ -68,6 +70,18 @@ class JobRecord:
     cancel_requested: bool = False
 
 
+@dataclass
+class PortUse:
+    kind: str
+    board_id: str
+    owner_id: str
+    started_at: str
+    can_takeover: bool = False
+    close_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    close_reason: str | None = None
+    serial_port: object | None = None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -83,7 +97,7 @@ class Esp32ToolService:
         self.index_path = self.jobs_root / "index.jsonl"
         self._jobs: dict[str, JobRecord] = {}
         self._order: list[str] = []
-        self._serial_sessions: dict[str, asyncio.subprocess.Process | None] = {}
+        self._serial_sessions: dict[str, PortUse] = {}
         self._lock = asyncio.Lock()
         self._load_history()
 
@@ -97,10 +111,11 @@ class Esp32ToolService:
         return board
 
     def ports(self) -> list[Esp32Port]:
+        self._drop_stale_serial_reservations()
+        busy = self._busy_ports()
         detected = self._pyserial_ports()
         if detected:
-            busy = self._busy_ports()
-            return [port.model_copy(update={"selected": index == 0, "busy": port.path in busy}) for index, port in enumerate(detected)]
+            return [self._mark_port_busy(port, index == 0, busy) for index, port in enumerate(detected)]
 
         seen: set[str] = set()
         paths: list[str] = []
@@ -116,10 +131,7 @@ class Esp32ToolService:
                         continue
                 seen.add(candidate)
                 paths.append(candidate)
-        return [
-            Esp32Port(path=path, selected=index == 0, busy=path in self._busy_ports())
-            for index, path in enumerate(paths)
-        ]
+        return [self._mark_port_busy(Esp32Port(path=path), index == 0, busy) for index, path in enumerate(paths)]
 
     def environment(self) -> Esp32EnvironmentStatus:
         esptool = catalog.configured_esptool(self.catalog_file)
@@ -237,12 +249,10 @@ class Esp32ToolService:
             if queue in record.subscribers:
                 record.subscribers.remove(queue)
 
-    async def serial_stream(self, board_id: str, port: str, baud: int | None) -> AsyncIterator[str]:
+    async def serial_stream(self, board_id: str, port: str, baud: int | None, *, takeover: bool = False) -> AsyncIterator[str]:
         board = self.board(board_id)
         serial_baud = baud or board.default_baud
-        async with self._lock:
-            self._assert_port_available(board.id, port)
-            self._serial_sessions[port] = None
+        session = await self._reserve_serial_monitor(board.id, port, takeover=takeover)
         serial_port = None
         try:
             try:
@@ -253,26 +263,30 @@ class Esp32ToolService:
             yield f">> opening serial monitor: {port} @ {serial_baud}"
             try:
                 serial_port = await asyncio.to_thread(serial.Serial, port=port, baudrate=serial_baud, timeout=0.25)
+                session.serial_port = serial_port
             except Exception as exc:  # noqa: BLE001
                 raise Esp32ToolError(f"failed to open serial port {port}: {exc}") from exc
             yield ">> serial monitor started"
-            while True:
+            while not session.close_requested.is_set():
                 raw = await asyncio.to_thread(serial_port.readline)
                 if not raw:
                     continue
                 yield raw.decode(errors="replace").rstrip("\r\n")
+            yield f">> serial monitor stopped: {session.close_reason or 'closed'}"
         finally:
             async with self._lock:
-                self._serial_sessions.pop(port, None)
+                if self._serial_sessions.get(port) is session:
+                    self._serial_sessions.pop(port, None)
             if serial_port is not None:
                 await asyncio.to_thread(serial_port.close)
 
     async def probe_device(self, board_id: str, port: str, baud: int | None) -> Esp32ProbeResult:
         board = self.board(board_id)
         req = Esp32JobRequest(board_id=board_id, action="chip_id", port=port, baud=baud or board.default_baud)
+        session = PortUse(kind="probe", board_id=board.id, owner_id="probe", started_at=_now(), can_takeover=False)
         async with self._lock:
             self._assert_port_available(board.id, port)
-            self._serial_sessions[port] = None
+            self._serial_sessions[port] = session
         try:
             raw_log: list[str] = []
             chip_id = await self._capture_esptool_value(board, req, "chip_id", raw_log)
@@ -289,7 +303,8 @@ class Esp32ToolService:
             )
         finally:
             async with self._lock:
-                self._serial_sessions.pop(port, None)
+                if self._serial_sessions.get(port) is session:
+                    self._serial_sessions.pop(port, None)
 
     def artifact_path(self, board_id: str, artifact_id: str) -> Path:
         board = self.board(board_id)
@@ -613,7 +628,8 @@ class Esp32ToolService:
             if record.port and new_record.port and record.port == new_record.port:
                 raise Esp32JobConflict(f"serial port {record.port} is busy")
         if new_record.port and new_record.port in self._serial_sessions:
-            raise Esp32JobConflict(f"serial port {new_record.port} is busy")
+            use = self._serial_sessions[new_record.port]
+            raise Esp32JobConflict(f"serial port {new_record.port} is busy: {use.kind}")
 
     def _assert_port_available(self, board_id: str, port: str) -> None:
         probe = JobRecord(
@@ -630,12 +646,100 @@ class Esp32ToolService:
         )
         self._assert_no_conflict(probe)
 
-    def _busy_ports(self) -> set[str]:
-        busy = set(self._serial_sessions)
+    async def _reserve_serial_monitor(self, board_id: str, port: str, *, takeover: bool) -> PortUse:
+        while True:
+            existing: PortUse | None = None
+            async with self._lock:
+                self._drop_stale_serial_reservations()
+                self._assert_jobs_available(board_id, port)
+                existing = self._serial_sessions.get(port)
+                if existing is None:
+                    session = PortUse(
+                        kind="serial_monitor",
+                        board_id=board_id,
+                        owner_id=uuid.uuid4().hex[:8],
+                        started_at=_now(),
+                        can_takeover=True,
+                    )
+                    self._serial_sessions[port] = session
+                    return session
+                if not takeover or not existing.can_takeover:
+                    raise Esp32JobConflict(f"serial port {port} is busy: {existing.kind}")
+                existing.close_reason = "takeover requested"
+                existing.close_requested.set()
+                if existing.serial_port is None and self._serial_sessions.get(port) is existing:
+                    self._serial_sessions.pop(port, None)
+                    continue
+            try:
+                await asyncio.wait_for(self._wait_for_port_release(port, existing), timeout=SERIAL_TAKEOVER_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError as exc:
+                raise Esp32JobConflict(f"serial port {port} did not release after takeover request") from exc
+
+    async def _wait_for_port_release(self, port: str, session: PortUse) -> None:
+        while self._serial_sessions.get(port) is session:
+            await asyncio.sleep(0.05)
+
+    def _assert_jobs_available(self, board_id: str, port: str) -> None:
+        for record in self._jobs.values():
+            if record.model.status not in ("queued", "running"):
+                continue
+            if record.model.board_id == board_id:
+                raise Esp32JobConflict(f"board {record.model.board_id} is busy")
+            if record.port and record.port == port:
+                raise Esp32JobConflict(f"serial port {record.port} is busy: {record.model.action}")
+
+    def _busy_ports(self) -> dict[str, dict[str, str | bool | None]]:
+        busy: dict[str, dict[str, str | bool | None]] = {}
+        for port, use in self._serial_sessions.items():
+            busy[port] = {
+                "busy": True,
+                "busy_reason": use.kind,
+                "busy_owner": use.owner_id,
+                "busy_since": use.started_at,
+                "can_takeover": use.can_takeover and not use.close_requested.is_set(),
+            }
         for record in self._jobs.values():
             if record.port and record.model.status in ("queued", "running"):
-                busy.add(record.port)
+                busy[record.port] = {
+                    "busy": True,
+                    "busy_reason": record.model.action,
+                    "busy_owner": record.model.id,
+                    "busy_since": record.model.started_at,
+                    "can_takeover": False,
+                }
         return busy
+
+    def _mark_port_busy(
+        self,
+        port: Esp32Port,
+        selected: bool,
+        busy: dict[str, dict[str, str | bool | None]],
+    ) -> Esp32Port:
+        info = busy.get(port.path)
+        if not info:
+            return port.model_copy(
+                update={
+                    "selected": selected,
+                    "busy": False,
+                    "busy_reason": None,
+                    "busy_owner": None,
+                    "busy_since": None,
+                    "can_takeover": False,
+                }
+            )
+        return port.model_copy(update={"selected": selected, **info})
+
+    def _drop_stale_serial_reservations(self) -> None:
+        now = datetime.now(timezone.utc)
+        for port, use in list(self._serial_sessions.items()):
+            if use.serial_port is not None:
+                continue
+            try:
+                started = datetime.fromisoformat(use.started_at)
+            except ValueError:
+                started = now
+            if use.close_requested.is_set() or (now - started).total_seconds() > STALE_SERIAL_RESERVATION_SECONDS:
+                self._serial_sessions.pop(port, None)
 
     def _artifacts(self, build_dir: Path, board_id: str | None = None) -> list[Esp32Artifact]:
         if not build_dir.exists():

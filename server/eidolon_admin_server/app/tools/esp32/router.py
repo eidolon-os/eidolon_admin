@@ -133,10 +133,11 @@ async def serial_stream(
     board_id: str = Query(...),
     port: str = Query(...),
     baud: int | None = Query(default=None, ge=1, le=2_000_000),
+    takeover: bool = Query(default=False),
 ) -> StreamingResponse:
     async def _events() -> AsyncIterator[bytes]:
         try:
-            async for line in _service(request).serial_stream(board_id, port, baud):
+            async for line in _service(request).serial_stream(board_id, port, baud, takeover=takeover):
                 yield _sse(line)
         except Esp32NotFound as exc:
             yield _sse(f"[error] {exc}")

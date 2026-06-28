@@ -86,6 +86,8 @@ const selectedBoardEnv = computed(() =>
 const selectedPortInfo = computed(() =>
   ports.value.find((port) => port.path === selectedPort.value) || null,
 )
+const selectedPortCanTakeover = computed(() => !!selectedPortInfo.value?.busy && !!selectedPortInfo.value.can_takeover)
+const selectedPortBusyText = computed(() => selectedPortInfo.value ? portBusyText(selectedPortInfo.value) : '')
 
 const hasPort = computed(() => !!selectedPort.value)
 const runningJob = computed(() =>
@@ -193,11 +195,13 @@ async function refreshAll() {
 
 async function refreshLight() {
   try {
-    const [nextJobs, nextDevices] = await Promise.all([
+    const [nextJobs, nextPorts, nextDevices] = await Promise.all([
       listEsp32Jobs(),
+      listEsp32Ports(),
       listDevices().catch(() => []),
     ])
     jobs.value = nextJobs
+    ports.value = nextPorts
     hubDevices.value = nextDevices.filter((device) => device.kind === 'esp32' || device.device_id.startsWith('esp32'))
     if (currentJob.value) {
       currentJob.value = nextJobs.find((job) => job.id === currentJob.value?.id) || currentJob.value
@@ -240,7 +244,7 @@ function canRun(action: Esp32Action) {
   if (requiresScript(action) && !contextReady.value) return false
   if (requiresPartition(action) && !selectedBoardEnv.value?.partition_csv_exists) return false
   if (cap.requires_port && !hasPort.value) return false
-  if (cap.requires_port && selectedPortInfo.value?.busy) return false
+  if (cap.requires_port && selectedPortInfo.value?.busy && (action !== 'monitor' || !selectedPortInfo.value.can_takeover)) return false
   if (action === 'restore_nvs' && !boardInfo.value?.backups.some((backup) => backup.partition === 'nvs')) return false
   if (action === 'image_info' && !boardInfo.value?.artifacts.some((artifact) => artifact.name.endsWith('.bin'))) return false
   return true
@@ -323,15 +327,33 @@ async function cancelCurrentJob() {
   }
 }
 
-function startSerial() {
+async function startSerial(options: { takeover?: boolean } = {}) {
   if (!selectedBoard.value || !selectedPort.value || !canRun('monitor')) return
+  const takeover = !!options.takeover
+  if (takeover) {
+    try {
+      await ElMessageBox.confirm(
+        '这会关闭当前串口监控连接，然后由本页面重新打开该串口。烧录、擦除、备份和恢复任务不能被接管。',
+        '接管串口监控',
+        {
+          confirmButtonText: '接管',
+          cancelButtonText: '取消',
+          type: 'warning',
+        },
+      )
+    } catch {
+      return
+    }
+  }
   activeTab.value = 'serial'
   serialStream.clear()
-  serialStream.open(esp32SerialStreamUrl(selectedBoard.value.id, selectedPort.value, baud.value))
+  serialStream.open(esp32SerialStreamUrl(selectedBoard.value.id, selectedPort.value, baud.value, takeover))
+  void refreshLight()
 }
 
 function stopSerial() {
   serialStream.close()
+  window.setTimeout(() => void refreshLight(), 400)
 }
 
 function exportLines(lines: string[], filename: string) {
@@ -444,6 +466,20 @@ function phaseText(job: Esp32Job | null) {
   const index = job.progress_index || (job.status === 'queued' ? 0 : total)
   return `${job.phase} ${index}/${total}`
 }
+
+function portBusyText(port: Esp32Port) {
+  if (!port.busy) return ''
+  const reason = port.busy_reason === 'serial_monitor'
+    ? '串口监控中'
+    : port.busy_reason === 'probe'
+      ? '设备识别中'
+      : port.busy_reason
+        ? `任务占用：${port.busy_reason}`
+        : '占用中'
+  const owner = port.busy_owner ? ` · ${port.busy_owner}` : ''
+  const since = port.busy_since ? ` · ${formatTimestamp(port.busy_since)}` : ''
+  return `${reason}${owner}${since}`
+}
 </script>
 
 <template>
@@ -466,7 +502,7 @@ function phaseText(job: Esp32Job | null) {
           <el-option
             v-for="port in ports"
             :key="port.path"
-            :label="`${port.path}${port.busy ? ' · busy' : ''}${port.likely_board_id ? ' · ' + port.likely_board_id : ''}`"
+            :label="`${port.path}${port.busy ? ' · ' + portBusyText(port) : ''}${port.likely_board_id ? ' · ' + port.likely_board_id : ''}`"
             :value="port.path"
           />
         </el-select>
@@ -512,8 +548,11 @@ function phaseText(job: Esp32Job | null) {
               <dt>USB</dt>
               <dd>
                 {{ selectedPortInfo?.description || selectedPortInfo?.manufacturer || '-' }}
-                <el-tag v-if="selectedPortInfo?.busy" type="warning" size="small">busy</el-tag>
+                <el-tag v-if="selectedPortInfo?.busy" type="warning" size="small">
+                  {{ selectedPortInfo.can_takeover ? '可接管' : 'busy' }}
+                </el-tag>
               </dd>
+              <dt v-if="selectedPortInfo?.busy">占用</dt><dd v-if="selectedPortInfo?.busy">{{ selectedPortBusyText }}</dd>
               <dt>上次成功</dt><dd class="mono">{{ lastSuccessfulPort || '-' }}</dd>
             </dl>
             <div class="context-actions">
@@ -637,9 +676,9 @@ function phaseText(job: Esp32Job | null) {
                   :icon="action === 'monitor' ? Connection : action === 'run' ? Promotion : VideoPlay"
                   :disabled="!canRun(action)"
                   :loading="actionBusy"
-                  @click="action === 'monitor' ? startSerial() : action === 'restore_nvs' ? restoreLatestNvs() : startJob(action)"
+                  @click="action === 'monitor' ? startSerial({ takeover: selectedPortCanTakeover }) : action === 'restore_nvs' ? restoreLatestNvs() : startJob(action)"
                 >
-                  {{ actionLabel(action) }}
+                  {{ action === 'monitor' && selectedPortCanTakeover ? '接管监控' : actionLabel(action) }}
                 </el-button>
               </div>
             </div>
@@ -711,12 +750,22 @@ function phaseText(job: Esp32Job | null) {
               </el-tag>
               <el-input v-model="serialFilter" placeholder="过滤日志" clearable />
               <el-checkbox v-model="serialFollow" size="small">跟随</el-checkbox>
-              <el-button :icon="Connection" :disabled="!hasPort || !selectedBoard || !!selectedPortInfo?.busy" @click="startSerial">开始监控</el-button>
+              <el-button :icon="Connection" :disabled="!canRun('monitor')" @click="startSerial({ takeover: selectedPortCanTakeover })">
+                {{ selectedPortCanTakeover ? '接管监控' : '开始监控' }}
+              </el-button>
               <el-button :icon="CircleClose" @click="stopSerial">停止</el-button>
               <el-button @click="serialStream.clear">清空</el-button>
               <el-button :icon="Download" @click="exportLines(visibleSerialLines, 'esp32-serial.log')">导出</el-button>
             </div>
           </div>
+          <el-alert
+            v-if="selectedPortInfo?.busy && !serialStream.connected.value"
+            class="serial-alert"
+            :type="selectedPortInfo.can_takeover ? 'warning' : 'info'"
+            :title="selectedPortCanTakeover ? '该串口正在被串口监控占用，可以手动接管。' : `该串口正在被占用：${selectedPortBusyText}`"
+            show-icon
+            :closable="false"
+          />
           <div ref="serialPane" class="log-pane serial-log">
             <div v-for="(line, index) in visibleSerialLines" :key="`${index}-${line}`" :class="lineClass(line)">
               {{ line }}
@@ -1043,6 +1092,9 @@ function phaseText(job: Esp32Job | null) {
 }
 .serial-panel {
   min-height: 620px;
+}
+.serial-alert {
+  margin-bottom: 10px;
 }
 .log-pane {
   flex: 1;

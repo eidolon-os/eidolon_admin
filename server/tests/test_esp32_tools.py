@@ -4,6 +4,7 @@ import asyncio
 import glob
 import sys
 import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -11,12 +12,13 @@ import pytest
 
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig
-from eidolon_admin_server.app.tools.esp32.schemas import Esp32Job, Esp32JobRequest
+from eidolon_admin_server.app.tools.esp32.schemas import Esp32Job, Esp32JobRequest, Esp32Port
 from eidolon_admin_server.app.tools.esp32.service import (
     Esp32JobConflict,
     Esp32ToolError,
     Esp32ToolService,
     JobRecord,
+    PortUse,
 )
 
 
@@ -452,10 +454,35 @@ def test_same_port_running_job_conflicts(tmp_path: Path) -> None:
         svc._assert_no_conflict(incoming)
 
 
+def test_ports_report_takeover_metadata_for_serial_monitor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    monkeypatch.setattr(svc, "_pyserial_ports", lambda: [Esp32Port(path="/dev/cu.usbmodem1101")])
+    svc._serial_sessions["/dev/cu.usbmodem1101"] = PortUse(
+        kind="serial_monitor",
+        board_id="esp-box-3",
+        owner_id="abc123",
+        started_at=datetime.now(timezone.utc).isoformat(),
+        can_takeover=True,
+    )
+    ports = svc.ports()
+    port = next(item for item in ports if item.path == "/dev/cu.usbmodem1101")
+    assert port.busy is True
+    assert port.busy_reason == "serial_monitor"
+    assert port.busy_owner == "abc123"
+    assert port.busy_since is not None
+    assert port.can_takeover is True
+
+
 @pytest.mark.asyncio
 async def test_serial_session_blocks_jobs_on_same_port(tmp_path: Path) -> None:
     svc = _service(tmp_path)
-    svc._serial_sessions["/dev/cu.usbmodem1101"] = None
+    svc._serial_sessions["/dev/cu.usbmodem1101"] = PortUse(
+        kind="serial_monitor",
+        board_id="esp-box-3",
+        owner_id="abc123",
+        started_at="2026-06-28T00:00:00+00:00",
+        can_takeover=True,
+    )
     with pytest.raises(Esp32JobConflict):
         await svc.create_job(
             Esp32JobRequest(

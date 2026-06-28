@@ -62,6 +62,10 @@ export interface Esp32Port {
   location?: string | null
   likely_board_id?: string | null
   busy: boolean
+  busy_reason?: string | null
+  busy_owner?: string | null
+  busy_since?: string | null
+  can_takeover: boolean
 }
 
 export interface Esp32EnvironmentStatus {
@@ -207,7 +211,8 @@ export function esp32JobStreamUrl(jobId: string): string {
   return `/api/tools/esp32/jobs/${encodeURIComponent(jobId)}/stream`
 }
 
-export function esp32SerialStreamUrl(boardId: string, port: string, baud: number): string {
+export function esp32SerialStreamUrl(boardId: string, port: string, baud: number, takeover = false): string {
   const params = new URLSearchParams({ board_id: boardId, port, baud: String(baud) })
+  if (takeover) params.set('takeover', 'true')
   return `/api/tools/esp32/serial/stream?${params.toString()}`
 }
