@@ -255,6 +255,8 @@ async def list_nearby_owner_devices(owner_id: str, request: Request) -> NearbyDe
 
     nearby: list[NearbyDeviceView] = []
     for device in runtime_devices:
+        if not device.approved:
+            continue
         if (device.status or "").lower() == "offline":
             continue
         stored = await store.devices.get_device(device.device_id)
@@ -269,6 +271,12 @@ async def identify_nearby_owner_device(owner_id: str, device_id: str, request: R
     await _require_owner(_store(request), owner_id)
     orch = _require_device_orchestrator(request)
     try:
+        runtime_device = await orch.get_device(device_id)
+        if not runtime_device.approved:
+            raise HTTPException(
+                status.HTTP_412_PRECONDITION_FAILED,
+                "device must be approved in Hub before Owner actions",
+            )
         return await orch.identify_device(device_id)
     except DeviceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
@@ -304,7 +312,10 @@ async def claim_nearby_device(
     try:
         runtime_device = await orch.get_device(device_id)
         if not runtime_device.approved:
-            runtime_device = await orch.approve_device(device_id)
+            raise HTTPException(
+                status.HTTP_412_PRECONDITION_FAILED,
+                "device must be approved in Hub before claiming",
+            )
     except DeviceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 

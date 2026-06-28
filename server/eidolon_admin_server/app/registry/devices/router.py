@@ -55,6 +55,30 @@ async def list_devices(request: Request) -> DeviceListResponse:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@router.post("/refresh", response_model=DeviceListResponse)
+async def refresh_devices(request: Request) -> DeviceListResponse:
+    """Force-sync Hub reachability, then return Admin's composed device view."""
+    orch = _orchestrator(request)
+    try:
+        devices = await orch.refresh_devices()
+        discovery = await orch.get_discovery_status()
+        return DeviceListResponse(
+            devices=devices,
+            hub_available=True,
+            discovery=discovery,
+            refreshed=True,
+        )
+    except DeviceError as exc:
+        if exc.status_code == 503:
+            return DeviceListResponse(
+                devices=[],
+                hub_available=False,
+                discovery=None,
+                refreshed=False,
+            )
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 @router.get("/{device_id}", response_model=DeviceView)
 async def get_device(device_id: str, request: Request) -> DeviceView:
     orch = _orchestrator(request)

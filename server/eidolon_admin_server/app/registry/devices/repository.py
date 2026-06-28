@@ -39,6 +39,12 @@ class HubDeviceClient(ServiceHTTPClient):
         body = r.json()
         return body.get("devices", [])
 
+    async def refresh_devices(self) -> list[dict[str, Any]]:
+        """Force Hub to refresh its LiveKit presence overlay, then return rows."""
+        r = await self._request("POST", "/api/admin/devices/refresh")
+        body = r.json()
+        return body.get("devices", [])
+
     async def get_discovery_status(self) -> dict[str, Any]:
         r = await self._request("GET", "/api/admin/discovery")
         return r.json()

@@ -141,6 +141,7 @@ class DeviceOrchestrator:
             last_seen=_parse_dt_optional(record.get("last_seen")),
             status=record.get("status", "unknown"),
             room_name=record.get("room_name", ""),
+            participant_sid=record.get("participant_sid", ""),
             missed_probes=int(record.get("missed_probes") or 0),
             binding=binding,
             resolved_user_id=resolved_user_id,
@@ -149,15 +150,7 @@ class DeviceOrchestrator:
 
     # ---- public API ----------------------------------------------------
 
-    async def list_devices(self) -> list[DeviceView]:
-        """Joins hub's device list × admin's bindings × agent metadata."""
-        try:
-            hub_records = await self._hub.list_devices()
-        except ServiceUnavailable as exc:
-            raise DeviceHubDown(str(exc)) from exc
-        except ServiceUpstreamError as exc:
-            self._map_hub_error(exc)
-
+    async def _compose_records(self, hub_records: list[dict[str, Any]]) -> list[DeviceView]:
         bindings = await self._bindings.list_all()
         out: list[DeviceView] = []
         for record in hub_records:
@@ -179,6 +172,27 @@ class DeviceOrchestrator:
                 )
             )
         return out
+
+    async def list_devices(self) -> list[DeviceView]:
+        """Joins hub's device list × admin's bindings × agent metadata."""
+        try:
+            hub_records = await self._hub.list_devices()
+        except ServiceUnavailable as exc:
+            raise DeviceHubDown(str(exc)) from exc
+        except ServiceUpstreamError as exc:
+            self._map_hub_error(exc)
+
+        return await self._compose_records(hub_records)
+
+    async def refresh_devices(self) -> list[DeviceView]:
+        """Force Hub to refresh LiveKit reachability, then compose Admin view."""
+        try:
+            hub_records = await self._hub.refresh_devices()
+        except ServiceUnavailable as exc:
+            raise DeviceHubDown(str(exc)) from exc
+        except ServiceUpstreamError as exc:
+            self._map_hub_error(exc)
+        return await self._compose_records(hub_records)
 
     async def get_discovery_status(self) -> DiscoveryStatus:
         try:

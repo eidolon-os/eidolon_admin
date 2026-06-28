@@ -9,6 +9,7 @@ import client from './client'
 export interface DeviceBinding {
   agent_id: string
   bound_at: string
+  interaction_mode?: 'half_duplex' | 'full_duplex' | null
 }
 
 export type DeviceKind = 'web' | 'esp32' | 'mobile' | 'unknown'
@@ -23,6 +24,7 @@ export interface DeviceView {
   last_seen: string | null
   status: string
   room_name?: string
+  participant_sid?: string
   missed_probes?: number
   binding: DeviceBinding | null
   resolved_user_id: string | null
@@ -33,6 +35,7 @@ export interface DeviceListResponse {
   devices: DeviceView[]
   hub_available: boolean
   discovery: DiscoveryStatus | null
+  refreshed?: boolean
 }
 
 export interface DiscoveryStatus {
@@ -56,6 +59,13 @@ export interface UnregisterResponse {
 
 export async function listDevices(): Promise<DeviceListResponse> {
   const { data } = await client.get<DeviceListResponse>('/devices', {
+    suppressToast: true,
+  })
+  return data
+}
+
+export async function refreshDevices(): Promise<DeviceListResponse> {
+  const { data } = await client.post<DeviceListResponse>('/devices/refresh', null, {
     suppressToast: true,
   })
   return data

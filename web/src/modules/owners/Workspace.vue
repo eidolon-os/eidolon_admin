@@ -526,14 +526,17 @@ function defaultPromptMarkdown(name: string): string {
       <section class="device-block">
         <div class="section-head">
           <div>
-            <h3>Nearby Devices</h3>
-            <p>已连接 Hub 但还未归属任何 Owner 的设备</p>
+            <h3>Available Approved Devices</h3>
+            <p>Hub 已批准且还未归属任何 Owner 的设备</p>
           </div>
           <el-tag :type="nearbyHubAvailable ? 'success' : 'warning'" size="small">
             {{ nearbyHubAvailable ? 'Hub online' : 'Hub unavailable' }}
           </el-tag>
         </div>
         <el-table :data="nearbyDevices" size="small" stripe>
+          <template #empty>
+            <span>{{ nearbyHubAvailable ? '暂无可认领设备，请先在 Hub / Devices 批准设备' : 'Hub unavailable' }}</span>
+          </template>
           <el-table-column prop="device_id" label="device_id" min-width="190" />
           <el-table-column prop="name" label="name" min-width="140" />
           <el-table-column prop="kind" label="kind" width="120" />

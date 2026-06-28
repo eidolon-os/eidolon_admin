@@ -75,6 +75,9 @@ def _hub_device_record(
         ),
         "last_seen": datetime.now(timezone.utc).isoformat(),
         "status": "online",
+        "room_name": f"device-{device_id}-control",
+        "participant_sid": "PA_TEST",
+        "missed_probes": 0,
     }
 
 
@@ -190,6 +193,31 @@ async def test_list_resolves_bound_devices_with_agent_metadata(
     assert d.binding.agent_id == "ag-1"
     assert d.resolved_user_id == "alice"
     assert d.resolved_template_id == "caretaker_jiezhi"
+    assert d.participant_sid == "PA_TEST"
+
+
+async def test_refresh_devices_forces_hub_refresh_and_composes_admin_view(
+    orchestrator: DeviceOrchestrator,
+) -> None:
+    from eidolon_admin_server.app.registry.schemas.device import DeviceBinding
+
+    await orchestrator._bindings.put(
+        "esp32-foo",
+        DeviceBinding(agent_id="ag-1", bound_at=datetime.now(timezone.utc)),
+    )
+    with respx.mock(base_url=HUB_URL) as rsx:
+        refresh = rsx.post("/api/admin/devices/refresh").mock(
+            return_value=httpx.Response(
+                200,
+                json={"devices": [_hub_device_record("esp32-foo")]},
+            )
+        )
+        devices = await orchestrator.refresh_devices()
+    assert refresh.called
+    assert len(devices) == 1
+    assert devices[0].binding is not None
+    assert devices[0].resolved_user_id == "alice"
+    assert devices[0].participant_sid == "PA_TEST"
 
 
 async def test_binding_repository_accepts_mac_address_device_id(
@@ -516,6 +544,26 @@ async def test_http_list_envelope(client: httpx.AsyncClient) -> None:
         "devices": [],
         "hub_available": True,
         "discovery": _hub_discovery_response(),
+        "refreshed": False,
+    }
+
+
+async def test_http_refresh_envelope(client: httpx.AsyncClient) -> None:
+    with respx.mock(base_url=HUB_URL) as rsx:
+        refresh = rsx.post("/api/admin/devices/refresh").mock(
+            return_value=httpx.Response(200, json={"devices": []})
+        )
+        rsx.get("/api/admin/discovery").mock(
+            return_value=httpx.Response(200, json=_hub_discovery_response())
+        )
+        r = await client.post("/api/devices/refresh")
+    assert r.status_code == 200
+    assert refresh.called
+    assert r.json() == {
+        "devices": [],
+        "hub_available": True,
+        "discovery": _hub_discovery_response(),
+        "refreshed": True,
     }
 
 

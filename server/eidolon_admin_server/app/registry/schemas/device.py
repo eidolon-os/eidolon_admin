@@ -53,8 +53,10 @@ class DeviceView(BaseModel):
     """Composed view shown in admin UI.
 
     Sources:
-        - device fact (id, kind, name, approved, last_seen, status):
+        - persistent device fact (id, kind, name, approved, enabled, last_seen):
           hub /api/admin/devices
+        - runtime reachability (status, room, participant, missed probes):
+          hub's LiveKit presence probe
         - binding (agent_id + bound_at): Eidolon Data grant metadata (None if not
           bound yet)
         - resolved_user_id / resolved_template_id (optional):
@@ -70,9 +72,10 @@ class DeviceView(BaseModel):
     approved: bool
     approved_at: datetime | None
     last_seen: datetime | None
-    # hub-derived status ("online" / "offline" / "degraded" / "unknown").
+    # Hub LiveKit presence overlay ("online" / "offline" / "degraded" / "unknown").
     status: str
     room_name: str = ""
+    participant_sid: str = ""
     missed_probes: int = 0
     binding: DeviceBinding | None = None
     # Resolved fields, filled in if binding is set AND the upstream agent
@@ -120,3 +123,4 @@ class DeviceListResponse(BaseModel):
     # surface a banner. Distinct from "no devices discovered yet".
     hub_available: bool
     discovery: DiscoveryStatus | None = None
+    refreshed: bool = False

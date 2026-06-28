@@ -12,14 +12,20 @@ from fastapi import FastAPI
 from eidolon_admin_server.app.data import router as data_router
 
 
-def _runtime_device(device_id: str, *, name: str = "ESP Device", status: str = "online") -> SimpleNamespace:
+def _runtime_device(
+    device_id: str,
+    *,
+    name: str = "ESP Device",
+    status: str = "online",
+    approved: bool = False,
+) -> SimpleNamespace:
     return SimpleNamespace(
         device_id=device_id,
         name=name,
         kind="esp32",
         enabled=True,
-        approved=False,
-        approved_at=None,
+        approved=approved,
+        approved_at=datetime.now(timezone.utc) if approved else None,
         last_seen=datetime.now(timezone.utc),
         status=status,
         room_name=f"{device_id}-control",
@@ -30,9 +36,10 @@ def _runtime_device(device_id: str, *, name: str = "ESP Device", status: str = "
 class FakeDeviceOrchestrator:
     def __init__(self) -> None:
         self.devices = {
-            "esp-near": _runtime_device("esp-near", name="Nearby ESP"),
+            "esp-near": _runtime_device("esp-near", name="Nearby ESP", approved=True),
+            "esp-pending": _runtime_device("esp-pending", name="Pending ESP"),
             "esp-owned": _runtime_device("esp-owned", name="Owned ESP"),
-            "esp-ghost": _runtime_device("esp-ghost", name="Ghost ESP", status="offline"),
+            "esp-ghost": _runtime_device("esp-ghost", name="Ghost ESP", status="offline", approved=True),
         }
         self.approved: list[str] = []
 
@@ -196,10 +203,20 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert nearby.status_code == 200
         assert nearby.json()["hub_available"] is True
         assert [row["device_id"] for row in nearby.json()["devices"]] == ["esp-near"]
+        assert nearby.json()["devices"][0]["approved"] is True
 
         identify = await client.post("/api/owners/owner-devices/nearby-devices/esp-near/identify")
         assert identify.status_code == 200
         assert identify.json()["op"] == "device.identify"
+
+        pending_identify = await client.post("/api/owners/owner-devices/nearby-devices/esp-pending/identify")
+        assert pending_identify.status_code == 412
+
+        pending_claim = await client.post(
+            "/api/owners/owner-devices/nearby-devices/esp-pending/claim",
+            json={"name": "Pending ESP"},
+        )
+        assert pending_claim.status_code == 412
 
         added = await client.post(
             "/api/owners/owner-devices/nearby-devices/esp-near/claim",
@@ -215,7 +232,7 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert added.json()["bound_companion_id"] == "c:owner-devices:default"
         assert added.json()["metadata_json"]["source"] == "hub_runtime"
         assert added.json()["metadata_json"]["hub_approved"] is True
-        assert fake_orchestrator.approved == ["esp-near"]
+        assert fake_orchestrator.approved == []
 
         empty_nearby = await client.get("/api/owners/owner-devices/nearby-devices")
         assert empty_nearby.status_code == 200
