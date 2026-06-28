@@ -11,7 +11,6 @@ const moduleMap: Record<string, Record<string, Component>> = {
   agent: {
     data: defineAsyncComponent(() => import('./agent/DataMemory.vue')),
     memory: defineAsyncComponent(() => import('./agent/DataMemory.vue')),
-    pairing: defineAsyncComponent(() => import('./agent/Pairing.vue')),
     'chat-test': defineAsyncComponent(() => import('./agent/ChatTest.vue')),
     conversations: defineAsyncComponent(() => import('./agent/Conversations.vue')),
     'long-tasks': defineAsyncComponent(() => import('./agent/LongTasks.vue')),

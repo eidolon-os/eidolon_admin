@@ -56,8 +56,7 @@ services:
     features:
       - { key: data,               label: "Data" }
       - { key: memory,             label: "Memory" }
-      - { key: pairing,            label: "Pairing" }
-      - { key: chat-test,          label: "Chat (events)", stream: true }
+      - { key: chat-test,          label: "Chat", stream: true }
       - { key: conversations,      label: "Conversations" }
       - { key: long-tasks,         label: "Long Tasks" }
       - { key: replay-reports,     label: "Replay Reports" }

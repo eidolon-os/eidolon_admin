@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Promotion, ChatLineRound } from '@element-plus/icons-vue'
+import { ChatDotRound, ChatLineRound, Promotion } from '@element-plus/icons-vue'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
 import AgentScopeSelector from './components/AgentScopeSelector.vue'
 import { chatTestUrl } from '@/api/agentRuntime'
@@ -19,7 +19,10 @@ const form = ref({
 
 const sending = ref(false)
 const connected = ref(false)
+const mode = ref<'stream' | 'events'>('stream')
 const events = ref<Array<{ type: string; data: any; ts: number }>>([])
+const userText = ref('')
+const assistantText = ref('')
 const paneRef = ref<HTMLElement | null>(null)
 let abortCtrl: AbortController | null = null
 
@@ -34,6 +37,8 @@ async function send() {
   }
   cancel()
   events.value = []
+  userText.value = form.value.text.trim()
+  assistantText.value = ''
   sending.value = true
   connected.value = false
 
@@ -70,6 +75,7 @@ async function send() {
           }
         }
         events.value.push(ev)
+        appendAssistantDelta(ev)
       }
     }
   } catch (e: any) {
@@ -87,6 +93,12 @@ function cancel() {
   abortCtrl = null
 }
 
+function clearOutput() {
+  events.value = []
+  userText.value = ''
+  assistantText.value = ''
+}
+
 onBeforeUnmount(cancel)
 
 const recent = computed(() => events.value.slice(-200))
@@ -100,6 +112,13 @@ function fmtEv(e: { type: string; data: any }) {
   if (typeof e.data === 'string') return e.data
   return JSON.stringify(e.data)
 }
+
+function appendAssistantDelta(e: { type: string; data: any }) {
+  if (e.type !== 'event' || e.data?.kind !== 'DELTA') return
+  const text = e.data?.data?.text
+  if (typeof text === 'string') assistantText.value += text
+}
+
 function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
   if (t === 'status') return 'info'
   if (t === 'error') return 'danger'
@@ -143,11 +162,31 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
     <el-card style="margin-top: 16px">
       <template #header>
         <div class="bar">
-          <span><el-icon><ChatLineRound /></el-icon>  事件流（{{ recent.length }}）</span>
-          <el-button size="small" link @click="events = []">清空</el-button>
+          <span><el-icon><ChatLineRound /></el-icon> Chat</span>
+          <el-radio-group v-model="mode" size="small">
+            <el-radio-button label="stream">Stream</el-radio-button>
+            <el-radio-button label="events">Events</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" link @click="clearOutput">清空</el-button>
         </div>
       </template>
-      <div ref="paneRef" class="events">
+
+      <div v-if="mode === 'stream'" class="stream-pane">
+        <div v-if="userText" class="bubble user">
+          <div class="bubble-label">User</div>
+          <div class="bubble-text">{{ userText }}</div>
+        </div>
+        <div class="bubble assistant">
+          <div class="bubble-label">
+            <el-icon><ChatDotRound /></el-icon>
+            Assistant
+          </div>
+          <div class="bubble-text">{{ assistantText || (sending ? '...' : '') }}</div>
+        </div>
+        <div v-if="!userText && !assistantText" class="empty-hint">(尚无消息)</div>
+      </div>
+
+      <div v-else ref="paneRef" class="events">
         <div v-for="(e, i) in recent" :key="i" class="event">
           <el-tag :type="evTagType(e.type)" size="small" effect="dark">{{ e.type }}</el-tag>
           <span class="ev-data">{{ fmtEv(e) }}</span>
@@ -166,6 +205,54 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
 .form-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .identity-item { margin-bottom: 0; }
 .bar { display: flex; justify-content: space-between; align-items: center; }
+.stream-pane {
+  background: var(--eid-bg-inset);
+  border: 1px solid var(--eid-border-strong);
+  border-radius: 6px;
+  padding: 14px;
+  min-height: 220px;
+  max-height: 60vh;
+  overflow: auto;
+}
+.bubble {
+  display: grid;
+  gap: 6px;
+  max-width: min(760px, 100%);
+  margin-bottom: 14px;
+}
+.bubble.user {
+  margin-left: auto;
+  text-align: right;
+}
+.bubble.assistant {
+  margin-right: auto;
+}
+.bubble-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--eid-text-muted);
+}
+.bubble.user .bubble-label {
+  justify-content: flex-end;
+}
+.bubble-text {
+  border: 1px solid var(--eid-border-strong);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--eid-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+}
+.bubble.user .bubble-text {
+  background: rgba(35, 211, 255, 0.14);
+  border-color: rgba(35, 211, 255, 0.35);
+}
 .events {
   background: var(--eid-bg-inset);
   border: 1px solid var(--eid-border-strong);
