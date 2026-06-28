@@ -139,6 +139,7 @@ class DeviceOrchestrator:
             approved=bool(record.get("approved")),
             approved_at=_parse_dt_optional(record.get("approved_at")),
             last_seen=_parse_dt_optional(record.get("last_seen")),
+            last_ip=record.get("last_ip", ""),
             status=record.get("status", "unknown"),
             room_name=record.get("room_name", ""),
             participant_sid=record.get("participant_sid", ""),

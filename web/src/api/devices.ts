@@ -22,6 +22,7 @@ export interface DeviceView {
   approved: boolean
   approved_at: string | null
   last_seen: string | null
+  last_ip?: string
   status: string
   room_name?: string
   participant_sid?: string

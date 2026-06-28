@@ -72,6 +72,9 @@ class DeviceView(BaseModel):
     approved: bool
     approved_at: datetime | None
     last_seen: datetime | None
+    # Last HTTP client IP observed by Hub when the device requested /api/config.
+    # This proves Hub reachability only; LiveKit reachability is status/room/sid.
+    last_ip: str = ""
     # Hub LiveKit presence overlay ("online" / "offline" / "degraded" / "unknown").
     status: str
     room_name: str = ""

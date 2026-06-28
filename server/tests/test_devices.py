@@ -74,6 +74,7 @@ def _hub_device_record(
             datetime.now(timezone.utc).isoformat() if approved else None
         ),
         "last_seen": datetime.now(timezone.utc).isoformat(),
+        "last_ip": "192.168.1.42",
         "status": "online",
         "room_name": f"device-{device_id}-control",
         "participant_sid": "PA_TEST",
@@ -193,6 +194,7 @@ async def test_list_resolves_bound_devices_with_agent_metadata(
     assert d.binding.agent_id == "ag-1"
     assert d.resolved_user_id == "alice"
     assert d.resolved_template_id == "caretaker_jiezhi"
+    assert d.last_ip == "192.168.1.42"
     assert d.participant_sid == "PA_TEST"
 
 

@@ -203,6 +203,10 @@ function registryState(d: DeviceView): { label: string; state: BadgeState; reaso
   return { label: 'Approved', state: 'online', reason: `persistent Hub registry · last seen ${formatTimestamp(d.last_seen)}` }
 }
 
+function lastIpText(d: DeviceView): string {
+  return d.last_ip || 'unknown ip'
+}
+
 function reachabilityState(d: DeviceView): { label: string; state: BadgeState; reason: string } {
   if (!d.enabled) return { label: 'Not active', state: 'offline', reason: 'disabled devices are not command targets' }
   if (d.status === 'online') return { label: 'Online', state: 'online', reason: reachabilityText(d) }
@@ -539,6 +543,7 @@ async function onMoreCommand(command: string, d: DeviceView) {
             <span class="mono">{{ row.device.device_id }}</span>
             <div class="inline-meta">
               <el-tag size="small" type="info">{{ row.device.kind || 'unknown' }}</el-tag>
+              <span class="mono">{{ lastIpText(row.device) }}</span>
               <span class="muted">{{ formatTimestamp(row.device.last_seen) }}</span>
             </div>
           </div>
@@ -682,6 +687,7 @@ async function onMoreCommand(command: string, d: DeviceView) {
           <div class="detail-grid">
             <div class="detail-box"><span class="label">Runtime status</span><span class="mono">{{ detail.status || 'unknown' }}</span></div>
             <div class="detail-box"><span class="label">Session</span><span class="mono">{{ sessionState(detail).label }}</span></div>
+            <div class="detail-box"><span class="label">Device IP</span><span class="mono">{{ lastIpText(detail) }}</span></div>
             <div class="detail-box"><span class="label">Last seen</span><span class="mono">{{ formatTimestamp(detail.last_seen) }}</span></div>
             <div class="detail-box"><span class="label">Missed probes</span><span class="mono">{{ detail.missed_probes ?? 0 }}</span></div>
             <div class="detail-box wide"><span class="label">Room</span><span class="mono">{{ detail.room_name || 'none' }}</span></div>
