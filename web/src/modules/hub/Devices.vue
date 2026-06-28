@@ -95,11 +95,17 @@ const sessionCount = computed(() => rows.value.filter((r) => r.readiness === 'in
 const offlineCount = computed(() => rows.value.filter((r) => r.device.status === 'offline').length)
 
 const lastDiscovery = ref<DeviceListResponse['discovery'] | null>(null)
+const lastLiveKit = ref<DeviceListResponse['livekit'] | null>(null)
 const discoveryBadge = computed(() => {
   if (!hubAvailable.value) return { label: 'Hub unreachable', type: 'danger' as const }
   if (!lastDiscovery.value) return { label: 'Discovery unknown', type: 'info' as const }
   if (lastDiscovery.value.registered) return { label: 'mDNS broadcasting', type: 'success' as const }
   return { label: 'mDNS stopped', type: 'warning' as const }
+})
+const liveKitMismatch = computed(() => {
+  const mdnsIp = lastDiscovery.value?.ip || ''
+  const nodeIp = lastLiveKit.value?.node_ip || ''
+  return !!mdnsIp && !!nodeIp && mdnsIp !== nodeIp
 })
 
 async function refresh() {
@@ -109,6 +115,7 @@ async function refresh() {
     devices.value = d.devices
     hubAvailable.value = d.hub_available
     lastDiscovery.value = d.discovery
+    lastLiveKit.value = d.livekit ?? null
   } catch (e: any) {
     ElMessage.error(`加载失败: ${extractErrorMessage(e)}`)
   } finally {
@@ -123,6 +130,7 @@ async function syncNow() {
     devices.value = d.devices
     hubAvailable.value = d.hub_available
     lastDiscovery.value = d.discovery
+    lastLiveKit.value = d.livekit ?? null
     ElMessage.success('已同步 Hub registry、LiveKit presence 和 Admin routing')
   } catch (e: any) {
     ElMessage.error(`同步失败: ${extractErrorMessage(e)}`)
@@ -529,6 +537,15 @@ async function onMoreCommand(command: string, d: DeviceView) {
       </span>
       <span v-if="lastDiscovery?.ip" class="muted">
         {{ lastDiscovery.service_name }} · {{ lastDiscovery.ip }}:{{ lastDiscovery.port }}
+      </span>
+      <span v-if="lastLiveKit?.node_ip" class="muted">
+        LiveKit node <span class="mono">{{ lastLiveKit.node_ip }}</span>
+      </span>
+      <el-tag v-if="liveKitMismatch" size="small" type="danger" effect="dark">
+        Hub mDNS IP != LiveKit node_ip
+      </el-tag>
+      <span v-if="lastLiveKit?.last_error" class="warn">
+        {{ lastLiveKit.last_error }}
       </span>
       <span v-if="lastDiscovery?.last_error" class="warn">
         {{ lastDiscovery.last_error }}

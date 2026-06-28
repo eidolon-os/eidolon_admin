@@ -120,10 +120,24 @@ class DiscoveryStatus(BaseModel):
     last_error: str = ""
 
 
+class LiveKitRuntimeStatus(BaseModel):
+    """Runtime LiveKit node advertised to LAN clients.
+
+    ``deploy/livekit/livekit.yaml`` is source config; local dev injects
+    ``rtc.node_ip`` into a generated runtime config before LiveKit starts.
+    """
+
+    node_ip: str = ""
+    config_path: str = ""
+    template_config_path: str = ""
+    last_error: str = ""
+
+
 class DeviceListResponse(BaseModel):
     devices: list[DeviceView]
     # Hub reachability. False → devices list is empty + admin should
     # surface a banner. Distinct from "no devices discovered yet".
     hub_available: bool
     discovery: DiscoveryStatus | None = None
+    livekit: LiveKitRuntimeStatus | None = None
     refreshed: bool = False

@@ -20,10 +20,9 @@ turn:
   udp_port: 3478
 
 rtc:
-  # LAN devices must receive a reachable RTC candidate. LiveKit auto-detection
-  # can pick a stale/inactive interface on macOS, which makes ESP32 data-only
-  # pending rooms close immediately during ICE negotiation.
-  node_ip: 192.168.100.5
+  # node_ip is dynamic in local/LAN dev. The supervisor wrapper renders
+  # var/livekit/livekit.generated.yaml at LiveKit process start and injects the
+  # current LAN IP there, so this source config stays portable.
   use_external_ip: false
   port_range_start: 50000
   port_range_end: 60000

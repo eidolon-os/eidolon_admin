@@ -25,6 +25,7 @@ from .device import (
     DeviceBinding,
     DeviceListResponse,
     DeviceView,
+    LiveKitRuntimeStatus,
     UnbindDeviceResponse,
 )
 from .resolve import ResolvedContext, ResolveDeviceResponse, ResolveUserResponse
@@ -88,6 +89,7 @@ __all__ = [
     # device
     "DeviceBinding",
     "DeviceView",
+    "LiveKitRuntimeStatus",
     "BindDeviceRequest",
     "UnbindDeviceResponse",
     "DeviceListResponse",

@@ -542,12 +542,12 @@ async def test_http_list_envelope(client: httpx.AsyncClient) -> None:
         )
         r = await client.get("/api/devices")
     assert r.status_code == 200
-    assert r.json() == {
-        "devices": [],
-        "hub_available": True,
-        "discovery": _hub_discovery_response(),
-        "refreshed": False,
-    }
+    body = r.json()
+    assert body["devices"] == []
+    assert body["hub_available"] is True
+    assert body["discovery"] == _hub_discovery_response()
+    assert body["refreshed"] is False
+    assert "livekit" in body
 
 
 async def test_http_refresh_envelope(client: httpx.AsyncClient) -> None:
@@ -561,12 +561,12 @@ async def test_http_refresh_envelope(client: httpx.AsyncClient) -> None:
         r = await client.post("/api/devices/refresh")
     assert r.status_code == 200
     assert refresh.called
-    assert r.json() == {
-        "devices": [],
-        "hub_available": True,
-        "discovery": _hub_discovery_response(),
-        "refreshed": True,
-    }
+    body = r.json()
+    assert body["devices"] == []
+    assert body["hub_available"] is True
+    assert body["discovery"] == _hub_discovery_response()
+    assert body["refreshed"] is True
+    assert "livekit" in body
 
 
 async def test_http_list_envelope_when_hub_down(

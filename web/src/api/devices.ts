@@ -36,6 +36,7 @@ export interface DeviceListResponse {
   devices: DeviceView[]
   hub_available: boolean
   discovery: DiscoveryStatus | null
+  livekit?: LiveKitRuntimeStatus | null
   refreshed?: boolean
 }
 
@@ -49,6 +50,13 @@ export interface DiscoveryStatus {
   config_url: string
   last_registered_at: string | null
   last_updated_at: string | null
+  last_error: string
+}
+
+export interface LiveKitRuntimeStatus {
+  node_ip: string
+  config_path: string
+  template_config_path: string
   last_error: string
 }
 

@@ -7,16 +7,52 @@ pointing at a chosen agent via ``bind``.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Request
+import yaml
 
 from ..schemas.device import (
     BindDeviceRequest,
     DeviceListResponse,
     DeviceView,
+    LiveKitRuntimeStatus,
 )
 from .orchestrator import DeviceError, DeviceOrchestrator
 
 router = APIRouter(prefix="/devices", tags=["devices"])
+_ADMIN_ROOT = Path(__file__).resolve().parents[5]
+
+
+def _livekit_runtime_status() -> LiveKitRuntimeStatus:
+    template = Path(
+        os.environ.get(
+            "EIDOLON_LIVEKIT_TEMPLATE_CONFIG",
+            str(_ADMIN_ROOT / "deploy/livekit/livekit.yaml"),
+        )
+    )
+    generated = Path(
+        os.environ.get(
+            "EIDOLON_LIVEKIT_GENERATED_CONFIG",
+            str(_ADMIN_ROOT / "var/livekit/livekit.generated.yaml"),
+        )
+    )
+    status = LiveKitRuntimeStatus(
+        config_path=str(generated),
+        template_config_path=str(template),
+    )
+    if not generated.exists():
+        status.last_error = "LiveKit generated config not found; restart livekit-server"
+        return status
+    try:
+        raw = yaml.safe_load(generated.read_text(encoding="utf-8")) or {}
+        rtc = raw.get("rtc") if isinstance(raw, dict) else None
+        node_ip = rtc.get("node_ip") if isinstance(rtc, dict) else ""
+        status.node_ip = str(node_ip or "")
+    except Exception as exc:  # pragma: no cover - defensive diagnostics only.
+        status.last_error = f"Failed to read LiveKit generated config: {exc}"
+    return status
 
 
 def _orchestrator(request: Request) -> DeviceOrchestrator:
@@ -44,6 +80,7 @@ async def list_devices(request: Request) -> DeviceListResponse:
             devices=devices,
             hub_available=True,
             discovery=discovery,
+            livekit=_livekit_runtime_status(),
         )
     except DeviceError as exc:
         if exc.status_code == 503:
@@ -51,6 +88,7 @@ async def list_devices(request: Request) -> DeviceListResponse:
                 devices=[],
                 hub_available=False,
                 discovery=None,
+                livekit=_livekit_runtime_status(),
             )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
@@ -66,6 +104,7 @@ async def refresh_devices(request: Request) -> DeviceListResponse:
             devices=devices,
             hub_available=True,
             discovery=discovery,
+            livekit=_livekit_runtime_status(),
             refreshed=True,
         )
     except DeviceError as exc:
@@ -74,6 +113,7 @@ async def refresh_devices(request: Request) -> DeviceListResponse:
                 devices=[],
                 hub_available=False,
                 discovery=None,
+                livekit=_livekit_runtime_status(),
                 refreshed=False,
             )
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc

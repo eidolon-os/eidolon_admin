@@ -45,8 +45,10 @@ Each sub-project is integrated via one of four modes (declared in
 - **`nats`** — shared infra under our supervisord (`nats-server` on
   `:4222` / `:8222` JetStream). One source of truth across the stack.
 - **`livekit`** — shared infra under our supervisord (`livekit-server` on
-  `:7880`). Config at `deploy/livekit/livekit.yaml`; hub and channel only
-  need matching `LIVEKIT_API_*` in their `.env`.
+  `:7880`). Source config is `deploy/livekit/livekit.yaml`; the dev supervisor
+  wrapper renders `var/livekit/livekit.generated.yaml` with the current LAN
+  `rtc.node_ip` before starting LiveKit. Hub and channel only need matching
+  `LIVEKIT_API_*` in their `.env`.
 
 ### Port registry
 
