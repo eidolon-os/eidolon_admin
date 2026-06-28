@@ -20,7 +20,6 @@ import { getOverview, type OverviewResponse, type ProgramView } from '@/api/over
 import ConfigEditor from './ConfigEditor.vue'
 import SystemHealthPanel from './SystemHealthPanel.vue'
 import LogViewer from '@/modules/common/LogViewer.vue'
-import OnboardingBanner from '@/modules/common/OnboardingBanner.vue'
 
 const overview = ref<OverviewResponse | null>(null)
 const configs = ref<ConfigSummary[]>([])
@@ -157,7 +156,6 @@ function probeLabel(probe: { configured: boolean; ok?: boolean; status_code?: nu
 
 <template>
   <div class="page">
-    <OnboardingBanner />
     <div class="topbar">
       <div class="title-row">
         <h2 class="title">Supervisor</h2>

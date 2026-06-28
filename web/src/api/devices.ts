@@ -1,18 +1,7 @@
-/**
- * Typed client for /api/devices — Phase 29.G surface.
- *
- * Replaces the Phase 25 shape. Devices no longer "own" agents; they
- * point at a pre-existing agent via bind/unbind.
- */
 import client from './client'
 
-export interface DeviceBinding {
-  agent_id: string
-  bound_at: string
-  interaction_mode?: 'half_duplex' | 'full_duplex' | null
-}
-
 export type DeviceKind = 'web' | 'esp32' | 'mobile' | 'unknown'
+export type DevicePresenceStatus = 'online' | 'degraded' | 'offline' | 'unknown'
 
 export interface DeviceView {
   device_id: string
@@ -23,21 +12,11 @@ export interface DeviceView {
   approved_at: string | null
   last_seen: string | null
   last_ip?: string
-  status: string
+  status: DevicePresenceStatus
   room_name?: string
   participant_sid?: string
   missed_probes?: number
-  binding: DeviceBinding | null
-  resolved_user_id: string | null
-  resolved_template_id: string | null
-}
-
-export interface DeviceListResponse {
-  devices: DeviceView[]
-  hub_available: boolean
-  discovery: DiscoveryStatus | null
-  livekit?: LiveKitRuntimeStatus | null
-  refreshed?: boolean
+  metadata?: Record<string, any>
 }
 
 export interface DiscoveryStatus {
@@ -60,92 +39,109 @@ export interface LiveKitRuntimeStatus {
   last_error: string
 }
 
+export interface DeviceListResponse {
+  devices: DeviceView[]
+  hub_available: boolean
+  discovery: DiscoveryStatus | null
+  livekit?: LiveKitRuntimeStatus | null
+  refreshed?: boolean
+}
+
 export interface UnregisterResponse {
   device_id: string
   existed?: boolean
   presence_cleared?: boolean
 }
 
+function normalizeDevice(raw: any): DeviceView {
+  return {
+    device_id: String(raw.device_id || ''),
+    name: String(raw.name || raw.device_id || ''),
+    kind: (raw.kind || 'unknown') as DeviceKind,
+    enabled: raw.enabled !== false,
+    approved: Boolean(raw.approved),
+    approved_at: raw.approved_at || null,
+    last_seen: raw.last_seen || raw.last_seen_at || null,
+    last_ip: raw.last_ip || raw.ip || raw.metadata?.ip,
+    status: (raw.status || 'unknown') as DevicePresenceStatus,
+    room_name: raw.room_name || '',
+    participant_sid: raw.participant_sid || '',
+    missed_probes: raw.missed_probes ?? 0,
+    metadata: raw.metadata || {},
+  }
+}
+
+function normalizeDeviceList(data: any): DeviceListResponse {
+  const devices = Array.isArray(data) ? data : data?.devices || []
+  return {
+    devices: devices.map(normalizeDevice),
+    hub_available: true,
+    discovery: data?.discovery || null,
+    livekit: data?.livekit || null,
+    refreshed: Boolean(data?.refreshed),
+  }
+}
+
 export async function listDevices(): Promise<DeviceListResponse> {
-  const { data } = await client.get<DeviceListResponse>('/devices', {
-    suppressToast: true,
-  })
-  return data
+  const { data } = await client.get('/services/hub/devices', { suppressToast: true })
+  return normalizeDeviceList(data)
 }
 
 export async function refreshDevices(): Promise<DeviceListResponse> {
-  const { data } = await client.post<DeviceListResponse>('/devices/refresh', null, {
+  const { data } = await client.post('/services/hub/devices/refresh', null, {
     suppressToast: true,
   })
-  return data
+  return normalizeDeviceList(data)
 }
 
 export async function getDevice(id: string): Promise<DeviceView> {
-  const { data } = await client.get<DeviceView>(`/devices/${encodeURIComponent(id)}`)
-  return data
+  const { data } = await client.get(`/services/hub/devices/${encodeURIComponent(id)}`)
+  return normalizeDevice(data)
 }
 
 export async function approveDevice(id: string): Promise<DeviceView> {
-  const { data } = await client.post<DeviceView>(
-    `/devices/${encodeURIComponent(id)}/approve`,
-  )
-  return data
+  const { data } = await client.post(`/services/hub/devices/${encodeURIComponent(id)}/approve`)
+  return normalizeDevice(data)
 }
 
 export async function setDeviceEnabled(id: string, enabled: boolean): Promise<DeviceView> {
-  const { data } = await client.post<DeviceView>(
-    `/devices/${encodeURIComponent(id)}/enable`,
+  const { data } = await client.post(
+    `/services/hub/devices/${encodeURIComponent(id)}/enable`,
     null,
     { params: { enabled } },
   )
-  return data
+  return normalizeDevice(data)
 }
 
-export async function bindDevice(id: string, agent_id: string): Promise<DeviceView> {
-  const { data } = await client.post<DeviceView>(
-    `/devices/${encodeURIComponent(id)}/bind`,
-    { agent_id },
-  )
-  return data
-}
-
-export async function unbindDevice(id: string): Promise<DeviceView> {
-  const { data } = await client.post<DeviceView>(
-    `/devices/${encodeURIComponent(id)}/unbind`,
+async function sendDeviceCommand(id: string, op: string): Promise<Record<string, any>> {
+  const { data } = await client.post<Record<string, any>>(
+    `/services/hub/devices/${encodeURIComponent(id)}/commands`,
+    { op, payload: {} },
   )
   return data
 }
 
 export async function wakeDevice(id: string): Promise<Record<string, any>> {
-  const { data } = await client.post<Record<string, any>>(
-    `/devices/${encodeURIComponent(id)}/wake`,
-  )
-  return data
+  return sendDeviceCommand(id, 'wake')
 }
 
 export async function identifyDevice(id: string): Promise<Record<string, any>> {
-  const { data } = await client.post<Record<string, any>>(
-    `/devices/${encodeURIComponent(id)}/identify`,
-  )
-  return data
+  return sendDeviceCommand(id, 'identify')
 }
 
 export async function refreshDeviceConfig(id: string): Promise<Record<string, any>> {
-  const { data } = await client.post<Record<string, any>>(
-    `/devices/${encodeURIComponent(id)}/refresh-config`,
-  )
-  return data
+  return sendDeviceCommand(id, 'refresh_config')
 }
 
 export async function unregisterDevice(id: string): Promise<UnregisterResponse> {
   const { data } = await client.delete<UnregisterResponse>(
-    `/devices/${encodeURIComponent(id)}`,
+    `/services/hub/devices/${encodeURIComponent(id)}`,
   )
   return data
 }
 
 export function formatTimestamp(iso: string | null | undefined): string {
-  if (!iso) return '—'
+  if (!iso) return '-'
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
   const pad = (value: number) => String(value).padStart(2, '0')
@@ -162,18 +158,4 @@ export function formatTimestamp(iso: string | null | undefined): string {
     ':',
     pad(date.getSeconds()),
   ].join('')
-}
-
-export function deriveDeviceStatusLabel(device: any): { label: string; tone: 'success' | 'warning' | 'info' } {
-  if (!device.approved) {
-    return { label: 'discovered', tone: 'info' }
-  }
-  const binding = device.binding
-  const agents = binding?.agents || []
-  if (!binding || agents.length === 0) {
-    return { label: 'approved (no agents)', tone: 'warning' }
-  }
-  const active = agents.find((agent: any) => agent.agent_id === binding.active_agent_id) || agents[0]
-  const template = active?.template_id || active?.agent_id || binding.active_agent_id || 'agent'
-  return { label: `bound · ${agents.length} · ${template}`, tone: 'success' }
 }

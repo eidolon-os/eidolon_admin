@@ -2,9 +2,8 @@
  * Hub admin client — thin typed wrapper around the gateway proxy.
  *
  * All requests go through /api/services/hub/* which the eidolon_admin gateway
- * forwards to hub's :8082/api/admin/* endpoints. Keep this client for Hub
- * diagnostics/raw control surfaces. The business Devices page uses /api/devices
- * via api/devices.ts.
+ * forwards to hub's :8082/api/admin/* endpoints. Owner/companion binding is
+ * handled by eidolon_data under the Owners workspace, not by Hub.
  */
 import client from './client'
 

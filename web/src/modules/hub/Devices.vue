@@ -26,14 +26,13 @@ type DeviceReadiness =
   | 'disabled'
   | 'offline'
   | 'degraded'
-  | 'routing_missing'
   | 'standby'
   | 'in_session'
   | 'online'
   | 'unknown'
 type BadgeState = 'online' | 'offline' | 'warning' | 'unknown'
 type TagTone = 'success' | 'warning' | 'info' | 'danger'
-type DetailTab = 'overview' | 'connection' | 'routing' | 'raw'
+type DetailTab = 'overview' | 'connection' | 'raw'
 
 interface DeviceRow {
   device: DeviceView
@@ -70,7 +69,6 @@ const filteredRows = computed(() => {
       r.readiness === 'pending_approval'
       || r.readiness === 'disabled'
       || r.readiness === 'degraded'
-      || r.readiness === 'routing_missing'
       || r.readiness === 'unknown'
     ))
   }
@@ -87,7 +85,6 @@ const attentionCount = computed(() => rows.value.filter((r) => (
   r.readiness === 'pending_approval'
   || r.readiness === 'disabled'
   || r.readiness === 'degraded'
-  || r.readiness === 'routing_missing'
   || r.readiness === 'unknown'
 )).length)
 const readyCount = computed(() => rows.value.filter((r) => r.readiness === 'standby' || r.readiness === 'online').length)
@@ -199,7 +196,6 @@ function readinessOf(d: DeviceView): DeviceReadiness {
   if (inVoiceRoom(d)) return 'in_session'
   if (d.status === 'offline') return 'offline'
   if (d.status === 'degraded') return 'degraded'
-  if ((d.status === 'online' || inControlRoom(d)) && !d.binding) return 'routing_missing'
   if (inControlRoom(d)) return 'standby'
   if (d.status === 'online') return 'online'
   return 'unknown'
@@ -247,9 +243,6 @@ function toDeviceRow(d: DeviceView): DeviceRow {
   if (readiness === 'degraded') {
     return { device: d, readiness, label: 'Degraded', state: 'warning', reason: reachabilityText(d) }
   }
-  if (readiness === 'routing_missing') {
-    return { device: d, readiness, label: 'Routing missing', state: 'warning', reason: 'reachable, no Admin routing' }
-  }
   if (readiness === 'standby') {
     return { device: d, readiness, label: 'Standby', state: 'online', reason: 'control room connected' }
   }
@@ -257,19 +250,6 @@ function toDeviceRow(d: DeviceView): DeviceRow {
     return { device: d, readiness, label: 'Online', state: 'online', reason: 'online, no control room' }
   }
   return { device: d, readiness, label: 'Unknown', state: 'unknown', reason: d.status || 'no runtime status' }
-}
-
-function routingState(d: DeviceView): { label: string; type: TagTone; detail: string } {
-  if (!d.approved) return { label: 'N/A', type: 'info', detail: 'not approved' }
-  if (!d.binding) return { label: 'Missing', type: 'warning', detail: 'Admin routing required' }
-  if (!d.resolved_user_id && !d.resolved_template_id) {
-    return { label: 'Drift', type: 'warning', detail: d.binding.agent_id }
-  }
-  return {
-    label: 'Ready',
-    type: 'success',
-    detail: `${d.resolved_user_id || '-'} / ${d.resolved_template_id || '-'}`,
-  }
 }
 
 function sessionState(d: DeviceView): { label: string; type: TagTone; detail: string } {
@@ -290,11 +270,8 @@ function primaryAction(row: DeviceRow): { label: string; type: 'primary' | 'defa
   if (row.readiness === 'in_session') {
     return { label: 'View room', type: 'default', run: () => openDetail(d, 'connection') }
   }
-  if (row.readiness === 'standby' && d.binding) {
+  if (row.readiness === 'standby') {
     return { label: 'Start session', type: 'primary', icon: VideoPlay, run: () => void onWake(d) }
-  }
-  if (row.readiness === 'routing_missing') {
-    return { label: 'Routing', type: 'default', run: () => openDetail(d, 'routing') }
   }
   if (row.readiness === 'degraded') {
     return { label: 'Diagnose', type: 'default', run: () => openDetail(d, 'connection') }
@@ -306,7 +283,6 @@ function primaryAction(row: DeviceRow): { label: string; type: 'primary' | 'defa
 }
 
 function lifecycleChecks(d: DeviceView): LifecycleCheck[] {
-  const routing = routingState(d)
   return [
     { label: 'Registry identity', ok: true, value: d.device_id },
     { label: 'Approved', ok: d.approved, value: d.approved ? formatTimestamp(d.approved_at) : 'pending' },
@@ -314,7 +290,6 @@ function lifecycleChecks(d: DeviceView): LifecycleCheck[] {
     { label: 'LiveKit presence', ok: d.status === 'online', value: reachabilityText(d) },
     { label: 'Probe misses', ok: (d.missed_probes ?? 0) === 0, value: missedProbeText(d) },
     { label: 'Command target', ok: canSendDeviceCommand(d), value: canSendDeviceCommand(d) ? d.participant_sid || 'ready' : commandUnavailableReason(d) },
-    { label: 'Admin routing', ok: routing.label === 'Ready', value: routing.detail },
     { label: 'Control room', ok: inControlRoom(d) || inVoiceRoom(d), value: sessionState(d).detail },
     { label: 'Voice session', ok: inVoiceRoom(d), value: inVoiceRoom(d) ? 'active' : 'none' },
   ]
@@ -461,7 +436,6 @@ async function onForget(d: DeviceView) {
 async function onMoreCommand(command: string, d: DeviceView) {
   if (command === 'detail') openDetail(d)
   if (command === 'connection') openDetail(d, 'connection')
-  if (command === 'routing') openDetail(d, 'routing')
   if (command === 'raw') openDetail(d, 'raw')
   if (command === 'identify') await onIdentify(d)
   if (command === 'refresh-config') await onRefreshConfig(d)
@@ -511,7 +485,7 @@ async function onMoreCommand(command: string, d: DeviceView) {
           点名可达设备
         </el-button>
         <el-tooltip
-          content="立即同步 Hub registry、LiveKit presence 和 Admin routing"
+          content="立即同步 Hub registry 和 LiveKit presence"
           placement="top"
         >
           <span class="button-wrap">
@@ -603,17 +577,6 @@ async function onMoreCommand(command: string, d: DeviceView) {
         </template>
       </el-table-column>
 
-      <el-table-column label="Admin Routing" min-width="230">
-        <template #default="{ row }">
-          <div class="state-cell">
-            <el-tag :type="routingState(row.device).type" size="small" effect="dark">
-              {{ routingState(row.device).label }}
-            </el-tag>
-            <span class="mono">{{ routingState(row.device).detail }}</span>
-          </div>
-        </template>
-      </el-table-column>
-
       <el-table-column label="Action" width="300" align="right" fixed="right">
         <template #default="{ row }">
           <div class="row-actions">
@@ -649,7 +612,6 @@ async function onMoreCommand(command: string, d: DeviceView) {
                 <el-dropdown-menu>
                   <el-dropdown-item command="detail">Overview</el-dropdown-item>
                   <el-dropdown-item command="connection">Connection</el-dropdown-item>
-                  <el-dropdown-item command="routing">Routing</el-dropdown-item>
                   <el-dropdown-item command="raw">Raw JSON</el-dropdown-item>
                   <el-dropdown-item command="identify" :disabled="!canSendDeviceCommand(row.device)">点名</el-dropdown-item>
                   <el-dropdown-item command="refresh-config" :disabled="!canSendDeviceCommand(row.device)">Refresh config</el-dropdown-item>
@@ -713,17 +675,6 @@ async function onMoreCommand(command: string, d: DeviceView) {
             <div v-if="!canSendDeviceCommand(detail)" class="detail-box wide"><span class="label">Command blocked</span><span class="muted">{{ commandUnavailableReason(detail) }}</span></div>
             <div class="detail-box"><span class="label">Enabled</span><span>{{ detail.enabled ? 'yes' : 'no' }}</span></div>
             <div class="detail-box"><span class="label">Approved</span><span>{{ detail.approved ? 'yes' : 'no' }}</span></div>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="Routing" name="routing">
-          <div class="detail-grid">
-            <div class="detail-box"><span class="label">State</span><span class="mono">{{ routingState(detail).label }}</span></div>
-            <div class="detail-box"><span class="label">Configured at</span><span class="mono">{{ formatTimestamp(detail.binding?.bound_at) }}</span></div>
-            <div class="detail-box wide"><span class="label">Agent</span><span class="mono">{{ detail.binding?.agent_id || 'not configured' }}</span></div>
-            <div class="detail-box"><span class="label">User</span><span class="mono">{{ detail.resolved_user_id || '—' }}</span></div>
-            <div class="detail-box"><span class="label">Template</span><span class="mono">{{ detail.resolved_template_id || '—' }}</span></div>
-            <div class="detail-box"><span class="label">Interaction mode</span><span class="mono">{{ detail.binding?.interaction_mode || 'default' }}</span></div>
           </div>
         </el-tab-pane>
 

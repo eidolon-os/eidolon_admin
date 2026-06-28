@@ -1,32 +1,21 @@
-/**
- * Typed client for /api/resolve — Phase 29.H aggregator surface.
- *
- * Joins device → agent → user → template → memory MCP into one
- * envelope. UI uses this to answer "what would this device run if
- * it dialled in right now?" without N round-trips.
- */
 import client from './client'
 
 export interface ResolvedContext {
+  owner_id: string
+  companion_id: string
   device_id: string
-  agent_id: string | null
-  user_id: string | null
-  template_id: string | null
-  template_revision: number | null
-  display_name: string | null
-  soul_md: string | null
-  knob_overlays: Record<string, number>
-  memory_mcp_url: string | null
-  upstream: {
-    agent_available: boolean
-    memory_available: boolean
-    hub_available: boolean
-  }
+  memory_realm_id: string
+  genome_id: string
+  interaction_mode: string | null
+}
+
+export interface ResolveDeviceResponse {
+  context: ResolvedContext
 }
 
 export async function resolveDevice(deviceId: string): Promise<ResolvedContext> {
-  const { data } = await client.get<ResolvedContext>(
+  const { data } = await client.get<ResolveDeviceResponse>(
     `/resolve/device/${encodeURIComponent(deviceId)}`,
   )
-  return data
+  return data.context
 }

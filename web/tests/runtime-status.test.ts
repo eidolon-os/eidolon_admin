@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MemoryUserDetail } from '../src/api/memory'
-import type { UserHealth } from '../src/api/users'
 import { memoryAgentStatus } from '../src/utils/memoryRuntime'
-import {
-  userHealthDetail,
-  userHealthLabel,
-  userHealthSuffix,
-  userHealthType,
-} from '../src/utils/userHealth'
 
 function memoryUser(overrides: Partial<MemoryUserDetail>): MemoryUserDetail {
   return {
@@ -23,16 +16,6 @@ function memoryUser(overrides: Partial<MemoryUserDetail>): MemoryUserDetail {
     log_path: null,
     consolidator: null,
     runner_status: null,
-    ...overrides,
-  }
-}
-
-function health(overrides: Partial<UserHealth>): UserHealth {
-  return {
-    worker_running: true,
-    mcp_reachable: true,
-    palace_initialized: true,
-    note: '',
     ...overrides,
   }
 }
@@ -54,19 +37,5 @@ describe('runtime status helpers', () => {
     expect(status.type).toBe('success')
     expect(status.label).toBe('RUNNING')
     expect(status.hint).toContain('pid 80310')
-  })
-
-  it('expands registered user health instead of collapsing everything into partial', () => {
-    expect(userHealthType(health({ worker_running: false }))).toBe('danger')
-    expect(userHealthLabel(health({ worker_running: false }))).toBe('worker down')
-    expect(userHealthLabel(health({ mcp_reachable: false }))).toBe('mcp down')
-    expect(userHealthLabel(health({ palace_initialized: false }))).toBe('initializing')
-    expect(userHealthSuffix(health({ mcp_reachable: false }))).toBe(' · mcp down')
-  })
-
-  it('includes the backend note in the health detail', () => {
-    const detail = userHealthDetail(health({ mcp_reachable: false, note: 'booting' }))
-    expect(detail).toContain('MCP unreachable')
-    expect(detail).toContain('booting')
   })
 })

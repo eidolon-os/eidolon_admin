@@ -23,14 +23,16 @@ describe('api/conversations.ts', () => {
 
     const { listTurns } = await import('../src/api/conversations')
     const result = await listTurns({
-      user_id: 'u-1',
+      owner_id: 'owner-1',
+      companion_id: 'companion-1',
       before: '2026-06-04T10:00:00Z',
       limit: 25,
     })
 
     expect(getMock).toHaveBeenCalledWith('/services/agent/conversations/turns', {
       params: {
-        user_id: 'u-1',
+        owner_id: 'owner-1',
+        companion_id: 'companion-1',
         before: '2026-06-04T10:00:00Z',
         limit: 25,
       },
@@ -46,9 +48,8 @@ describe('api/conversations.ts', () => {
             turn_id: 'turn-1',
             conversation_id: 'conv-1',
             seq: 7,
-            tenant_id: 'demo',
-            user_id: 'user-1',
-            agent_instance_id: 'agent-1',
+            owner_id: 'owner-1',
+            companion_id: 'companion-1',
             started_at: '2026-06-04T10:00:00Z',
             disposition: 'semantic_upsert',
             reason: 'preference',
@@ -64,11 +65,12 @@ describe('api/conversations.ts', () => {
     })
 
     const { listMemoryAudit } = await import('../src/api/conversations')
-    const result = await listMemoryAudit({ user_id: 'user-1', limit: 10 })
+    const result = await listMemoryAudit({ owner_id: 'owner-1', companion_id: 'companion-1', limit: 10 })
 
     expect(getMock).toHaveBeenCalledWith('/services/agent/conversations/memory-audit', {
       params: {
-        user_id: 'user-1',
+        owner_id: 'owner-1',
+        companion_id: 'companion-1',
         limit: 10,
       },
     })
@@ -82,9 +84,10 @@ describe('api/conversations.ts', () => {
         turn_id: 'turn/with space',
         conversation_id: 'conv-1',
         seq: 1,
-        tenant_id: 'demo',
-        user_id: 'user-1',
-        agent_instance_id: 'agent-1',
+        owner_id: 'owner-1',
+        companion_id: 'companion-1',
+        memory_realm_id: 'realm-1',
+        genome_id: 'genome-1',
         trigger: 'user',
         caller_kind: null,
         device_id: null,
