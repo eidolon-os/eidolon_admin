@@ -9,6 +9,7 @@ from eidolon_data.services import OwnerWorkspaceError
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
+from .hub_client import HubRuntimeUnavailable
 from .schemas import (
     CompanionListResponse,
     CompanionView,
@@ -242,13 +243,13 @@ async def list_owner_devices(owner_id: str, request: Request) -> DeviceListRespo
 async def list_nearby_owner_devices(owner_id: str, request: Request) -> NearbyDeviceListResponse:
     store = _store(request)
     await _require_owner(store, owner_id)
-    orch = _device_orchestrator(request)
-    if orch is None:
+    hub = _hub_device_client(request)
+    if hub is None:
         return NearbyDeviceListResponse(devices=[], hub_available=False)
     try:
-        runtime_devices = await orch.list_devices()
-    except Exception as exc:  # noqa: BLE001
-        status_code = int(getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY))
+        runtime_devices = await hub.list_devices()
+    except HubRuntimeUnavailable as exc:
+        status_code = exc.status_code
         if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
             return NearbyDeviceListResponse(devices=[], hub_available=False)
         raise HTTPException(status_code, str(exc)) from exc
@@ -269,20 +270,17 @@ async def list_nearby_owner_devices(owner_id: str, request: Request) -> NearbyDe
 @router.post("/owners/{owner_id}/nearby-devices/{device_id}/identify")
 async def identify_nearby_owner_device(owner_id: str, device_id: str, request: Request) -> dict[str, Any]:
     await _require_owner(_store(request), owner_id)
-    orch = _require_device_orchestrator(request)
+    hub = _require_hub_device_client(request)
     try:
-        runtime_device = await orch.get_device(device_id)
+        runtime_device = await hub.get_device(device_id)
         if not runtime_device.approved:
             raise HTTPException(
                 status.HTTP_412_PRECONDITION_FAILED,
                 "device must be approved in Hub before Owner actions",
             )
-        return await orch.identify_device(device_id)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            int(getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY)),
-            str(exc),
-        ) from exc
+        return await hub.identify_device(device_id)
+    except HubRuntimeUnavailable as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
 
 
 @router.post("/owners/{owner_id}/nearby-devices/{device_id}/claim", response_model=DeviceView)
@@ -311,19 +309,16 @@ async def claim_nearby_device(
         if companion is None or companion.owner_id != owner_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "companion does not belong to owner")
 
-    orch = _require_device_orchestrator(request)
+    hub = _require_hub_device_client(request)
     try:
-        runtime_device = await orch.get_device(device_id)
+        runtime_device = await hub.get_device(device_id)
         if not runtime_device.approved:
             raise HTTPException(
                 status.HTTP_412_PRECONDITION_FAILED,
                 "device must be approved in Hub before claiming",
             )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            int(getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY)),
-            str(exc),
-        ) from exc
+    except HubRuntimeUnavailable as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
 
     metadata_json = {
         **payload.metadata_json,
@@ -379,7 +374,7 @@ async def claim_nearby_device(
             "interaction_mode": payload.interaction_mode,
         },
     )
-    await orch.refresh_device_config(device_id)
+    await hub.refresh_device_config(device_id)
     return _device(row)
 
 
@@ -550,15 +545,15 @@ def _store(request: Request) -> DataStore:
     return store
 
 
-def _device_orchestrator(request: Request) -> Any | None:
-    return getattr(request.app.state, "device_orchestrator", None)
+def _hub_device_client(request: Request) -> Any | None:
+    return getattr(request.app.state, "hub_device_client", None)
 
 
-def _require_device_orchestrator(request: Request) -> Any:
-    orch = _device_orchestrator(request)
-    if orch is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "device runtime unavailable")
-    return orch
+def _require_hub_device_client(request: Request) -> Any:
+    client = _hub_device_client(request)
+    if client is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Hub device runtime unavailable")
+    return client
 
 
 async def _require_owner(store: DataStore, owner_id: str) -> Any:

@@ -31,6 +31,7 @@ from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .data import router as data_router
+from .data.hub_client import HubDeviceRuntimeClient
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.router import router as memory_router
@@ -127,12 +128,16 @@ def create_app(
     # exercise memory write endpoints.
     app.state.memory_publisher = JetStreamPublisher()
     app.state.memory_supervisor_client = build_memory_supervisor_client(app.state.http_client)
+    hub_service = app.state.registry.get("hub")
+    app.state.hub_device_client = HubDeviceRuntimeClient(
+        app.state.http_client,
+        hub_service.base_url if hub_service is not None else "",
+    )
     # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
     app.state.data_store = None
     # Legacy tenant/user/agent registry orchestrators are intentionally not
     # initialized in the owner/companion model.
-    app.state.device_orchestrator = None
     app.state.voiceprint_model_dir = settings.speaker_model_dir
     app.state.esp32_tools = Esp32ToolService(catalog_file=settings.esp32_tools_file)
 

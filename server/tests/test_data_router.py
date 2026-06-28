@@ -33,7 +33,7 @@ def _runtime_device(
     )
 
 
-class FakeDeviceOrchestrator:
+class FakeHubDeviceClient:
     def __init__(self) -> None:
         self.devices = {
             "esp-near": _runtime_device("esp-near", name="Nearby ESP", approved=True),
@@ -47,12 +47,6 @@ class FakeDeviceOrchestrator:
         return list(self.devices.values())
 
     async def get_device(self, device_id: str) -> SimpleNamespace:
-        return self.devices[device_id]
-
-    async def approve_device(self, device_id: str) -> SimpleNamespace:
-        self.approved.append(device_id)
-        self.devices[device_id].approved = True
-        self.devices[device_id].approved_at = datetime.now(timezone.utc)
         return self.devices[device_id]
 
     async def identify_device(self, device_id: str) -> dict:
@@ -118,29 +112,29 @@ async def test_owner_scoped_data_overview_and_lists(
         },
     )
     assert initialized.status_code == 200
-    assert initialized.json()["companion"]["companion_id"] == "c:owner-a:default"
-    assert initialized.json()["persona_genome"]["genome_id"] == "g:owner-a:default:v1"
+    assert initialized.json()["companion"]["companion_id"] == "c_owner-a_default"
+    assert initialized.json()["persona_genome"]["genome_id"] == "g_owner-a_default_v1"
     assert initialized.json()["persona_genome"]["status"] == "committed"
     assert initialized.json()["persona_genome"]["prompt_markdown"].startswith("# Xiaoyi")
-    assert initialized.json()["memory_realm"]["realm_id"] == "r:owner-a:default"
+    assert initialized.json()["memory_realm"]["realm_id"] == "r_owner-a_default"
 
     await data_store.devices.create_device(
         device_id="device-a",
         owner_id="owner-a",
         name="Desk Body",
         kind="voice_body",
-        bound_companion_id="c:owner-a:default",
+        bound_companion_id="c_owner-a_default",
     )
     await data_store.conversations.create_conversation(
         conversation_id="conversation-a",
         owner_id="owner-a",
-        companion_id="c:owner-a:default",
+        companion_id="c_owner-a_default",
         title="Morning",
     )
     await data_store.jobs.create(
         job_id="job-a",
         owner_id="owner-a",
-        companion_id="c:owner-a:default",
+        companion_id="c_owner-a_default",
         provider="mementos",
         kind="daily_report",
     )
@@ -159,16 +153,16 @@ async def test_owner_scoped_data_overview_and_lists(
         "jobs": 1,
         "events": 5,
     }
-    assert body["companions"][0]["companion_id"] == "c:owner-a:default"
+    assert body["companions"][0]["companion_id"] == "c_owner-a_default"
     assert body["devices"][0]["device_id"] == "device-a"
     assert body["conversations"][0]["conversation_id"] == "conversation-a"
-    assert body["memory_realms"][0]["realm_id"] == "r:owner-a:default"
+    assert body["memory_realms"][0]["realm_id"] == "r_owner-a_default"
     assert body["jobs"][0]["job_id"] == "job-a"
     assert {event["event_type"] for event in body["events"]} >= {"owner.created", "companion.workspace.initialized"}
 
     genomes = await client.get("/api/owners/owner-a/persona-genomes")
     assert genomes.status_code == 200
-    assert genomes.json()["persona_genomes"][0]["genome_id"] == "g:owner-a:default:v1"
+    assert genomes.json()["persona_genomes"][0]["genome_id"] == "g_owner-a_default_v1"
     assert genomes.json()["persona_genomes"][0]["prompt_markdown"].startswith("# Xiaoyi")
 
     missing = await client.get("/api/owners/missing/workspace")
@@ -180,8 +174,8 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
 ) -> None:
     app = FastAPI()
     app.state.data_store = data_store
-    fake_orchestrator = FakeDeviceOrchestrator()
-    app.state.device_orchestrator = fake_orchestrator
+    fake_hub = FakeHubDeviceClient()
+    app.state.hub_device_client = fake_hub
     app.include_router(data_router, prefix="/api")
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -222,17 +216,17 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
             "/api/owners/owner-devices/nearby-devices/esp-near/claim",
             json={
                 "name": "Nearby ESP",
-                "companion_id": "c:owner-devices:default",
+                "companion_id": "c_owner-devices_default",
                 "interaction_mode": "voice",
             },
         )
         assert added.status_code == 200
         assert added.json()["owner_id"] == "owner-devices"
         assert added.json()["status"] == "active"
-        assert added.json()["bound_companion_id"] == "c:owner-devices:default"
+        assert added.json()["bound_companion_id"] == "c_owner-devices_default"
         assert added.json()["metadata_json"]["source"] == "hub_runtime"
         assert added.json()["metadata_json"]["hub_approved"] is True
-        assert fake_orchestrator.approved == []
+        assert fake_hub.approved == []
 
         empty_nearby = await client.get("/api/owners/owner-devices/nearby-devices")
         assert empty_nearby.status_code == 200

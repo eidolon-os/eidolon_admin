@@ -54,13 +54,10 @@ services:
     ports:
       declared: [$EIDOLON_AGENT_HTTP_PORT, $EIDOLON_AGENT_ADMIN_PORT, $EIDOLON_AGENT_GRPC_PORT]
     features:
-      - { key: data,               label: "Data" }
-      - { key: memory,             label: "Memory" }
       - { key: chat-test,          label: "Chat", stream: true }
       - { key: conversations,      label: "Conversations" }
       - { key: long-tasks,         label: "Long Tasks" }
       - { key: replay-reports,     label: "Replay Reports" }
-      - { key: console,            label: "API Console" }
     configs:
       - id: settings
         label: "agent settings.yaml"
