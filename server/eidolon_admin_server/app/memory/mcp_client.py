@@ -1,7 +1,7 @@
 """Per-request MCP HTTP session manager.
 
-Each call opens a fresh Streamable-HTTP MCP session against the user's
-agent_runner port (looked up in admin's user registry), invokes a tool, then closes.
+Each call opens a fresh Streamable-HTTP MCP session against the memory realm's
+agent_runner port, invokes a tool, then closes.
 Matches eidolon_memory's mcp_client.py:59-89 pattern — no caching, no
 long-lived sessions, intentionally simple.
 
@@ -23,7 +23,7 @@ from fastapi import HTTPException
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-from .runners import UserEntry, load_users
+from .runners import RealmEntry, load_realms
 
 logger = logging.getLogger(__name__)
 
@@ -35,21 +35,21 @@ _DEFAULT_CONNECT_ATTEMPTS = 4
 _DEFAULT_BACKOFF_SECONDS = 0.4
 
 
-class MemoryUserNotFound(HTTPException):
-    def __init__(self, user_id: str) -> None:
-        super().__init__(404, f"user not found in admin registry: {user_id!r}")
+class MemoryRealmNotFound(HTTPException):
+    def __init__(self, memory_realm_id: str) -> None:
+        super().__init__(404, f"memory realm not found: {memory_realm_id!r}")
 
 
-class MemoryUserDisabled(HTTPException):
-    def __init__(self, user_id: str) -> None:
-        super().__init__(403, f"user is disabled: {user_id!r}")
+class MemoryRealmDisabled(HTTPException):
+    def __init__(self, memory_realm_id: str) -> None:
+        super().__init__(403, f"memory realm is disabled: {memory_realm_id!r}")
 
 
 class MemoryAgentUnreachable(HTTPException):
-    def __init__(self, user_id: str, url: str, inner: Exception) -> None:
+    def __init__(self, memory_realm_id: str, url: str, inner: Exception) -> None:
         super().__init__(
             502,
-            f"agent_runner for user {user_id!r} unreachable at {url}: {inner}",
+            f"agent_runner for memory realm {memory_realm_id!r} unreachable at {url}: {inner}",
         )
 
 
@@ -57,15 +57,15 @@ def mcp_url_for_port(port: int) -> str:
     return f"http://{_MCP_HOST}:{port}{_MCP_PATH}"
 
 
-def resolve_user(user_id: str) -> UserEntry:
-    """Return the UserEntry for ``user_id`` or raise HTTP-friendly errors."""
-    users = load_users()
-    for u in users:
-        if u.id == user_id:
+def resolve_realm(memory_realm_id: str) -> RealmEntry:
+    """Return the RealmEntry for ``memory_realm_id`` or raise HTTP-friendly errors."""
+    realms = load_realms()
+    for u in realms:
+        if u.memory_realm_id == memory_realm_id:
             if not u.enabled:
-                raise MemoryUserDisabled(user_id)
+                raise MemoryRealmDisabled(memory_realm_id)
             return u
-    raise MemoryUserNotFound(user_id)
+    raise MemoryRealmNotFound(memory_realm_id)
 
 
 def _bearer_token() -> str | None:
@@ -88,8 +88,8 @@ def _local_http_client(
 
 
 @asynccontextmanager
-async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]:
-    """Open a fresh MCP session for ``user_id``. Yields (session, url).
+async def open_session(memory_realm_id: str) -> AsyncIterator[tuple[ClientSession, str]]:
+    """Open a fresh MCP session for ``memory_realm_id``. Yields (session, url).
 
     Caller is responsible for awaiting tool calls inside the ``async with``.
     Any failure connecting / initializing the MCP session is normalized
@@ -110,8 +110,8 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
         the failure is connect-refused, 502 from server, or a stream
         protocol violation.
     """
-    user = resolve_user(user_id)
-    url = mcp_url_for_port(user.port)
+    realm = resolve_realm(memory_realm_id)
+    url = mcp_url_for_port(realm.port)
     headers: dict[str, str] = {}
     token = _bearer_token()
     if token:
@@ -131,8 +131,8 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
                 await session.initialize()
                 yield session, url
     except HTTPException:
-        # MemoryUserNotFound / MemoryUserDisabled are HTTPException subclasses
-        # raised by resolve_user(); re-raise unchanged so the user sees
+        # MemoryRealmNotFound / MemoryRealmDisabled are HTTPException subclasses
+        # raised by resolve_realm(); re-raise unchanged so the user sees
         # the precise 404/403 rather than a misleading 502.
         raise
     except BaseException as exc:  # noqa: BLE001 — see docstring
@@ -144,7 +144,7 @@ async def open_session(user_id: str) -> AsyncIterator[tuple[ClientSession, str]]
         # Cast to Exception for the constructor (we know it's catchable).
         if not isinstance(inner, Exception):
             inner = RuntimeError(str(inner) or type(inner).__name__)
-        raise MemoryAgentUnreachable(user_id, url, inner) from exc
+        raise MemoryAgentUnreachable(memory_realm_id, url, inner) from exc
 
 
 def _unwrap(payload: Any) -> Any:
@@ -170,12 +170,12 @@ def _parse_text_content(content: list[Any]) -> Any:
 
 
 async def call_tool(
-    user_id: str,
+    memory_realm_id: str,
     tool: str,
     arguments: dict[str, Any] | None = None,
 ) -> Any:
     """One-shot MCP tool call. Returns decoded JSON or raises HTTPException."""
-    async with open_session(user_id) as (session, _url):
+    async with open_session(memory_realm_id) as (session, _url):
         result = await session.call_tool(tool, arguments or {})
         if result.isError:
             err = _parse_text_content(result.content) or "tool returned error"
@@ -183,9 +183,9 @@ async def call_tool(
         return _parse_text_content(result.content)
 
 
-async def list_tools(user_id: str) -> list[dict[str, Any]]:
+async def list_tools(memory_realm_id: str) -> list[dict[str, Any]]:
     """List MCP tools exposed by the agent_runner."""
-    async with open_session(user_id) as (session, _url):
+    async with open_session(memory_realm_id) as (session, _url):
         result = await session.list_tools()
         return [
             {
@@ -197,26 +197,26 @@ async def list_tools(user_id: str) -> list[dict[str, Any]]:
         ]
 
 
-async def probe_reachable(user_id: str) -> bool:
+async def probe_reachable(memory_realm_id: str) -> bool:
     """Cheap liveness probe — opens a session and immediately closes.
 
     Returns True iff a fresh MCP session can be established and initialized
-    against the user's agent_runner.
+    against the realm's agent_runner.
 
-    **This function must never raise** — it's called from /api/memory/users
-    in an ``asyncio.gather`` over every configured user. A single user with
-    a wedged MCP transport must not crash the whole users-list response.
-    Any failure (HTTPException from resolve_user, MemoryAgentUnreachable
+    **This function must never raise** — it's called from /api/memory/realms
+    in an ``asyncio.gather`` over every configured realm. A single realm with
+    a wedged MCP transport must not crash the whole realms-list response.
+    Any failure (HTTPException from resolve_realm, MemoryAgentUnreachable
     from connect, or anything genuinely unexpected) is logged and returned
     as False. The caller renders this as "unreachable" in the UI, which is
     exactly the operator-actionable signal we want.
     """
     try:
-        async with open_session(user_id):
+        async with open_session(memory_realm_id):
             return True
     except HTTPException:
         # Expected "not reachable" path — user disabled, agent down, etc.
         return False
     except BaseException as exc:  # noqa: BLE001 — see docstring
-        logger.warning("probe_reachable(%s) unexpected error: %s", user_id, exc)
+        logger.warning("probe_reachable(%s) unexpected error: %s", memory_realm_id, exc)
         return False

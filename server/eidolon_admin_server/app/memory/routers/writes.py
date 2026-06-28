@@ -22,7 +22,7 @@ from ..schemas import (
     MemoryCreateRequest,
     MemoryWriteAccepted,
 )
-from ..space import memory_actor_context_for_user
+from ..space import memory_actor_context_for_realm
 
 router = APIRouter()
 
@@ -36,10 +36,9 @@ async def create_memory(body: MemoryCreateRequest, request: Request) -> MemoryWr
     if publisher is None:
         raise HTTPException(503, "memory NATS publisher not initialised")
     try:
-        context = await memory_actor_context_for_user(
+        context = await memory_actor_context_for_realm(
             request,
-            body.user_id,
-            companion_id=body.companion_id,
+            body.memory_realm_id,
         )
     except ValueError as exc:
         raise HTTPException(422, f"invalid memory actor context: {exc}") from exc
@@ -79,8 +78,8 @@ def _kg_result(payload: object) -> KgWriteResult:
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def add_kg_triple(body: KgTripleAddRequest) -> KgWriteResult:
-    args = body.model_dump(exclude={"user_id", "companion_id"}, exclude_none=True)
-    payload = await call_tool(body.user_id, "eidolon_memory_kg_add_triple", args)
+    args = body.model_dump(exclude={"memory_realm_id"}, exclude_none=True)
+    payload = await call_tool(body.memory_realm_id, "eidolon_memory_kg_add_triple", args)
     return _kg_result(payload)
 
 
@@ -90,6 +89,6 @@ async def add_kg_triple(body: KgTripleAddRequest) -> KgWriteResult:
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def invalidate_kg(body: KgInvalidateRequest) -> KgWriteResult:
-    args = body.model_dump(exclude={"user_id", "companion_id"}, exclude_none=True)
-    payload = await call_tool(body.user_id, "eidolon_memory_kg_invalidate", args)
+    args = body.model_dump(exclude={"memory_realm_id"}, exclude_none=True)
+    payload = await call_tool(body.memory_realm_id, "eidolon_memory_kg_invalidate", args)
     return _kg_result(payload)

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { recall, type KgTripleOut, type MemoryRecord, type RecallResponse } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const query = ref('')
 const topK = ref(5)
 const voice = ref(false)

@@ -33,7 +33,6 @@ const moduleMap: Record<string, Record<string, Component>> = {
   },
   memory: {
     runners: defineAsyncComponent(() => import('./memory/Runners.vue')),
-    users: defineAsyncComponent(() => import('./memory/Users.vue')),
     memories: defineAsyncComponent(() => import('./memory/Memories.vue')),
     search: defineAsyncComponent(() => import('./memory/MemorySearch.vue')),
     write: defineAsyncComponent(() => import('./memory/MemoryWrite.vue')),

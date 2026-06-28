@@ -11,12 +11,12 @@ router = APIRouter()
 
 @router.get("/hierarchy", response_model=HierarchyResponse)
 async def get_hierarchy(
-    user_id: str = Query(...),
+    memory_realm_id: str = Query(...),
     max_records: int = Query(8000, ge=1, le=200000),
     max_drawers_per_room: int = Query(48, ge=1, le=1000),
 ) -> HierarchyResponse:
     data = await call_tool(
-        user_id,
+        memory_realm_id,
         "eidolon_memory_hierarchy_snapshot",
         {"max_records": max_records, "max_drawers_per_room": max_drawers_per_room},
     )

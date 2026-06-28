@@ -2,14 +2,14 @@
 import { onMounted, ref, watch, computed } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getHierarchy } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
 interface DrawerNode { label: string; preview?: string; truncated?: boolean }
 interface RoomNode { label: string; drawer_count?: number; drawers?: DrawerNode[]; preview_truncated?: boolean }
 interface WingNode { label: string; display_name?: string; room_count?: number; drawer_count?: number; rooms?: RoomNode[] }
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const maxRecords = ref(8000)
 const maxDrawersPerRoom = ref(48)
 const loading = ref(false)

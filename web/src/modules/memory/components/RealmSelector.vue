@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted } from 'vue'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import { memoryAgentStatus } from '@/utils/memoryRuntime'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
@@ -18,10 +18,11 @@ onBeforeUnmount(() => {
 })
 
 const options = computed(() =>
-  store.users.map((u) => ({
-    label: `${u.user_id}${u.enabled ? '' : ' (disabled)'} · :${u.port}`,
-    status: memoryAgentStatus(u),
-    value: u.user_id,
+  store.realms.map((realm) => ({
+    label: `${realm.memory_realm_id}${realm.enabled ? '' : ' (disabled)'} · :${realm.port}`,
+    hint: `${realm.owner_id} / ${realm.companion_id}`,
+    status: memoryAgentStatus(realm),
+    value: realm.memory_realm_id,
   })),
 )
 
@@ -32,13 +33,13 @@ const current = computed({
 </script>
 
 <template>
-  <div class="user-selector">
-    <span class="prefix">Memory user</span>
+  <div class="realm-selector">
+    <span class="prefix">Memory realm</span>
     <el-select
       v-model="current"
-      placeholder="选择用户"
+      placeholder="选择 realm"
       size="small"
-      style="width: 220px"
+      style="width: 260px"
       :loading="store.loading"
     >
       <el-option
@@ -49,9 +50,7 @@ const current = computed({
       >
         <span :class="['dot', `dot-${opt.status.type}`]" :title="opt.status.hint" />
         {{ opt.label }}
-        <span v-if="opt.status.label !== 'RUNNING'" class="status-note">
-          {{ opt.status.label.toLowerCase() }}
-        </span>
+        <span class="status-note">{{ opt.hint }}</span>
       </el-option>
     </el-select>
     <el-button size="small" link @click="store.load(true)" :loading="store.loading">↻</el-button>
@@ -59,7 +58,7 @@ const current = computed({
 </template>
 
 <style scoped>
-.user-selector {
+.realm-selector {
   display: inline-flex;
   align-items: center;
   gap: 8px;

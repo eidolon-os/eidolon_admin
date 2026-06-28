@@ -89,14 +89,14 @@ function consolidatorTag(c: {
     </div>
 
     <el-alert
-      v-if="data && !data.users_source_exists"
+      v-if="data && !data.realms_source_exists"
       type="warning"
       :closable="false"
       show-icon
       style="margin-bottom: 16px"
     >
       <template #title>
-        用户数据源不可用：<code>{{ data.users_source }}</code>
+        Memory realm 数据源不可用：<code>{{ data.realms_source }}</code>
         ——
         确认 Eidolon Data SQLite 和 admin-api 正常
       </template>
@@ -104,13 +104,14 @@ function consolidatorTag(c: {
 
     <el-card>
       <template #header>
-        <span>声明的用户（{{ data?.users_source || '...' }}）</span>
+        <span>声明的 memory realms（{{ data?.realms_source || '...' }}）</span>
       </template>
 
       <el-table :data="data?.runners || []" stripe v-loading="loading">
-        <el-table-column label="User ID" width="160">
+        <el-table-column label="Memory Realm" min-width="220">
           <template #default="{ row }">
-            <span class="user-id">{{ row.user_id }}</span>
+            <span class="realm-id">{{ row.memory_realm_id }}</span>
+            <span class="muted owner-line">{{ row.owner_id }} / {{ row.companion_id }}</span>
           </template>
         </el-table-column>
         <el-table-column label="Port" width="72">
@@ -178,7 +179,7 @@ function consolidatorTag(c: {
       <template #header>
         <span style="color: var(--eid-warning)">⚠ 孤儿进程</span>
         <span class="hint">
-          进程在运行但 Eidolon Data 无对应 owner（通常需触发 memory-supervisor reconcile）
+          进程在运行但 Eidolon Data 无对应 memory realm（通常需触发 memory-supervisor reconcile）
         </span>
       </template>
       <el-table
@@ -192,7 +193,7 @@ function consolidatorTag(c: {
         size="small"
       >
         <el-table-column label="Role" prop="role" width="110" />
-        <el-table-column label="User ID" prop="user_id" />
+        <el-table-column label="Memory Realm" prop="memory_realm_id" />
         <el-table-column label="PID">
           <template #default="{ row }"><span class="mono">{{ row.pid }}</span></template>
         </el-table-column>
@@ -235,9 +236,13 @@ function consolidatorTag(c: {
   font-size: 12px;
   color: var(--eid-text-muted);
 }
-.user-id {
+.realm-id {
   font-weight: 600;
   color: var(--eid-text-primary);
+}
+.owner-line {
+  display: block;
+  margin-top: 2px;
 }
 .mono {
   font-family: var(--eid-font-mono);

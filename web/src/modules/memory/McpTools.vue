@@ -2,10 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { listMcpTools, type McpToolOut } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const tools = ref<McpToolOut[]>([])
 const loading = ref(false)
 const filter = ref('')

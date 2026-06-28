@@ -1,4 +1,5 @@
 """FastAPI app factory for the Eidolon admin gateway."""
+# ruff: noqa: E402
 from __future__ import annotations
 
 import os
@@ -32,7 +33,9 @@ from .configs.router import router as configs_router
 from .data import router as data_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
+from .memory.router import router as memory_router
 from .memory.nats_publisher import JetStreamPublisher
+from .memory.supervisor_client import build_memory_supervisor_client
 from .nats_kv import KVClient
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
@@ -123,6 +126,7 @@ def create_app(
     # boots even when NATS is down. None is allowed for tests that don't
     # exercise memory write endpoints.
     app.state.memory_publisher = JetStreamPublisher()
+    app.state.memory_supervisor_client = build_memory_supervisor_client(app.state.http_client)
     # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
     app.state.data_store = None
@@ -148,6 +152,7 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
+    app.include_router(memory_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     app.include_router(esp32_tools_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be

@@ -1,21 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { useMemoryUserStore } from '@/stores/memoryUser'
-
-// Most memory pages need a user_id to make any backend call. This shell lazily
-// loads the store, hides children until the user is chosen, and gives a
-// helpful empty-state.
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 
 interface Props {
-  /** If true, the page works without a user_id (e.g. Users page itself). */
-  noUserNeeded?: boolean
+  noRealmNeeded?: boolean
   title?: string
 }
 const props = defineProps<Props>()
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 onMounted(() => store.load())
 
-const ready = computed(() => props.noUserNeeded || !!store.currentId)
+const ready = computed(() => props.noRealmNeeded || !!store.currentId)
 </script>
 
 <template>
@@ -24,10 +19,10 @@ const ready = computed(() => props.noUserNeeded || !!store.currentId)
 
     <el-empty
       v-if="!ready && !store.loading"
-      description="选择一个 memory user 开始（顶部下拉框）"
+      description="选择一个 memory realm 开始（顶部下拉框）"
     />
     <el-skeleton v-else-if="store.loading && !store.loaded" :rows="6" animated />
-    <slot v-else :user-id="store.currentId" />
+    <slot v-else :memory-realm-id="store.currentId" />
   </div>
 </template>
 

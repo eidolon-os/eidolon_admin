@@ -2,11 +2,11 @@
 import { onMounted, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getKnowledgeGraph, getPalaceGraph, type GraphSnapshot } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 import PalaceGraph from './components/PalaceGraph.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const kind = ref<'knowledge' | 'palace'>('knowledge')
 const entity = ref('')
 const currentOnly = ref(true)

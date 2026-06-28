@@ -2,10 +2,10 @@
 import { onMounted, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { listMemories, type MemoryRecord } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const records = ref<MemoryRecord[]>([])
 const totalHint = ref(0)
 const loading = ref(false)

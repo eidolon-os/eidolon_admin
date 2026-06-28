@@ -2,10 +2,10 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createMemory } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const wing = ref('Wing_Profile')
 const room = ref('profile_core')
 const text = ref('')
@@ -26,7 +26,7 @@ async function onSubmit() {
   lastResult.value = null
   try {
     const r = await createMemory({
-      user_id: store.currentId,
+      memory_realm_id: store.currentId,
       wing: wing.value,
       room: room.value,
       text: text.value,
@@ -72,7 +72,7 @@ async function onSubmit() {
               发布到 NATS
             </el-button>
             <span class="hint">
-              → agent.memory.conversation.turn.{{ store.currentId }}
+              → eidolon.memory.turn.&lt;encoded realm token&gt;
             </span>
           </el-form-item>
         </el-form>

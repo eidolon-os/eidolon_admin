@@ -1,19 +1,18 @@
-"""Map registry users + live processes into API models."""
+"""Map memory realms + live processes into API models."""
 from __future__ import annotations
 
 import time
 
 from .runners import (
-    UserEntry,
+    RealmEntry,
     child_log_path,
-    find_agent_processes,
     find_consolidator_processes,
 )
 from .schemas import ConsolidatorStatus
 
 
 def consolidator_status(
-    entry: UserEntry,
+    entry: RealmEntry,
     *,
     cons_map: dict | None = None,
 ) -> ConsolidatorStatus:
@@ -42,12 +41,12 @@ def consolidator_status(
     )
 
 
-def agent_log_path_for(entry: UserEntry) -> str:
+def agent_log_path_for(entry: RealmEntry) -> str:
     return child_log_path(entry.id, "agent")
 
 
 def memory_runtime_state(
-    entry: UserEntry,
+    entry: RealmEntry,
     *,
     worker_running: bool,
     agent_reachable: bool,

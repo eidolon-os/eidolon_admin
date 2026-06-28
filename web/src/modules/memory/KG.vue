@@ -11,10 +11,10 @@ import {
   type KgStats,
   type KgTripleOut,
 } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const stats = ref<KgStats | null>(null)
 const predicates = ref<KgPredicates>({ predicates: [], sensitive: [] })
 const timeline = ref<KgTripleOut[]>([])
@@ -68,7 +68,7 @@ async function submitWrite() {
   submittingWrite.value = true
   try {
     const r = await addKgTriple({
-      user_id: store.currentId,
+      memory_realm_id: store.currentId,
       ...writeForm.value,
       valid_from: writeForm.value.valid_from || undefined,
       valid_to: writeForm.value.valid_to || undefined,
@@ -87,7 +87,7 @@ async function submitInvalidate() {
   if (!invalidateForm.value.subject || !invalidateForm.value.predicate || !invalidateForm.value.object) return
   submittingInvalidate.value = true
   try {
-    const r = await invalidateKg({ user_id: store.currentId, ...invalidateForm.value })
+    const r = await invalidateKg({ memory_realm_id: store.currentId, ...invalidateForm.value })
     ElMessage.success(`invalidate ${r.status}`)
     invalidateForm.value = { subject: '', predicate: '', object: '' }
     await loadAll()

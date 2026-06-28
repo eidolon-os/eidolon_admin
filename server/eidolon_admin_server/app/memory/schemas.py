@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-# -- Users --------------------------------------------------------------------
+# -- Realms -------------------------------------------------------------------
 
 
 class ConsolidatorStatus(BaseModel):
@@ -35,10 +35,14 @@ class ConsolidatorUpdateRequest(BaseModel):
     min_confidence: float = Field(ge=0.0, le=1.0, default=0.6)
 
 
-class UserDetail(BaseModel):
-    user_id: str
+class RealmDetail(BaseModel):
+    memory_realm_id: str
+    owner_id: str
+    companion_id: str
     port: int
     enabled: bool
+    engine: str = "mempalace"
+    status: str = "active"
     palace_path: str = ""
     mcp_http_url: str = ""
     agent_reachable: bool = False
@@ -53,28 +57,15 @@ class UserDetail(BaseModel):
     runner_status: dict[str, Any] | None = None
 
 
-class UsersListResponse(BaseModel):
-    users_source: str
-    steward_mode: str = ""
-    default_user_id: str = ""
-    users: list[UserDetail] = Field(default_factory=list)
-
-
-class UserCreateRequest(BaseModel):
-    id: str = Field(..., min_length=1, max_length=64)
-    port: int = Field(..., ge=1024, le=65535)
-    enabled: bool = True
-    palace_path: str = ""
-
-
-class UserMutateResponse(BaseModel):
-    user: UserDetail
-    message: str
+class RealmsListResponse(BaseModel):
+    realms_source: str
+    default_memory_realm_id: str = ""
+    realms: list[RealmDetail] = Field(default_factory=list)
 
 
 class RebuildIndexJob(BaseModel):
     job_id: str
-    user_id: str
+    memory_realm_id: str
     status: str
     created_at: str
     started_at: str | None = None
@@ -101,8 +92,7 @@ class MemoryListResponse(BaseModel):
 
 
 class MemoryCreateRequest(BaseModel):
-    user_id: str
-    companion_id: str | None = None
+    memory_realm_id: str
     wing: str = "Wing_Profile"
     room: str = "profile_core"
     text: str = Field(..., min_length=1)
@@ -209,8 +199,7 @@ class KgTimelineResponse(BaseModel):
 
 
 class KgTripleAddRequest(BaseModel):
-    user_id: str
-    companion_id: str | None = None
+    memory_realm_id: str
     subject: str = Field(..., min_length=1)
     predicate: str = Field(..., min_length=1)
     object: str = Field(..., min_length=1)
@@ -221,8 +210,7 @@ class KgTripleAddRequest(BaseModel):
 
 
 class KgInvalidateRequest(BaseModel):
-    user_id: str
-    companion_id: str | None = None
+    memory_realm_id: str
     subject: str = Field(..., min_length=1)
     predicate: str = Field(..., min_length=1)
     object: str = Field(..., min_length=1)

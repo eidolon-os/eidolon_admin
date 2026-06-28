@@ -27,8 +27,8 @@ def _triples(data: Any) -> list[KgTripleOut]:
 
 
 @router.get("/kg/predicates", response_model=KgPredicates)
-async def kg_predicates(user_id: str = Query(...)) -> KgPredicates:
-    result = await call_tool(user_id, "eidolon_memory_kg_predicates")
+async def kg_predicates(memory_realm_id: str = Query(...)) -> KgPredicates:
+    result = await call_tool(memory_realm_id, "eidolon_memory_kg_predicates")
     if isinstance(result, dict):
         return KgPredicates(
             predicates=list(result.get("predicates") or []),
@@ -38,8 +38,8 @@ async def kg_predicates(user_id: str = Query(...)) -> KgPredicates:
 
 
 @router.get("/kg/stats", response_model=KgStats)
-async def kg_stats(user_id: str = Query(...)) -> KgStats:
-    result = await call_tool(user_id, "eidolon_memory_kg_stats")
+async def kg_stats(memory_realm_id: str = Query(...)) -> KgStats:
+    result = await call_tool(memory_realm_id, "eidolon_memory_kg_stats")
     if isinstance(result, dict):
         return KgStats.model_validate(result)
     return KgStats()
@@ -48,7 +48,7 @@ async def kg_stats(user_id: str = Query(...)) -> KgStats:
 @router.get("/kg/entity/{name}", response_model=KgEntityResponse)
 async def kg_entity(
     name: str,
-    user_id: str = Query(...),
+    memory_realm_id: str = Query(...),
     as_of: str | None = None,
     direction: str = Query("outgoing", pattern="^(outgoing|incoming|both)$"),
     include_sensitive: bool = False,
@@ -60,14 +60,14 @@ async def kg_entity(
     }
     if as_of:
         args["as_of"] = as_of
-    result = await call_tool(user_id, "eidolon_memory_kg_query_entity", args)
+    result = await call_tool(memory_realm_id, "eidolon_memory_kg_query_entity", args)
     triples = _triples(result.get("triples") if isinstance(result, dict) else result)
     return KgEntityResponse(entity=name, triples=triples)
 
 
 @router.get("/kg/timeline", response_model=KgTimelineResponse)
 async def kg_timeline(
-    user_id: str = Query(...),
+    memory_realm_id: str = Query(...),
     entity_name: str | None = None,
     since: str | None = None,
     until: str | None = None,
@@ -81,6 +81,6 @@ async def kg_timeline(
         args["since"] = since
     if until:
         args["until"] = until
-    result = await call_tool(user_id, "eidolon_memory_kg_timeline", args)
+    result = await call_tool(memory_realm_id, "eidolon_memory_kg_timeline", args)
     triples = _triples(result.get("triples") if isinstance(result, dict) else result)
     return KgTimelineResponse(triples=triples)

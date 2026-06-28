@@ -9,8 +9,8 @@ const ownersStore = useOwnersStore()
 const route = useRoute()
 const router = useRouter()
 
-const MemoryUserSelector = defineAsyncComponent(
-  () => import('@/modules/memory/components/UserSelector.vue'),
+const MemoryRealmSelector = defineAsyncComponent(
+  () => import('@/modules/memory/components/RealmSelector.vue'),
 )
 const OwnerSelector = defineAsyncComponent(
   () => import('@/modules/owners/OwnerSelector.vue'),
@@ -403,7 +403,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
         </button>
         <div class="header-actions">
           <OwnerSelector />
-          <MemoryUserSelector v-if="isMemoryRoute" />
+          <MemoryRealmSelector v-if="isMemoryRoute" />
           <el-button size="small" @click="store.load(true)">刷新菜单</el-button>
         </div>
       </el-header>

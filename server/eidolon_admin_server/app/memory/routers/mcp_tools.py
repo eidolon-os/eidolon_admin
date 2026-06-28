@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/mcp/tools", response_model=McpToolsResponse)
-async def mcp_tools(user_id: str = Query(...)) -> McpToolsResponse:
-    raw = await list_tools(user_id)
+async def mcp_tools(memory_realm_id: str = Query(...)) -> McpToolsResponse:
+    raw = await list_tools(memory_realm_id)
     tools = [McpToolOut.model_validate(t) for t in raw]
     return McpToolsResponse(tools=tools, count=len(tools))

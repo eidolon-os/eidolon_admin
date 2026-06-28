@@ -2,10 +2,10 @@
 import { ref, watch } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { searchMemories, type MemoryRecord } from '@/api/memory'
-import { useMemoryUserStore } from '@/stores/memoryUser'
+import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
-const store = useMemoryUserStore()
+const store = useMemoryRealmStore()
 const query = ref('')
 const topK = ref(8)
 const wing = ref('')

@@ -37,6 +37,20 @@ def _write_eidolon_data(tmp_path: Path, *, missing: bool = False) -> Path:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE memory_realms (
+                realm_id TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                companion_id TEXT NOT NULL,
+                engine TEXT NOT NULL DEFAULT 'mempalace',
+                engine_config_json TEXT NOT NULL DEFAULT '{}',
+                policy_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         conn.executemany(
             """
             INSERT INTO owners (
@@ -64,15 +78,26 @@ def _write_eidolon_data(tmp_path: Path, *, missing: bool = False) -> Path:
                 ),
             ],
         )
+        conn.executemany(
+            """
+            INSERT INTO memory_realms (
+                realm_id, owner_id, companion_id, engine, engine_config_json, policy_json, status
+            ) VALUES (?, ?, ?, 'mempalace', '{}', '{}', ?)
+            """,
+            [
+                ("r:alice:default", "alice", "default", "active"),
+                ("r:bob:default", "bob", "default", "active"),
+                ("r:carol:default", "disabled-carol", "default", "active"),
+            ],
+        )
     conn.close()
     return db_path
 
 
-async def test_user_id_from_cmdline_requires_memory_space_id():
-    f = runners_mod._user_id_from_cmdline
-    assert f(["x", "--memory-space-id", "default.alice.default", "--port", "8030"]) == "alice"
-    assert f(["x", "--memory-space-id=default.bob.default"]) == "bob"
-    assert f(["x", "--memory-space-id=alice"]) is None
+async def test_memory_realm_id_from_cmdline_preserves_opaque_space_id():
+    f = runners_mod._memory_realm_id_from_cmdline
+    assert f(["x", "--memory-space-id", "r:alice:default", "--port", "8030"]) == "r:alice:default"
+    assert f(["x", "--memory-space-id=default.bob.default"]) == "default.bob.default"
     assert f(["x", "--port", "8030"]) is None
 
 
@@ -110,17 +135,17 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["users_source_exists"] is True
-    assert data["users_source"].endswith("eidolon.sqlite3")
-    assert data["users_source_type"] == "eidolon_data"
-    ids = [r["user_id"] for r in data["runners"]]
-    assert ids == ["alice", "bob", "disabled-carol"]
+    assert data["realms_source_exists"] is True
+    assert data["realms_source"].endswith("eidolon.sqlite3")
+    assert data["realms_source_type"] == "eidolon_data"
+    ids = [r["memory_realm_id"] for r in data["runners"]]
+    assert ids == ["r:alice:default", "r:bob:default", "r:carol:default"]
     # None of them are running.
     assert all(r["pid"] is None and r["running"] is False for r in data["runners"])
     assert all(r["consolidator"]["running"] is False for r in data["runners"])
     assert data["consolidator_orphans"] == []
     # Disabled user is not probed.
-    carol = next(r for r in data["runners"] if r["user_id"] == "disabled-carol")
+    carol = next(r for r in data["runners"] if r["memory_realm_id"] == "r:carol:default")
     assert carol["listening"] is False
     assert data["orphans"] == []
 
@@ -159,7 +184,7 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
 
     fake_proc = FakeProc(pid=99001, create_time=0.0)
     # Map includes one orphan user not in the registry.
-    fake_map = {"alice": fake_proc, "ghost": FakeProc(pid=99002, create_time=0.0)}
+    fake_map = {"r:alice:default": fake_proc, "ghost": FakeProc(pid=99002, create_time=0.0)}
 
     with (
         patch.object(runners_mod, "find_agent_processes", return_value=fake_map),
@@ -169,10 +194,10 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
             resp = await ac.get("/api/memory/runners")
 
     data = resp.json()
-    alice = next(r for r in data["runners"] if r["user_id"] == "alice")
+    alice = next(r for r in data["runners"] if r["memory_realm_id"] == "r:alice:default")
     assert alice["pid"] == 99001
     assert alice["running"] is True
-    assert [o["user_id"] for o in data["orphans"]] == ["ghost"]
+    assert [o["memory_realm_id"] for o in data["orphans"]] == ["ghost"]
 
 
 async def test_endpoint_when_eidolon_data_missing(tmp_path, monkeypatch):
@@ -189,5 +214,5 @@ async def test_endpoint_when_eidolon_data_missing(tmp_path, monkeypatch):
 
     data = resp.json()
     assert resp.status_code == 200
-    assert data["users_source_exists"] is False
+    assert data["realms_source_exists"] is False
     assert data["runners"] == []

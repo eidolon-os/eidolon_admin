@@ -83,7 +83,7 @@ def _project_triples_to_graph(
 
 @router.get("/graph/knowledge", response_model=GraphSnapshot)
 async def knowledge_graph(
-    user_id: str = Query(...),
+    memory_realm_id: str = Query(...),
     max_triples: int = Query(400, ge=1, le=5000),
     max_nodes: int = Query(400, ge=1, le=5000),
     current_only: bool = True,
@@ -97,7 +97,7 @@ async def knowledge_graph(
     }
     if entity:
         args["entity"] = entity
-    payload = await call_tool(user_id, "eidolon_memory_kg_snapshot", args)
+    payload = await call_tool(memory_realm_id, "eidolon_memory_kg_snapshot", args)
     if not isinstance(payload, dict):
         return GraphSnapshot(available=False, reason="unexpected payload shape")
     triples = payload.get("triples") or []
@@ -118,13 +118,13 @@ async def knowledge_graph(
 
 @router.get("/graph/palace", response_model=GraphSnapshot)
 async def palace_graph(
-    user_id: str = Query(...),
+    memory_realm_id: str = Query(...),
     max_nodes: int = Query(120, ge=1, le=2000),
     max_edges: int = Query(200, ge=1, le=5000),
 ) -> GraphSnapshot:
     # palace_graph tool already returns {nodes, edges, ...} directly.
     payload = await call_tool(
-        user_id,
+        memory_realm_id,
         "eidolon_memory_palace_graph",
         {"max_nodes": max_nodes, "max_edges": max_edges},
     )

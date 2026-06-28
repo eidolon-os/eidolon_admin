@@ -18,9 +18,13 @@ export interface ConsolidatorRunnerInfo {
 }
 
 export interface RunnerInfo {
-  user_id: string
+  memory_realm_id: string
+  owner_id: string
+  companion_id: string
   port: number
   enabled: boolean
+  engine: string
+  status: string
   palace_path: string
   running: boolean
   listening: boolean
@@ -33,7 +37,7 @@ export interface RunnerInfo {
 }
 
 export interface OrphanInfo {
-  user_id: string
+  memory_realm_id: string
   role?: 'agent' | 'consolidator'
   pid: number | null
   uptime_sec: number | null
@@ -42,9 +46,9 @@ export interface OrphanInfo {
 }
 
 export interface RunnersResponse {
-  users_source: string
-  users_source_type?: string
-  users_source_exists: boolean
+  realms_source: string
+  realms_source_type?: string
+  realms_source_exists: boolean
   runners: RunnerInfo[]
   orphans: OrphanInfo[]
   consolidator_orphans: OrphanInfo[]
@@ -55,7 +59,7 @@ export async function listRunners(): Promise<RunnersResponse> {
   return data
 }
 
-// ── Users ────────────────────────────────────────────────────────────────────
+// ── Realms ───────────────────────────────────────────────────────────────────
 
 export interface ConsolidatorStatus {
   configured: boolean
@@ -70,10 +74,14 @@ export interface ConsolidatorStatus {
   log_path: string
 }
 
-export interface MemoryUserDetail {
-  user_id: string
+export interface MemoryRealmDetail {
+  memory_realm_id: string
+  owner_id: string
+  companion_id: string
   port: number
   enabled: boolean
+  engine: string
+  status: string
   palace_path: string
   mcp_http_url: string
   agent_reachable: boolean
@@ -88,36 +96,15 @@ export interface MemoryUserDetail {
   runner_status: Record<string, any> | null
 }
 
-export interface ConsolidatorUpdateBody {
-  enabled: boolean
-  interval_hours?: number
-  window_days?: number
-  min_drawers?: number
-  min_confidence?: number
-}
-
-export interface UsersListResponse {
-  users_source: string
-  steward_mode: string
-  default_user_id: string
-  users: MemoryUserDetail[]
-}
-
-export interface UserCreateBody {
-  id: string
-  port: number
-  enabled?: boolean
-  palace_path?: string
-}
-
-export interface UserMutateResponse {
-  user: MemoryUserDetail
-  message: string
+export interface RealmsListResponse {
+  realms_source: string
+  default_memory_realm_id: string
+  realms: MemoryRealmDetail[]
 }
 
 export interface RebuildIndexJob {
   job_id: string
-  user_id: string
+  memory_realm_id: string
   status: 'pending' | 'running' | 'succeeded' | 'failed' | string
   created_at: string
   started_at: string | null
@@ -131,52 +118,14 @@ export interface RebuildIndexJobsResponse {
   jobs: RebuildIndexJob[]
 }
 
-export async function listMemoryUsers(): Promise<UsersListResponse> {
-  const { data } = await client.get<UsersListResponse>('/memory/users')
+export async function listMemoryRealms(): Promise<RealmsListResponse> {
+  const { data } = await client.get<RealmsListResponse>('/memory/realms')
   return data
 }
 
-export async function createMemoryUser(body: UserCreateBody): Promise<UserMutateResponse> {
-  const { data } = await client.post<UserMutateResponse>('/memory/users', body)
-  return data
-}
-
-export async function setMemoryUserEnabled(
-  userId: string,
-  enabled: boolean,
-): Promise<UserMutateResponse> {
-  const { data } = await client.post<UserMutateResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/enable`,
-    null,
-    { params: { enabled } },
-  )
-  return data
-}
-
-export async function startMemoryUser(userId: string): Promise<UserMutateResponse> {
-  const { data } = await client.post<UserMutateResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/start`,
-  )
-  return data
-}
-
-export async function stopMemoryUser(userId: string): Promise<UserMutateResponse> {
-  const { data } = await client.post<UserMutateResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/stop`,
-  )
-  return data
-}
-
-export async function initMemoryUserPalace(userId: string): Promise<UserMutateResponse> {
-  const { data } = await client.post<UserMutateResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/init`,
-  )
-  return data
-}
-
-export async function rebuildMemoryUserIndex(userId: string): Promise<RebuildIndexJob> {
+export async function rebuildMemoryRealmIndex(realmId: string): Promise<RebuildIndexJob> {
   const { data } = await client.post<RebuildIndexJob>(
-    `/memory/users/${encodeURIComponent(userId)}/rebuild-index`,
+    `/memory/realms/${encodeURIComponent(realmId)}/rebuild-index`,
   )
   return data
 }
@@ -189,28 +138,10 @@ export async function getMemoryRebuildIndexJob(jobId: string): Promise<RebuildIn
 }
 
 export async function listMemoryRebuildIndexJobs(
-  userId: string,
+  realmId: string,
 ): Promise<RebuildIndexJobsResponse> {
   const { data } = await client.get<RebuildIndexJobsResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/rebuild-index`,
-  )
-  return data
-}
-
-export async function updateMemoryUserConsolidator(
-  userId: string,
-  body: ConsolidatorUpdateBody,
-): Promise<UserMutateResponse> {
-  const { data } = await client.put<UserMutateResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/consolidator`,
-    body,
-  )
-  return data
-}
-
-export async function removeMemoryUserConsolidator(userId: string): Promise<UserMutateResponse> {
-  const { data } = await client.delete<UserMutateResponse>(
-    `/memory/users/${encodeURIComponent(userId)}/consolidator`,
+    `/memory/realms/${encodeURIComponent(realmId)}/rebuild-index`,
   )
   return data
 }
@@ -236,7 +167,7 @@ export interface MemoryListResponse {
 }
 
 export interface MemoryCreateBody {
-  user_id: string
+  memory_realm_id: string
   wing?: string
   room?: string
   text: string
@@ -244,26 +175,26 @@ export interface MemoryCreateBody {
 }
 
 export async function searchMemories(
-  userId: string,
+  realmId: string,
   query: string,
   topK = 8,
   wing?: string,
   room?: string,
 ): Promise<MemorySearchResponse> {
   const { data } = await client.get<MemorySearchResponse>('/memory/memories/search', {
-    params: { user_id: userId, query, top_k: topK, wing, room },
+    params: { memory_realm_id: realmId, query, top_k: topK, wing, room },
   })
   return data
 }
 
 export async function listMemories(
-  userId: string,
+  realmId: string,
   limit = 100,
   offset = 0,
   includePrivate = false,
 ): Promise<MemoryListResponse> {
   const { data } = await client.get<MemoryListResponse>('/memory/memories', {
-    params: { user_id: userId, limit, offset, include_private: includePrivate },
+    params: { memory_realm_id: realmId, limit, offset, include_private: includePrivate },
   })
   return data
 }
@@ -276,12 +207,16 @@ export async function createMemory(body: MemoryCreateBody) {
 // ── Hierarchy ───────────────────────────────────────────────────────────────
 
 export async function getHierarchy(
-  userId: string,
+  realmId: string,
   maxRecords = 8000,
   maxDrawersPerRoom = 48,
 ): Promise<{ data: Record<string, any> }> {
   const { data } = await client.get('/memory/hierarchy', {
-    params: { user_id: userId, max_records: maxRecords, max_drawers_per_room: maxDrawersPerRoom },
+    params: {
+      memory_realm_id: realmId,
+      max_records: maxRecords,
+      max_drawers_per_room: maxDrawersPerRoom,
+    },
   })
   return data
 }
@@ -314,7 +249,7 @@ export interface GraphSnapshot {
 }
 
 export async function getKnowledgeGraph(
-  userId: string,
+  realmId: string,
   maxTriples = 400,
   currentOnly = true,
   entity?: string,
@@ -322,7 +257,7 @@ export async function getKnowledgeGraph(
 ): Promise<GraphSnapshot> {
   const { data } = await client.get<GraphSnapshot>('/memory/graph/knowledge', {
     params: {
-      user_id: userId,
+      memory_realm_id: realmId,
       max_triples: maxTriples,
       current_only: currentOnly,
       entity,
@@ -333,12 +268,12 @@ export async function getKnowledgeGraph(
 }
 
 export async function getPalaceGraph(
-  userId: string,
+  realmId: string,
   maxNodes = 120,
   maxEdges = 200,
 ): Promise<GraphSnapshot> {
   const { data } = await client.get<GraphSnapshot>('/memory/graph/palace', {
-    params: { user_id: userId, max_nodes: maxNodes, max_edges: maxEdges },
+    params: { memory_realm_id: realmId, max_nodes: maxNodes, max_edges: maxEdges },
   })
   return data
 }
@@ -375,35 +310,40 @@ export interface KgWriteResult {
   triple_id: string | null
 }
 
-export async function getKgPredicates(userId: string): Promise<KgPredicates> {
+export async function getKgPredicates(realmId: string): Promise<KgPredicates> {
   const { data } = await client.get<KgPredicates>('/memory/kg/predicates', {
-    params: { user_id: userId },
+    params: { memory_realm_id: realmId },
   })
   return data
 }
 
-export async function getKgStats(userId: string): Promise<KgStats> {
+export async function getKgStats(realmId: string): Promise<KgStats> {
   const { data } = await client.get<KgStats>('/memory/kg/stats', {
-    params: { user_id: userId },
+    params: { memory_realm_id: realmId },
   })
   return data
 }
 
 export async function getKgEntity(
-  userId: string,
+  realmId: string,
   name: string,
   direction: 'outgoing' | 'incoming' | 'both' = 'both',
   asOf?: string,
   includeSensitive = false,
 ): Promise<{ entity: string; triples: KgTripleOut[] }> {
   const { data } = await client.get(`/memory/kg/entity/${encodeURIComponent(name)}`, {
-    params: { user_id: userId, direction, as_of: asOf, include_sensitive: includeSensitive },
+    params: {
+      memory_realm_id: realmId,
+      direction,
+      as_of: asOf,
+      include_sensitive: includeSensitive,
+    },
   })
   return data
 }
 
 export async function getKgTimeline(
-  userId: string,
+  realmId: string,
   entityName?: string,
   since?: string,
   until?: string,
@@ -412,7 +352,7 @@ export async function getKgTimeline(
 ): Promise<{ triples: KgTripleOut[] }> {
   const { data } = await client.get('/memory/kg/timeline', {
     params: {
-      user_id: userId,
+      memory_realm_id: realmId,
       entity_name: entityName,
       since,
       until,
@@ -424,7 +364,7 @@ export async function getKgTimeline(
 }
 
 export interface KgTripleAddBody {
-  user_id: string
+  memory_realm_id: string
   subject: string
   predicate: string
   object: string
@@ -439,7 +379,7 @@ export async function addKgTriple(body: KgTripleAddBody): Promise<KgWriteResult>
 }
 
 export interface KgInvalidateBody {
-  user_id: string
+  memory_realm_id: string
   subject: string
   predicate: string
   object: string
@@ -467,9 +407,9 @@ export interface RecallResponse {
   records: MemoryRecord[]
 }
 
-export async function recall(userId: string, body: RecallBody): Promise<RecallResponse> {
+export async function recall(realmId: string, body: RecallBody): Promise<RecallResponse> {
   const { data } = await client.post<RecallResponse>('/memory/recall', body, {
-    params: { user_id: userId },
+    params: { memory_realm_id: realmId },
   })
   return data
 }
@@ -487,9 +427,9 @@ export interface McpToolsResponse {
   count: number
 }
 
-export async function listMcpTools(userId: string): Promise<McpToolsResponse> {
+export async function listMcpTools(realmId: string): Promise<McpToolsResponse> {
   const { data } = await client.get<McpToolsResponse>('/memory/mcp/tools', {
-    params: { user_id: userId },
+    params: { memory_realm_id: realmId },
   })
   return data
 }

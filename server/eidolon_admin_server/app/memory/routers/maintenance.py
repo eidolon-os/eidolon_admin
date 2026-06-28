@@ -5,22 +5,27 @@ HTTP API, so the browser talks only to eidolon_admin.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from fastapi import APIRouter, HTTPException, Request
 from eidolon_sdk.core.http import ServiceUnavailable, ServiceUpstreamError
 
-from ...registry.users.repository import MemoryUserClient
-from ..space import memory_space_id_for_user
+from ..space import memory_space_id_for_realm
 from ..schemas import RebuildIndexJob, RebuildIndexJobsResponse
 
 router = APIRouter()
 
 
-def _memory_client(request: Request) -> MemoryUserClient:
-    client: MemoryUserClient | None = getattr(
-        request.app.state, "memory_user_client", None
-    )
+class MemoryMaintenanceClient(Protocol):
+    async def rebuild_index(self, memory_realm_id: str) -> dict[str, Any]: ...
+
+    async def get_rebuild_index_job(self, job_id: str) -> dict[str, Any]: ...
+
+    async def list_rebuild_index_jobs(self, memory_realm_id: str) -> dict[str, Any]: ...
+
+
+def _memory_client(request: Request) -> MemoryMaintenanceClient:
+    client = getattr(request.app.state, "memory_supervisor_client", None)
     if client is None:
         raise HTTPException(
             503,
@@ -35,13 +40,13 @@ def _map_upstream(exc: ServiceUpstreamError) -> HTTPException:
 
 
 @router.post(
-    "/users/{user_id}/rebuild-index",
+    "/realms/{memory_realm_id}/rebuild-index",
     response_model=RebuildIndexJob,
     status_code=202,
 )
-async def rebuild_user_index(user_id: str, request: Request) -> RebuildIndexJob:
+async def rebuild_realm_index(memory_realm_id: str, request: Request) -> RebuildIndexJob:
     try:
-        space_id = await memory_space_id_for_user(request, user_id)
+        space_id = await memory_space_id_for_realm(request, memory_realm_id)
         return RebuildIndexJob.model_validate(
             await _memory_client(request).rebuild_index(space_id)
         )
@@ -64,15 +69,15 @@ async def get_rebuild_index_job(job_id: str, request: Request) -> RebuildIndexJo
 
 
 @router.get(
-    "/users/{user_id}/rebuild-index",
+    "/realms/{memory_realm_id}/rebuild-index",
     response_model=RebuildIndexJobsResponse,
 )
-async def list_user_rebuild_index_jobs(
-    user_id: str,
+async def list_realm_rebuild_index_jobs(
+    memory_realm_id: str,
     request: Request,
 ) -> RebuildIndexJobsResponse:
     try:
-        space_id = await memory_space_id_for_user(request, user_id)
+        space_id = await memory_space_id_for_realm(request, memory_realm_id)
         return RebuildIndexJobsResponse.model_validate(
             await _memory_client(request).list_rebuild_index_jobs(space_id)
         )

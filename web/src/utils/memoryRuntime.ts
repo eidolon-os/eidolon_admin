@@ -1,4 +1,4 @@
-import type { MemoryUserDetail } from '@/api/memory'
+import type { MemoryRealmDetail } from '@/api/memory'
 
 export type RuntimeTagType = 'success' | 'warning' | 'danger' | 'info'
 
@@ -8,12 +8,12 @@ export interface RuntimeStatus {
   hint: string
 }
 
-export function memoryAgentStatus(row: MemoryUserDetail): RuntimeStatus {
+export function memoryAgentStatus(row: MemoryRealmDetail): RuntimeStatus {
   if (!row.enabled) {
     return {
       type: 'info',
       label: 'disabled',
-      hint: 'User is disabled in admin registry.',
+      hint: 'Memory realm is disabled.',
     }
   }
 

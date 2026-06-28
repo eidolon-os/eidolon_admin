@@ -131,7 +131,6 @@ services:
       declared: [$EIDOLON_MEMORY_DISCOVERY_PORT]
     features:
       - { key: runners,   label: "Runners & Workers" }
-      - { key: users,     label: "Users" }
       - { key: memories,  label: "Memories" }
       - { key: search,    label: "Search" }
       - { key: write,     label: "Write Turn" }

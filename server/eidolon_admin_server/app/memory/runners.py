@@ -1,12 +1,12 @@
-"""Per-user memory runner and consolidator discovery.
+"""Per-realm memory runner and consolidator discovery.
 
 memory-supervisor spawns ``eidolon-memory-agent`` and (opt-in)
-``eidolon-memory-consolidator`` per enabled user in Eidolon Data.
+``eidolon-memory-consolidator`` per enabled memory realm in Eidolon Data.
 supervisord cannot see those grandchildren, so we surface them here by:
 
-1. Reading `eidolon_data`'s owners table.
+1. Reading `eidolon_data`'s memory_realms table.
 2. Scanning processes via psutil for each CLI, binding ``--memory-space-id``.
-3. TCP-probing each user's agent port.
+3. TCP-probing each realm's agent port.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from eidolon_data import load_settings
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"
 
-def users_source_path() -> Path:
+def realms_source_path() -> Path:
     return Path(load_settings().sqlite_path).expanduser().resolve()
 
 
@@ -35,9 +35,9 @@ def memory_log_dir() -> Path:
     ).expanduser()
 
 
-def child_log_path(user_id: str, kind: str = "agent") -> str:
-    """Log file path memory-supervisor uses (``{kind}_{user_id}.log``)."""
-    return str(memory_log_dir() / f"{kind}_{user_id}.log")
+def child_log_path(memory_realm_id: str, kind: str = "agent") -> str:
+    """Log file path memory-supervisor uses (``{kind}_{memory_realm_id}.log``)."""
+    return str(memory_log_dir() / f"{kind}_{memory_realm_id}.log")
 
 
 @dataclass
@@ -76,12 +76,20 @@ class ConsolidatorConfig:
 
 
 @dataclass
-class UserEntry:
-    id: str
+class RealmEntry:
+    memory_realm_id: str
+    owner_id: str
+    companion_id: str
     port: int
     enabled: bool
+    engine: str = "mempalace"
+    status: str = "active"
     palace_path: str = ""
     consolidator: ConsolidatorConfig | None = None
+
+    @property
+    def id(self) -> str:
+        return self.memory_realm_id
 
     def consolidator_configured(self) -> bool:
         return self.consolidator is not None
@@ -90,11 +98,11 @@ class UserEntry:
         return bool(self.consolidator and self.consolidator.enabled)
 
 
-def load_users() -> list[UserEntry]:
-    return _load_users_from_eidolon_data(users_source_path())
+def load_realms() -> list[RealmEntry]:
+    return _load_realms_from_eidolon_data(realms_source_path())
 
 
-def _load_users_from_eidolon_data(db_path: Path) -> list[UserEntry]:
+def _load_realms_from_eidolon_data(db_path: Path) -> list[RealmEntry]:
     if not db_path.is_file():
         return []
     try:
@@ -105,10 +113,19 @@ def _load_users_from_eidolon_data(db_path: Path) -> list[UserEntry]:
     try:
         rows = conn.execute(
             """
-            SELECT owner_id, display_name, profile_json, settings_json
-            FROM owners
-            WHERE kind = 'person'
-            ORDER BY created_at
+            SELECT
+                r.realm_id,
+                r.owner_id,
+                r.companion_id,
+                r.engine,
+                r.engine_config_json,
+                r.policy_json,
+                r.status,
+                o.profile_json AS owner_profile_json,
+                o.settings_json AS owner_settings_json
+            FROM memory_realms r
+            JOIN owners o ON o.owner_id = r.owner_id
+            ORDER BY r.created_at
             """
         ).fetchall()
     except sqlite3.Error:
@@ -116,21 +133,24 @@ def _load_users_from_eidolon_data(db_path: Path) -> list[UserEntry]:
     finally:
         conn.close()
 
-    entries: list[UserEntry] = []
+    entries: list[RealmEntry] = []
     for row in rows:
-        profile = _json_dict(row["profile_json"])
-        settings = _json_dict(row["settings_json"])
+        profile = _json_dict(row["owner_profile_json"])
+        settings = _json_dict(row["owner_settings_json"])
+        engine_config = _json_dict(row["engine_config_json"])
         registry = profile.get("registry") if isinstance(profile.get("registry"), dict) else {}
-        user_id = str(registry.get("user_id") or row["owner_id"])
-        if user_id.startswith("tenant:"):
-            continue
+        enabled = bool(registry.get("enabled", True)) and str(row["status"] or "") == "active"
         consolidator = ConsolidatorConfig.from_yaml(settings.get("consolidator")) or ConsolidatorConfig()
         entries.append(
-            UserEntry(
-                id=user_id,
-                port=int(settings.get("memory_port") or 0),
-                enabled=bool(registry.get("enabled", True)),
-                palace_path=str(settings.get("palace_path") or ""),
+            RealmEntry(
+                memory_realm_id=str(row["realm_id"]),
+                owner_id=str(row["owner_id"]),
+                companion_id=str(row["companion_id"]),
+                port=int(engine_config.get("memory_port") or settings.get("memory_port") or 0),
+                enabled=enabled,
+                engine=str(row["engine"] or "mempalace"),
+                status=str(row["status"] or "active"),
+                palace_path=str(engine_config.get("palace_path") or settings.get("palace_path") or ""),
                 consolidator=consolidator,
             )
         )
@@ -149,31 +169,18 @@ def _json_dict(value: object) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _owner_user_id(value: str | None) -> str | None:
-    """Reduce a memory_space_id to the owner_user_id admin keys by.
-
-    Runners launch with ``--memory-space-id <tenant>.<owner_user>.<persona>``;
-    extract the middle segment so it maps back to admin's registry user.
-    """
-    if not value:
-        return None
-    parts = value.split(".")
-    if len(parts) == 3:
-        return parts[1]
-    return None
-
-
-def _user_id_from_cmdline(cmd: list[str]) -> str | None:
+def _memory_realm_id_from_cmdline(cmd: list[str]) -> str | None:
+    """Return the opaque ``--memory-space-id`` value from a worker CLI."""
     for i, token in enumerate(cmd):
         if token == "--memory-space-id" and i + 1 < len(cmd):
-            return _owner_user_id(cmd[i + 1])
+            return cmd[i + 1]
         if token.startswith("--memory-space-id="):
-            return _owner_user_id(token.split("=", 1)[1])
+            return token.split("=", 1)[1]
     return None
 
 
 def find_processes_by_cli(binary_name: str) -> dict[str, psutil.Process]:
-    """Map user_id -> Process for every live subprocess matching ``binary_name``."""
+    """Map memory_realm_id -> Process for every live subprocess matching ``binary_name``."""
     out: dict[str, psutil.Process] = {}
     for proc in psutil.process_iter(attrs=["cmdline", "create_time"]):
         try:
@@ -184,10 +191,10 @@ def find_processes_by_cli(binary_name: str) -> dict[str, psutil.Process]:
             continue
         if binary_name not in " ".join(cmd):
             continue
-        uid = _user_id_from_cmdline(cmd)
-        if not uid:
+        realm_id = _memory_realm_id_from_cmdline(cmd)
+        if not realm_id:
             continue
-        out[uid] = proc
+        out[realm_id] = proc
     return out
 
 
@@ -245,7 +252,7 @@ def _proc_meta(proc: psutil.Process | None) -> dict[str, Any]:
 
 
 def _consolidator_row(
-    u: UserEntry,
+    u: RealmEntry,
     proc: psutil.Process | None,
 ) -> dict[str, Any]:
     meta = _proc_meta(proc)
@@ -264,20 +271,24 @@ def _consolidator_row(
 
 
 async def list_runners() -> dict[str, Any]:
-    source_path = users_source_path()
-    users = load_users()
+    source_path = realms_source_path()
+    realms = load_realms()
     pid_map = find_agent_processes()
     cons_map = find_consolidator_processes()
 
-    async def _one(u: UserEntry) -> dict[str, Any]:
+    async def _one(u: RealmEntry) -> dict[str, Any]:
         proc = pid_map.get(u.id)
         listening = await _probe_tcp("127.0.0.1", u.port) if u.enabled else False
         meta = _proc_meta(proc)
         running = proc is not None
         return {
-            "user_id": u.id,
+            "memory_realm_id": u.memory_realm_id,
+            "owner_id": u.owner_id,
+            "companion_id": u.companion_id,
             "port": u.port,
             "enabled": u.enabled,
+            "engine": u.engine,
+            "status": u.status,
             "palace_path": u.palace_path,
             "running": running,
             "listening": listening,
@@ -286,25 +297,25 @@ async def list_runners() -> dict[str, Any]:
             **meta,
         }
 
-    results = await asyncio.gather(*(_one(u) for u in users))
+    results = await asyncio.gather(*(_one(u) for u in realms))
 
-    known_ids = {u.id for u in users}
+    known_ids = {u.id for u in realms}
     orphans = []
-    for uid, proc in pid_map.items():
-        if uid in known_ids:
+    for realm_id, proc in pid_map.items():
+        if realm_id in known_ids:
             continue
-        orphans.append({"user_id": uid, "role": "agent", **_proc_meta(proc)})
+        orphans.append({"memory_realm_id": realm_id, "role": "agent", **_proc_meta(proc)})
 
     cons_orphans = []
-    for uid, proc in cons_map.items():
-        if uid in known_ids:
+    for realm_id, proc in cons_map.items():
+        if realm_id in known_ids:
             continue
-        cons_orphans.append({"user_id": uid, "role": "consolidator", **_proc_meta(proc)})
+        cons_orphans.append({"memory_realm_id": realm_id, "role": "consolidator", **_proc_meta(proc)})
 
     return {
-        "users_source": str(source_path),
-        "users_source_type": "eidolon_data",
-        "users_source_exists": source_path.exists(),
+        "realms_source": str(source_path),
+        "realms_source_type": "eidolon_data",
+        "realms_source_exists": source_path.exists(),
         "runners": results,
         "orphans": orphans,
         "consolidator_orphans": cons_orphans,
