@@ -23,6 +23,8 @@ export interface MemoryRecallSummary {
 }
 
 export interface MemoryWriteSummary {
+  trace_kind: string | null
+  durable_result: string | null
   disposition: string | null
   reason: string | null
   fanout_allowed: boolean
@@ -58,6 +60,8 @@ export interface DevelopmentGuardSummary {
     shadow_dropped_kinds: string[]
   }
   memory_write_policy: {
+    trace_kind: string | null
+    durable_result: string | null
     mode: string | null
     shadow_only: boolean
     fanout_allowed: boolean
@@ -119,6 +123,8 @@ export interface MemoryAuditRow {
   owner_id: string
   companion_id: string
   started_at: string
+  trace_kind: string | null
+  durable_result: string | null
   disposition: string | null
   reason: string | null
   policy_version: string | null

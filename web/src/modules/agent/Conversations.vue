@@ -376,7 +376,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
               </span>
             </div>
             <div class="obs-item">
-              <span class="lbl">memory write</span>
+              <span class="lbl">write intent</span>
               <span class="val mono">
                 {{ detail.observability_summary.memory_write.disposition || '—' }}
                 <template v-if="!detail.observability_summary.memory_write.fanout_allowed">
@@ -474,9 +474,9 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
     <section class="audit eid-panel eid-panel-pad">
       <div class="audit-head">
         <div>
-          <h3>Memory audit</h3>
+          <h3>Memory intent audit</h3>
           <p class="muted">
-            本地 turn trace 中的 memory 写入候选，只展示 disposition / reason，不展示消息正文。
+            本地 turn trace 中的 memory fanout intent，不代表 durable memory worker 最终写入结果。
           </p>
         </div>
         <el-button :icon="Refresh" :loading="auditLoading" size="small" @click="refreshMemoryAudit">
@@ -504,7 +504,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
             <span class="mono">{{ row.companion_id }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="disposition" width="190">
+        <el-table-column label="intent" width="190">
           <template #default="{ row }">
             <el-tag :type="auditTagType(row)" size="small">
               {{ row.disposition || '—' }}
@@ -537,7 +537,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
         </el-table-column>
       </el-table>
       <div v-if="!auditLoading && auditRows.length === 0" class="empty audit-empty">
-        当前过滤条件下没有 memory 写入候选。
+        当前过滤条件下没有 memory fanout intent。
       </div>
     </section>
   </div>

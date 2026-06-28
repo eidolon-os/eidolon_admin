@@ -51,6 +51,8 @@ describe('api/conversations.ts', () => {
             owner_id: 'owner-1',
             companion_id: 'companion-1',
             started_at: '2026-06-04T10:00:00Z',
+            trace_kind: 'memory_write_intent',
+            durable_result: 'async_memory_worker',
             disposition: 'semantic_upsert',
             reason: 'preference',
             fanout_allowed: true,
@@ -75,6 +77,7 @@ describe('api/conversations.ts', () => {
       },
     })
     expect(result.rows[0].disposition).toBe('semantic_upsert')
+    expect(result.rows[0].trace_kind).toBe('memory_write_intent')
     expect(result.rows[0].fanout_allowed).toBe(true)
   })
 
@@ -124,6 +127,8 @@ describe('api/conversations.ts', () => {
             context_injected: true,
           },
           memory_write: {
+            trace_kind: 'memory_write_intent',
+            durable_result: 'async_memory_worker',
             disposition: 'semantic_upsert',
             reason: 'preference',
             fanout_allowed: true,
@@ -156,6 +161,8 @@ describe('api/conversations.ts', () => {
               shadow_dropped_kinds: [],
             },
             memory_write_policy: {
+              trace_kind: 'memory_write_intent',
+              durable_result: 'async_memory_worker',
               mode: 'enabled',
               shadow_only: false,
               fanout_allowed: true,
@@ -180,6 +187,7 @@ describe('api/conversations.ts', () => {
     expect(getMock).toHaveBeenCalledWith('/services/agent/conversations/turns/turn%2Fwith%20space')
     expect(result.observability_summary?.context.segment_kinds).toContain('memory')
     expect(result.observability_summary?.memory_write.disposition).toBe('semantic_upsert')
+    expect(result.observability_summary?.memory_write.durable_result).toBe('async_memory_worker')
     expect(result.observability_summary?.development_guards.tool_policy.schema_strict).toBe(true)
   })
 })
