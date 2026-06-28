@@ -67,6 +67,7 @@ mkdir -p "$VAR_DIR" "$RUN_DIR" "${LOG_DIR}/admin/childlogs"
 
 # Vite dev server pid/log — admin-api's pid is owned by supervisord now.
 WEB_PID_FILE="${RUN_DIR}/eidolon-admin-gateway-web.pid"
+LEGACY_WEB_PID_FILE="${RUN_DIR}/eidolon-admin-web.pid"
 WEB_LOG_FILE="${LOG_DIR}/admin/gateway-web.log"
 
 API_HOST="${EIDOLON_ADMIN_API_HOST:-127.0.0.1}"
@@ -259,13 +260,78 @@ kill_tree() {
 
 # --- vite dev server --------------------------------------------------------
 
-web_alive() { [[ -f "$WEB_PID_FILE" ]] && kill -0 "$(cat "$WEB_PID_FILE")" 2>/dev/null; }
+proc_cwd() {
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1 || true
+}
+
+web_pid_is_ours() {
+  local pid=$1 args cwd
+  kill -0 "$pid" 2>/dev/null || return 1
+  args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+  cwd="$(proc_cwd "$pid" || true)"
+  [[ "$args" == *"vite"* || "$args" == *"vite.js"* ]] || return 1
+  [[ "$cwd" == "$WEB_DIR" || "$args" == *"$WEB_DIR"* ]]
+}
+
+web_pid_from_file() {
+  local file pid
+  for file in "$WEB_PID_FILE" "$LEGACY_WEB_PID_FILE"; do
+    [[ -f "$file" ]] || continue
+    pid="$(cat "$file" 2>/dev/null || true)"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if web_pid_is_ours "$pid"; then
+      if [[ "$file" == "$LEGACY_WEB_PID_FILE" ]]; then
+        info "adopting legacy web PID file $LEGACY_WEB_PID_FILE (PID $pid)" >&2
+        echo "$pid" >"$WEB_PID_FILE"
+      fi
+      echo "$pid"
+      return 0
+    fi
+    warn "ignoring stale web pidfile $file (PID ${pid:-?} is not this Vite server)" >&2
+  done
+  return 1
+}
+
+web_listener_pids() {
+  lsof -nP -tiTCP:"$WEB_PORT" -sTCP:LISTEN 2>/dev/null || true
+}
+
+web_pid_from_port() {
+  local pid
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    if web_pid_is_ours "$pid"; then
+      warn "web PID file missing/stale; adopting Vite listener on :$WEB_PORT (PID $pid)" >&2
+      echo "$pid" >"$WEB_PID_FILE"
+      echo "$pid"
+      return 0
+    fi
+  done < <(web_listener_pids)
+  return 1
+}
+
+web_pid() {
+  web_pid_from_file || web_pid_from_port
+}
+
+web_alive() { web_pid >/dev/null; }
+
+print_web_port_conflict() {
+  error "port $WEB_PORT is already in use by a non-admin-web process:"
+  lsof -nP -iTCP:"$WEB_PORT" -sTCP:LISTEN >&2 || true
+  error "stop that process or change EIDOLON_ADMIN_WEB_PORT, then retry"
+}
 
 do_web_start() {
   ensure_web_deps
-  if web_alive; then
-    info "web already running (PID $(cat "$WEB_PID_FILE"))"
+  local pid
+  if pid="$(web_pid)"; then
+    info "web already running (PID $pid)"
     return 0
+  fi
+  if [[ -n "$(web_listener_pids)" ]]; then
+    print_web_port_conflict
+    return 1
   fi
   info "starting web (log $WEB_LOG_FILE)"
   (
@@ -284,12 +350,12 @@ do_web_start() {
 }
 
 do_web_stop() {
-  if ! web_alive; then
+  local pid
+  if ! pid="$(web_pid)"; then
     info "web not running"
-    rm -f "$WEB_PID_FILE" 2>/dev/null || true
+    rm -f "$WEB_PID_FILE" "$LEGACY_WEB_PID_FILE" 2>/dev/null || true
     return 0
   fi
-  local pid; pid="$(cat "$WEB_PID_FILE")"
   # Vite spawns esbuild + occasional node worker children for HMR. Use
   # kill_tree so they all go down together — otherwise we leave esbuild
   # daemons holding scratch ports / file watches as orphans.
@@ -300,14 +366,15 @@ do_web_stop() {
     warn "vite tree still alive after 2s; SIGKILL whole tree"
     kill_tree "$pid" "-KILL"
   fi
-  rm -f "$WEB_PID_FILE"
+  rm -f "$WEB_PID_FILE" "$LEGACY_WEB_PID_FILE"
   info "web stopped"
 }
 
 do_web_status() {
   header "admin web (vite)"
-  if web_alive; then
-    info "running PID $(cat "$WEB_PID_FILE")"
+  local pid
+  if pid="$(web_pid)"; then
+    info "running PID $pid"
     echo "  URL: http://127.0.0.1:${WEB_PORT}/"
     echo "  Log: $WEB_LOG_FILE"
   else
