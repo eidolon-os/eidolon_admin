@@ -4,6 +4,7 @@ We mock the per-request MCP call_tool / list_tools functions — spinning a real
 MCP server in unit tests is overkill, and the per-router logic is mostly
 argument shaping + response un-wrapping which is what we actually want to test.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,6 +15,10 @@ import httpx
 import pytest
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.memory.routers.realms import _default_memory_realm_id
+from eidolon_admin_server.app.memory.runtime_route import (
+    MemoryRuntimeRoute,
+    route_for_realm,
+)
 from eidolon_admin_server.app.memory.runners import RealmEntry
 from eidolon_admin_server.app.settings import (
     AdminBindConfig,
@@ -66,13 +71,13 @@ def eidolon_data_db(tmp_path):
                     "alice",
                     "Alice",
                     json.dumps({"registry": {"enabled": True}}),
-                    json.dumps({"memory_port": 8030, "consolidator": {"enabled": True}}),
+                    json.dumps({"consolidator": {"enabled": True}}),
                 ),
                 (
                     "bob",
                     "Bob",
                     json.dumps({"registry": {"enabled": False}}),
-                    json.dumps({"memory_port": 8031, "consolidator": {"enabled": True}}),
+                    json.dumps({"consolidator": {"enabled": True}}),
                 ),
             ],
         )
@@ -108,19 +113,24 @@ def app(tmp_path, eidolon_data_db, monkeypatch):
 
 
 async def _http(app):
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://gw"
+    )
 
 
 # -- realms -------------------------------------------------------------------
 
 
 async def test_realms_list(app):
-    with patch(
-        "eidolon_admin_server.app.memory.routers.realms.probe_reachable",
-        new=AsyncMock(return_value=True),
-    ), patch(
-        "eidolon_admin_server.app.memory.routers.realms.call_tool",
-        new=AsyncMock(return_value={"palace_initialized": True, "ready": True}),
+    with (
+        patch(
+            "eidolon_admin_server.app.memory.routers.realms.probe_reachable",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "eidolon_admin_server.app.memory.routers.realms.call_tool",
+            new=AsyncMock(return_value={"palace_initialized": True, "ready": True}),
+        ),
     ):
         async with await _http(app) as ac:
             resp = await ac.get("/api/memory/realms")
@@ -128,25 +138,49 @@ async def test_realms_list(app):
     assert resp.status_code == 200
     data = resp.json()
     assert data["realms_source"].endswith("eidolon.sqlite3")
-    assert [u["memory_realm_id"] for u in data["realms"]] == ["r:alice:default", "r:bob:default"]
+    assert [u["memory_realm_id"] for u in data["realms"]] == [
+        "r:alice:default",
+        "r:bob:default",
+    ]
     alice = data["realms"][0]
     assert alice["owner_id"] == "alice"
     assert alice["companion_id"] == "default"
     assert alice["enabled"] is True
     assert alice["agent_reachable"] is True
     assert alice["palace_initialized"] is True
-    assert alice["mcp_http_url"].endswith(":8030/mcp")
+    assert alice["mcp_http_url"] == route_for_realm("r:alice:default").mcp_http_url
     # bob is disabled — no probe attempted.
     assert data["realms"][1]["agent_reachable"] is False
 
 
 async def test_realms_list_default_realm_prefers_first_enabled():
     entries = [
-        RealmEntry(memory_realm_id="r:benchmark:default", owner_id="benchmark", companion_id="default", port=8033, enabled=False),
-        RealmEntry(memory_realm_id="r:default:default", owner_id="default", companion_id="default", port=8030, enabled=True),
-        RealmEntry(memory_realm_id="r:manson:default", owner_id="manson", companion_id="default", port=8031, enabled=True),
+        _realm_entry("r:benchmark:default", "benchmark", "default", enabled=False),
+        _realm_entry("r:default:default", "default", "default", enabled=True),
+        _realm_entry("r:manson:default", "manson", "default", enabled=True),
     ]
     assert _default_memory_realm_id(entries) == "r:default:default"
+
+
+def _realm_entry(
+    memory_realm_id: str,
+    owner_id: str,
+    companion_id: str,
+    *,
+    enabled: bool,
+) -> RealmEntry:
+    return RealmEntry(
+        memory_realm_id=memory_realm_id,
+        owner_id=owner_id,
+        companion_id=companion_id,
+        runtime_route=MemoryRuntimeRoute(
+            memory_realm_id=memory_realm_id,
+            mcp_host="127.0.0.1",
+            mcp_port=8030,
+            mcp_path="/mcp",
+        ),
+        enabled=enabled,
+    )
 
 
 class _FakeMemorySupervisorClient:
@@ -200,7 +234,9 @@ async def test_rebuild_index_routes_proxy_to_memory_supervisor(app):
 
 
 async def test_memories_search(app):
-    fake = {"records": [{"key": "k1", "value": "hello", "metadata": {"similarity": 0.91}}]}
+    fake = {
+        "records": [{"key": "k1", "value": "hello", "metadata": {"similarity": 0.91}}]
+    }
     with patch(
         "eidolon_admin_server.app.memory.routers.memories.call_tool",
         new=AsyncMock(return_value=fake),
@@ -208,7 +244,11 @@ async def test_memories_search(app):
         async with await _http(app) as ac:
             resp = await ac.get(
                 "/api/memory/memories/search",
-                params={"memory_realm_id": "r:alice:default", "query": "hi", "top_k": 3},
+                params={
+                    "memory_realm_id": "r:alice:default",
+                    "query": "hi",
+                    "top_k": 3,
+                },
             )
 
     assert resp.status_code == 200
@@ -221,6 +261,26 @@ async def test_memories_search(app):
     assert args[2]["context"]["memory_space_id"] == "r:alice:default"
 
 
+async def test_memories_search_accepts_single_record_dict(app):
+    fake = {
+        "key": "k1",
+        "value": "用户的名字是曼森。",
+        "metadata": {"retrieval": "lexical_fallback"},
+    }
+    with patch(
+        "eidolon_admin_server.app.memory.routers.memories.call_tool",
+        new=AsyncMock(return_value=fake),
+    ):
+        async with await _http(app) as ac:
+            resp = await ac.get(
+                "/api/memory/memories/search",
+                params={"memory_realm_id": "r:alice:default", "query": "曼森"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json()["records"] == [fake]
+
+
 async def test_memories_list_returns_total_hint(app):
     fake = {"records": [{"key": "k1"}, {"key": "k2"}], "total_hint": 42}
     with patch(
@@ -228,7 +288,9 @@ async def test_memories_list_returns_total_hint(app):
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/memories", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/memories", params={"memory_realm_id": "r:alice:default"}
+            )
 
     data = resp.json()
     assert data["total_hint"] == 42
@@ -243,7 +305,9 @@ async def test_memories_list_tolerates_list_payload(app):
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/memories", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/memories", params={"memory_realm_id": "r:alice:default"}
+            )
 
     data = resp.json()
     assert data["records"] == fake
@@ -260,7 +324,9 @@ async def test_hierarchy_passthrough(app):
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/hierarchy", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/hierarchy", params={"memory_realm_id": "r:alice:default"}
+            )
 
     assert resp.json()["data"] == fake
 
@@ -271,10 +337,20 @@ async def test_hierarchy_passthrough(app):
 async def test_graph_knowledge(app):
     """kg_snapshot returns {stats, triples}; router projects to {nodes, edges}."""
     fake = {
-        "stats": {"entities": 2, "triples_total": 2, "triples_active": 1, "triples_invalidated": 1},
+        "stats": {
+            "entities": 2,
+            "triples_total": 2,
+            "triples_active": 1,
+            "triples_invalidated": 1,
+        },
         "triples": [
             {"subject": "alice", "predicate": "knows", "object": "bob"},
-            {"subject": "alice", "predicate": "lives_in", "object": "place:北京", "valid_to": "2026-01-01T00:00:00Z"},
+            {
+                "subject": "alice",
+                "predicate": "lives_in",
+                "object": "place:北京",
+                "valid_to": "2026-01-01T00:00:00Z",
+            },
         ],
     }
     with patch(
@@ -317,7 +393,10 @@ async def test_graph_palace(app):
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/graph/palace", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/graph/palace",
+                params={"memory_realm_id": "r:alice:default"},
+            )
 
     assert resp.json()["capped"] is True
 
@@ -332,19 +411,29 @@ async def test_kg_predicates(app):
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/kg/predicates", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/kg/predicates",
+                params={"memory_realm_id": "r:alice:default"},
+            )
 
     assert resp.json() == fake
 
 
 async def test_kg_stats(app):
-    fake = {"entities": 12, "triples_total": 50, "triples_active": 40, "triples_invalidated": 10}
+    fake = {
+        "entities": 12,
+        "triples_total": 50,
+        "triples_active": 40,
+        "triples_invalidated": 10,
+    }
     with patch(
         "eidolon_admin_server.app.memory.routers.kg.call_tool",
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/kg/stats", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/kg/stats", params={"memory_realm_id": "r:alice:default"}
+            )
 
     assert resp.json() == fake
 
@@ -383,7 +472,11 @@ async def test_kg_timeline(app):
         async with await _http(app) as ac:
             resp = await ac.get(
                 "/api/memory/kg/timeline",
-                params={"memory_realm_id": "r:alice:default", "entity_name": "alice", "limit": 50},
+                params={
+                    "memory_realm_id": "r:alice:default",
+                    "entity_name": "alice",
+                    "limit": 50,
+                },
             )
 
     assert len(resp.json()["triples"]) == 1
@@ -424,15 +517,25 @@ async def test_recall(app):
 
 async def test_mcp_tools(app):
     fake = [
-        {"name": "eidolon_memory_search", "description": "vector search", "input_schema": {"type": "object"}},
-        {"name": "eidolon_memory_status", "description": "agent status", "input_schema": {}},
+        {
+            "name": "eidolon_memory_search",
+            "description": "vector search",
+            "input_schema": {"type": "object"},
+        },
+        {
+            "name": "eidolon_memory_status",
+            "description": "agent status",
+            "input_schema": {},
+        },
     ]
     with patch(
         "eidolon_admin_server.app.memory.routers.mcp_tools.list_tools",
         new=AsyncMock(return_value=fake),
     ):
         async with await _http(app) as ac:
-            resp = await ac.get("/api/memory/mcp/tools", params={"memory_realm_id": "r:alice:default"})
+            resp = await ac.get(
+                "/api/memory/mcp/tools", params={"memory_realm_id": "r:alice:default"}
+            )
 
     data = resp.json()
     assert data["count"] == 2
@@ -514,7 +617,9 @@ async def test_kg_add_triple(app):
     assert resp.json() == {"status": "applied", "request_id": None, "triple_id": "t-1"}
     args = mock.await_args.args
     assert args[1] == "eidolon_memory_kg_add_triple"
-    assert "memory_realm_id" not in args[2]  # memory_realm_id is the routing key, not a tool arg
+    assert (
+        "memory_realm_id" not in args[2]
+    )  # memory_realm_id is the routing key, not a tool arg
     assert args[2]["confidence"] == 0.9
 
 

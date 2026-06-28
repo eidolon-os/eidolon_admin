@@ -6,7 +6,7 @@ import asyncio
 
 from fastapi import APIRouter
 
-from ..mcp_client import call_tool, mcp_url_for_port, probe_reachable
+from ..mcp_client import call_tool, probe_reachable
 from ..presentation import agent_log_path_for, consolidator_status, memory_runtime_state
 from ..runners import (
     RealmEntry,
@@ -43,7 +43,7 @@ async def _build_detail(
         engine=entry.engine,
         status=entry.status,
         palace_path=entry.palace_path,
-        mcp_http_url=mcp_url_for_port(entry.port),
+        mcp_http_url=entry.mcp_http_url,
         agent_log_path=agent_log_path_for(entry),
         log_path=agent_log_path_for(entry),
         pid=proc.pid if proc else None,
@@ -67,6 +67,8 @@ async def _build_detail(
                 detail.palace_initialized = bool(
                     status.get("palace_initialized") or status.get("ready")
                 )
+                if status.get("palace_path"):
+                    detail.palace_path = str(status["palace_path"])
         except Exception:  # noqa: BLE001 - best-effort enrichment
             pass
     detail.runtime_state = memory_runtime_state(

@@ -10,6 +10,7 @@ Why per-request:
 - MCP HTTP sessions are cheap to open (~10-25 ms)
 - The admin UI is low-frequency: humans, not loops
 """
+
 from __future__ import annotations
 
 import json
@@ -28,13 +29,6 @@ from .runners import RealmEntry, load_realms
 logger = logging.getLogger(__name__)
 
 
-# How memory's agent_runner exposes MCP. Mirrors McpHttpConfig defaults.
-_MCP_HOST = "127.0.0.1"
-_MCP_PATH = "/mcp"
-_DEFAULT_CONNECT_ATTEMPTS = 4
-_DEFAULT_BACKOFF_SECONDS = 0.4
-
-
 class MemoryRealmNotFound(HTTPException):
     def __init__(self, memory_realm_id: str) -> None:
         super().__init__(404, f"memory realm not found: {memory_realm_id!r}")
@@ -51,10 +45,6 @@ class MemoryAgentUnreachable(HTTPException):
             502,
             f"agent_runner for memory realm {memory_realm_id!r} unreachable at {url}: {inner}",
         )
-
-
-def mcp_url_for_port(port: int) -> str:
-    return f"http://{_MCP_HOST}:{port}{_MCP_PATH}"
 
 
 def resolve_realm(memory_realm_id: str) -> RealmEntry:
@@ -88,7 +78,9 @@ def _local_http_client(
 
 
 @asynccontextmanager
-async def open_session(memory_realm_id: str) -> AsyncIterator[tuple[ClientSession, str]]:
+async def open_session(
+    memory_realm_id: str,
+) -> AsyncIterator[tuple[ClientSession, str]]:
     """Open a fresh MCP session for ``memory_realm_id``. Yields (session, url).
 
     Caller is responsible for awaiting tool calls inside the ``async with``.
@@ -111,7 +103,7 @@ async def open_session(memory_realm_id: str) -> AsyncIterator[tuple[ClientSessio
         protocol violation.
     """
     realm = resolve_realm(memory_realm_id)
-    url = mcp_url_for_port(realm.port)
+    url = realm.mcp_http_url
     headers: dict[str, str] = {}
     token = _bearer_token()
     if token:

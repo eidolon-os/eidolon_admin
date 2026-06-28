@@ -84,7 +84,6 @@ const initForm = ref({
   evolution_state_json: JSON.stringify({ version: 1, mode: 'continuous' }, null, 2),
   realm_id: '',
   memory_engine: 'mempalace',
-  memory_engine_config_json: '{}',
   memory_policy_json: JSON.stringify({ scope: 'owner', recall: 'companion_default' }, null, 2),
 })
 
@@ -256,7 +255,7 @@ async function submitInitialize() {
       evolution_state_json: parseJson(initForm.value.evolution_state_json, 'Evolution state JSON'),
       realm_id: nullableText(initForm.value.realm_id),
       memory_engine: initForm.value.memory_engine.trim() || 'mempalace',
-      memory_engine_config_json: parseJson(initForm.value.memory_engine_config_json, 'Memory engine config JSON'),
+      memory_engine_config_json: {},
       memory_policy_json: parseJson(initForm.value.memory_policy_json, 'Memory policy JSON'),
     })
     ElMessage.success('Companion 工作区已初始化')
@@ -453,9 +452,6 @@ function defaultPromptMarkdown(name: string): string {
           <div class="json-grid">
             <el-form-item label="policy_json">
               <el-input v-model="initForm.memory_policy_json" type="textarea" :rows="7" />
-            </el-form-item>
-            <el-form-item label="engine_config_json">
-              <el-input v-model="initForm.memory_engine_config_json" type="textarea" :rows="7" />
             </el-form-item>
           </div>
         </section>

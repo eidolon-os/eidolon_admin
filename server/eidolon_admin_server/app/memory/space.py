@@ -11,8 +11,6 @@ from fastapi import HTTPException, Request
 
 from .runners import RealmEntry, load_realms
 
-ADMIN_MEMORY_ACTOR_ID = "admin_ui"
-
 
 def resolve_realm(memory_realm_id: str) -> RealmEntry:
     """Return the configured memory realm or raise a HTTP-friendly 404."""
@@ -38,8 +36,8 @@ async def memory_actor_context_for_realm(
     request: Request,
     memory_realm_id: str,
     *,
-    device_id: str = ADMIN_MEMORY_ACTOR_ID,
-    session_id: str = ADMIN_MEMORY_ACTOR_ID,
+    device_id: str | None = None,
+    session_id: str | None = None,
 ) -> MemoryActorContext:
     """Build the canonical memory context for admin read/write calls."""
 

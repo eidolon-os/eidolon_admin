@@ -13,6 +13,7 @@ HTTP 502 to every request, then point a fake user entry at it. This
 exercises the full ``streamablehttp_client`` → ``ClientSession`` → MCP
 init handshake path that wedges in production.
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -27,6 +28,7 @@ from eidolon_admin_server.app.memory.mcp_client import (
     open_session,
     probe_reachable,
 )
+from eidolon_admin_server.app.memory.runtime_route import MemoryRuntimeRoute
 from eidolon_admin_server.app.memory.runners import RealmEntry
 
 
@@ -43,6 +45,7 @@ async def _fake_mcp_returning_502(port: int):
     httpx.HTTPStatusError, which the OLD narrow ``except`` clause didn't
     catch and the FastAPI handler converted into a generic 500.
     """
+
     async def handler(_request: web.Request) -> web.Response:
         return web.Response(status=502, text="Bad Gateway")
 
@@ -63,7 +66,12 @@ def _realm(memory_realm_id: str, *, port: int, enabled: bool = True) -> RealmEnt
         memory_realm_id=memory_realm_id,
         owner_id="alice",
         companion_id="default",
-        port=port,
+        runtime_route=MemoryRuntimeRoute(
+            memory_realm_id=memory_realm_id,
+            mcp_host="127.0.0.1",
+            mcp_port=port,
+            mcp_path="/mcp",
+        ),
         enabled=enabled,
     )
 

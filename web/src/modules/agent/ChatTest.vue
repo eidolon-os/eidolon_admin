@@ -15,6 +15,7 @@ const form = ref({
   owner_id: ownersStore.currentId,
   companion_id: '',
   text: '',
+  persist_memory: false,
 })
 
 const sending = ref(false)
@@ -151,6 +152,13 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
         </div>
         <el-form-item label="用户消息">
           <el-input v-model="form.text" type="textarea" :rows="3" placeholder="模拟用户的一句话…" />
+        </el-form-item>
+        <el-form-item label="Memory 写入">
+          <el-switch
+            v-model="form.persist_memory"
+            active-text="写入"
+            inactive-text="只读"
+          />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :icon="Promotion" :loading="sending" @click="send">发送</el-button>

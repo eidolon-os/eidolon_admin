@@ -8,6 +8,7 @@ supervisord cannot see those grandchildren, so we surface them here by:
 2. Scanning processes via psutil for each CLI, binding ``--memory-space-id``.
 3. TCP-probing each realm's agent port.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -21,9 +22,13 @@ from typing import Any
 
 import psutil
 from eidolon_data import load_settings
+from eidolon_sdk.memory import memory_space_storage_name
+
+from .runtime_route import MemoryRuntimeRoute, default_mcp_base_port, route_for_realm
 
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"
+
 
 def realms_source_path() -> Path:
     return Path(load_settings().sqlite_path).expanduser().resolve()
@@ -31,8 +36,28 @@ def realms_source_path() -> Path:
 
 def memory_log_dir() -> Path:
     return Path(
-        os.environ.get("EIDOLON_MEMORY_LOG_DIR", Path.home() / "eidolon" / "logs" / "memory")
+        os.environ.get(
+            "EIDOLON_MEMORY_LOG_DIR", Path.home() / "eidolon" / "logs" / "memory"
+        )
     ).expanduser()
+
+
+def memory_palaces_root() -> Path:
+    """Best-effort admin display root for memory worker palace directories."""
+    return (
+        Path(
+            os.environ.get(
+                "EIDOLON_MEMORY_PALACES_ROOT",
+                Path.home() / "eidolon" / "memory" / "mempalaces",
+            )
+        )
+        .expanduser()
+        .resolve()
+    )
+
+
+def memory_palace_path(memory_realm_id: str) -> str:
+    return str(memory_palaces_root() / memory_space_storage_name(memory_realm_id))
 
 
 def child_log_path(memory_realm_id: str, kind: str = "agent") -> str:
@@ -80,12 +105,20 @@ class RealmEntry:
     memory_realm_id: str
     owner_id: str
     companion_id: str
-    port: int
+    runtime_route: MemoryRuntimeRoute
     enabled: bool
     engine: str = "mempalace"
     status: str = "active"
     palace_path: str = ""
     consolidator: ConsolidatorConfig | None = None
+
+    @property
+    def port(self) -> int:
+        return self.runtime_route.mcp_port
+
+    @property
+    def mcp_http_url(self) -> str:
+        return self.runtime_route.mcp_http_url
 
     @property
     def id(self) -> str:
@@ -118,7 +151,6 @@ def _load_realms_from_eidolon_data(db_path: Path) -> list[RealmEntry]:
                 r.owner_id,
                 r.companion_id,
                 r.engine,
-                r.engine_config_json,
                 r.policy_json,
                 r.status,
                 o.profile_json AS owner_profile_json,
@@ -134,23 +166,36 @@ def _load_realms_from_eidolon_data(db_path: Path) -> list[RealmEntry]:
         conn.close()
 
     entries: list[RealmEntry] = []
+    used_ports: set[int] = set()
+    base_port = default_mcp_base_port()
     for row in rows:
         profile = _json_dict(row["owner_profile_json"])
         settings = _json_dict(row["owner_settings_json"])
-        engine_config = _json_dict(row["engine_config_json"])
-        registry = profile.get("registry") if isinstance(profile.get("registry"), dict) else {}
-        enabled = bool(registry.get("enabled", True)) and str(row["status"] or "") == "active"
-        consolidator = ConsolidatorConfig.from_yaml(settings.get("consolidator")) or ConsolidatorConfig()
+        registry = (
+            profile.get("registry") if isinstance(profile.get("registry"), dict) else {}
+        )
+        enabled = (
+            bool(registry.get("enabled", True)) and str(row["status"] or "") == "active"
+        )
+        consolidator = (
+            ConsolidatorConfig.from_yaml(settings.get("consolidator"))
+            or ConsolidatorConfig()
+        )
+        memory_realm_id = str(row["realm_id"])
         entries.append(
             RealmEntry(
-                memory_realm_id=str(row["realm_id"]),
+                memory_realm_id=memory_realm_id,
                 owner_id=str(row["owner_id"]),
                 companion_id=str(row["companion_id"]),
-                port=int(engine_config.get("memory_port") or settings.get("memory_port") or 0),
+                runtime_route=route_for_realm(
+                    memory_realm_id,
+                    base_port=base_port,
+                    used_ports=used_ports,
+                ),
                 enabled=enabled,
                 engine=str(row["engine"] or "mempalace"),
                 status=str(row["status"] or "active"),
-                palace_path=str(engine_config.get("palace_path") or settings.get("palace_path") or ""),
+                palace_path=memory_palace_path(memory_realm_id),
                 consolidator=consolidator,
             )
         )
@@ -304,13 +349,17 @@ async def list_runners() -> dict[str, Any]:
     for realm_id, proc in pid_map.items():
         if realm_id in known_ids:
             continue
-        orphans.append({"memory_realm_id": realm_id, "role": "agent", **_proc_meta(proc)})
+        orphans.append(
+            {"memory_realm_id": realm_id, "role": "agent", **_proc_meta(proc)}
+        )
 
     cons_orphans = []
     for realm_id, proc in cons_map.items():
         if realm_id in known_ids:
             continue
-        cons_orphans.append({"memory_realm_id": realm_id, "role": "consolidator", **_proc_meta(proc)})
+        cons_orphans.append(
+            {"memory_realm_id": realm_id, "role": "consolidator", **_proc_meta(proc)}
+        )
 
     return {
         "realms_source": str(source_path),

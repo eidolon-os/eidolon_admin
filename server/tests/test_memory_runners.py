@@ -1,4 +1,5 @@
 """Tests for the /api/memory/runners endpoint."""
+
 from __future__ import annotations
 
 import json
@@ -15,6 +16,7 @@ from eidolon_admin_server.app.settings import (
     GatewayConfig,
     Settings,
 )
+from eidolon_sdk.memory import memory_space_storage_name
 
 pytestmark = pytest.mark.asyncio
 
@@ -62,19 +64,19 @@ def _write_eidolon_data(tmp_path: Path, *, missing: bool = False) -> Path:
                     "alice",
                     "Alice",
                     json.dumps({"registry": {"enabled": True}}),
-                    json.dumps({"memory_port": 8030, "consolidator": {"enabled": True}}),
+                    json.dumps({"consolidator": {"enabled": True}}),
                 ),
                 (
                     "bob",
                     "Bob",
                     json.dumps({"registry": {"enabled": True}}),
-                    json.dumps({"memory_port": 8031, "consolidator": {"enabled": True}}),
+                    json.dumps({"consolidator": {"enabled": True}}),
                 ),
                 (
                     "disabled-carol",
                     "Carol",
                     json.dumps({"registry": {"enabled": False}}),
-                    json.dumps({"memory_port": 8032, "consolidator": {"enabled": True}}),
+                    json.dumps({"consolidator": {"enabled": True}}),
                 ),
             ],
         )
@@ -96,13 +98,18 @@ def _write_eidolon_data(tmp_path: Path, *, missing: bool = False) -> Path:
 
 async def test_memory_realm_id_from_cmdline_preserves_opaque_space_id():
     f = runners_mod._memory_realm_id_from_cmdline
-    assert f(["x", "--memory-space-id", "r:alice:default", "--port", "8030"]) == "r:alice:default"
+    assert (
+        f(["x", "--memory-space-id", "r:alice:default", "--port", "8030"])
+        == "r:alice:default"
+    )
     assert f(["x", "--memory-space-id=default.bob.default"]) == "default.bob.default"
     assert f(["x", "--port", "8030"]) is None
 
 
 async def _http(app):
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://gw"
+    )
 
 
 def _app(tmp_path):
@@ -140,14 +147,61 @@ async def test_endpoint_lists_users_with_no_processes(tmp_path, monkeypatch):
     assert data["realms_source_type"] == "eidolon_data"
     ids = [r["memory_realm_id"] for r in data["runners"]]
     assert ids == ["r:alice:default", "r:bob:default", "r:carol:default"]
+    assert all(r["port"] > 0 for r in data["runners"])
+    assert len({r["port"] for r in data["runners"]}) == 3
     # None of them are running.
     assert all(r["pid"] is None and r["running"] is False for r in data["runners"])
     assert all(r["consolidator"]["running"] is False for r in data["runners"])
     assert data["consolidator_orphans"] == []
     # Disabled user is not probed.
-    carol = next(r for r in data["runners"] if r["memory_realm_id"] == "r:carol:default")
+    carol = next(
+        r for r in data["runners"] if r["memory_realm_id"] == "r:carol:default"
+    )
     assert carol["listening"] is False
     assert data["orphans"] == []
+
+
+async def test_load_realms_derives_routes_when_engine_config_is_empty(
+    tmp_path, monkeypatch
+):
+    data_db = _write_eidolon_data(tmp_path)
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
+    monkeypatch.setenv("EIDOLON_MEMORY_MCP_PORT", "8030")
+    monkeypatch.setenv("EIDOLON_MEMORY_PALACES_ROOT", str(tmp_path / "mempalaces"))
+
+    realms = runners_mod.load_realms()
+
+    alice = next(r for r in realms if r.memory_realm_id == "r:alice:default")
+    assert alice.port > 0
+    assert alice.mcp_http_url == f"http://127.0.0.1:{alice.port}/mcp"
+    assert alice.port != 0
+    assert alice.palace_path == str(
+        tmp_path / "mempalaces" / memory_space_storage_name("r:alice:default")
+    )
+
+
+async def test_load_realms_ignores_legacy_palace_path_overrides(tmp_path, monkeypatch):
+    data_db = _write_eidolon_data(tmp_path)
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
+    monkeypatch.setenv("EIDOLON_MEMORY_PALACES_ROOT", str(tmp_path / "runtime-root"))
+    conn = sqlite3.connect(data_db)
+    with conn:
+        conn.execute(
+            "UPDATE owners SET settings_json = ? WHERE owner_id = 'alice'",
+            (json.dumps({"palace_path": "/tmp/owner-palace"}),),
+        )
+        conn.execute(
+            "UPDATE memory_realms SET engine_config_json = ? WHERE realm_id = 'r:alice:default'",
+            (json.dumps({"palace_path": "/tmp/realm-palace"}),),
+        )
+    conn.close()
+
+    realms = runners_mod.load_realms()
+
+    alice = next(r for r in realms if r.memory_realm_id == "r:alice:default")
+    assert alice.palace_path == str(
+        tmp_path / "runtime-root" / memory_space_storage_name("r:alice:default")
+    )
 
 
 async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
@@ -184,7 +238,10 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
 
     fake_proc = FakeProc(pid=99001, create_time=0.0)
     # Map includes one orphan user not in the registry.
-    fake_map = {"r:alice:default": fake_proc, "ghost": FakeProc(pid=99002, create_time=0.0)}
+    fake_map = {
+        "r:alice:default": fake_proc,
+        "ghost": FakeProc(pid=99002, create_time=0.0),
+    }
 
     with (
         patch.object(runners_mod, "find_agent_processes", return_value=fake_map),
@@ -194,7 +251,9 @@ async def test_endpoint_surfaces_orphan_processes(tmp_path, monkeypatch):
             resp = await ac.get("/api/memory/runners")
 
     data = resp.json()
-    alice = next(r for r in data["runners"] if r["memory_realm_id"] == "r:alice:default")
+    alice = next(
+        r for r in data["runners"] if r["memory_realm_id"] == "r:alice:default"
+    )
     assert alice["pid"] == 99001
     assert alice["running"] is True
     assert [o["memory_realm_id"] for o in data["orphans"]] == ["ghost"]

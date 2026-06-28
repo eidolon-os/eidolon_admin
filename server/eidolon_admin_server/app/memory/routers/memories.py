@@ -1,4 +1,5 @@
 """Memory list / search read endpoints (writes live in writes.py)."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, Request
@@ -33,7 +34,14 @@ async def search_memories(
     if room:
         args["room"] = room
     result = await call_tool(memory_realm_id, "eidolon_memory_search", args)
-    records = result if isinstance(result, list) else (result or {}).get("records", [])
+    if isinstance(result, list):
+        records = result
+    elif isinstance(result, dict) and isinstance(result.get("records"), list):
+        records = result["records"]
+    elif isinstance(result, dict) and {"key", "value"}.issubset(result):
+        records = [result]
+    else:
+        records = []
     return MemorySearchResponse(records=records or [])
 
 
