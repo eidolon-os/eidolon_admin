@@ -40,7 +40,7 @@ COMMON_CAPABILITIES: list[Esp32Capability] = [
     _cap("flash", "完整烧录", requires_port=True),
     _cap("flash_app", "仅烧录 app", requires_port=True),
     _cap("flash_assets", "仅烧录 assets", requires_port=True),
-    _cap("run", "编译 + 烧录 + 监控", requires_port=True),
+    _cap("run", "编译 + 烧录", requires_port=True),
     _cap("monitor", "串口监控", requires_port=True),
     _cap("clean", "清理 build"),
     _cap("erase_nvs", "擦除 NVS / 长期记忆", requires_port=True, dangerous=True, confirm_token="ERASE NVS"),

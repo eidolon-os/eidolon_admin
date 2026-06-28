@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import glob
+import sys
+import types
 from pathlib import Path
 
 import httpx
@@ -12,6 +14,7 @@ from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig
 from eidolon_admin_server.app.tools.esp32.schemas import Esp32Job, Esp32JobRequest
 from eidolon_admin_server.app.tools.esp32.service import (
     Esp32JobConflict,
+    Esp32ToolError,
     Esp32ToolService,
     JobRecord,
 )
@@ -347,6 +350,75 @@ def test_action_mapping_ignores_user_supplied_shell_options(tmp_path: Path) -> N
     flat = " ".join(arg for step in steps for arg in step.args)
     assert "rm -rf" not in flat
     assert steps[0].args[-1] == "flash"
+
+
+def test_run_action_builds_and_flashes_without_interactive_monitor(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    board = svc.board("esp-box-3")
+    steps = svc._steps(
+        board,
+        Esp32JobRequest(
+            board_id=board.id,
+            action="run",
+            port="/dev/cu.usbmodem1101",
+        ),
+    )
+    assert [step.args[-1] for step in steps] == ["build", "flash"]
+    assert all("monitor" not in step.args for step in steps)
+
+
+@pytest.mark.asyncio
+async def test_monitor_jobs_are_live_stream_only(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    with pytest.raises(Esp32ToolError, match="serial stream"):
+        await svc.create_job(
+            Esp32JobRequest(
+                board_id="esp-box-3",
+                action="monitor",
+                port="/dev/cu.usbmodem1101",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_serial_stream_reads_via_pyserial(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    opened: dict[str, object] = {}
+
+    class FakeSerialPort:
+        def __init__(self, *, port: str, baudrate: int, timeout: float) -> None:
+            self.port = port
+            self.baudrate = baudrate
+            self.timeout = timeout
+            self.closed = False
+
+        def readline(self) -> bytes:
+            return b"boot ok\r\n"
+
+        def close(self) -> None:
+            self.closed = True
+
+    def fake_serial(**kwargs: object) -> FakeSerialPort:
+        opened["kwargs"] = kwargs
+        opened["port"] = FakeSerialPort(**kwargs)  # type: ignore[arg-type]
+        return opened["port"]  # type: ignore[return-value]
+
+    monkeypatch.setitem(sys.modules, "serial", types.SimpleNamespace(Serial=fake_serial))
+    stream = svc.serial_stream("esp-box-3", "/dev/cu.usbmodem1101", 115200)
+    try:
+        assert await anext(stream) == ">> opening serial monitor: /dev/cu.usbmodem1101 @ 115200"
+        assert await anext(stream) == ">> serial monitor started"
+        assert await anext(stream) == "boot ok"
+    finally:
+        await stream.aclose()
+
+    assert opened["kwargs"] == {
+        "port": "/dev/cu.usbmodem1101",
+        "baudrate": 115200,
+        "timeout": 0.25,
+    }
+    assert getattr(opened["port"], "closed") is True
+    assert "/dev/cu.usbmodem1101" not in svc._serial_sessions
 
 
 def test_same_port_running_job_conflicts(tmp_path: Path) -> None:

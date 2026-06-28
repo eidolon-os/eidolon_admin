@@ -239,46 +239,33 @@ class Esp32ToolService:
 
     async def serial_stream(self, board_id: str, port: str, baud: int | None) -> AsyncIterator[str]:
         board = self.board(board_id)
-        req = Esp32JobRequest(
-            board_id=board_id,
-            action="monitor",
-            port=port,
-            baud=baud or board.default_baud,
-        )
-        steps = self._steps(board, req)
-        if len(steps) != 1:
-            raise Esp32ToolError("monitor action resolved to multiple commands")
-        step = steps[0]
+        serial_baud = baud or board.default_baud
         async with self._lock:
             self._assert_port_available(board.id, port)
             self._serial_sessions[port] = None
-        process: asyncio.subprocess.Process | None = None
+        serial_port = None
         try:
-            yield f">> {' '.join(_quote(a) for a in step.args)}"
-            process = await asyncio.create_subprocess_exec(
-                *step.args,
-                cwd=str(step.cwd),
-                env={**os.environ, **step.env},
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            async with self._lock:
-                self._serial_sessions[port] = process
-            assert process.stdout is not None
+            try:
+                import serial  # type: ignore[import-not-found]
+            except Exception as exc:  # noqa: BLE001
+                raise Esp32ToolError("pyserial is not installed; serial monitor is unavailable") from exc
+
+            yield f">> opening serial monitor: {port} @ {serial_baud}"
+            try:
+                serial_port = await asyncio.to_thread(serial.Serial, port=port, baudrate=serial_baud, timeout=0.25)
+            except Exception as exc:  # noqa: BLE001
+                raise Esp32ToolError(f"failed to open serial port {port}: {exc}") from exc
+            yield ">> serial monitor started"
             while True:
-                raw = await process.stdout.readline()
+                raw = await asyncio.to_thread(serial_port.readline)
                 if not raw:
-                    break
-                yield raw.decode(errors="replace").rstrip("\n")
+                    continue
+                yield raw.decode(errors="replace").rstrip("\r\n")
         finally:
             async with self._lock:
                 self._serial_sessions.pop(port, None)
-            if process and process.returncode is None:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=3)
-                except asyncio.TimeoutError:
-                    process.kill()
+            if serial_port is not None:
+                await asyncio.to_thread(serial_port.close)
 
     async def probe_device(self, board_id: str, port: str, baud: int | None) -> Esp32ProbeResult:
         board = self.board(board_id)
@@ -323,6 +310,8 @@ class Esp32ToolService:
         cap = known.get(req.action)
         if cap is None:
             raise Esp32ToolError(f"action {req.action!r} is not supported by {board.label}")
+        if req.action == "monitor":
+            raise Esp32ToolError("monitor is a live serial stream; use the serial stream endpoint")
         if cap.requires_port and not req.port:
             raise Esp32ToolError(f"action {req.action!r} requires a serial port")
         if cap.dangerous and req.confirm_token != cap.confirm_token:
@@ -369,10 +358,9 @@ class Esp32ToolService:
             return [
                 CommandStep([script, "build"], cwd, base_env),
                 CommandStep([script, "flash"], cwd, port_env),
-                CommandStep([script, "monitor"], cwd, port_env),
             ]
         if req.action == "monitor":
-            return [CommandStep([script, "monitor"], cwd, port_env)]
+            raise Esp32ToolError("monitor is a live serial stream; use serial_stream()")
         if req.action == "clean":
             return [CommandStep([script, "clean"], cwd, base_env)]
         if req.action == "erase_flash":

@@ -119,7 +119,7 @@ const lastSuccessfulPort = computed(() => {
 })
 
 const actionGroups: Array<{ title: string; hint: string; actions: Esp32Action[] }> = [
-  { title: '常用流程', hint: '日常固件迭代优先从这里走', actions: ['build', 'flash', 'run'] },
+  { title: '常用流程', hint: '日常固件迭代优先从这里走；监控在串口页单独打开', actions: ['build', 'flash', 'run'] },
   { title: '串口调试', hint: '看日志、确认启动和运行状态', actions: ['monitor', 'reset_device'] },
   { title: '维护', hint: '处理脏 build 或只烧录部分产物', actions: ['clean', 'build_clean', 'flash_app', 'flash_assets', 'image_info'] },
   { title: '备份恢复', hint: '动持久分区前先留退路', actions: ['backup_nvs', 'backup_config', 'backup_assets', 'restore_nvs'] },
@@ -235,6 +235,8 @@ function canRun(action: Esp32Action) {
   const cap = capabilityMap.value.get(action)
   if (!cap || actionBusy.value) return false
   if (runningJob.value && action !== 'monitor') return false
+  if (action === 'monitor' && serialStream.connected.value) return false
+  if (action === 'monitor' && runningJob.value?.port && runningJob.value.port === selectedPort.value) return false
   if (requiresScript(action) && !contextReady.value) return false
   if (requiresPartition(action) && !selectedBoardEnv.value?.partition_csv_exists) return false
   if (cap.requires_port && !hasPort.value) return false
@@ -245,7 +247,7 @@ function canRun(action: Esp32Action) {
 }
 
 function requiresScript(action: Esp32Action) {
-  return ['build', 'build_clean', 'flash', 'flash_app', 'flash_assets', 'run', 'monitor', 'clean'].includes(action)
+  return ['build', 'build_clean', 'flash', 'flash_app', 'flash_assets', 'run', 'clean'].includes(action)
 }
 
 function requiresPartition(action: Esp32Action) {
@@ -322,7 +324,7 @@ async function cancelCurrentJob() {
 }
 
 function startSerial() {
-  if (!selectedBoard.value || !selectedPort.value) return
+  if (!selectedBoard.value || !selectedPort.value || !canRun('monitor')) return
   activeTab.value = 'serial'
   serialStream.clear()
   serialStream.open(esp32SerialStreamUrl(selectedBoard.value.id, selectedPort.value, baud.value))
@@ -414,6 +416,9 @@ function failureHint(job: Esp32Job | null) {
   }
   if (job.action.includes('flash') || job.action.includes('erase')) {
     return '建议：确认串口没有被占用、设备处于下载模式、端口选择正确，然后重试。'
+  }
+  if (job.action === 'run') {
+    return '建议：查看日志确认失败发生在编译还是烧录阶段；烧录完成后请在串口页单独打开监控。'
   }
   return '建议：查看完整日志后重试，或先运行环境诊断。'
 }
