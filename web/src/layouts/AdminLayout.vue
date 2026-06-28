@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { useServicesStore } from '@/stores/services'
 import { useOwnersStore } from '@/stores/owners'
 
-const store = useServicesStore()
 const ownersStore = useOwnersStore()
 const route = useRoute()
 const router = useRouter()
@@ -21,33 +19,265 @@ const commandQuery = ref('')
 const commandScope = ref<string | null>(null)
 const sidebarOpen = ref(localStorage.getItem('eidolon-admin.sidebar_open') !== '0')
 
+type RouteTarget = {
+  name: string
+  params?: Record<string, string>
+}
+
 type CommandItem = {
   id: string
   label: string
   group: string
   hint: string
   icon: string
-  route: Record<string, unknown>
+  route: RouteTarget
   scope: string
 }
 
-type MenuItem = {
+type NavItem = {
   id: string
   label: string
   hint?: string
   icon: string
-  route: Record<string, unknown>
+  route: RouteTarget
+}
+
+type MenuItem = NavItem & {
   active: boolean
 }
 
-type MenuGroup = {
+type NavGroup = {
   id: string
   label: string
+  code: string
+  icon: string
+  items: NavItem[]
+}
+
+type MenuGroup = Omit<NavGroup, 'items'> & {
   items: MenuItem[]
 }
 
+const navigation: NavGroup[] = [
+  {
+    id: 'admin',
+    label: 'Admin',
+    code: 'ADM',
+    icon: 'Monitor',
+    items: [
+      {
+        id: 'owners-directory',
+        label: 'Owners',
+        hint: 'Owner workspaces',
+        icon: 'UserFilled',
+        route: { name: 'owners' },
+      },
+      {
+        id: 'supervisor',
+        label: 'Supervisor',
+        hint: 'Processes and health',
+        icon: 'Cpu',
+        route: { name: 'supervisor' },
+      },
+      {
+        id: 'configs',
+        label: 'Service Configs',
+        hint: 'Runtime files',
+        icon: 'Document',
+        route: { name: 'configs' },
+      },
+      {
+        id: 'benchmark-agent',
+        label: 'Benchmarks',
+        hint: 'Run artifacts',
+        icon: 'DataAnalysis',
+        route: { name: 'benchmarks', params: { project: 'agent' } },
+      },
+      {
+        id: 'tool-esp32',
+        label: 'ESP32 Tools',
+        hint: 'Serial and flash',
+        icon: 'Tools',
+        route: { name: 'tool-esp32' },
+      },
+    ],
+  },
+  {
+    id: 'agent',
+    label: 'Agent',
+    code: 'AGT',
+    icon: 'Avatar',
+    items: [
+      {
+        id: 'agent-chat',
+        label: 'Chat Test',
+        hint: 'Live request path',
+        icon: 'ChatLineRound',
+        route: { name: 'feature', params: { serviceId: 'agent', feature: 'chat-test' } },
+      },
+      {
+        id: 'agent-conversations',
+        label: 'Conversations',
+        hint: 'Turns and messages',
+        icon: 'Tickets',
+        route: { name: 'feature', params: { serviceId: 'agent', feature: 'conversations' } },
+      },
+      {
+        id: 'agent-tasks',
+        label: 'Long Tasks',
+        hint: 'Cowork queue',
+        icon: 'Timer',
+        route: { name: 'feature', params: { serviceId: 'agent', feature: 'long-tasks' } },
+      },
+      {
+        id: 'agent-reports',
+        label: 'Replay Reports',
+        hint: 'Evaluation artifacts',
+        icon: 'DocumentChecked',
+        route: { name: 'feature', params: { serviceId: 'agent', feature: 'replay-reports' } },
+      },
+    ],
+  },
+  {
+    id: 'memory',
+    label: 'Memory',
+    code: 'MEM',
+    icon: 'Collection',
+    items: [
+      {
+        id: 'memory-runners',
+        label: 'Runners',
+        hint: 'Workers and routes',
+        icon: 'Operation',
+        route: { name: 'feature', params: { serviceId: 'memory', feature: 'runners' } },
+      },
+      {
+        id: 'memory-items',
+        label: 'Memories',
+        hint: 'Stored records',
+        icon: 'Collection',
+        route: { name: 'feature', params: { serviceId: 'memory', feature: 'memories' } },
+      },
+      {
+        id: 'memory-search',
+        label: 'Search',
+        hint: 'Query recall data',
+        icon: 'Search',
+        route: { name: 'feature', params: { serviceId: 'memory', feature: 'search' } },
+      },
+      {
+        id: 'memory-graph',
+        label: 'Graph',
+        hint: 'Palace graph',
+        icon: 'Share',
+        route: { name: 'feature', params: { serviceId: 'memory', feature: 'graph' } },
+      },
+      {
+        id: 'memory-kg',
+        label: 'Knowledge Graph',
+        hint: 'Triples and facts',
+        icon: 'Connection',
+        route: { name: 'feature', params: { serviceId: 'memory', feature: 'kg' } },
+      },
+      {
+        id: 'memory-mcp',
+        label: 'MCP Tools',
+        hint: 'Tool surface',
+        icon: 'SetUp',
+        route: { name: 'feature', params: { serviceId: 'memory', feature: 'mcp' } },
+      },
+    ],
+  },
+  {
+    id: 'hub',
+    label: 'Hub',
+    code: 'HUB',
+    icon: 'Share',
+    items: [
+      {
+        id: 'hub-devices',
+        label: 'Devices',
+        hint: 'Binding and commands',
+        icon: 'Monitor',
+        route: { name: 'feature', params: { serviceId: 'hub', feature: 'devices' } },
+      },
+      {
+        id: 'hub-discovery',
+        label: 'Discovery',
+        hint: 'Nearby devices',
+        icon: 'Aim',
+        route: { name: 'feature', params: { serviceId: 'hub', feature: 'discovery' } },
+      },
+      {
+        id: 'hub-commands',
+        label: 'Commands',
+        hint: 'Control plane',
+        icon: 'Position',
+        route: { name: 'feature', params: { serviceId: 'hub', feature: 'commands' } },
+      },
+      {
+        id: 'hub-events',
+        label: 'Events',
+        hint: 'Hub stream',
+        icon: 'Bell',
+        route: { name: 'feature', params: { serviceId: 'hub', feature: 'events' } },
+      },
+      {
+        id: 'hub-metrics',
+        label: 'Metrics',
+        hint: 'Runtime counters',
+        icon: 'DataLine',
+        route: { name: 'feature', params: { serviceId: 'hub', feature: 'metrics' } },
+      },
+    ],
+  },
+  {
+    id: 'channel',
+    label: 'Channel',
+    code: 'CHN',
+    icon: 'DataLine',
+    items: [
+      {
+        id: 'channel-overview',
+        label: 'Overview',
+        hint: 'Voice worker',
+        icon: 'DataLine',
+        route: { name: 'feature', params: { serviceId: 'channel', feature: 'overview' } },
+      },
+      {
+        id: 'channel-config',
+        label: 'Config',
+        hint: 'Voice settings',
+        icon: 'Setting',
+        route: { name: 'feature', params: { serviceId: 'channel', feature: 'config' } },
+      },
+    ],
+  },
+  {
+    id: 'client-web',
+    label: 'Client Web',
+    code: 'WEB',
+    icon: 'ChromeFilled',
+    items: [
+      {
+        id: 'client-web-overview',
+        label: 'Overview',
+        hint: 'Browser surface',
+        icon: 'ChromeFilled',
+        route: { name: 'feature', params: { serviceId: 'client-web', feature: 'overview' } },
+      },
+      {
+        id: 'client-web-config',
+        label: 'Config',
+        hint: 'Web env',
+        icon: 'Setting',
+        route: { name: 'feature', params: { serviceId: 'client-web', feature: 'config' } },
+      },
+    ],
+  },
+]
+
 onMounted(() => {
-  store.load()
   ownersStore.load()
   window.addEventListener('keydown', handleGlobalKeydown)
 })
@@ -56,113 +286,51 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
-const isMemoryRoute = computed(() => {
-  return route.name === 'feature' && route.params.serviceId === 'memory'
-})
-
-const activeKey = computed(() => {
-  if (route.name === 'owners' || route.name === 'owner-workspace') return 'owners'
-  if (route.name === 'supervisor') return 'supervisor'
-  if (route.name === 'configs') return 'configs'
-  if (route.name === 'benchmarks') return 'benchmark'
-  if (route.name === 'tool-esp32') return 'tools::esp32'
-  if (route.params.serviceId && route.params.feature) {
-    return `${route.params.serviceId}::${route.params.feature}`
-  }
-  return ''
-})
-
-// Hide meta-services (e.g. the synthetic "admin" entry that only exposes
-// configs: blocks) from the main service navigation.
-const navigableServices = computed(() =>
-  store.services.filter((s) => s.features.length > 0),
+const menuGroups = computed<MenuGroup[]>(() =>
+  navigation.map((group) => ({
+    ...group,
+    items: group.items.map((item) => ({
+      ...item,
+      active: isActiveRoute(item),
+    })),
+  })),
 )
 
-const staticCommands = computed<CommandItem[]>(() => [
-  {
-    id: 'owners',
-    label: 'Owners',
-    group: 'Owners',
-    hint: 'Select or create a sovereign owner workspace',
-    icon: 'UserFilled',
-    route: { name: 'owners' },
-    scope: 'owners',
-  },
-  {
-    id: 'supervisor',
-    label: 'Supervisor',
-    group: 'Core',
-    hint: 'System processes, health, runtime controls',
-    icon: 'Cpu',
-    route: { name: 'supervisor' },
-    scope: 'core',
-  },
-  {
-    id: 'configs',
-    label: 'Configs',
-    group: 'Core',
-    hint: 'Edit service configs and reload runtime',
-    icon: 'Document',
-    route: { name: 'configs' },
-    scope: 'core',
-  },
-  {
-    id: 'benchmark-agent',
-    label: 'Benchmark Center',
-    group: 'Benchmark',
-    hint: 'Cross-project benchmark artifacts and run management',
-    icon: 'DataAnalysis',
-    route: { name: 'benchmarks', params: { project: 'agent' } },
-    scope: 'benchmark',
-  },
-  {
-    id: 'tool-esp32',
-    label: 'ESP32',
-    group: 'Tools',
-    hint: 'Serial logs, build, flash, erase, diagnostics',
-    icon: 'Tools',
-    route: { name: 'tool-esp32' },
-    scope: 'tools',
-  },
-])
+const activeGroup = computed(() => menuGroups.value.find((group) => group.items.some((item) => item.active)))
 
-const serviceCommands = computed<CommandItem[]>(() =>
-  navigableServices.value.flatMap((svc) =>
-    svc.features.map((f) => ({
-      id: `${svc.id}::${f.key}`,
-      label: f.label,
-      group: svc.name,
-      hint: `${svc.id}/${f.key}`,
-      icon: serviceIcon(svc.id),
-      route: { name: 'feature', params: { serviceId: svc.id, feature: f.key } },
-      scope: svc.id,
+const activeMenuItem = computed(() => {
+  for (const group of menuGroups.value) {
+    const item = group.items.find((entry) => entry.active)
+    if (item) return { group, item }
+  }
+  return null
+})
+
+const isMemoryRoute = computed(() => activeMenuItem.value?.group.id === 'memory')
+
+const commandItems = computed<CommandItem[]>(() =>
+  menuGroups.value.flatMap((group) =>
+    group.items.map((item) => ({
+      id: item.id,
+      label: item.label,
+      group: group.label,
+      hint: item.hint || group.label,
+      icon: item.icon,
+      route: item.route,
+      scope: group.id,
     })),
   ),
 )
 
-const commandItems = computed(() => [...staticCommands.value, ...serviceCommands.value])
-
 const currentTitle = computed(() => {
-  if (route.name === 'owners') return 'Owners'
   if (route.name === 'owner-workspace') return `Owner / ${route.params.ownerId || ''}`
-  if (route.name === 'supervisor') return 'Supervisor'
-  if (route.name === 'configs') return 'Configs'
-  if (route.name === 'benchmarks') return `Benchmark / ${route.params.project || 'agent'}`
-  if (route.name === 'tool-esp32') return 'Tools / ESP32'
-  if (route.params.serviceId) {
-    const serviceName = store.findService(route.params.serviceId as string)?.name || route.params.serviceId
-    return `${serviceName} / ${route.params.feature}`
-  }
+  if (activeMenuItem.value) return `${activeMenuItem.value.group.label} / ${activeMenuItem.value.item.label}`
   return 'Command Center'
 })
 
 const scopeLabel = computed(() => {
   if (!commandScope.value) return 'All systems'
-  if (commandScope.value === 'owners') return 'Owners'
-  if (commandScope.value === 'core') return 'Core'
-  if (commandScope.value === 'benchmark') return 'Benchmark'
-  if (commandScope.value === 'tools') return 'Tools'
-  return store.findService(commandScope.value)?.name || commandScope.value
+  return navigation.find((group) => group.id === commandScope.value)?.label || commandScope.value
 })
 
 const filteredCommands = computed(() => {
@@ -187,128 +355,21 @@ const groupedCommands = computed(() => {
   return groups
 })
 
-const railItems = computed(() => [
-  { id: 'owners', label: 'Owners', code: 'OWN', icon: 'UserFilled', active: activeKey.value === 'owners' },
-  { id: 'core', label: 'Core', code: 'SYS', icon: 'Monitor', active: ['supervisor', 'configs'].includes(activeKey.value) },
-  { id: 'benchmark', label: 'Benchmark', code: 'BMK', icon: 'DataAnalysis', active: activeKey.value === 'benchmark' },
-  { id: 'tools', label: 'Tools', code: 'TLS', icon: 'Tools', active: typeof activeKey.value === 'string' && activeKey.value.startsWith('tools::') },
-  ...navigableServices.value.map((svc) => ({
-    id: svc.id,
-    label: svc.name,
-    code: serviceCode(svc.id),
-    icon: serviceIcon(svc.id),
-    active: typeof activeKey.value === 'string' && activeKey.value.startsWith(`${svc.id}::`),
+const railItems = computed(() =>
+  menuGroups.value.map((group) => ({
+    id: group.id,
+    label: group.label,
+    code: group.code,
+    icon: group.icon,
+    active: activeGroup.value?.id === group.id,
   })),
-])
+)
 
-const ownerWorkspaceMenu = computed<MenuItem[]>(() => {
-  return [
-    {
-      id: 'owners-list',
-      label: 'Owner Directory',
-      hint: 'All owners',
-      icon: 'UserFilled',
-      route: { name: 'owners' },
-      active: route.name === 'owners',
-    },
-    {
-      id: 'owners-create',
-      label: 'Create Owner',
-      hint: 'New sovereignty root',
-      icon: 'CirclePlus',
-      route: { name: 'owners', query: { create: '1' } },
-      active: route.name === 'owners' && route.query.create === '1',
-    },
-  ]
-})
-
-const menuGroups = computed<MenuGroup[]>(() => [
-  {
-    id: 'owners',
-    label: 'Owners',
-    items: ownerWorkspaceMenu.value,
-  },
-  {
-    id: 'system',
-    label: 'System',
-    items: [
-      {
-        id: 'supervisor',
-        label: 'Supervisor',
-        hint: 'Processes and health',
-        icon: 'Cpu',
-        route: { name: 'supervisor' },
-        active: route.name === 'supervisor',
-      },
-      {
-        id: 'configs',
-        label: 'Configs',
-        hint: 'Runtime configuration',
-        icon: 'Document',
-        route: { name: 'configs' },
-        active: route.name === 'configs',
-      },
-    ],
-  },
-  {
-    id: 'benchmark',
-    label: 'Benchmark',
-    items: [
-      {
-        id: 'benchmark-agent',
-        label: 'Benchmark Center',
-        icon: 'DataAnalysis',
-        route: { name: 'benchmarks', params: { project: 'agent' } },
-        active: route.name === 'benchmarks',
-      },
-    ],
-  },
-  {
-    id: 'tools',
-    label: 'Tools',
-    items: [
-      {
-        id: 'tool-esp32',
-        label: 'ESP32',
-        hint: 'Serial / flash',
-        icon: 'Tools',
-        route: { name: 'tool-esp32' },
-        active: route.name === 'tool-esp32',
-      },
-    ],
-  },
-  ...navigableServices.value.map((svc) => ({
-    id: svc.id,
-    label: svc.name,
-    items: svc.features.map((feature) => ({
-      id: `${svc.id}-${feature.key}`,
-      label: feature.label,
-      hint: feature.key,
-      icon: serviceIcon(svc.id),
-      route: { name: 'feature', params: { serviceId: svc.id, feature: feature.key } },
-      active: route.name === 'feature'
-        && route.params.serviceId === svc.id
-        && route.params.feature === feature.key,
-    })),
-  })),
-])
-
-function serviceIcon(serviceId: string): string {
-  if (serviceId === 'agent') return 'Avatar'
-  if (serviceId === 'hub') return 'Share'
-  if (serviceId === 'memory') return 'Collection'
-  if (serviceId === 'channel') return 'DataLine'
-  if (serviceId === 'client-web') return 'ChromeFilled'
-  return 'Box'
-}
-
-function serviceCode(serviceId: string): string {
-  if (serviceId === 'agent') return 'AGT'
-  if (serviceId === 'hub') return 'HUB'
-  if (serviceId === 'memory') return 'MEM'
-  if (serviceId === 'channel') return 'CHN'
-  if (serviceId === 'client-web') return 'WEB'
-  return serviceId.slice(0, 3).toUpperCase()
+function isActiveRoute(item: NavItem): boolean {
+  if (item.id === 'owners-directory' && route.name === 'owner-workspace') return true
+  if (route.name !== item.route.name) return false
+  if (!item.route.params) return true
+  return Object.entries(item.route.params).every(([key, value]) => String(route.params[key]) === String(value))
 }
 
 function openCommand(scope: string | null = null) {
@@ -332,11 +393,8 @@ function toggleSidebar() {
 }
 
 function handleRailClick(id: string) {
-  if (id === 'owners' || id === 'core' || id === 'benchmark' || id === 'tools') {
-    openCommand(id)
-    return
-  }
-  openCommand(id)
+  const group = navigation.find((entry) => entry.id === id)
+  if (group?.items[0]) router.push(group.items[0].route)
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -404,7 +462,6 @@ function handleGlobalKeydown(event: KeyboardEvent) {
         <div class="header-actions">
           <OwnerSelector />
           <MemoryRealmSelector v-if="isMemoryRoute" />
-          <el-button size="small" @click="store.load(true)">刷新菜单</el-button>
         </div>
       </el-header>
       <el-main class="main">
@@ -434,7 +491,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <input
             v-model="commandQuery"
             autofocus
-            placeholder="Search systems, reports, memory, devices..."
+            placeholder="Search admin, agent, memory, hub..."
             @keydown.enter="filteredCommands[0] && runCommand(filteredCommands[0])"
             @keydown.esc="commandOpen = false"
           >
@@ -442,17 +499,13 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
         <div class="scope-strip">
           <button :class="{ active: commandScope === null }" @click="openCommand(null)">All</button>
-          <button :class="{ active: commandScope === 'owners' }" @click="openCommand('owners')">Owners</button>
-          <button :class="{ active: commandScope === 'core' }" @click="openCommand('core')">Core</button>
-          <button :class="{ active: commandScope === 'benchmark' }" @click="openCommand('benchmark')">Benchmark</button>
-          <button :class="{ active: commandScope === 'tools' }" @click="openCommand('tools')">Tools</button>
           <button
-            v-for="svc in navigableServices"
-            :key="svc.id"
-            :class="{ active: commandScope === svc.id }"
-            @click="openCommand(svc.id)"
+            v-for="group in navigation"
+            :key="group.id"
+            :class="{ active: commandScope === group.id }"
+            @click="openCommand(group.id)"
           >
-            {{ svc.name }}
+            {{ group.label }}
           </button>
         </div>
 
