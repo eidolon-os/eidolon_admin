@@ -9,7 +9,6 @@ from eidolon_data.services import OwnerWorkspaceError
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
-from ..registry.devices.orchestrator import DeviceError, DeviceOrchestrator
 from .schemas import (
     CompanionListResponse,
     CompanionView,
@@ -248,10 +247,11 @@ async def list_nearby_owner_devices(owner_id: str, request: Request) -> NearbyDe
         return NearbyDeviceListResponse(devices=[], hub_available=False)
     try:
         runtime_devices = await orch.list_devices()
-    except DeviceError as exc:
-        if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+    except Exception as exc:  # noqa: BLE001
+        status_code = int(getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY))
+        if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
             return NearbyDeviceListResponse(devices=[], hub_available=False)
-        raise HTTPException(exc.status_code, str(exc)) from exc
+        raise HTTPException(status_code, str(exc)) from exc
 
     nearby: list[NearbyDeviceView] = []
     for device in runtime_devices:
@@ -278,8 +278,11 @@ async def identify_nearby_owner_device(owner_id: str, device_id: str, request: R
                 "device must be approved in Hub before Owner actions",
             )
         return await orch.identify_device(device_id)
-    except DeviceError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            int(getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY)),
+            str(exc),
+        ) from exc
 
 
 @router.post("/owners/{owner_id}/nearby-devices/{device_id}/claim", response_model=DeviceView)
@@ -316,8 +319,11 @@ async def claim_nearby_device(
                 status.HTTP_412_PRECONDITION_FAILED,
                 "device must be approved in Hub before claiming",
             )
-    except DeviceError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            int(getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY)),
+            str(exc),
+        ) from exc
 
     metadata_json = {
         **payload.metadata_json,
@@ -544,11 +550,11 @@ def _store(request: Request) -> DataStore:
     return store
 
 
-def _device_orchestrator(request: Request) -> DeviceOrchestrator | None:
+def _device_orchestrator(request: Request) -> Any | None:
     return getattr(request.app.state, "device_orchestrator", None)
 
 
-def _require_device_orchestrator(request: Request) -> DeviceOrchestrator:
+def _require_device_orchestrator(request: Request) -> Any:
     orch = _device_orchestrator(request)
     if orch is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "device runtime unavailable")

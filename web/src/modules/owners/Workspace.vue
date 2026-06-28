@@ -374,8 +374,8 @@ function defaultPromptMarkdown(name: string): string {
     <section v-else-if="activeSection === 'initialize'" v-loading="loading" class="workspace-section">
       <el-alert
         v-if="overview?.initialized"
-        title="Companion workspace 已初始化"
-        type="success"
+        title="当前 Owner 已有 Companion，可以继续创建新的 Companion 工作区"
+        type="info"
         :closable="false"
         show-icon
       />
@@ -383,7 +383,6 @@ function defaultPromptMarkdown(name: string): string {
       <el-form
         label-position="top"
         class="init-form"
-        :disabled="Boolean(overview?.initialized)"
         @submit.prevent="submitInitialize"
       >
         <section class="init-block">
@@ -462,8 +461,8 @@ function defaultPromptMarkdown(name: string): string {
         </section>
 
         <div class="form-actions">
-          <el-button type="primary" :loading="initializing" :disabled="Boolean(overview?.initialized)" @click="submitInitialize">
-            初始化工作区
+          <el-button type="primary" :loading="initializing" @click="submitInitialize">
+            创建 Companion 工作区
           </el-button>
         </div>
       </el-form>

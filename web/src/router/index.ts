@@ -34,7 +34,7 @@ const routes: RouteRecordRaw[] = [
         path: 'agents',
         redirect: {
           name: 'feature',
-          params: { serviceId: 'agent', feature: 'conversations' },
+          params: { serviceId: 'agent', feature: 'data' },
         },
       },
       {

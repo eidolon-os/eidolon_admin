@@ -45,7 +45,7 @@ services:
     base_url: http://127.0.0.1:$EIDOLON_AGENT_ADMIN_PORT
     upstream_prefix: /api/admin
     auth: { type: none }
-    health: /api/admin/personas/templates
+    health: /api/admin/conversations/turns?limit=1
     supervisor:
       config_file: deploy/supervisor/available/agent.conf
       group: agent
@@ -54,11 +54,9 @@ services:
     ports:
       declared: [$EIDOLON_AGENT_HTTP_PORT, $EIDOLON_AGENT_ADMIN_PORT, $EIDOLON_AGENT_GRPC_PORT]
     features:
-      - { key: personas-templates, label: "Persona 模板" }
-      - { key: personas-instances, label: "Persona 实例" }
-      - { key: persona-lab,        label: "Persona Lab" }
+      - { key: data,               label: "Data" }
+      - { key: memory,             label: "Memory" }
       - { key: pairing,            label: "Pairing" }
-      - { key: chat-stream,        label: "Chat", stream: true }
       - { key: chat-test,          label: "Chat (events)", stream: true }
       - { key: conversations,      label: "Conversations" }
       - { key: long-tasks,         label: "Long Tasks" }

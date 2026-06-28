@@ -10,14 +10,17 @@ import {
   type LongTaskSummary,
 } from '@/api/longTasks'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
-import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
+import AgentScopeSelector from './components/AgentScopeSelector.vue'
+import { useOwnersStore } from '@/stores/owners'
 
+const ownersStore = useOwnersStore()
 const tasks = ref<LongTaskSummary[]>([])
 const loading = ref(false)
 const detail = ref<LongTaskDetail | null>(null)
 const detailLoading = ref(false)
 const selectedId = ref<string | null>(null)
-const filterUserId = ref<string | null>(null)
+const ownerId = ref(ownersStore.currentId)
+const companionId = ref('')
 const filterStatus = ref<string>('')
 const cursor = ref<string | null>(null)
 const hasMore = computed(() => cursor.value !== null)
@@ -85,12 +88,13 @@ function clearSelection() {
 
 function buildParams(): ListLongTasksParams {
   const params: ListLongTasksParams = { limit: 50 }
-  if (filterUserId.value) params.user_id = filterUserId.value
+  if (ownerId.value) params.owner_id = ownerId.value
+  if (companionId.value) params.companion_id = companionId.value
   if (filterStatus.value) params.status = filterStatus.value
   return params
 }
 
-watch([filterUserId, filterStatus], () => {
+watch([ownerId, companionId, filterStatus], () => {
   clearSelection()
   void refresh()
 })
@@ -143,14 +147,13 @@ function jsonText(value: unknown): string {
     <header class="page-head eid-page-head">
       <div>
         <h2>Long Tasks</h2>
-        <p class="hint eid-page-hint">通过 agent admin API 查看 mementos 长任务，不直接读取 agent SQLite。</p>
+        <p class="hint eid-page-hint">查看 owner / companion 维度的长任务，任务身份来自运行时 token。</p>
       </div>
       <div class="head-actions eid-head-actions">
-        <RegisteredUserPicker
-          v-model="filterUserId"
-          width="220px"
-          placeholder="按 user 过滤"
-          :auto-select-first="false"
+        <AgentScopeSelector
+          v-model:owner-id="ownerId"
+          v-model:companion-id="companionId"
+          allow-all-companions
         />
         <el-select
           v-model="filterStatus"
@@ -188,9 +191,14 @@ function jsonText(value: unknown): string {
               <span class="muted mono">{{ formatTimestamp(row.created_at) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="user" width="120">
+          <el-table-column label="owner" width="130">
             <template #default="{ row }">
-              <span class="mono">{{ row.user_id }}</span>
+              <span class="mono">{{ row.owner_id }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="companion" width="140">
+            <template #default="{ row }">
+              <span class="mono">{{ row.companion_id }}</span>
             </template>
           </el-table-column>
           <el-table-column label="status" width="110">
@@ -251,7 +259,7 @@ function jsonText(value: unknown): string {
         <template v-else-if="detail">
           <div class="detail-head eid-detail-head">
             <div>
-              <h3>{{ detail.user_id }} · {{ detail.task_type }}</h3>
+              <h3>{{ detail.owner_id }} · {{ detail.companion_id }} · {{ detail.task_type }}</h3>
               <p class="meta eid-meta-row">
                 <code class="mono">{{ shortId(detail.task_id) }}</code>
                 <span>•</span>
@@ -275,6 +283,8 @@ function jsonText(value: unknown): string {
               <div><span class="lbl">task_key</span><span class="mono">{{ detail.task_key }}</span></div>
               <div><span class="lbl">turn_id</span><span class="mono">{{ detail.turn_id }}</span></div>
               <div><span class="lbl">trace_id</span><span class="mono">{{ detail.trace_id || '—' }}</span></div>
+              <div><span class="lbl">memory realm</span><span class="mono">{{ detail.memory_realm_id || '—' }}</span></div>
+              <div><span class="lbl">genome</span><span class="mono">{{ detail.genome_id || '—' }}</span></div>
             </div>
           </section>
 

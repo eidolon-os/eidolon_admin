@@ -10,9 +10,10 @@ export interface LongTaskSummary {
   task_id: string
   provider: string
   status: string
-  tenant_id: string
-  user_id: string
-  agent_instance_id: string | null
+  owner_id: string
+  companion_id: string
+  memory_realm_id: string | null
+  genome_id: string | null
   conversation_id: string | null
   turn_id: string
   trace_id: string | null
@@ -66,8 +67,8 @@ export interface LongTaskDetail extends LongTaskSummary {
 }
 
 export interface ListLongTasksParams {
-  tenant_id?: string
-  user_id?: string
+  owner_id?: string
+  companion_id?: string
   status?: string
   provider?: string
   task_type?: string

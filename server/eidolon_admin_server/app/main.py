@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
 # Process-wide proxy scrub. The admin gateway only talks to localhost
 # sub-projects; a system HTTP_PROXY (e.g. Clash on :7890) silently intercepts
@@ -21,12 +20,6 @@ from contextlib import asynccontextmanager
 
 import httpx
 from eidolon_data import DataStore, load_settings
-from eidolon_data.adapters import (
-    EidolonDataAgentMetadataRepository,
-    EidolonDataDeviceBindingRepository,
-    EidolonDataTenantRepository,
-    EidolonDataUserRepository,
-)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -40,41 +33,7 @@ from .data import router as data_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.nats_publisher import JetStreamPublisher
-from .memory.router import router as memory_router
 from .nats_kv import KVClient
-from .registry.agents import (
-    AgentMetadataRepository,
-    AgentOrchestrator,
-    AgentProjectClient,
-    router as agents_router,
-)
-from .registry.devices import (
-    DeviceBindingRepository,
-    DeviceOrchestrator,
-    HubDeviceClient,
-    router as devices_router,
-)
-from .registry.resolve import ResolveOrchestrator, router as resolve_router
-from .registry.templates import (
-    TemplateAgentClient,
-    TemplateOrchestrator,
-    router as templates_router,
-)
-from .registry.templates.orchestrator import TemplateNotFound
-from .registry.tenants import (
-    TenantOrchestrator,
-    router as tenants_router,
-)
-from .registry.users import (
-    MemoryUserClient,
-    UserOrchestrator,
-    router as users_router,
-)
-from .registry.voiceprints import (
-    VoiceprintStore,
-    router as voiceprints_router,
-)
-from .routers.bootstrap import router as bootstrap_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
@@ -112,206 +71,20 @@ def create_app(
                 exc,
             )
 
-        tenant_repo = None
-        user_repo = None
         data_store = None
-        ag_repo = None
-        binding_repo = None
-        hub_client = None
-
-        # Control-plane registry data lives in eidolon_data's sovereign DB.
-        # Seed the default tenant regardless of NATS state so user CRUD can
-        # still validate tenant ownership when the bus is down.
+        # Owner/companion data lives in eidolon_data's sovereign DB. The older
+        # tenant/user/agent registry adapters were intentionally removed from
+        # eidolon_data during the owner/companion hard switch; admin must not
+        # reconstruct them at startup.
         try:
             data_store = DataStore.open(load_settings())
             await data_store.init_schema()
             app.state.data_store = data_store
-            tenant_repo = EidolonDataTenantRepository(data_store)
-            user_repo = EidolonDataUserRepository(data_store)
-            ag_repo = AgentMetadataRepository(EidolonDataAgentMetadataRepository(data_store))
-            binding_repo = DeviceBindingRepository(EidolonDataDeviceBindingRepository(data_store))
-            tenant_orch = TenantOrchestrator(tenant_repo)
-            app.state.tenant_orchestrator = tenant_orch
-            logger.info("eidolon_data owner registry ready")
+            logger.info("eidolon_data owner store ready")
         except Exception:  # noqa: BLE001
             logger.exception(
-                "tenant registry init failed; /api/tenants will return 503 "
+                "eidolon_data init failed; /api/owners will return 503 "
                 "until eidolon_data is available",
-            )
-
-        # Templates module — purely an HTTP proxy to agent. Doesn't need
-        # NATS, only the agent service URL from services.yaml. If agent
-        # is absent (services.yaml misconfigured), leave orchestrator
-        # None and /api/templates 503s; same fault-tolerant pattern.
-        agent_url_for_templates = _resolve_service_base_url(cfg, "agent")
-        if agent_url_for_templates:
-            client = TemplateAgentClient(
-                app.state.http_client, agent_url_for_templates
-            )
-            app.state.template_orchestrator = TemplateOrchestrator(client)
-            logger.info("template orchestrator ready (agent=%s)", agent_url_for_templates)
-        else:
-            logger.warning(
-                "template orchestrator NOT initialized — agent service "
-                "missing from services.yaml"
-            )
-
-        # Users module — admin's local registry DB is the user source of
-        # truth; memory's supervisor admin HTTP provides health/reconcile.
-        memory_admin_url = _resolve_memory_supervisor_url()
-        if memory_admin_url and getattr(
-            app.state, "tenant_orchestrator", None
-        ) is not None and user_repo is not None:
-            user_client = MemoryUserClient(app.state.http_client, memory_admin_url)
-            app.state.memory_user_client = user_client
-            user_orch = UserOrchestrator(
-                memory_client=user_client,
-                metadata_repo=user_repo,
-                tenant_orchestrator=app.state.tenant_orchestrator,
-            )
-            app.state.user_orchestrator = user_orch
-            # Close the cascade gap noted in 29.A doc §10: now that Users
-            # exists, wire its refcount method into Tenants's delete
-            # check so we can't orphan users into a deleted tenant.
-            app.state.tenant_orchestrator.set_user_refcount_provider(
-                user_orch.count_users_for_tenant
-            )
-
-            async def _delete_user_voiceprint(tenant_id: str, user_id: str) -> bool:
-                return app.state.voiceprint_store.delete_profile(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                )
-
-            user_orch.set_voiceprint_delete_provider(_delete_user_voiceprint)
-            logger.info("user orchestrator ready (memory=%s)", memory_admin_url)
-        else:
-            logger.warning(
-                "user orchestrator NOT initialized — memory supervisor "
-                "url / tenant orchestrator missing"
-            )
-
-        # Agents module — bridges agent project (persona instances) and
-        # admin's registry metadata (single agent_id → composite key resolver).
-        # Needs both agent service URL AND a working UserOrchestrator
-        # (because every create validates the owning user).
-        agent_url_for_agents = _resolve_service_base_url(cfg, "agent")
-        template_orch = app.state.template_orchestrator
-        user_orch_ready = getattr(app.state, "user_orchestrator", None)
-        if (
-            agent_url_for_agents
-            and template_orch is not None
-            and user_orch_ready is not None
-            and ag_repo is not None
-        ):
-            ag_client = AgentProjectClient(
-                app.state.http_client, agent_url_for_agents
-            )
-
-            # Template-existence checker: an async callable that returns
-            # True iff a template by this id exists in agent. We wrap
-            # TemplateOrchestrator.get() so the agent orchestrator
-            # doesn't import TemplateOrchestrator directly (keeps the
-            # dependency direction clean and easier to fake in tests).
-            async def _template_exists(template_id: str) -> bool:
-                try:
-                    await template_orch.get(template_id)
-                    return True
-                except TemplateNotFound:
-                    return False
-                except Exception:  # noqa: BLE001 - any other error treated as missing
-                    logger.exception(
-                        "agent_orch template-exists check failed for %s",
-                        template_id,
-                    )
-                    return False
-
-            app.state.agent_orchestrator = AgentOrchestrator(
-                agent_client=ag_client,
-                metadata_repo=ag_repo,
-                user_orchestrator=user_orch_ready,
-                template_exists_check=_template_exists,
-            )
-
-            # 29.K back-pointer: now that AgentOrchestrator exists, give
-            # UserOrchestrator a way to fetch agent_ids for the UserView
-            # envelope. Until 29.K this field was always [] (silent gap
-            # — the user-edit dropdown rendered no choices). Lambda
-            # extracts just the ids since UserView.agent_ids: list[str].
-            user_orch_ready.set_agent_ids_provider(
-                lambda uid: app.state.agent_orchestrator.list_agent_ids_for_user(uid)
-            )
-            user_orch_ready.set_agent_delete_provider(
-                lambda aid: app.state.agent_orchestrator.delete_agent(aid)
-            )
-            user_orch_ready.set_agent_user_data_delete_provider(
-                lambda uid: app.state.agent_orchestrator.delete_user_data(uid)
-            )
-
-            logger.info(
-                "agent orchestrator ready (agent=%s)", agent_url_for_agents
-            )
-        else:
-            logger.warning(
-                "agent orchestrator NOT initialized — agent url / registry / "
-                "user orchestrator missing"
-            )
-
-        # Devices module — Phase 29.G replacement for the old device-
-        # creates-agent flow. Hub HTTP for the device fact, admin's registry
-        # for the device→agent binding pointer.
-        hub_url = _resolve_service_base_url(cfg, "hub")
-        ag_repo_for_devices = ag_repo
-        agent_orch_for_devices = app.state.agent_orchestrator
-        if _device_orchestrator_dependencies_ready(
-            hub_url=hub_url,
-            agent_repo=ag_repo_for_devices,
-            binding_repo=binding_repo,
-            agent_orchestrator=agent_orch_for_devices,
-        ):
-            hub_client = HubDeviceClient(app.state.http_client, hub_url)
-            device_orch = DeviceOrchestrator(
-                hub_client=hub_client,
-                binding_repo=binding_repo,
-                agent_lookup=ag_repo_for_devices.get,
-            )
-            app.state.device_orchestrator = device_orch
-            # Cascade hook: when an agent is deleted, unbind every device
-            # pointing at it (mirrors Tenant→User cascade in 29.E.1 and
-            # Agent→User.active_agent in 29.F).
-            agent_orch_for_devices.set_device_cascade_hook(
-                device_orch.unbind_all_referring_to
-            )
-            logger.info("device orchestrator ready (hub=%s)", hub_url)
-        else:
-            logger.warning(
-                "device orchestrator NOT initialized — hub url / registry / "
-                "agent orchestrator missing"
-            )
-
-        # Resolve aggregator — pure read-only join across all four
-        # entity orchestrators. Built last because it depends on all
-        # of them being ready.
-        if (
-            app.state.template_orchestrator is not None
-            and app.state.user_orchestrator is not None
-            and app.state.agent_orchestrator is not None
-            and app.state.device_orchestrator is not None
-        ):
-            app.state.resolve_orchestrator = ResolveOrchestrator(
-                binding_repo=binding_repo,
-                hub_client=hub_client,
-                agent_meta_repo=ag_repo,
-                user_orchestrator=app.state.user_orchestrator,
-                template_orchestrator=app.state.template_orchestrator,
-                voiceprint_store=app.state.voiceprint_store,
-                data_store=data_store,
-            )
-            logger.info("resolve orchestrator ready")
-        else:
-            logger.warning(
-                "resolve orchestrator NOT initialized — depends on all of "
-                "templates / users / agents / devices being ready"
             )
 
         try:
@@ -353,17 +126,9 @@ def create_app(
     # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
     app.state.data_store = None
-    # Each entity module (Tenants/Templates/Users/Agents/Devices) +
-    # the Resolve aggregator gets its own orchestrator slot. Routers
-    # check the slot before serving and emit 503 if absent.
-    app.state.tenant_orchestrator = None
-    app.state.template_orchestrator = None
-    app.state.memory_user_client = None
-    app.state.user_orchestrator = None
-    app.state.agent_orchestrator = None
+    # Legacy tenant/user/agent registry orchestrators are intentionally not
+    # initialized in the owner/companion model.
     app.state.device_orchestrator = None
-    app.state.resolve_orchestrator = None
-    app.state.voiceprint_store = VoiceprintStore(settings.voiceprint_root)
     app.state.voiceprint_model_dir = settings.speaker_model_dir
     app.state.esp32_tools = Esp32ToolService(catalog_file=settings.esp32_tools_file)
 
@@ -379,19 +144,10 @@ def create_app(
     app.include_router(benchmarks_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
     app.include_router(supervisor_router, prefix="/api")
-    app.include_router(memory_router, prefix="/api")
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
-    app.include_router(tenants_router, prefix="/api")
-    app.include_router(templates_router, prefix="/api")
-    app.include_router(users_router, prefix="/api")
-    app.include_router(voiceprints_router, prefix="/api")
-    app.include_router(agents_router, prefix="/api")
-    app.include_router(devices_router, prefix="/api")
-    app.include_router(resolve_router, prefix="/api")
-    app.include_router(bootstrap_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     app.include_router(esp32_tools_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be
@@ -399,60 +155,5 @@ def create_app(
     # exact path GET /api/services.
     app.include_router(gateway_router, prefix="/api")
     return app
-
-
-def _resolve_service_base_url(cfg: GatewayConfig, service_id: str) -> str | None:
-    """Return the configured ``base_url`` for a service id, or ``None`` if
-    the service is absent or has no upstream (e.g. native-integration only).
-
-    Used by the lifespan to wire the device orchestrator to hub / agent
-    without hardcoding port numbers; ports are owned by services.yaml.
-    """
-    svc = cfg.find(service_id)
-    if svc is None or not svc.base_url:
-        return None
-    return svc.base_url
-
-
-def _device_orchestrator_dependencies_ready(
-    *,
-    hub_url: str | None,
-    agent_repo: Any | None,
-    binding_repo: Any | None,
-    agent_orchestrator: Any | None,
-) -> bool:
-    """Devices need Admin's agent orchestrator for the delete-cascade hook.
-
-    Without it, leave device/resolve orchestrators unset so their routers return
-    503 instead of crashing lifespan while wiring ``set_device_cascade_hook``.
-    """
-    return (
-        bool(hub_url)
-        and agent_repo is not None
-        and binding_repo is not None
-        and agent_orchestrator is not None
-    )
-
-
-def _resolve_memory_supervisor_url() -> str | None:
-    """Resolve the URL for memory's supervisor-embedded admin HTTP.
-
-    Memory's supervisor process listens on a port NOT exposed via
-    services.yaml (it's internal, not a service users hit). We look at
-    the env vars ports.py sets:
-        EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST  (default 127.0.0.1)
-        EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT  (default 8019)
-
-    Returns ``None`` only if the env vars are explicitly cleared — the
-    defaults always produce a valid URL.
-    """
-    import os
-
-    host = os.environ.get("EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST", "127.0.0.1").strip()
-    port = os.environ.get("EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT", "8019").strip()
-    if not host or not port:
-        return None
-    return f"http://{host}:{port}"
-
 
 app = create_app()

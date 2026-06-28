@@ -3,19 +3,17 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Promotion, ChatLineRound } from '@element-plus/icons-vue'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
-import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
+import AgentScopeSelector from './components/AgentScopeSelector.vue'
+import { chatTestUrl } from '@/api/agentRuntime'
+import { useOwnersStore } from '@/stores/owners'
 
 // Chat test uses SSE over POST — fetch-with-stream-reader rather than
 // EventSource (which only supports GET).
 
-// 2026-06-03: user_id used to be a free-text input defaulting to
-// "tester". That made it trivially easy to test against a user memory
-// had no palace for → recall always missed → "AI forgot my data" bug
-// reports. We now require picking from the registered-users dropdown.
+const ownersStore = useOwnersStore()
 const form = ref({
-  tenant_id: 'default',
-  user_id: '' as string | null,
-  template_id: '',
+  owner_id: ownersStore.currentId,
+  companion_id: '',
   text: '',
 })
 
@@ -30,8 +28,8 @@ async function send() {
     ElMessage.warning('请输入要测试的话')
     return
   }
-  if (!form.value.user_id) {
-    ElMessage.warning('请选择 user')
+  if (!form.value.owner_id || !form.value.companion_id) {
+    ElMessage.warning('请选择 owner 和 companion')
     return
   }
   cancel()
@@ -41,7 +39,7 @@ async function send() {
 
   abortCtrl = new AbortController()
   try {
-    const resp = await fetch('/api/services/agent/chat/test', {
+    const resp = await fetch(chatTestUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form.value),
@@ -125,11 +123,12 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
     <el-card>
       <el-form>
         <div class="form-grid">
-          <el-form-item label="Tenant"><el-input v-model="form.tenant_id" /></el-form-item>
-          <el-form-item label="User">
-            <RegisteredUserPicker v-model="form.user_id" width="100%" />
+          <el-form-item label="Runtime identity" class="identity-item">
+            <AgentScopeSelector
+              v-model:owner-id="form.owner_id"
+              v-model:companion-id="form.companion_id"
+            />
           </el-form-item>
-          <el-form-item label="Template (可选)"><el-input v-model="form.template_id" /></el-form-item>
         </div>
         <el-form-item label="用户消息">
           <el-input v-model="form.text" type="textarea" :rows="3" placeholder="模拟用户的一句话…" />
@@ -164,7 +163,8 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
 .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .title-row { display: flex; align-items: center; gap: 12px; }
 .title { margin: 0; font-size: 18px; font-weight: 600; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+.form-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.identity-item { margin-bottom: 0; }
 .bar { display: flex; justify-content: space-between; align-items: center; }
 .events {
   background: var(--eid-bg-inset);

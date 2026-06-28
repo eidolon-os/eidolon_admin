@@ -3,8 +3,8 @@
  * /conversations — read-only browse over agent's chat turn log.
  *
  * Phase 34.B. Master/detail pattern:
- *   - Master (left): paginated table of turns, filterable by user via
- *     the shared RegisteredUserPicker. Cursor-paginated using the
+ *   - Master (left): paginated table of turns, filterable by owner and
+ *     companion. Cursor-paginated using the
  *     ``next_before`` field the endpoint hands back.
  *   - Detail (right): clicking a row loads the full TurnDetail and
  *     renders the message bubbles + a collapsible "调试信息" block
@@ -26,8 +26,10 @@ import {
   type TurnSummary,
 } from '@/api/conversations'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
-import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
+import AgentScopeSelector from './components/AgentScopeSelector.vue'
+import { useOwnersStore } from '@/stores/owners'
 
+const ownersStore = useOwnersStore()
 const turns = ref<TurnSummary[]>([])
 const loading = ref(false)
 const detail = ref<TurnDetail | null>(null)
@@ -35,7 +37,8 @@ const detailLoading = ref(false)
 const auditRows = ref<MemoryAuditRow[]>([])
 const auditLoading = ref(false)
 const selectedId = ref<string | null>(null)
-const filterUserId = ref<string | null>(null)
+const ownerId = ref(ownersStore.currentId)
+const companionId = ref('')
 const cursor = ref<string | null>(null)
 const hasMore = computed(() => cursor.value !== null)
 const debugCollapsed = ref(true)
@@ -47,7 +50,8 @@ async function refresh() {
   cursor.value = null
   try {
     const params: ListTurnsParams = { limit: 50 }
-    if (filterUserId.value) params.user_id = filterUserId.value
+    if (ownerId.value) params.owner_id = ownerId.value
+    if (companionId.value) params.companion_id = companionId.value
     const r = await listTurns(params)
     turns.value = r.turns
     cursor.value = r.next_before
@@ -63,7 +67,8 @@ async function refreshMemoryAudit() {
   auditLoading.value = true
   try {
     const params: ListTurnsParams = { limit: 50 }
-    if (filterUserId.value) params.user_id = filterUserId.value
+    if (ownerId.value) params.owner_id = ownerId.value
+    if (companionId.value) params.companion_id = companionId.value
     const r = await listMemoryAudit(params)
     auditRows.value = r.rows
   } catch (e: any) {
@@ -78,7 +83,8 @@ async function loadMore() {
   loading.value = true
   try {
     const params: ListTurnsParams = { limit: 50, before: cursor.value }
-    if (filterUserId.value) params.user_id = filterUserId.value
+    if (ownerId.value) params.owner_id = ownerId.value
+    if (companionId.value) params.companion_id = companionId.value
     const r = await listTurns(params)
     turns.value = [...turns.value, ...r.turns]
     cursor.value = r.next_before
@@ -120,10 +126,7 @@ function clearSelection() {
   detail.value = null
 }
 
-// Refresh when user filter changes. RegisteredUserPicker auto-selects
-// the first registered user on mount, which fires this watcher with a
-// real id (we want refresh — not the legacy "fetch all" view).
-watch(filterUserId, () => {
+watch([ownerId, companionId], () => {
   clearSelection()
   void refresh()
 })
@@ -233,16 +236,15 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
       <div>
         <h2>对话记录</h2>
         <p class="hint eid-page-hint">
-          只读视图：浏览 agent SQLite 里的 turn 日志。按 user 过滤；
+          只读视图：浏览 agent turn 日志。按 owner / companion 过滤；
           点击一行展开看消息正文 + 调试信息（latency / tokens / trace）。
         </p>
       </div>
       <div class="head-actions eid-head-actions">
-        <RegisteredUserPicker
-          v-model="filterUserId"
-          width="240px"
-          placeholder="按 user 过滤"
-          :auto-select-first="true"
+        <AgentScopeSelector
+          v-model:owner-id="ownerId"
+          v-model:companion-id="companionId"
+          allow-all-companions
         />
         <el-button :icon="Refresh" :loading="loading" size="small" @click="refresh">
           刷新
@@ -266,9 +268,14 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
               <span class="muted mono">{{ formatTimestamp(row.started_at) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="user" width="120">
+          <el-table-column label="owner" width="140">
             <template #default="{ row }">
-              <span class="mono">{{ row.user_id }}</span>
+              <span class="mono">{{ row.owner_id }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="companion" width="150">
+            <template #default="{ row }">
+              <span class="mono">{{ row.companion_id }}</span>
             </template>
           </el-table-column>
           <el-table-column label="status" width="80">
@@ -308,7 +315,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
         </el-table>
 
         <div v-if="!loading && turns.length === 0" class="empty">
-          这个 user 还没有对话记录。让 ta 通过 companion / agent chat 测试发一句话试试。
+          当前 owner / companion 没有对话记录。可以通过 Agent / Chat Test 发一句话验证链路。
         </div>
 
         <div class="pager">
@@ -333,7 +340,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
         <template v-else-if="detail">
           <div class="detail-head eid-detail-head">
             <div>
-              <h3>{{ detail.user_id }} · turn {{ detail.seq }}</h3>
+              <h3>{{ detail.owner_id }} · {{ detail.companion_id }} · turn {{ detail.seq }}</h3>
               <p class="meta eid-meta-row">
                 <code class="mono">{{ detail.turn_id.slice(0, 12) }}…</code>
                 <span>•</span>
@@ -448,11 +455,12 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
               <div><span class="lbl">triage</span><span class="val mono">{{ detail.triage_kind || '—' }}</span></div>
               <div><span class="lbl">trigger</span><span class="val mono">{{ detail.trigger }}</span></div>
               <div><span class="lbl">device</span><span class="val mono">{{ detail.device_id || '—' }}</span></div>
+              <div><span class="lbl">memory realm</span><span class="val mono">{{ detail.memory_realm_id || '—' }}</span></div>
+              <div><span class="lbl">genome</span><span class="val mono">{{ detail.genome_id || '—' }}</span></div>
               <div><span class="lbl">caller_kind</span><span class="val mono">{{ detail.caller_kind || '—' }}</span></div>
               <div><span class="lbl">trace_id</span><span class="val mono">{{ detail.trace_id || '—' }}</span></div>
               <div v-if="detail.error_code"><span class="lbl">error_code</span><span class="val mono">{{ detail.error_code }}</span></div>
               <div class="full"><span class="lbl">conversation</span><span class="val mono">{{ detail.conversation_id }}</span></div>
-              <div class="full"><span class="lbl">agent_instance</span><span class="val mono">{{ detail.agent_instance_id }}</span></div>
               <div v-if="detail.metadata" class="full">
                 <span class="lbl">metadata</span>
                 <pre class="val">{{ JSON.stringify(detail.metadata, null, 2) }}</pre>
@@ -486,9 +494,14 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
             <span class="muted mono">{{ formatTimestamp(row.started_at) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="user" width="120">
+        <el-table-column label="owner" width="140">
           <template #default="{ row }">
-            <span class="mono">{{ row.user_id }}</span>
+            <span class="mono">{{ row.owner_id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="companion" width="150">
+          <template #default="{ row }">
+            <span class="mono">{{ row.companion_id }}</span>
           </template>
         </el-table-column>
         <el-table-column label="disposition" width="190">

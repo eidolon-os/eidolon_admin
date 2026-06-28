@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Shared dropdown for picking an admin-registered ``user_id`` on test
- * pages (ChatTest / ChatStream / Pairing). Backed by ``/api/users``,
+ * Shared dropdown for picking an admin-registered ``user_id`` on legacy
+ * registry and memory pages. Backed by ``/api/users``,
  * which means: only users known to admin (and therefore to memory)
  * show up here.
  *

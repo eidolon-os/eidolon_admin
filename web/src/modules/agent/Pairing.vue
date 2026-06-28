@@ -1,29 +1,26 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { issuePairingCode, pairingQrUrl, type PairingCode } from '@/api/agentLegacyProxy'
-import RegisteredUserPicker from '@/modules/common/RegisteredUserPicker.vue'
+import { issuePairingCode, pairingQrUrl, type PairingCode } from '@/api/agentRuntime'
+import AgentScopeSelector from './components/AgentScopeSelector.vue'
+import { useOwnersStore } from '@/stores/owners'
 
-const tenantId = ref('default')
-// 2026-06-03: was a free-text input — same "type a user that has no
-// memory palace" footgun as ChatTest. RegisteredUserPicker constrains
-// to admin-known users.
-const userId = ref<string | null>(null)
-const templateId = ref('')
+const ownersStore = useOwnersStore()
+const ownerId = ref(ownersStore.currentId)
+const companionId = ref('')
 const issuing = ref(false)
 const code = ref<PairingCode | null>(null)
 
 async function issue() {
-  if (!userId.value) {
-    ElMessage.warning('请选择 user')
+  if (!ownerId.value || !companionId.value) {
+    ElMessage.warning('请选择 owner 和 companion')
     return
   }
   issuing.value = true
   try {
     code.value = await issuePairingCode({
-      tenant_id: tenantId.value,
-      user_id: userId.value,
-      default_template_id: templateId.value || undefined,
+      owner_id: ownerId.value,
+      companion_id: companionId.value,
     })
     ElMessage.success(`配对码：${code.value.code}（${code.value.expires_at} 失效）`)
   } catch (e: any) {
@@ -41,17 +38,9 @@ async function issue() {
     <el-card>
       <template #header>发起配对</template>
       <el-form>
-        <div class="form-grid">
-          <el-form-item label="Tenant ID">
-            <el-input v-model="tenantId" />
-          </el-form-item>
-          <el-form-item label="User ID" required>
-            <RegisteredUserPicker v-model="userId" width="100%" />
-          </el-form-item>
-          <el-form-item label="Default template (可选)">
-            <el-input v-model="templateId" placeholder="如：companion-base" />
-          </el-form-item>
-        </div>
+        <el-form-item label="Runtime identity" required>
+          <AgentScopeSelector v-model:owner-id="ownerId" v-model:companion-id="companionId" />
+        </el-form-item>
         <el-button type="primary" :loading="issuing" @click="issue">生成配对码</el-button>
       </el-form>
     </el-card>
@@ -72,6 +61,10 @@ async function issue() {
             <span class="label">PAIR URL</span>
             <span class="mono">{{ code.pair_url }}</span>
           </div>
+          <div v-if="code.memory" class="row">
+            <span class="label">MEMORY</span>
+            <span class="mono">{{ code.memory.memory_realm_id }} · {{ code.memory.mcp_http_url || 'route ready' }}</span>
+          </div>
         </div>
         <img :src="pairingQrUrl(code.code)" alt="QR" class="qr" />
       </div>
@@ -82,7 +75,6 @@ async function issue() {
 <style scoped>
 .page { display: flex; flex-direction: column; }
 .title { margin: 0 0 16px 0; font-size: 18px; font-weight: 600; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 .result-card .result {
   display: grid;
   grid-template-columns: 1fr auto;

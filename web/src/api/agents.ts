@@ -1,12 +1,9 @@
 /**
  * Typed client for /api/agents — Phase 29.F catalog CRUD.
  *
- * This is the modern surface: agents-as-catalog-entities, owned by
- * admin, orchestrated across agent + memory + admin's KV. The sibling
- * file ``api/agentLegacyProxy.ts`` is the older gateway-proxy for the
- * agent service's own admin endpoints (templates render, persona
- * instances raw) — kept around because the ``/agent`` power-user
- * module still uses them. Two files, two surfaces, on purpose.
+ * Deprecated registry catalog client. The Agent menu no longer imports this
+ * surface; owner/companion runtime operations go through eidolon_data and the
+ * agent admin owner/companion endpoints.
  */
 import client from './client'
 

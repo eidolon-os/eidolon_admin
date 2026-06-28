@@ -87,9 +87,10 @@ export interface TurnSummary {
   turn_id: string
   conversation_id: string
   seq: number
-  tenant_id: string
-  user_id: string
-  agent_instance_id: string
+  owner_id: string
+  companion_id: string
+  memory_realm_id: string | null
+  genome_id: string | null
   trigger: string
   caller_kind: string | null
   device_id: string | null
@@ -115,8 +116,8 @@ export interface MemoryAuditRow {
   turn_id: string
   conversation_id: string
   seq: number
-  tenant_id: string
-  user_id: string
+  owner_id: string
+  companion_id: string
   started_at: string
   disposition: string | null
   reason: string | null
@@ -154,8 +155,8 @@ export interface TurnDetail extends TurnSummary {
 }
 
 export interface ListTurnsParams {
-  user_id?: string
-  tenant_id?: string
+  owner_id?: string
+  companion_id?: string
   limit?: number
   before?: string
 }

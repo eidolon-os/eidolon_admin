@@ -9,11 +9,9 @@ const route = useRoute()
 // back to the generic ApiConsole so unmapped endpoints stay reachable.
 const moduleMap: Record<string, Record<string, Component>> = {
   agent: {
-    'personas-templates': defineAsyncComponent(() => import('./agent/PersonasTemplates.vue')),
-    'personas-instances': defineAsyncComponent(() => import('./agent/PersonasInstances.vue')),
-    'persona-lab': defineAsyncComponent(() => import('./agent/PersonaInstanceLab.vue')),
+    data: defineAsyncComponent(() => import('./agent/DataMemory.vue')),
+    memory: defineAsyncComponent(() => import('./agent/DataMemory.vue')),
     pairing: defineAsyncComponent(() => import('./agent/Pairing.vue')),
-    'chat-stream': defineAsyncComponent(() => import('./agent/ChatStream.vue')),
     'chat-test': defineAsyncComponent(() => import('./agent/ChatTest.vue')),
     conversations: defineAsyncComponent(() => import('./agent/Conversations.vue')),
     'long-tasks': defineAsyncComponent(() => import('./agent/LongTasks.vue')),
