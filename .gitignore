@@ -27,6 +27,17 @@ web/.vite/
 # Runtime artifacts (supervisord pid/socket/childlogs)
 var/
 
+# Benchmark artifacts
+benchmarks/runs/
+benchmark/runs/
+reports/benchmark*/
+reports/*benchmark*/
+reports/*_benchmark_*/
+reports/memory_perf_*/
+reports/memory_quality_*/
+reports/memory_multi_device_*/
+reports/e2e_*/
+
 # Supervisord enabled/ is RUNTIME STATE, not source: the Admin UI's
 # Enable/Disable buttons mutate this directory, and any git operation
 # that touched these symlinks would silently override the user's
