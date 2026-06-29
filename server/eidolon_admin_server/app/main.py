@@ -38,6 +38,8 @@ from .memory.router import router as memory_router
 from .memory.nats_publisher import JetStreamPublisher
 from .memory.supervisor_client import build_memory_supervisor_client
 from .nats_kv import KVClient
+from .resolve import router as resolve_router
+from .resolve.orchestrator import ResolveOrchestrator
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
@@ -84,6 +86,9 @@ def create_app(
             data_store = DataStore.open(load_settings())
             await data_store.init_schema()
             app.state.data_store = data_store
+            app.state.resolve_orchestrator = ResolveOrchestrator(
+                data_store=data_store
+            )
             logger.info("eidolon_data owner store ready")
         except Exception:  # noqa: BLE001
             logger.exception(
@@ -136,6 +141,7 @@ def create_app(
     # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
     app.state.data_store = None
+    app.state.resolve_orchestrator = None
     # Legacy tenant/user/agent registry orchestrators are intentionally not
     # initialized in the owner/companion model.
     app.state.voiceprint_model_dir = settings.speaker_model_dir
@@ -157,6 +163,7 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
+    app.include_router(resolve_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     app.include_router(esp32_tools_router, prefix="/api")
