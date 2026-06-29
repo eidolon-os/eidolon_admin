@@ -122,15 +122,15 @@ async function sendDeviceCommand(id: string, op: string): Promise<Record<string,
 }
 
 export async function wakeDevice(id: string): Promise<Record<string, any>> {
-  return sendDeviceCommand(id, 'wake')
+  return sendDeviceCommand(id, 'room.join')
 }
 
 export async function identifyDevice(id: string): Promise<Record<string, any>> {
-  return sendDeviceCommand(id, 'identify')
+  return sendDeviceCommand(id, 'device.identify')
 }
 
 export async function refreshDeviceConfig(id: string): Promise<Record<string, any>> {
-  return sendDeviceCommand(id, 'refresh_config')
+  return sendDeviceCommand(id, 'config.refresh')
 }
 
 export async function unregisterDevice(id: string): Promise<UnregisterResponse> {
