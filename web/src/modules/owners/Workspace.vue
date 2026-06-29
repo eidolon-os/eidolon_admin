@@ -6,6 +6,7 @@ import {
   bindOwnerDevice,
   getOwnerOverview,
   identifyNearbyDevice,
+  identifyOwnerDevice,
   initializeOwnerWorkspace,
   listOwnerCompanions,
   listOwnerConversations,
@@ -15,6 +16,8 @@ import {
   listOwnerMemoryRealms,
   listNearbyOwnerDevices,
   listOwnerPersonaGenomes,
+  releaseOwnerDevice,
+  updateOwnerDevice,
   type CompanionView,
   type ConversationView,
   type DeviceView,
@@ -28,8 +31,8 @@ import {
 import CatalogPage from '@/modules/common/CatalogPage.vue'
 import { useOwnersStore } from '@/stores/owners'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
-import { ElMessage } from 'element-plus'
-import { Bell, Link, Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Bell, CloseBold, Delete, Link, Plus } from '@element-plus/icons-vue'
 
 type Section =
   | 'overview'
@@ -65,6 +68,8 @@ const deviceActionName = ref('')
 const deviceActionCompanionId = ref('')
 const deviceActionLoading = ref(false)
 const identifyingDeviceId = ref('')
+const releasingDeviceId = ref('')
+const unbindingDeviceId = ref('')
 const initForm = ref({
   companion_id: '',
   companion_display_name: '',
@@ -173,10 +178,22 @@ async function loadDevicesSection() {
   nearbyHubAvailable.value = nearby.hub_available
 }
 
-async function identifyDevice(row: NearbyDeviceView) {
+async function identifyNearby(row: NearbyDeviceView) {
   identifyingDeviceId.value = row.device_id
   try {
     const result = await identifyNearbyDevice(ownerId.value, row.device_id)
+    ElMessage.success(`点名命令已下发: ${result.command_id || row.device_id}`)
+  } catch (e) {
+    ElMessage.error(`点名失败: ${extractErrorMessage(e)}`)
+  } finally {
+    identifyingDeviceId.value = ''
+  }
+}
+
+async function identifyOwned(row: DeviceView) {
+  identifyingDeviceId.value = row.device_id
+  try {
+    const result = await identifyOwnerDevice(ownerId.value, row.device_id)
     ElMessage.success(`点名命令已下发: ${result.command_id || row.device_id}`)
   } catch (e) {
     ElMessage.error(`点名失败: ${extractErrorMessage(e)}`)
@@ -189,7 +206,10 @@ function openAddDevice(row: NearbyDeviceView) {
   deviceActionMode.value = 'add'
   deviceActionId.value = row.device_id
   deviceActionName.value = row.name || row.device_id
-  deviceActionCompanionId.value = companions.value.length === 1 ? companions.value[0].companion_id : ''
+  const availableCompanion = companions.value.find(
+    (companion) => !isCompanionBoundToOtherDevice(companion.companion_id, row.device_id),
+  )
+  deviceActionCompanionId.value = availableCompanion?.companion_id || ''
   deviceActionOpen.value = true
 }
 
@@ -208,7 +228,7 @@ async function submitDeviceAction() {
     const companionId = deviceActionCompanionId.value || null
     if (deviceActionMode.value === 'add') {
       await addNearbyDeviceToOwner(ownerId.value, deviceActionId.value, {
-        name: deviceActionName.value,
+        name: deviceActionName.value.trim() || deviceActionId.value,
         companion_id: companionId,
         interaction_mode: companionId ? 'voice' : null,
         access_policy_json: companionId
@@ -217,6 +237,9 @@ async function submitDeviceAction() {
       })
       ElMessage.success('设备已认领并绑定到当前 Owner')
     } else {
+      await updateOwnerDevice(ownerId.value, deviceActionId.value, {
+        name: deviceActionName.value.trim() || null,
+      })
       await bindOwnerDevice(ownerId.value, deviceActionId.value, companionId)
       ElMessage.success(companionId ? '设备已绑定 Companion' : '设备已解绑 Companion')
     }
@@ -227,6 +250,57 @@ async function submitDeviceAction() {
   } finally {
     deviceActionLoading.value = false
   }
+}
+
+async function unbindDevice(row: DeviceView) {
+  unbindingDeviceId.value = row.device_id
+  try {
+    await bindOwnerDevice(ownerId.value, row.device_id, null)
+    ElMessage.success('设备已解绑 Companion')
+    await loadDevicesSection()
+  } catch (e) {
+    ElMessage.error(`解绑失败: ${extractErrorMessage(e)}`)
+  } finally {
+    unbindingDeviceId.value = ''
+  }
+}
+
+async function releaseDevice(row: DeviceView) {
+  try {
+    await ElMessageBox.confirm(
+      `释放设备 ${row.name || row.device_id} 后，它会回到可认领设备列表。`,
+      '释放设备',
+      { confirmButtonText: '释放', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  releasingDeviceId.value = row.device_id
+  try {
+    await releaseOwnerDevice(ownerId.value, row.device_id)
+    ElMessage.success('设备已释放')
+    await loadDevicesSection()
+  } catch (e) {
+    ElMessage.error(`释放失败: ${extractErrorMessage(e)}`)
+  } finally {
+    releasingDeviceId.value = ''
+  }
+}
+
+function companionLabel(companionId: string | null | undefined): string {
+  if (!companionId) return '—'
+  const companion = companions.value.find((item) => item.companion_id === companionId)
+  return companion?.display_name || companionId
+}
+
+function isCompanionBoundToOtherDevice(companionId: string, deviceId: string): boolean {
+  return devices.value.some(
+    (device) =>
+      device.device_id !== deviceId
+      && device.bound_companion_id === companionId
+      && device.status !== 'revoked'
+      && !device.revoked_at,
+  )
 }
 
 async function goInitialize() {
@@ -504,15 +578,45 @@ function defaultPromptMarkdown(name: string): string {
           <el-table-column prop="name" label="name" min-width="140" />
           <el-table-column prop="kind" label="kind" width="120" />
           <el-table-column prop="status" label="status" width="110" />
-          <el-table-column prop="bound_companion_id" label="companion" min-width="180" />
+          <el-table-column label="companion" min-width="180">
+            <template #default="{ row }">{{ companionLabel(row.bound_companion_id) }}</template>
+          </el-table-column>
           <el-table-column label="last seen" width="190">
             <template #default="{ row }">{{ formatTimestamp(row.last_seen_at) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="150" fixed="right">
+          <el-table-column label="操作" width="330" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" :icon="Link" @click="openBindDevice(row)">
-                {{ row.bound_companion_id ? 'Change' : 'Bind' }}
-              </el-button>
+              <div class="row-actions">
+                <el-button
+                  size="small"
+                  :icon="Bell"
+                  :loading="identifyingDeviceId === row.device_id"
+                  @click="identifyOwned(row)"
+                >
+                  点名
+                </el-button>
+                <el-button size="small" :icon="Link" @click="openBindDevice(row)">
+                  {{ row.bound_companion_id ? '换绑' : '绑定' }}
+                </el-button>
+                <el-button
+                  size="small"
+                  :icon="CloseBold"
+                  :disabled="!row.bound_companion_id"
+                  :loading="unbindingDeviceId === row.device_id"
+                  @click="unbindDevice(row)"
+                >
+                  解绑
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  :icon="Delete"
+                  :loading="releasingDeviceId === row.device_id"
+                  @click="releaseDevice(row)"
+                >
+                  释放
+                </el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -547,7 +651,7 @@ function defaultPromptMarkdown(name: string): string {
                   size="small"
                   :icon="Bell"
                   :loading="identifyingDeviceId === row.device_id"
-                  @click="identifyDevice(row)"
+                  @click="identifyNearby(row)"
                 >
                   点名
                 </el-button>
@@ -607,8 +711,11 @@ function defaultPromptMarkdown(name: string): string {
       width="520px"
     >
       <el-form label-position="top">
-        <el-form-item label="Device">
-          <el-input :model-value="deviceActionName" disabled />
+        <el-form-item label="设备名称">
+          <el-input
+            v-model="deviceActionName"
+            placeholder="例如 box-3；用于区分具体物理设备"
+          />
         </el-form-item>
         <el-form-item label="Companion">
           <el-select
@@ -623,6 +730,7 @@ function defaultPromptMarkdown(name: string): string {
               :key="companion.companion_id"
               :label="companion.display_name || companion.companion_id"
               :value="companion.companion_id"
+              :disabled="isCompanionBoundToOtherDevice(companion.companion_id, deviceActionId)"
             >
               <span>{{ companion.display_name || companion.companion_id }}</span>
               <span class="option-id">{{ companion.companion_id }}</span>

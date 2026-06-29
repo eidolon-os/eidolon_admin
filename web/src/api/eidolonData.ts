@@ -128,6 +128,11 @@ export interface DeviceAddToOwnerRequest {
   metadata_json?: JsonDict
 }
 
+export interface DeviceUpdateRequest {
+  name?: string | null
+  metadata_json?: JsonDict
+}
+
 export interface ConversationView {
   conversation_id: string
   owner_id: string
@@ -284,6 +289,13 @@ export async function identifyNearbyDevice(ownerId: string, deviceId: string): P
   return data
 }
 
+export async function identifyOwnerDevice(ownerId: string, deviceId: string): Promise<JsonDict> {
+  const { data } = await client.post<JsonDict>(
+    `/owners/${encodeURIComponent(ownerId)}/devices/${encodeURIComponent(deviceId)}/identify`,
+  )
+  return data
+}
+
 export async function addNearbyDeviceToOwner(
   ownerId: string,
   deviceId: string,
@@ -305,6 +317,25 @@ export async function bindOwnerDevice(
     `/owners/${encodeURIComponent(ownerId)}/devices/${encodeURIComponent(deviceId)}/bind-companion`,
     null,
     { params: { companion_id: companionId || undefined } },
+  )
+  return data
+}
+
+export async function updateOwnerDevice(
+  ownerId: string,
+  deviceId: string,
+  body: DeviceUpdateRequest,
+): Promise<DeviceView> {
+  const { data } = await client.patch<DeviceView>(
+    `/owners/${encodeURIComponent(ownerId)}/devices/${encodeURIComponent(deviceId)}`,
+    body,
+  )
+  return data
+}
+
+export async function releaseOwnerDevice(ownerId: string, deviceId: string): Promise<DeviceView> {
+  const { data } = await client.post<DeviceView>(
+    `/owners/${encodeURIComponent(ownerId)}/devices/${encodeURIComponent(deviceId)}/release`,
   )
   return data
 }

@@ -151,7 +151,7 @@ function evTagType(t: string): 'success' | 'warning' | 'danger' | 'info' {
           </el-form-item>
         </div>
         <el-form-item label="用户消息">
-          <el-input v-model="form.text" type="textarea" :rows="3" placeholder="模拟用户的一句话…" />
+          <el-input v-model="form.text" type="textarea" :rows="3" placeholder="例如：请点名 box-3，让它发出本地识别提示" />
         </el-form-item>
         <el-form-item label="Memory 写入">
           <el-switch

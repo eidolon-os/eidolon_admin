@@ -228,15 +228,54 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert added.json()["metadata_json"]["hub_approved"] is True
         assert fake_hub.approved == []
 
+        updated = await client.patch(
+            "/api/owners/owner-devices/devices/esp-near",
+            json={"name": "box-3", "metadata_json": {"aliases": ["box-3", "客厅音箱"]}},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["name"] == "box-3"
+        assert updated.json()["metadata_json"]["aliases"] == ["box-3", "客厅音箱"]
+        assert updated.json()["metadata_json"]["source"] == "hub_runtime"
+
+        owner_identify = await client.post("/api/owners/owner-devices/devices/esp-near/identify")
+        assert owner_identify.status_code == 200
+        assert owner_identify.json()["op"] == "device.identify"
+
+        fake_hub.devices["esp-second"] = _runtime_device("esp-second", name="Second ESP", approved=True)
+        duplicate_binding = await client.post(
+            "/api/owners/owner-devices/nearby-devices/esp-second/claim",
+            json={
+                "name": "Second ESP",
+                "companion_id": "c_owner-devices_default",
+                "interaction_mode": "voice",
+            },
+        )
+        assert duplicate_binding.status_code == 409
+
         empty_nearby = await client.get("/api/owners/owner-devices/nearby-devices")
         assert empty_nearby.status_code == 200
-        assert empty_nearby.json()["devices"] == []
+        assert [row["device_id"] for row in empty_nearby.json()["devices"]] == ["esp-second"]
+
+        unbound = await client.post("/api/owners/owner-devices/devices/esp-near/bind-companion")
+        assert unbound.status_code == 200
+        assert unbound.json()["bound_companion_id"] is None
+
+        released = await client.post("/api/owners/owner-devices/devices/esp-near/release")
+        assert released.status_code == 200
+        assert released.json()["owner_id"] is None
+        assert released.json()["bound_companion_id"] is None
 
         events = await data_store.events.list_for_subject(
             subject_type="device",
             subject_id="esp-near",
         )
-        assert [event.event_type for event in events] == ["device.claimed", "device.bound_companion"]
+        assert [event.event_type for event in events] == [
+            "device.claimed",
+            "device.bound_companion",
+            "device.updated",
+            "device.bound_companion",
+            "device.released",
+        ]
 
 
 async def test_data_router_returns_503_without_datastore() -> None:

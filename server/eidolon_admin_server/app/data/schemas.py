@@ -149,6 +149,11 @@ class DeviceClaimRequest(BaseModel):
 DeviceAddToOwnerRequest = DeviceClaimRequest
 
 
+class DeviceUpdateRequest(BaseModel):
+    name: str | None = None
+    metadata_json: JsonDict | None = None
+
+
 class ConversationView(BaseModel):
     conversation_id: str
     owner_id: str

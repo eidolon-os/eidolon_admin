@@ -17,6 +17,7 @@ from .schemas import (
     ConversationView,
     DeviceAddToOwnerRequest,
     DeviceListResponse,
+    DeviceUpdateRequest,
     DeviceView,
     EventListResponse,
     EventView,
@@ -305,9 +306,8 @@ async def claim_nearby_device(
             raise HTTPException(status.HTTP_409_CONFLICT, "device already belongs to another owner")
 
     if payload.companion_id:
-        companion = await store.companions.get(payload.companion_id)
-        if companion is None or companion.owner_id != owner_id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "companion does not belong to owner")
+        await _require_owner_companion(store, owner_id, payload.companion_id)
+        await _require_companion_unbound(store, owner_id, payload.companion_id)
 
     hub = _require_hub_device_client(request)
     try:
@@ -342,17 +342,20 @@ async def claim_nearby_device(
             metadata_json=metadata_json,
             last_seen_at=runtime_device.last_seen,
         )
-    row = await store.devices.claim_device(
-        runtime_device.device_id,
-        owner_id=owner_id,
-        name=payload.name or runtime_device.name or runtime_device.device_id,
-        kind=runtime_device.kind or "unknown",
-        companion_id=payload.companion_id,
-        interaction_mode=payload.interaction_mode,
-        network_json=network_json,
-        access_policy_json=payload.access_policy_json,
-        metadata_json=metadata_json,
-    )
+    try:
+        row = await store.devices.claim_device(
+            runtime_device.device_id,
+            owner_id=owner_id,
+            name=payload.name or runtime_device.name or runtime_device.device_id,
+            kind=runtime_device.kind or "unknown",
+            companion_id=payload.companion_id,
+            interaction_mode=payload.interaction_mode,
+            network_json=network_json,
+            access_policy_json=payload.access_policy_json,
+            metadata_json=metadata_json,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await store.events.append(
         event_id=_event_id(),
         owner_id=owner_id,
@@ -395,6 +398,18 @@ async def approve_owner_device(owner_id: str, device_id: str, request: Request) 
     return _device(row)
 
 
+@router.post("/owners/{owner_id}/devices/{device_id}/identify")
+async def identify_owner_device(owner_id: str, device_id: str, request: Request) -> dict[str, Any]:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    device = await _require_owner_device(store, owner_id, device_id)
+    hub = _require_hub_device_client(request)
+    try:
+        return await hub.identify_device(device.device_id)
+    except HubRuntimeUnavailable as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
 @router.post("/owners/{owner_id}/devices/{device_id}/revoke", response_model=DeviceView)
 async def revoke_owner_device(owner_id: str, device_id: str, request: Request) -> DeviceView:
     store = _store(request)
@@ -412,6 +427,55 @@ async def revoke_owner_device(owner_id: str, device_id: str, request: Request) -
     return _device(row)
 
 
+@router.post("/owners/{owner_id}/devices/{device_id}/release", response_model=DeviceView)
+async def release_owner_device(owner_id: str, device_id: str, request: Request) -> DeviceView:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    device = await _require_owner_device(store, owner_id, device_id)
+    row = await store.devices.release(device.device_id)
+    await store.events.append(
+        event_id=_event_id(),
+        owner_id=owner_id,
+        subject_type="device",
+        subject_id=device_id,
+        event_type="device.released",
+        actor_type="admin",
+    )
+    return _device(row)
+
+
+@router.patch("/owners/{owner_id}/devices/{device_id}", response_model=DeviceView)
+async def update_owner_device(
+    owner_id: str,
+    device_id: str,
+    payload: DeviceUpdateRequest,
+    request: Request,
+) -> DeviceView:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    device = await _require_owner_device(store, owner_id, device_id)
+    metadata_json = (
+        {**(device.metadata_json or {}), **payload.metadata_json}
+        if payload.metadata_json is not None
+        else None
+    )
+    row = await store.devices.update_device(
+        device.device_id,
+        name=payload.name.strip() if isinstance(payload.name, str) and payload.name.strip() else None,
+        metadata_json=metadata_json,
+    )
+    await store.events.append(
+        event_id=_event_id(),
+        owner_id=owner_id,
+        subject_type="device",
+        subject_id=device_id,
+        event_type="device.updated",
+        actor_type="admin",
+        payload_json={"name": payload.name, "metadata_json": payload.metadata_json or {}},
+    )
+    return _device(row)
+
+
 @router.post("/owners/{owner_id}/devices/{device_id}/bind-companion", response_model=DeviceView)
 async def bind_owner_device(
     owner_id: str,
@@ -423,10 +487,17 @@ async def bind_owner_device(
     await _require_owner(store, owner_id)
     device = await _require_owner_device(store, owner_id, device_id)
     if companion_id is not None:
-        companion = await store.companions.get(companion_id)
-        if companion is None or companion.owner_id != owner_id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "companion does not belong to owner")
-    row = await store.devices.bind_companion(device.device_id, companion_id=companion_id)
+        await _require_owner_companion(store, owner_id, companion_id)
+        await _require_companion_unbound(
+            store,
+            owner_id,
+            companion_id,
+            except_device_id=device.device_id,
+        )
+    try:
+        row = await store.devices.bind_companion(device.device_id, companion_id=companion_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await store.events.append(
         event_id=_event_id(),
         owner_id=owner_id,
@@ -568,6 +639,36 @@ async def _require_owner_device(store: DataStore, owner_id: str, device_id: str)
     if row is None or row.owner_id != owner_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "device not found")
     return row
+
+
+async def _require_owner_companion(store: DataStore, owner_id: str, companion_id: str) -> Any:
+    companion = await store.companions.get(companion_id)
+    if companion is None or companion.owner_id != owner_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "companion does not belong to owner")
+    if companion.status != "active":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "companion is not active")
+    return companion
+
+
+async def _require_companion_unbound(
+    store: DataStore,
+    owner_id: str,
+    companion_id: str,
+    *,
+    except_device_id: str | None = None,
+) -> None:
+    devices = await store.devices.list_devices_for_owner(owner_id)
+    for device in devices:
+        if device.device_id == except_device_id:
+            continue
+        if device.bound_companion_id != companion_id:
+            continue
+        if device.revoked_at is not None or device.status == "revoked":
+            continue
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"companion is already bound to device {device.device_id}",
+        )
 
 
 async def _require_owner_job(store: DataStore, owner_id: str, job_id: str) -> Any:
