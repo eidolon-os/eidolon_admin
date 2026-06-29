@@ -19,7 +19,7 @@ async def _store(tmp_path) -> DataStore:
 
 async def _workspace(store: DataStore, *, owner_id: str = "owner-a"):
     await store.owner_service.create_owner(owner_id=owner_id, display_name=owner_id)
-    return await store.companion_workspace.initialize_workspace(owner_id=owner_id)
+    return await store.workspace_provisioning.provision_workspace(owner_id=owner_id)
 
 
 async def test_resolve_owner_returns_default_runtime_identity(tmp_path) -> None:

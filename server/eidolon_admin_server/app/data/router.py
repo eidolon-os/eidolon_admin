@@ -169,7 +169,7 @@ async def initialize_owner_workspace(
 ) -> WorkspaceInitializeResponse:
     store = _store(request)
     try:
-        result = await store.companion_workspace.initialize_workspace(
+        result = await store.workspace_provisioning.provision_workspace(
             owner_id=owner_id,
             companion_id=payload.companion_id,
             companion_display_name=payload.companion_display_name,
