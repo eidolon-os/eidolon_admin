@@ -129,6 +129,7 @@ async def test_owner_scoped_data_overview_and_lists(
         conversation_id="conversation-a",
         owner_id="owner-a",
         companion_id="c_owner-a_default",
+        source_device_id="device-a",
         title="Morning",
     )
     await data_store.jobs.create(
