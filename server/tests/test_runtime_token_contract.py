@@ -15,7 +15,7 @@ import pytest
 from eidolon_sdk.biz.runtime import (
     RuntimeTokenVerifier,
     RuntimeUnauthenticatedError,
-    sign_device_token,
+    sign_runtime_token,
 )
 
 
@@ -24,9 +24,19 @@ def shared_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+def _sign_device_actor_token(*, secret: str, device_id: str, **kwargs):
+    return sign_runtime_token(
+        secret=secret,
+        actor_kind="device",
+        actor_id=device_id,
+        device_id=device_id,
+        **kwargs,
+    )
+
+
 @pytest.mark.asyncio
 async def test_sdk_signed_token_verifies_with_runtime_schema(shared_secret: str) -> None:
-    token, exp_returned = sign_device_token(
+    token, exp_returned = _sign_device_actor_token(
         secret=shared_secret,
         device_id="contract-test-abc",
         owner_id="owner-a",
@@ -50,7 +60,7 @@ async def test_sdk_signed_token_verifies_with_runtime_schema(shared_secret: str)
 
 @pytest.mark.asyncio
 async def test_wrong_secret_rejected(shared_secret: str) -> None:
-    token, _ = sign_device_token(
+    token, _ = _sign_device_actor_token(
         secret=shared_secret,
         device_id="wrong-secret-test",
         owner_id="owner-a",
@@ -66,7 +76,7 @@ async def test_wrong_secret_rejected(shared_secret: str) -> None:
 
 @pytest.mark.asyncio
 async def test_expired_token_rejected(shared_secret: str) -> None:
-    token, exp = sign_device_token(
+    token, exp = _sign_device_actor_token(
         secret=shared_secret,
         device_id="expired-test",
         owner_id="owner-a",
@@ -85,7 +95,7 @@ async def test_expired_token_rejected(shared_secret: str) -> None:
 def test_payload_field_names_are_locked(shared_secret: str) -> None:
     import jwt
 
-    token, _ = sign_device_token(
+    token, _ = _sign_device_actor_token(
         secret=shared_secret,
         device_id="schema-lock",
         owner_id="owner-a",
@@ -96,6 +106,8 @@ def test_payload_field_names_are_locked(shared_secret: str) -> None:
     payload = jwt.decode(token, shared_secret, algorithms=["HS256"])
     required = {
         "device_id",
+        "actor_kind",
+        "actor_id",
         "owner_id",
         "companion_id",
         "memory_realm_id",
