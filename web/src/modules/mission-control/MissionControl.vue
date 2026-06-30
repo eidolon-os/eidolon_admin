@@ -289,6 +289,15 @@ function friendlyEventSummary(event: RuntimeEvent) {
   return text
 }
 
+function friendlyStoryDetail(step: RuntimeStoryStep) {
+  const text = step.detail || ''
+  const lower = text.toLowerCase()
+  if (lower.includes('mission_control:health_check')) return '飞控台完成链路自检，状态已同步。'
+  if (lower.includes('device command updated')) return '最近一次身体信号已经进入系统视野。'
+  if (lower.includes('device:')) return text.replace(/device:[\w:-]+/g, '身体节点').replace(/_/g, ' ')
+  return text
+}
+
 function nodeTone(status: string | undefined) {
   const value = statusClass(status)
   if (value === 'is-ok') return '#5eead4'
@@ -488,110 +497,102 @@ function startConstellation() {
       </aside>
     </section>
 
-    <section class="story-panel">
-      <div class="flight-head">
+    <section class="signal-path">
+      <div class="path-rail" />
+      <article v-for="step in flowSteps" :key="step.key" class="path-node" :class="statusClass(step.status)">
         <div>
-          <p class="eyebrow">Runtime Flow</p>
-          <h2>一次交互如何穿过 Agent OS</h2>
+          <el-icon><component :is="storyIcon(step)" /></el-icon>
         </div>
-        <span>{{ flowSteps.length }} 层</span>
-      </div>
-      <ol class="flowline">
-        <li v-for="step in flowSteps" :key="step.key" :class="statusClass(step.status)">
-          <div class="story-icon">
-            <el-icon><component :is="storyIcon(step)" /></el-icon>
-          </div>
-          <div>
-            <strong>{{ step.title }}</strong>
-            <p>{{ step.detail }}</p>
-            <span>{{ sourceLabel(step.source) }} · {{ step.ts ? formatTimestamp(step.ts) : '等待信号' }}</span>
-          </div>
-        </li>
-      </ol>
-    </section>
-
-    <section class="plain-summary">
-      <div>
-        <span>系统视角</span>
-        <strong>{{ ownerLabel }} 只是在和 {{ companionLabel }} 互动</strong>
-        <p>{{ experience?.plain_summary }}</p>
-      </div>
-      <div class="completion-box">
-        <span>链路完整度</span>
-        <strong>{{ experience?.completion ?? 0 }}%</strong>
-      </div>
-      <div class="next-action">
-        <span>下一步</span>
-        <strong>{{ experience?.next_best_action }}</strong>
-      </div>
+        <strong>{{ step.title }}</strong>
+        <span>{{ sourceLabel(step.source) }}</span>
+      </article>
     </section>
 
     <p v-if="error" class="error-strip">{{ error }}</p>
 
-    <section class="capability-strip">
-      <article v-for="card in cards" :key="card.key" :class="statusClass(card.status)">
-        <span>{{ card.title }}</span>
-        <strong>{{ card.metric }}</strong>
-        <p>{{ card.detail }}</p>
-      </article>
-    </section>
+    <section class="observatory-stage">
+      <div class="observatory-field" />
 
-    <section class="mission-grid">
-      <section class="body-panel">
-        <div class="panel-head">
+      <header class="observatory-header">
+        <div class="observatory-copy">
+          <p class="eyebrow">Runtime Observatory</p>
+          <h2>Agent OS Runtime</h2>
+        </div>
+        <div class="observatory-metrics">
           <div>
-            <p class="eyebrow">身体网络</p>
-            <h2>小忆可以出现在哪里</h2>
+            <span>链路完整度</span>
+            <strong>{{ experience?.completion ?? 0 }}%</strong>
           </div>
-          <span class="panel-stat">{{ onlineDevices }}/{{ devices.length }} 在线</span>
+          <div>
+            <span>下一步</span>
+            <strong>{{ experience?.next_best_action }}</strong>
+          </div>
         </div>
+      </header>
 
-        <div class="body-map">
-          <article
-            v-for="device in devices"
-            :key="device.device_id"
-            class="device-node"
-            :class="[statusClass(device.status), { 'is-online': device.online }]"
-          >
-            <div class="node-core">
-              <el-icon><component :is="deviceIcon(device)" /></el-icon>
-            </div>
-            <div class="node-copy">
-              <h3>{{ friendlyDeviceName(device) }}</h3>
-              <p>{{ device.name || device.device_id }}</p>
-              <span>{{ device.online ? '可作为当前身体' : '暂时离线' }}</span>
-            </div>
-            <div class="cap-row">
-              <span v-for="cap in device.capabilities.slice(0, 5)" :key="cap">{{ cap }}</span>
-            </div>
-          </article>
-
-          <article v-if="!devices.length" class="empty-state">
-            <el-icon><Connection /></el-icon>
-            <span>还没有检测到身体节点</span>
-          </article>
-        </div>
+      <section class="telemetry-river" aria-label="Agent OS telemetry">
+        <article v-for="card in cards" :key="card.key" :class="statusClass(card.status)">
+          <span>{{ card.title }}</span>
+          <strong>{{ card.metric }}</strong>
+          <p>{{ card.detail }}</p>
+        </article>
       </section>
 
-      <section class="lanes-panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">体验分层</p>
-            <h2>Agent OS 的实时分工</h2>
+      <section class="runtime-theater">
+        <div class="body-constellation">
+          <div class="theater-head">
+            <div>
+              <p class="eyebrow">Body Mesh</p>
+              <h2>小忆可以出现在哪里</h2>
+            </div>
+            <span>{{ onlineDevices }}/{{ devices.length }} 在线</span>
           </div>
-          <span class="panel-stat">{{ degradedSources.length ? `${degradedSources.length} 项需关注` : '稳定' }}</span>
+
+          <div class="body-field">
+            <article
+              v-for="device in devices"
+              :key="device.device_id"
+              class="body-signal"
+              :class="[statusClass(device.status), { 'is-online': device.online }]"
+            >
+              <div class="signal-core">
+                <el-icon><component :is="deviceIcon(device)" /></el-icon>
+              </div>
+              <div>
+                <strong>{{ friendlyDeviceName(device) }}</strong>
+                <p>{{ device.name || device.device_id }}</p>
+                <span>{{ device.online ? '当前可用身体' : '暂时离线' }}</span>
+              </div>
+              <div class="signal-caps">
+                <b v-for="cap in device.capabilities.slice(0, 4)" :key="cap">{{ cap }}</b>
+              </div>
+            </article>
+
+            <article v-if="!devices.length" class="body-signal empty-state">
+              <el-icon><Connection /></el-icon>
+              <span>还没有检测到身体节点</span>
+            </article>
+          </div>
         </div>
 
-        <div class="lane-list">
-          <article v-for="lane in lanes" :key="lane.key" :class="statusClass(lane.status)">
-            <div class="lane-icon">
+        <div class="os-layers">
+          <div class="theater-head">
+            <div>
+              <p class="eyebrow">Agent OS Layers</p>
+              <h2>实时分工</h2>
+            </div>
+            <span>{{ degradedSources.length ? `${degradedSources.length} 项需关注` : '稳定' }}</span>
+          </div>
+
+          <article v-for="lane in lanes" :key="lane.key" class="layer-row" :class="statusClass(lane.status)">
+            <div class="layer-icon">
               <el-icon><component :is="laneIcon(lane.key)" /></el-icon>
             </div>
-            <div class="lane-copy">
+            <div class="layer-line">
               <span>{{ lane.title }}</span>
               <strong>{{ lane.headline }}</strong>
               <p>{{ lane.detail }}</p>
-              <div class="lane-items">
+              <div>
                 <b v-for="item in lane.items.slice(0, 3)" :key="`${lane.key}-${item.label}-${item.value}`">
                   {{ item.label }}：{{ item.value }}
                 </b>
@@ -599,34 +600,33 @@ function startConstellation() {
             </div>
           </article>
         </div>
-      </section>
 
-      <section class="event-panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">安全摘要</p>
-            <h2>系统刚刚发生了什么</h2>
-          </div>
-          <span class="panel-stat">{{ recentEvents.length }} 条</span>
-        </div>
-        <div class="event-feed">
-          <article v-for="event in recentEvents" :key="event.event_id">
-            <el-tag size="small" :type="eventTone(event)" effect="dark">{{ sourceLabel(event.source) }}</el-tag>
+        <div class="event-radar">
+          <div class="theater-head">
             <div>
-              <strong>{{ friendlyEventSummary(event) }}</strong>
-              <span>{{ formatTimestamp(event.ts) }} · 默认脱敏</span>
+              <p class="eyebrow">Signal Feed</p>
+              <h2>刚刚发生了什么</h2>
             </div>
-          </article>
+            <span>{{ recentEvents.length }} 条</span>
+          </div>
+
+          <div class="event-stream">
+            <article v-for="event in recentEvents" :key="event.event_id">
+              <span>{{ sourceLabel(event.source) }}</span>
+              <strong>{{ friendlyEventSummary(event) }}</strong>
+              <small>{{ formatTimestamp(event.ts) }} · 默认脱敏</small>
+            </article>
+          </div>
         </div>
       </section>
 
-      <section class="privacy-panel">
+      <footer class="privacy-ribbon">
         <div>
           <el-icon><Lock /></el-icon>
           <strong>隐私保护默认开启</strong>
         </div>
         <p>{{ snapshot?.privacy_notice || '默认只展示摘要、数量、状态和 hash，不展示完整私密文本、图片或音频。' }}</p>
-      </section>
+      </footer>
     </section>
   </main>
 </template>
@@ -656,10 +656,12 @@ function startConstellation() {
 
 .hero-bar,
 .hero-stage,
+.signal-path,
 .plain-summary,
 .capability-strip,
 .story-panel,
 .mission-grid,
+.observatory-stage,
 .error-strip {
   position: relative;
   z-index: 1;
@@ -1230,18 +1232,45 @@ h3 {
 .plain-summary {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) 180px minmax(220px, 0.8fr);
-  gap: 1px;
+  gap: 0;
+  position: relative;
   overflow: hidden;
   margin-bottom: 16px;
-  border: 1px solid rgba(91, 121, 111, 0.68);
+  border: 1px solid rgba(94, 234, 212, 0.2);
   border-radius: 8px;
-  background: rgba(91, 121, 111, 0.68);
+  background:
+    linear-gradient(90deg, rgba(94, 234, 212, 0.12), transparent 36%, rgba(250, 204, 21, 0.06)),
+    rgba(4, 13, 14, 0.72);
+  box-shadow: inset 0 0 48px rgba(94, 234, 212, 0.05), 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+
+.plain-summary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(94, 234, 212, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94, 234, 212, 0.04) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(90deg, black, transparent 86%);
 }
 
 .plain-summary > div {
+  position: relative;
   min-width: 0;
-  padding: 15px;
-  background: rgba(8, 16, 15, 0.92);
+  padding: 16px 18px;
+  background: transparent;
+}
+
+.plain-summary > div + div::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 0;
+  width: 1px;
+  background: linear-gradient(transparent, rgba(94, 234, 212, 0.42), transparent);
 }
 
 .plain-summary span,
@@ -1285,15 +1314,599 @@ h3 {
   background: rgba(75, 13, 27, 0.62);
 }
 
+.signal-path {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  padding: 18px 20px;
+  border: 1px solid rgba(94, 234, 212, 0.16);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(94, 234, 212, 0.09), transparent 42%),
+    rgba(4, 14, 15, 0.68);
+}
+
+.path-rail {
+  position: absolute;
+  top: 48px;
+  right: 44px;
+  left: 44px;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.12), rgba(94, 234, 212, 0.72), rgba(250, 204, 21, 0.44), rgba(94, 234, 212, 0.12));
+  box-shadow: 0 0 24px rgba(94, 234, 212, 0.22);
+}
+
+.path-rail::before,
+.path-rail::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 13%;
+  height: 5px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(238, 247, 244, 0.9), transparent);
+  filter: blur(0.4px);
+  transform: translateY(-50%);
+  animation: signalSweep 4.8s linear infinite;
+}
+
+.path-rail::after {
+  animation-delay: -2.4s;
+  opacity: 0.62;
+}
+
+.path-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+  text-align: center;
+}
+
+.path-node div {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(94, 234, 212, 0.34);
+  border-radius: 50%;
+  color: #8ff5de;
+  background:
+    radial-gradient(circle, rgba(94, 234, 212, 0.22), rgba(4, 18, 18, 0.96) 68%);
+  box-shadow: 0 0 28px rgba(94, 234, 212, 0.18);
+  animation: nodeBreathe 3.6s ease-in-out infinite;
+}
+
+.path-node strong,
+.path-node span {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.path-node strong {
+  color: #eef7f4;
+  font-size: 14px;
+}
+
+.path-node span {
+  margin-top: 5px;
+  color: #8aa7a0;
+  font: 700 10px/1 var(--eid-font-mono);
+}
+
+.observatory-stage {
+  position: relative;
+  overflow: hidden;
+  min-height: 820px;
+  margin-bottom: 16px;
+  padding: 24px;
+  border: 1px solid rgba(94, 234, 212, 0.2);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at 48% 42%, rgba(94, 234, 212, 0.16), transparent 28%),
+    radial-gradient(circle at 12% 72%, rgba(56, 189, 248, 0.1), transparent 28%),
+    linear-gradient(135deg, rgba(5, 18, 20, 0.95), rgba(7, 12, 13, 0.86) 58%, rgba(20, 18, 10, 0.72));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04), 0 30px 90px rgba(0, 0, 0, 0.28);
+}
+
+.observatory-stage::before,
+.observatory-stage::after,
+.observatory-field {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.observatory-stage::before {
+  inset: 18px;
+  border: 1px solid rgba(94, 234, 212, 0.08);
+  clip-path: polygon(0 8%, 3% 0, 97% 0, 100% 8%, 100% 92%, 97% 100%, 3% 100%, 0 92%);
+}
+
+.observatory-stage::after {
+  top: 18%;
+  right: -14%;
+  width: 62%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(94, 234, 212, 0.12);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 0 0 70px rgba(94, 234, 212, 0.018),
+    inset 0 0 0 150px rgba(250, 204, 21, 0.018),
+    0 0 80px rgba(94, 234, 212, 0.05);
+}
+
+.observatory-field {
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(94, 234, 212, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94, 234, 212, 0.045) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at 50% 46%, black, transparent 82%);
+}
+
+.observatory-field::before,
+.observatory-field::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.observatory-field::before {
+  inset: -30% -10%;
+  background: linear-gradient(110deg, transparent 36%, rgba(94, 234, 212, 0.08), transparent 56%);
+  animation: slowScan 8s linear infinite;
+}
+
+.observatory-field::after {
+  right: 12%;
+  bottom: 14%;
+  width: 34%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(94, 234, 212, 0.08);
+  border-radius: 50%;
+  animation: orbitDrift 12s linear infinite;
+}
+
+.observatory-header,
+.telemetry-river,
+.runtime-theater,
+.privacy-ribbon {
+  position: relative;
+  z-index: 1;
+}
+
+.observatory-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.7fr);
+  gap: 28px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+
+.observatory-copy h2 {
+  max-width: 780px;
+  font-size: clamp(28px, 3.4vw, 50px);
+  line-height: 1.05;
+}
+
+.observatory-copy p:last-child {
+  max-width: 860px;
+  margin-top: 12px;
+  color: #b9cbc5;
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+.observatory-metrics {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 1px;
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.3), rgba(250, 204, 21, 0.18));
+}
+
+.observatory-metrics div {
+  min-width: 0;
+  padding: 14px 16px;
+  background: rgba(4, 14, 15, 0.82);
+}
+
+.observatory-metrics span,
+.theater-head span,
+.telemetry-river span,
+.event-stream span,
+.body-signal span,
+.layer-line span {
+  display: block;
+  color: #8aa7a0;
+  font: 700 10px/1.2 var(--eid-font-mono);
+  text-transform: uppercase;
+}
+
+.observatory-metrics strong {
+  display: block;
+  margin-top: 7px;
+  overflow: hidden;
+  color: #eafff9;
+  font-size: 17px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.observatory-metrics div:first-child strong {
+  color: #8ff5de;
+  font: 900 42px/1 var(--eid-font-mono);
+}
+
+.telemetry-river {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  margin-bottom: 18px;
+  padding: 10px 0;
+  border-block: 1px solid rgba(94, 234, 212, 0.16);
+  background:
+    linear-gradient(90deg, rgba(94, 234, 212, 0.12), transparent 36%, rgba(250, 204, 21, 0.05)),
+    rgba(4, 14, 15, 0.44);
+}
+
+.telemetry-river article {
+  position: relative;
+  flex: 1 0 150px;
+  min-width: 150px;
+  min-height: 0;
+  padding: 2px 18px 2px 16px;
+  border-left: 1px solid rgba(94, 234, 212, 0.13);
+}
+
+.telemetry-river article:first-child {
+  border-left: 0;
+}
+
+.telemetry-river article::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 14px currentColor;
+  opacity: 0.9;
+  transform: translateY(-50%);
+  animation: dotPulse 2.4s ease-in-out infinite;
+}
+
+.telemetry-river strong {
+  display: inline-block;
+  margin: 4px 8px 0 0;
+  overflow: hidden;
+  color: #eef7f4;
+  font: 900 22px/1 var(--eid-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.telemetry-river p {
+  display: inline;
+  color: #aabdba;
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.runtime-theater {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(330px, 0.8fr) minmax(290px, 0.58fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.body-constellation,
+.os-layers,
+.event-radar {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.body-constellation {
+  min-height: 520px;
+}
+
+.theater-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.theater-head h2 {
+  font-size: 24px;
+}
+
+.theater-head > span {
+  align-self: start;
+  padding: 7px 10px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  border-radius: 999px;
+  color: #a7f3d0;
+  background: rgba(94, 234, 212, 0.06);
+}
+
+.body-field {
+  position: relative;
+  min-height: 450px;
+  border-top: 1px solid rgba(94, 234, 212, 0.16);
+  background:
+    radial-gradient(circle at 50% 52%, rgba(94, 234, 212, 0.13), transparent 24%),
+    radial-gradient(circle at 50% 52%, transparent 34%, rgba(94, 234, 212, 0.12) 35%, transparent 36%, transparent 52%, rgba(250, 204, 21, 0.1) 53%, transparent 54%);
+}
+
+.body-field::before,
+.body-field::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.body-field::before {
+  inset: 10% 16%;
+  border: 1px solid rgba(94, 234, 212, 0.14);
+  border-radius: 50%;
+  animation: orbitDrift 18s linear infinite;
+}
+
+.body-field::after {
+  top: 52%;
+  right: 8%;
+  left: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(94, 234, 212, 0.52), transparent);
+  animation: linePulse 2.8s ease-in-out infinite;
+}
+
+.body-signal {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
+  width: 38%;
+  min-width: 0;
+  max-width: 245px;
+  padding: 10px 0 0;
+  background: transparent;
+}
+
+.body-signal:nth-child(1) { top: 8%; left: 2%; }
+.body-signal:nth-child(2) { top: 10%; right: 2%; }
+.body-signal:nth-child(3) { top: 42%; left: 2%; }
+.body-signal:nth-child(4) { top: 42%; right: 2%; }
+.body-signal:nth-child(5) { bottom: 7%; left: 10%; }
+.body-signal:nth-child(6) { right: 10%; bottom: 8%; }
+.body-signal:nth-child(n + 7) { position: relative; top: auto; right: auto; bottom: auto; left: auto; display: inline-grid; margin: 12px 18px 0 0; }
+
+.body-signal::before {
+  content: "";
+  position: absolute;
+  top: 28px;
+  left: -10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 18px currentColor;
+  animation: dotPulse 2.2s ease-in-out infinite;
+}
+
+.body-signal::after {
+  content: "";
+  position: absolute;
+  top: 30px;
+  right: 8px;
+  left: 52px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.44), transparent);
+}
+
+.signal-core,
+.layer-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(94, 234, 212, 0.28);
+  border-radius: 50%;
+  color: #8ff5de;
+  background: radial-gradient(circle, rgba(94, 234, 212, 0.18), rgba(5, 18, 18, 0.92) 72%);
+  box-shadow: 0 0 24px rgba(94, 234, 212, 0.14);
+}
+
+.body-signal strong,
+.layer-line strong,
+.event-stream strong {
+  display: block;
+  overflow: hidden;
+  color: #eef7f4;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.body-signal strong {
+  margin-bottom: 4px;
+}
+
+.body-signal p,
+.layer-line p {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #b9cbc5;
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signal-caps {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  margin-left: 58px;
+  max-height: 22px;
+  overflow: hidden;
+}
+
+.signal-caps b,
+.layer-line b {
+  padding: 4px 6px;
+  border-radius: 999px;
+  color: #dff8f1;
+  font: 700 10px/1 var(--eid-font-mono);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.os-layers {
+  padding-top: 2px;
+}
+
+.layer-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 13px;
+  min-width: 0;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(94, 234, 212, 0.13);
+}
+
+.layer-row::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 61px;
+  height: 2px;
+  background: linear-gradient(90deg, currentColor, transparent 78%);
+  opacity: 0.54;
+}
+
+.layer-line strong {
+  margin-top: 4px;
+  font-size: 15px;
+}
+
+.layer-line div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.event-radar {
+  min-height: 520px;
+}
+
+.event-stream {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  padding: 4px 0 0 18px;
+}
+
+.event-stream::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: linear-gradient(rgba(94, 234, 212, 0.76), rgba(250, 204, 21, 0.28), transparent);
+  box-shadow: 0 0 24px rgba(94, 234, 212, 0.32);
+}
+
+.event-stream article {
+  position: relative;
+  min-width: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(94, 234, 212, 0.1);
+}
+
+.event-stream article::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  left: -17px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5eead4;
+  box-shadow: 0 0 18px rgba(94, 234, 212, 0.72);
+  animation: dotPulse 2.6s ease-in-out infinite;
+}
+
+.event-stream strong {
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.event-stream small {
+  display: block;
+  margin-top: 5px;
+  color: #819891;
+  font: 11px/1.2 var(--eid-font-mono);
+}
+
+.privacy-ribbon {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 22px;
+  padding: 13px 16px;
+  border-block: 1px solid rgba(250, 204, 21, 0.18);
+  background: linear-gradient(90deg, rgba(250, 204, 21, 0.08), transparent 82%);
+}
+
+.privacy-ribbon div {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 9px;
+  color: #fde68a;
+}
+
+.privacy-ribbon p {
+  color: #aabdba;
+  line-height: 1.5;
+}
+
 .capability-strip {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 1px;
+  gap: 0;
   overflow: hidden;
   margin-bottom: 16px;
-  border: 1px solid rgba(94, 234, 212, 0.18);
+  border: 1px solid rgba(94, 234, 212, 0.16);
   border-radius: 8px;
-  background: rgba(94, 234, 212, 0.18);
+  background:
+    linear-gradient(90deg, rgba(94, 234, 212, 0.08), transparent 34%, rgba(250, 204, 21, 0.04)),
+    rgba(4, 13, 14, 0.58);
 }
 
 .capability-strip article,
@@ -1301,20 +1914,40 @@ h3 {
 .lanes-panel,
 .event-panel,
 .privacy-panel {
-  border: 1px solid rgba(91, 121, 111, 0.7);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(94, 234, 212, 0.16);
   border-radius: 8px;
-  background: rgba(8, 16, 15, 0.88);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04), 0 20px 60px rgba(0, 0, 0, 0.22);
+  background:
+    linear-gradient(135deg, rgba(94, 234, 212, 0.08), transparent 40%, rgba(250, 204, 21, 0.04)),
+    rgba(4, 14, 15, 0.76);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04), 0 20px 60px rgba(0, 0, 0, 0.2);
 }
 
 .capability-strip article {
-  min-height: 112px;
-  padding: 14px;
+  min-height: 108px;
+  padding: 15px 16px 14px;
   border: 0;
+  border-left: 1px solid rgba(94, 234, 212, 0.13);
   border-radius: 0;
   background:
-    linear-gradient(180deg, rgba(94, 234, 212, 0.07), rgba(8, 16, 15, 0.9)),
-    rgba(8, 16, 15, 0.9);
+    linear-gradient(180deg, rgba(94, 234, 212, 0.08), transparent 44%),
+    transparent;
+  clip-path: none;
+}
+
+.capability-strip article:first-child {
+  border-left: 0;
+}
+
+.capability-strip article::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  left: 16px;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.68), transparent);
 }
 
 .capability-strip strong {
@@ -1334,6 +1967,20 @@ h3 {
 .event-panel,
 .privacy-panel {
   padding: 18px;
+}
+
+.body-panel::before,
+.lanes-panel::before,
+.event-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(94, 234, 212, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94, 234, 212, 0.03) 1px, transparent 1px);
+  background-size: 38px 38px;
+  mask-image: radial-gradient(circle at 50% 0%, black, transparent 72%);
 }
 
 .story-panel {
@@ -1477,19 +2124,36 @@ h3 {
 }
 
 .body-map {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 12px;
+  gap: 2px 20px;
+  padding: 10px 4px 4px;
+}
+
+.body-map::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  pointer-events: none;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 28% 28%, rgba(94, 234, 212, 0.12), transparent 22%),
+    radial-gradient(circle at 72% 72%, rgba(56, 189, 248, 0.1), transparent 24%);
 }
 
 .device-node,
 .empty-state {
+  position: relative;
   min-width: 0;
-  min-height: 150px;
-  padding: 13px;
-  border: 1px solid rgba(91, 121, 111, 0.5);
-  border-radius: 8px;
-  background: linear-gradient(180deg, rgba(14, 29, 28, 0.95), rgba(8, 15, 14, 0.95));
+  min-height: 128px;
+  padding: 14px 10px 13px 14px;
+  border: 0;
+  border-left: 1px solid rgba(94, 234, 212, 0.24);
+  border-radius: 0;
+  background:
+    linear-gradient(90deg, rgba(94, 234, 212, 0.07), transparent 58%),
+    transparent;
 }
 
 .device-node {
@@ -1498,17 +2162,34 @@ h3 {
   gap: 12px;
 }
 
+.device-node::before {
+  content: "";
+  position: absolute;
+  top: 18px;
+  left: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5eead4;
+  box-shadow: 0 0 18px rgba(94, 234, 212, 0.8);
+}
+
 .device-node.is-online {
-  border-color: rgba(94, 234, 212, 0.54);
-  box-shadow: inset 0 0 34px rgba(94, 234, 212, 0.08);
+  background:
+    linear-gradient(90deg, rgba(94, 234, 212, 0.14), transparent 62%),
+    transparent;
+  box-shadow: none;
 }
 
 .node-core {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   border: 1px solid rgba(94, 234, 212, 0.35);
+  border-radius: 50%;
   color: #8ff5de;
-  background: #071716;
+  background:
+    radial-gradient(circle, rgba(94, 234, 212, 0.16), rgba(7, 23, 22, 0.92) 68%);
+  box-shadow: 0 0 20px rgba(94, 234, 212, 0.12);
 }
 
 .node-copy p {
@@ -1532,11 +2213,11 @@ h3 {
 
 .cap-row span {
   padding: 4px 6px;
-  border: 1px solid rgba(145, 170, 163, 0.22);
-  border-radius: 6px;
+  border: 1px solid rgba(94, 234, 212, 0.16);
+  border-radius: 999px;
   color: #aabdba;
   font: 10px/1 var(--eid-font-mono);
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(94, 234, 212, 0.04);
 }
 
 .empty-state {
@@ -1551,25 +2232,39 @@ h3 {
 
 .lane-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .lane-list article {
+  position: relative;
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
-  padding: 11px;
-  border: 1px solid rgba(91, 121, 111, 0.48);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  padding: 10px 0 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(94, 234, 212, 0.12);
+  border-radius: 0;
+  background: transparent;
+}
+
+.lane-list article::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 54px;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.52), transparent 74%);
 }
 
 .lane-icon {
   width: 40px;
   height: 40px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  border-radius: 50%;
   color: #8ff5de;
-  background: rgba(94, 234, 212, 0.08);
+  background: radial-gradient(circle, rgba(94, 234, 212, 0.18), rgba(6, 18, 18, 0.84) 70%);
 }
 
 .lane-copy {
@@ -1604,10 +2299,10 @@ h3 {
 .lane-items b {
   max-width: 100%;
   padding: 5px 7px;
-  border-radius: 6px;
+  border-radius: 999px;
   color: #dff8f1;
   font: 700 11px/1 var(--eid-font-mono);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(94, 234, 212, 0.07);
 }
 
 .event-panel {
@@ -1615,20 +2310,47 @@ h3 {
 }
 
 .event-feed {
+  position: relative;
   display: grid;
-  gap: 9px;
+  gap: 12px;
+  padding-left: 14px;
+}
+
+.event-feed::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 3px;
+  width: 1px;
+  background: linear-gradient(rgba(94, 234, 212, 0.72), rgba(250, 204, 21, 0.24), transparent);
+  box-shadow: 0 0 18px rgba(94, 234, 212, 0.28);
 }
 
 .event-feed article {
+  position: relative;
   display: grid;
   grid-template-columns: 68px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
   min-width: 0;
-  padding: 10px;
-  border: 1px solid rgba(91, 121, 111, 0.42);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  padding: 3px 0 10px;
+  border: 0;
+  border-bottom: 1px solid rgba(94, 234, 212, 0.1);
+  border-radius: 0;
+  background: transparent;
+}
+
+.event-feed article::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: -14px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5eead4;
+  box-shadow: 0 0 16px rgba(94, 234, 212, 0.72);
 }
 
 .event-feed span {
@@ -1644,6 +2366,10 @@ h3 {
 .privacy-panel {
   display: grid;
   gap: 10px;
+  border-color: rgba(250, 204, 21, 0.18);
+  background:
+    linear-gradient(90deg, rgba(250, 204, 21, 0.08), transparent 76%),
+    rgba(4, 14, 15, 0.72);
 }
 
 .privacy-panel div {
@@ -1682,6 +2408,69 @@ h3 {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes signalSweep {
+  from {
+    left: -16%;
+  }
+
+  to {
+    left: 104%;
+  }
+}
+
+@keyframes nodeBreathe {
+  0%,
+  100% {
+    box-shadow: 0 0 18px rgba(94, 234, 212, 0.12), inset 0 0 18px rgba(94, 234, 212, 0.06);
+    transform: scale(1);
+  }
+
+  50% {
+    box-shadow: 0 0 34px rgba(94, 234, 212, 0.28), inset 0 0 28px rgba(94, 234, 212, 0.12);
+    transform: scale(1.04);
+  }
+}
+
+@keyframes slowScan {
+  from {
+    transform: translateX(-18%);
+  }
+
+  to {
+    transform: translateX(18%);
+  }
+}
+
+@keyframes orbitDrift {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes linePulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes dotPulse {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: scale(0.86);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.28);
   }
 }
 
