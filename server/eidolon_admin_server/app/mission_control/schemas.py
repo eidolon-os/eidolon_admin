@@ -1,0 +1,197 @@
+"""Wire schemas for the Mission Control runtime observatory."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+JsonDict = dict[str, Any]
+
+RuntimeSource = Literal[
+    "hub",
+    "channel",
+    "agent",
+    "memory",
+    "data",
+    "admin",
+    "mission_control",
+]
+RuntimeSeverity = Literal["info", "warn", "error"]
+PrivacyMode = Literal["safe", "summary", "restricted"]
+
+
+class SourceStatus(BaseModel):
+    source: str
+    ok: bool
+    detail: str = ""
+    latency_ms: float | None = None
+
+
+class RuntimeEvent(BaseModel):
+    event_id: str
+    ts: datetime
+    source: RuntimeSource
+    type: str
+    severity: RuntimeSeverity = "info"
+    privacy: PrivacyMode = "safe"
+    trace_id: str | None = None
+    owner_id: str | None = None
+    companion_id: str | None = None
+    device_id: str | None = None
+    conversation_id: str | None = None
+    turn_id: str | None = None
+    job_id: str | None = None
+    summary: str
+    payload: JsonDict = Field(default_factory=dict)
+
+
+class RuntimeOwner(BaseModel):
+    owner_id: str = ""
+    display_name: str = ""
+    kind: str = ""
+    status: str = ""
+
+
+class RuntimeCompanion(BaseModel):
+    companion_id: str = ""
+    display_name: str = ""
+    kind: str = ""
+    status: str = ""
+    genome_id: str | None = None
+    memory_realm_id: str | None = None
+
+
+class RuntimeDevice(BaseModel):
+    device_id: str
+    name: str = ""
+    role: str = "Body Node"
+    kind: str = "unknown"
+    status: str = "offline"
+    online: bool = False
+    approved: bool = False
+    owner_id: str | None = None
+    companion_id: str | None = None
+    interaction_mode: str | None = None
+    room_name: str = ""
+    participant_sid: str = ""
+    last_seen_at: datetime | None = None
+    capabilities: list[str] = Field(default_factory=list)
+    signals: JsonDict = Field(default_factory=dict)
+
+
+class RuntimeTurn(BaseModel):
+    turn_id: str
+    conversation_id: str
+    owner_id: str
+    companion_id: str
+    device_id: str | None = None
+    status: str
+    trigger: str = ""
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    latency_ms: int | None = None
+    memory_hits: int = 0
+    tool_names: list[str] = Field(default_factory=list)
+    privacy_mode: str | None = None
+    stages: list[JsonDict] = Field(default_factory=list)
+
+
+class RuntimeJob(BaseModel):
+    job_id: str
+    owner_id: str
+    companion_id: str | None = None
+    conversation_id: str | None = None
+    turn_id: str | None = None
+    provider: str = ""
+    kind: str = ""
+    status: str = ""
+    summary: str = ""
+    progress: JsonDict = Field(default_factory=dict)
+    result_summary: str = ""
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class RuntimeMemory(BaseModel):
+    realms_total: int = 0
+    active_realm_id: str = ""
+    runners_total: int = 0
+    runners_online: int = 0
+    last_recall_hits: int = 0
+    last_write_disposition: str | None = None
+    fanout_allowed: bool = False
+    privacy_mode: str | None = None
+    summary: str = ""
+
+
+class RuntimeService(BaseModel):
+    service_id: str
+    name: str
+    online: bool = False
+    checked: bool = False
+    latency_ms: float | None = None
+    detail: str = ""
+
+
+class RuntimeStoryStep(BaseModel):
+    key: str
+    title: str
+    detail: str = ""
+    status: str = "pending"
+    source: str = ""
+    ts: datetime | None = None
+
+
+class RuntimeLaneItem(BaseModel):
+    label: str
+    value: str = ""
+    status: str = "idle"
+    detail: str = ""
+
+
+class RuntimeLane(BaseModel):
+    key: str
+    title: str
+    headline: str = ""
+    detail: str = ""
+    status: str = "idle"
+    items: list[RuntimeLaneItem] = Field(default_factory=list)
+
+
+class RuntimeCapabilityCard(BaseModel):
+    key: str
+    title: str
+    status: str = "idle"
+    metric: str = ""
+    detail: str = ""
+
+
+class RuntimeExperience(BaseModel):
+    headline: str = "Eidolon 正在等待一次交互"
+    subheadline: str = "同一个 companion 可以通过多个身体、记忆和工具协同工作。"
+    plain_summary: str = "选择一个 owner 后，Mission Control 会展示身份、身体、记忆、任务和权限如何一起运转。"
+    system_state: str = "standby"
+    completion: int = 0
+    storyline: list[RuntimeStoryStep] = Field(default_factory=list)
+    lanes: list[RuntimeLane] = Field(default_factory=list)
+    capability_cards: list[RuntimeCapabilityCard] = Field(default_factory=list)
+    next_best_action: str = "和任意已绑定设备说一句话，观察这条链路如何被点亮。"
+
+
+class RuntimeSnapshot(BaseModel):
+    generated_at: datetime
+    owner: RuntimeOwner | None = None
+    companion: RuntimeCompanion | None = None
+    devices: list[RuntimeDevice] = Field(default_factory=list)
+    services: list[RuntimeService] = Field(default_factory=list)
+    active_turn: RuntimeTurn | None = None
+    recent_turns: list[RuntimeTurn] = Field(default_factory=list)
+    memory: RuntimeMemory = Field(default_factory=RuntimeMemory)
+    jobs: list[RuntimeJob] = Field(default_factory=list)
+    recent_events: list[RuntimeEvent] = Field(default_factory=list)
+    source_status: list[SourceStatus] = Field(default_factory=list)
+    experience: RuntimeExperience = Field(default_factory=RuntimeExperience)
+    privacy_notice: str = "Default safe mode: raw transcripts, messages, and images are redacted."

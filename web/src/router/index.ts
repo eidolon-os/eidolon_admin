@@ -3,6 +3,11 @@ import AdminLayout from '@/layouts/AdminLayout.vue'
 
 const routes: RouteRecordRaw[] = [
   {
+    path: '/mission-control',
+    name: 'mission-control',
+    component: () => import('@/modules/mission-control/MissionControl.vue'),
+  },
+  {
     path: '/',
     component: AdminLayout,
     children: [

@@ -35,6 +35,7 @@ from .data.hub_client import HubDeviceRuntimeClient
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.router import router as memory_router
+from .mission_control import router as mission_control_router
 from .memory.nats_publisher import JetStreamPublisher
 from .memory.supervisor_client import build_memory_supervisor_client
 from .nats_kv import KVClient
@@ -165,6 +166,7 @@ def create_app(
     app.include_router(data_router, prefix="/api")
     app.include_router(resolve_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")
+    app.include_router(mission_control_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     app.include_router(esp32_tools_router, prefix="/api")
     # NOTE: gateway router uses /api/services/{id}/{path:path}. It must be

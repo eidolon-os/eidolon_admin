@@ -66,6 +66,13 @@ const navigation: NavGroup[] = [
     icon: 'Monitor',
     items: [
       {
+        id: 'mission-control',
+        label: 'Mission Control',
+        hint: 'Runtime observatory',
+        icon: 'Aim',
+        route: { name: 'mission-control' },
+      },
+      {
         id: 'owners-directory',
         label: 'Owners',
         hint: 'Owner workspaces',
