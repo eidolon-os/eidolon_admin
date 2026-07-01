@@ -182,6 +182,7 @@ export interface RuntimeSnapshot {
   generated_at: string
   owner: RuntimeOwner | null
   companion: RuntimeCompanion | null
+  companions: RuntimeCompanion[]
   devices: RuntimeDevice[]
   services: RuntimeService[]
   active_turn: RuntimeTurn | null

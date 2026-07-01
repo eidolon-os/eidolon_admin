@@ -73,6 +73,13 @@ const navigation: NavGroup[] = [
         route: { name: 'mission-control' },
       },
       {
+        id: 'mission-control-cyber',
+        label: 'Mission Control · Cyber',
+        hint: 'Netrun HUD',
+        icon: 'Aim',
+        route: { name: 'mission-control-cyber' },
+      },
+      {
         id: 'owners-directory',
         label: 'Owners',
         hint: 'Owner workspaces',

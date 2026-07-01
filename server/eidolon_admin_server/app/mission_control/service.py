@@ -130,14 +130,8 @@ async def build_snapshot(request: Request, owner_id: str | None = None) -> Runti
             kind=owner.kind,
             status=owner.status,
         ),
-        companion=RuntimeCompanion(
-            companion_id=getattr(companion, "companion_id", "") or "",
-            display_name=getattr(companion, "display_name", "") or "",
-            kind=getattr(companion, "kind", "") or "",
-            status=getattr(companion, "status", "") or "",
-            genome_id=getattr(companion, "current_genome_id", None),
-            memory_realm_id=getattr(companion, "default_memory_realm_id", None),
-        ) if companion is not None else None,
+        companion=_runtime_companion(companion) if companion is not None else None,
+        companions=[_runtime_companion(row) for row in companions],
         devices=runtime_devices,
         services=services,
         active_turn=active_turn,
@@ -343,38 +337,89 @@ async def _services(request: Request) -> tuple[list[RuntimeService], list[Source
     if registry is None or http_client is None:
         return [], [SourceStatus(source="services", ok=False, detail="registry unavailable")]
 
+    # Pull live supervisord process state once, so process-only services
+    # (channel, mementos) without an HTTP health surface still report real
+    # liveness — consistent with the Overview page's composite verdict.
+    sv_client = getattr(request.app.state, "supervisor_client", None)
+    sv_by_full: dict[str, Any] = {}
+    if sv_client is not None:
+        try:
+            infos = await sv_client.get_all_process_info()
+            sv_by_full = {info.full_name: info for info in infos}
+        except Exception:  # noqa: BLE001
+            sv_by_full = {}
+
+    def _supervisor_state(svc: Any) -> tuple[bool, bool, str]:
+        """Returns (supervised, all_programs_running, statename_summary)."""
+        sup = getattr(svc, "supervisor", None)
+        if sup is None:
+            return False, False, ""
+        group = getattr(sup, "group", "") or ""
+        programs = getattr(sup, "programs", []) or []
+        states = []
+        for prog in programs:
+            full = f"{group}:{prog}" if group else prog
+            info = sv_by_full.get(full)
+            states.append(getattr(info, "statename", "UNKNOWN") if info else "UNKNOWN")
+        return True, (bool(states) and all(s == "RUNNING" for s in states)), ", ".join(states)
+
     async def _probe(svc: Any) -> RuntimeService:
         started = time.perf_counter()
         url = _health_url(svc)
-        if not url:
-            return RuntimeService(
-                service_id=svc.id,
-                name=svc.name,
-                online=False,
-                checked=False,
-                detail="no health probe",
-            )
-        try:
-            resp = await http_client.get(url, timeout=1.2, headers={"Connection": "close"})
-            return RuntimeService(
-                service_id=svc.id,
-                name=svc.name,
-                online=resp.status_code < 500,
-                checked=True,
-                latency_ms=round((time.perf_counter() - started) * 1000, 1),
-                detail=f"HTTP {resp.status_code}",
-            )
-        except Exception as exc:  # noqa: BLE001
-            return RuntimeService(
-                service_id=svc.id,
-                name=svc.name,
-                online=False,
-                checked=True,
-                latency_ms=round((time.perf_counter() - started) * 1000, 1),
-                detail=str(exc),
-            )
+        http_ok: bool | None = None
+        latency: float | None = None
+        http_detail = ""
+        if url:
+            try:
+                resp = await http_client.get(url, timeout=1.2, headers={"Connection": "close"})
+                http_ok = resp.status_code < 500
+                http_detail = f"HTTP {resp.status_code}"
+            except Exception as exc:  # noqa: BLE001
+                http_ok = False
+                http_detail = str(exc)
+            latency = round((time.perf_counter() - started) * 1000, 1)
 
-    rows = await asyncio.gather(*(_probe(svc) for svc in registry.services))
+        supervised, all_running, sv_summary = _supervisor_state(svc)
+
+        # Composite: online if HTTP healthy OR supervisord reports all RUNNING.
+        online = bool(http_ok) or (supervised and all_running)
+        checked = bool(url) or supervised
+        if url:
+            detail = http_detail
+        elif supervised:
+            detail = f"supervisord: {sv_summary or 'unknown'}"
+        else:
+            detail = "no health probe"
+
+        return RuntimeService(
+            service_id=svc.id,
+            name=svc.name,
+            online=online,
+            checked=checked,
+            latency_ms=latency,
+            detail=detail,
+        )
+
+    rows = list(await asyncio.gather(*(_probe(svc) for svc in registry.services)))
+
+    # Shared infrastructure (NATS / LiveKit): supervised-only, not in the
+    # service registry, so surface them from supervisord process state.
+    for sid, name, full in (("nats", "NATS", "nats:nats-server"), ("livekit", "LiveKit", "livekit:livekit-server")):
+        if any(r.service_id == sid for r in rows):
+            continue
+        info = sv_by_full.get(full)
+        state = getattr(info, "statename", "UNKNOWN") if info else "UNKNOWN"
+        rows.append(
+            RuntimeService(
+                service_id=sid,
+                name=name,
+                online=state == "RUNNING",
+                checked=info is not None,
+                latency_ms=None,
+                detail=f"supervisord: {state}",
+            )
+        )
+
     ok = sum(1 for row in rows if row.online)
     return rows, [SourceStatus(source="services", ok=True, detail=f"{ok}/{len(rows)} online")]
 
@@ -540,7 +585,7 @@ def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any
         },
         {
             "key": "agent_turn",
-            "label": f"小忆思考并回应：{_friendly_status(row.get('status'))}",
+            "label": f"智能体思考并回应：{_friendly_status(row.get('status'))}",
             "status": _stage_status(row.get("status")),
             "latency_ms": latency.get("total_ms") or row.get("total_latency_ms"),
         },
@@ -713,7 +758,7 @@ def _experience(
     source_status: list[SourceStatus],
 ) -> RuntimeExperience:
     online_devices = [device for device in devices if device.online]
-    companion_name = getattr(companion, "display_name", "") or getattr(companion, "companion_id", "") or "小忆"
+    companion_name = getattr(companion, "display_name", "") or getattr(companion, "companion_id", "") or "伙伴"
     owner_name = getattr(owner, "display_name", "") or getattr(owner, "owner_id", "") or "当前用户"
     latest_event = recent_events[0] if recent_events else None
     turn_event = _latest_event(recent_events, "turn")
@@ -800,7 +845,7 @@ def _storyline(
         ),
         RuntimeStoryStep(
             key="turn",
-            title="小忆处理",
+            title="智能体处理",
             detail=(
                 f"最近一次交互状态：{_friendly_status(active_turn.status)}"
                 if active_turn
@@ -886,7 +931,7 @@ def _experience_lanes(
                 if active_turn
                 else "等待用户开口"
             ),
-            detail="这里展示从身体输入到小忆回应的关键步骤，不展示私密原文。",
+            detail="这里展示从身体输入到智能体回应的关键步骤，不展示私密原文。",
             status=_stage_status(active_turn.status) if active_turn else "pending",
             items=[
                 RuntimeLaneItem(
@@ -1023,6 +1068,17 @@ def _default_companion(companions: list[Any]) -> Any | None:
     return companions[0] if companions else None
 
 
+def _runtime_companion(row: Any) -> RuntimeCompanion:
+    return RuntimeCompanion(
+        companion_id=getattr(row, "companion_id", "") or "",
+        display_name=getattr(row, "display_name", "") or "",
+        kind=getattr(row, "kind", "") or "",
+        status=getattr(row, "status", "") or "",
+        genome_id=getattr(row, "current_genome_id", None),
+        memory_realm_id=getattr(row, "default_memory_realm_id", None),
+    )
+
+
 def _event_summary(event_type: str, subject_type: str, subject_id: str) -> str:
     readable = event_type.replace(".", " ")
     return f"{readable} · {subject_type}:{subject_id}"
@@ -1090,7 +1146,7 @@ def _friendly_source(value: str) -> str:
     return {
         "hub": "身体/设备",
         "channel": "语音通道",
-        "agent": "小忆大脑",
+        "agent": "智能体引擎",
         "memory": "记忆系统",
         "data": "事实账本",
         "admin": "控制台",
@@ -1118,7 +1174,7 @@ def _friendly_event_type(value: str) -> str:
 def _friendly_service_name(service_id: str, name: str) -> str:
     return {
         "admin": "控制台",
-        "agent": "小忆大脑",
+        "agent": "智能体引擎",
         "hub": "身体中枢",
         "memory": "记忆系统",
         "channel": "语音通道",

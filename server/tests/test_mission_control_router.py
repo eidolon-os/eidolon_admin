@@ -91,6 +91,7 @@ async def test_snapshot_degrades_without_runtime_sources(
     body = resp.json()
     assert body["owner"]["owner_id"] == "owner-mc"
     assert body["companion"]["display_name"] == "Xiaoyi"
+    assert body["companions"][0]["display_name"] == "Xiaoyi"
     assert body["devices"][0]["role"] == "Room Voice / Sensor Dock"
     assert body["devices"][0]["capabilities"] == ["display", "sensor", "speaker", "voice"]
     assert any(item["source"] == "hub" and not item["ok"] for item in body["source_status"])

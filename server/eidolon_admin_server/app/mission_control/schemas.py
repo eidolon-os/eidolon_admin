@@ -185,6 +185,7 @@ class RuntimeSnapshot(BaseModel):
     generated_at: datetime
     owner: RuntimeOwner | None = None
     companion: RuntimeCompanion | None = None
+    companions: list[RuntimeCompanion] = Field(default_factory=list)
     devices: list[RuntimeDevice] = Field(default_factory=list)
     services: list[RuntimeService] = Field(default_factory=list)
     active_turn: RuntimeTurn | None = None

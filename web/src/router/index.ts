@@ -8,6 +8,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/modules/mission-control/MissionControl.vue'),
   },
   {
+    path: '/mission-control-cyber',
+    name: 'mission-control-cyber',
+    component: () => import('@/modules/mission-control/MissionControlCyber.vue'),
+  },
+  {
     path: '/',
     component: AdminLayout,
     children: [
