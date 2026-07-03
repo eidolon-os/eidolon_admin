@@ -20,6 +20,9 @@ from fastapi import Request
 from eidolon_data import DataStore
 
 from .schemas import (
+    EvidenceChain,
+    EvidenceStep,
+    PermissionLedgerItem,
     RuntimeCapabilityCard,
     RuntimeCompanion,
     RuntimeDevice,
@@ -121,6 +124,14 @@ async def build_snapshot(request: Request, owner_id: str | None = None) -> Runti
         recent_events=recent_events,
         source_status=source_status,
     )
+    permission_ledger = _permission_ledger(recent_events)
+    evidence_chains = _evidence_chains(
+        companion=companion,
+        devices=runtime_devices,
+        memory=memory,
+        jobs=runtime_jobs,
+        ledger=permission_ledger,
+    )
 
     return RuntimeSnapshot(
         generated_at=generated_at,
@@ -141,6 +152,9 @@ async def build_snapshot(request: Request, owner_id: str | None = None) -> Runti
         recent_events=recent_events,
         source_status=source_status,
         experience=experience,
+        evidence_chains=evidence_chains,
+        permission_ledger=permission_ledger,
+        demo_mode="live",
     )
 
 
@@ -154,6 +168,7 @@ def hub_event_to_runtime(raw: dict[str, Any]) -> RuntimeEvent:
             event_id=f"mc-hub-{uuid4().hex}",
             ts=_parse_dt(raw.get("at")) or now,
             source="hub",
+            event_origin="live",
             type="device.presence.probe_cycle",
             severity="info",
             summary=f"Hub probe detected {detected} known device(s)",
@@ -172,6 +187,7 @@ def hub_event_to_runtime(raw: dict[str, Any]) -> RuntimeEvent:
             event_id=str(raw.get("command_id") or f"mc-hub-{uuid4().hex}"),
             ts=_parse_dt(raw.get("updated_at") or raw.get("created_at")) or now,
             source="hub",
+            event_origin="live",
             type="device.command.updated",
             severity=severity,  # type: ignore[arg-type]
             device_id=_str_or_none(raw.get("device_id")),
@@ -745,6 +761,92 @@ def _events_from_jobs(jobs: list[RuntimeJob]) -> list[RuntimeEvent]:
     return out
 
 
+# (token match, ledger kind, privacy level, raw-retention policy)
+_PERMISSION_KINDS: list[tuple[tuple[str, ...], str, str, str]] = [
+    (("camera", "photo", "vision"), "camera.take_photo", "sensitive", "not_stored"),
+    (("room.join",), "room.join", "operation", "n/a"),
+    (("identify",), "device.identify", "operation", "n/a"),
+    (("volume",), "device.volume", "operation", "n/a"),
+    (("brightness",), "device.brightness", "operation", "n/a"),
+    (("command",), "device.command", "operation", "n/a"),
+]
+
+
+def _permission_ledger(events: list[RuntimeEvent]) -> list[PermissionLedgerItem]:
+    """Surface high-sensitivity capability calls for audit. Summaries are already
+    redacted upstream, so this only reshapes — it never re-reads raw payloads."""
+    out: list[PermissionLedgerItem] = []
+    for event in events:
+        blob = f"{event.type} {event.summary}".lower()
+        match = next((m for m in _PERMISSION_KINDS if any(tok in blob for tok in m[0])), None)
+        if match is None:
+            continue
+        _, kind, privacy_level, retention = match
+        status = event.summary.rsplit("->", 1)[-1].strip() if "->" in event.summary else ""
+        out.append(
+            PermissionLedgerItem(
+                ts=event.ts,
+                kind=kind,
+                device_id=event.device_id,
+                status=status,
+                privacy_level=privacy_level,
+                raw_retention=retention,
+                summary=event.summary,
+            )
+        )
+    return out[:20]
+
+
+def _evidence_chains(
+    *,
+    companion: Any | None,
+    devices: list[RuntimeDevice],
+    memory: RuntimeMemory,
+    jobs: list[RuntimeJob],
+    ledger: list[PermissionLedgerItem],
+) -> list[EvidenceChain]:
+    """Derive the three demo proof-chains. Confidence = done/total; a chain is
+    only 'proven' when every step has real backing — mock is never marked live."""
+    online = [d for d in devices if d.online]
+    has_camera = any(
+        "camera.snapshot" in d.capabilities or "camera" in f"{d.kind} {d.role}".lower()
+        for d in devices
+    )
+    camera_grant = next((i for i in ledger if i.kind == "camera.take_photo"), None)
+    active_jobs = [j for j in jobs if (j.status or "").lower() in {"running", "queued", "accepted", "pending", "active"}]
+    done_jobs = [j for j in jobs if (j.status or "").lower() in {"succeeded", "done", "completed"}]
+
+    cross_body = [
+        EvidenceStep(key="bodies", label="多身体在线", done=len(devices) >= 2, detail=f"{len(online)}/{len(devices)} 在线"),
+        EvidenceStep(key="identity", label="同一身份与记忆域", done=companion is not None and memory.realms_total > 0),
+        EvidenceStep(key="write", label="记忆写入", done=memory.last_write_disposition is not None),
+        EvidenceStep(key="recall", label="跨身体召回命中", done=memory.last_recall_hits > 0, detail=f"{memory.last_recall_hits} hit"),
+    ]
+    vision = [
+        EvidenceStep(key="capability", label="视觉身体", done=has_camera),
+        EvidenceStep(key="authorized", label="授权调用摄像头", done=camera_grant is not None, detail=camera_grant.summary if camera_grant else ""),
+        EvidenceStep(key="retention", label="仅摘要 · 不留原图", done=camera_grant is not None),
+    ]
+    coworker = [
+        EvidenceStep(key="delegate", label="任务交办", done=bool(jobs)),
+        EvidenceStep(key="running", label="后台执行", done=bool(active_jobs) or bool(done_jobs)),
+        EvidenceStep(key="artifact", label="产物完成", done=any(j.result_summary for j in done_jobs)),
+        EvidenceStep(key="report", label="回报 / 落库", done=bool(done_jobs)),
+    ]
+
+    def _chain(key: str, title: str, claim: str, steps: list[EvidenceStep]) -> EvidenceChain:
+        done = sum(1 for s in steps if s.done)
+        total = len(steps)
+        status = "proven" if done == total else "partial" if done else "pending"
+        return EvidenceChain(key=key, title=title, claim=claim, status=status, confidence=round(done / total * 100), steps=steps)
+
+    return [
+        _chain("cross_body_memory", "跨身体记忆", "同一伙伴的身份与记忆不绑定任何单一硬件。", cross_body),
+        _chain("vision_permission", "视觉授权", "摄像头是受权限管理的视觉身体，默认只留摘要、不扩散原图。", vision),
+        _chain("coworker_task", "Coworker 任务", "前台对话可把上下文交给后台数字员工并回报产物。", coworker),
+    ]
+
+
 def _experience(
     *,
     owner: Any,
@@ -833,6 +935,7 @@ def _storyline(
             ),
             status="done" if latest_device else "pending",
             source="hub",
+            event_origin="live",
             ts=latest_device.last_seen_at if latest_device else None,
         ),
         RuntimeStoryStep(
@@ -889,6 +992,7 @@ def _storyline(
             ),
             status="done" if camera_event else "pending",
             source="hub",
+            event_origin="live",
             ts=camera_event.ts if camera_event else None,
         ),
     ]

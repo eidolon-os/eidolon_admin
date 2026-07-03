@@ -159,3 +159,56 @@ async def test_events_stream_emits_startup_frame() -> None:
 
     assert first.startswith("event: runtime_event\n")
     assert "mission_control.connected" in first
+    assert '"event_origin"' in first and '"live"' in first
+
+
+async def test_snapshot_exposes_contract_layer(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await data_store.owner_service.create_owner(
+        owner_id="owner-cl", display_name="CL", actor_type="test"
+    )
+    await data_store.workspace_provisioning.provision_workspace(
+        owner_id="owner-cl", companion_display_name="Xiaoyi", actor_type="test"
+    )
+    await data_store.devices.create_device(
+        device_id="cam-1",
+        owner_id="owner-cl",
+        name="ATK Camera",
+        kind="atk_camera",
+        bound_companion_id="c_owner-cl_default",
+        capabilities_json={"camera.snapshot": True},
+    )
+    await data_store.events.append(
+        event_id="ev-cam",
+        owner_id="owner-cl",
+        subject_type="device",
+        subject_id="cam-1",
+        event_type="self.camera.take_photo",
+        payload_json={"image": "raw bytes should be redacted"},
+    )
+
+    resp = await client.get("/api/mission-control/snapshot?owner_id=owner-cl")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # demo mode + provenance on every event
+    assert body["demo_mode"] == "live"
+    assert body["recent_events"], "expected at least one event"
+    assert all(ev["event_origin"] == "polling" for ev in body["recent_events"])
+
+    # three honest proof chains
+    chains = {c["key"]: c for c in body["evidence_chains"]}
+    assert set(chains) == {"cross_body_memory", "vision_permission", "coworker_task"}
+    for chain in chains.values():
+        assert 0 <= chain["confidence"] <= 100
+        assert chain["status"] in {"pending", "partial", "proven"}
+    assert chains["vision_permission"]["confidence"] > 0  # camera capability + grant
+
+    # permission ledger captured the camera call, no raw image leaked
+    cam = next(i for i in body["permission_ledger"] if i["kind"] == "camera.take_photo")
+    assert cam["privacy_level"] == "sensitive"
+    assert cam["raw_retention"] == "not_stored"
+    cam_event = next(ev for ev in body["recent_events"] if ev["event_id"] == "ev-cam")
+    assert "[redacted:" in cam_event["payload"]["image"]

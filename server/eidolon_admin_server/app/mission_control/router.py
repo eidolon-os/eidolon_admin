@@ -93,6 +93,7 @@ async def _hub_stream(request: Request) -> AsyncIterator[bytes]:
                 source="mission_control",
                 type="source.hub.degraded",
                 severity="warn",
+                event_origin="live",
                 summary=f"Hub stream unavailable: {exc}",
                 payload={},
             )
@@ -107,6 +108,7 @@ def _startup_event() -> RuntimeEvent:
         source="mission_control",
         type="mission_control.connected",
         severity="info",
+        event_origin="live",
         summary="Mission Control event stream connected",
         payload={},
     )

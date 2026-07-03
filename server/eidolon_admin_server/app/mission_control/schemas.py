@@ -20,6 +20,8 @@ RuntimeSource = Literal[
 ]
 RuntimeSeverity = Literal["info", "warn", "error"]
 PrivacyMode = Literal["safe", "summary", "restricted"]
+EventOrigin = Literal["live", "polling", "replay", "mock"]
+DemoMode = Literal["live", "replay", "mixed"]
 
 
 class SourceStatus(BaseModel):
@@ -36,6 +38,8 @@ class RuntimeEvent(BaseModel):
     type: str
     severity: RuntimeSeverity = "info"
     privacy: PrivacyMode = "safe"
+    # Provenance: live (SSE), polling (snapshot-derived), replay (fixture), mock.
+    event_origin: EventOrigin = "polling"
     trace_id: str | None = None
     owner_id: str | None = None
     companion_id: str | None = None
@@ -181,6 +185,36 @@ class RuntimeExperience(BaseModel):
     next_best_action: str = "和任意已绑定设备说一句话，观察这条链路如何被点亮。"
 
 
+class EvidenceStep(BaseModel):
+    key: str
+    label: str
+    done: bool = False
+    detail: str = ""
+
+
+class EvidenceChain(BaseModel):
+    """A demo claim with a derived proof trail (Topology + Trace + Ledger)."""
+
+    key: str
+    title: str
+    claim: str
+    status: str = "pending"  # pending | partial | proven
+    confidence: int = 0  # done_steps / total_steps, 0..100 — honest, never faked
+    steps: list[EvidenceStep] = Field(default_factory=list)
+
+
+class PermissionLedgerItem(BaseModel):
+    """A high-sensitivity capability invocation surfaced for audit."""
+
+    ts: datetime | None = None
+    kind: str  # camera.take_photo | room.join | device.identify | device.command | ...
+    device_id: str | None = None
+    status: str = ""
+    privacy_level: str = "operation"  # sensitive | operation
+    raw_retention: str = "n/a"  # not_stored | n/a
+    summary: str = ""
+
+
 class RuntimeSnapshot(BaseModel):
     generated_at: datetime
     owner: RuntimeOwner | None = None
@@ -195,4 +229,7 @@ class RuntimeSnapshot(BaseModel):
     recent_events: list[RuntimeEvent] = Field(default_factory=list)
     source_status: list[SourceStatus] = Field(default_factory=list)
     experience: RuntimeExperience = Field(default_factory=RuntimeExperience)
+    evidence_chains: list[EvidenceChain] = Field(default_factory=list)
+    permission_ledger: list[PermissionLedgerItem] = Field(default_factory=list)
+    demo_mode: DemoMode = "live"
     privacy_notice: str = "Default safe mode: raw transcripts, messages, and images are redacted."
