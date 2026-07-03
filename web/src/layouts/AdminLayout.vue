@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useOwnersStore } from '@/stores/owners'
+import { navigation, type NavGroup, type NavItem, type RouteTarget } from './navigation'
 
 const ownersStore = useOwnersStore()
 const route = useRoute()
@@ -19,9 +20,24 @@ const commandQuery = ref('')
 const commandScope = ref<string | null>(null)
 const sidebarOpen = ref(localStorage.getItem('eidolon-admin.sidebar_open') !== '0')
 
-type RouteTarget = {
-  name: string
-  params?: Record<string, string>
+// Per-group collapse state (only collapsible groups participate). Persisted so
+// the System · Infrastructure section stays folded across sessions by default.
+const groupOpen = ref<Record<string, boolean>>(
+  Object.fromEntries(
+    navigation.map((g) => {
+      if (!g.collapsible) return [g.id, true]
+      const saved = localStorage.getItem(`eidolon-admin.nav.${g.id}_open`)
+      return [g.id, saved === null ? !g.defaultCollapsed : saved === '1']
+    }),
+  ),
+)
+function isGroupOpen(id: string): boolean {
+  return groupOpen.value[id] !== false
+}
+function toggleGroup(id: string) {
+  const next = !isGroupOpen(id)
+  groupOpen.value[id] = next
+  localStorage.setItem(`eidolon-admin.nav.${id}_open`, next ? '1' : '0')
 }
 
 type CommandItem = {
@@ -34,262 +50,13 @@ type CommandItem = {
   scope: string
 }
 
-type NavItem = {
-  id: string
-  label: string
-  hint?: string
-  icon: string
-  route: RouteTarget
-}
-
 type MenuItem = NavItem & {
   active: boolean
-}
-
-type NavGroup = {
-  id: string
-  label: string
-  code: string
-  icon: string
-  items: NavItem[]
 }
 
 type MenuGroup = Omit<NavGroup, 'items'> & {
   items: MenuItem[]
 }
-
-const navigation: NavGroup[] = [
-  {
-    id: 'admin',
-    label: 'Admin',
-    code: 'ADM',
-    icon: 'Monitor',
-    items: [
-      {
-        id: 'mission-control',
-        label: 'Mission Control',
-        hint: 'Runtime observatory',
-        icon: 'Aim',
-        route: { name: 'mission-control' },
-      },
-      {
-        id: 'mission-control-cyber',
-        label: 'Mission Control · Cyber',
-        hint: 'Netrun HUD',
-        icon: 'Aim',
-        route: { name: 'mission-control-cyber' },
-      },
-      {
-        id: 'owners-directory',
-        label: 'Owners',
-        hint: 'Owner workspaces',
-        icon: 'UserFilled',
-        route: { name: 'owners' },
-      },
-      {
-        id: 'supervisor',
-        label: 'Supervisor',
-        hint: 'Processes and health',
-        icon: 'Cpu',
-        route: { name: 'supervisor' },
-      },
-      {
-        id: 'configs',
-        label: 'Service Configs',
-        hint: 'Runtime files',
-        icon: 'Document',
-        route: { name: 'configs' },
-      },
-      {
-        id: 'benchmark-agent',
-        label: 'Benchmarks',
-        hint: 'Run artifacts',
-        icon: 'DataAnalysis',
-        route: { name: 'benchmarks', params: { project: 'agent' } },
-      },
-      {
-        id: 'tool-esp32',
-        label: 'ESP32 Tools',
-        hint: 'Serial and flash',
-        icon: 'Tools',
-        route: { name: 'tool-esp32' },
-      },
-    ],
-  },
-  {
-    id: 'agent',
-    label: 'Agent',
-    code: 'AGT',
-    icon: 'Avatar',
-    items: [
-      {
-        id: 'agent-chat',
-        label: 'Chat Test',
-        hint: 'Live request path',
-        icon: 'ChatLineRound',
-        route: { name: 'feature', params: { serviceId: 'agent', feature: 'chat-test' } },
-      },
-      {
-        id: 'agent-conversations',
-        label: 'Conversations',
-        hint: 'Turns and messages',
-        icon: 'Tickets',
-        route: { name: 'feature', params: { serviceId: 'agent', feature: 'conversations' } },
-      },
-      {
-        id: 'agent-tasks',
-        label: 'Long Tasks',
-        hint: 'Cowork queue',
-        icon: 'Timer',
-        route: { name: 'feature', params: { serviceId: 'agent', feature: 'long-tasks' } },
-      },
-      {
-        id: 'agent-reports',
-        label: 'Replay Reports',
-        hint: 'Evaluation artifacts',
-        icon: 'DocumentChecked',
-        route: { name: 'feature', params: { serviceId: 'agent', feature: 'replay-reports' } },
-      },
-    ],
-  },
-  {
-    id: 'memory',
-    label: 'Memory',
-    code: 'MEM',
-    icon: 'Collection',
-    items: [
-      {
-        id: 'memory-runners',
-        label: 'Runners',
-        hint: 'Workers and routes',
-        icon: 'Operation',
-        route: { name: 'feature', params: { serviceId: 'memory', feature: 'runners' } },
-      },
-      {
-        id: 'memory-items',
-        label: 'Memories',
-        hint: 'Stored records',
-        icon: 'Collection',
-        route: { name: 'feature', params: { serviceId: 'memory', feature: 'memories' } },
-      },
-      {
-        id: 'memory-search',
-        label: 'Search',
-        hint: 'Query recall data',
-        icon: 'Search',
-        route: { name: 'feature', params: { serviceId: 'memory', feature: 'search' } },
-      },
-      {
-        id: 'memory-graph',
-        label: 'Graph',
-        hint: 'Palace graph',
-        icon: 'Share',
-        route: { name: 'feature', params: { serviceId: 'memory', feature: 'graph' } },
-      },
-      {
-        id: 'memory-kg',
-        label: 'Knowledge Graph',
-        hint: 'Triples and facts',
-        icon: 'Connection',
-        route: { name: 'feature', params: { serviceId: 'memory', feature: 'kg' } },
-      },
-      {
-        id: 'memory-mcp',
-        label: 'MCP Tools',
-        hint: 'Tool surface',
-        icon: 'SetUp',
-        route: { name: 'feature', params: { serviceId: 'memory', feature: 'mcp' } },
-      },
-    ],
-  },
-  {
-    id: 'hub',
-    label: 'Hub',
-    code: 'HUB',
-    icon: 'Share',
-    items: [
-      {
-        id: 'hub-devices',
-        label: 'Devices',
-        hint: 'Binding and commands',
-        icon: 'Monitor',
-        route: { name: 'feature', params: { serviceId: 'hub', feature: 'devices' } },
-      },
-      {
-        id: 'hub-discovery',
-        label: 'Discovery',
-        hint: 'Nearby devices',
-        icon: 'Aim',
-        route: { name: 'feature', params: { serviceId: 'hub', feature: 'discovery' } },
-      },
-      {
-        id: 'hub-commands',
-        label: 'Commands',
-        hint: 'Control plane',
-        icon: 'Position',
-        route: { name: 'feature', params: { serviceId: 'hub', feature: 'commands' } },
-      },
-      {
-        id: 'hub-events',
-        label: 'Events',
-        hint: 'Hub stream',
-        icon: 'Bell',
-        route: { name: 'feature', params: { serviceId: 'hub', feature: 'events' } },
-      },
-      {
-        id: 'hub-metrics',
-        label: 'Metrics',
-        hint: 'Runtime counters',
-        icon: 'DataLine',
-        route: { name: 'feature', params: { serviceId: 'hub', feature: 'metrics' } },
-      },
-    ],
-  },
-  {
-    id: 'channel',
-    label: 'Channel',
-    code: 'CHN',
-    icon: 'DataLine',
-    items: [
-      {
-        id: 'channel-overview',
-        label: 'Overview',
-        hint: 'Voice worker',
-        icon: 'DataLine',
-        route: { name: 'feature', params: { serviceId: 'channel', feature: 'overview' } },
-      },
-      {
-        id: 'channel-config',
-        label: 'Config',
-        hint: 'Voice settings',
-        icon: 'Setting',
-        route: { name: 'feature', params: { serviceId: 'channel', feature: 'config' } },
-      },
-    ],
-  },
-  {
-    id: 'client-web',
-    label: 'Client Web',
-    code: 'WEB',
-    icon: 'ChromeFilled',
-    items: [
-      {
-        id: 'client-web-overview',
-        label: 'Overview',
-        hint: 'Browser surface',
-        icon: 'ChromeFilled',
-        route: { name: 'feature', params: { serviceId: 'client-web', feature: 'overview' } },
-      },
-      {
-        id: 'client-web-config',
-        label: 'Config',
-        hint: 'Web env',
-        icon: 'Setting',
-        route: { name: 'feature', params: { serviceId: 'client-web', feature: 'config' } },
-      },
-    ],
-  },
-]
 
 onMounted(() => {
   ownersStore.load()
@@ -380,7 +147,7 @@ const railItems = computed(() =>
 )
 
 function isActiveRoute(item: NavItem): boolean {
-  if (item.id === 'owners-directory' && route.name === 'owner-workspace') return true
+  if (item.route.name === 'owners' && route.name === 'owner-workspace') return true
   if (route.name !== item.route.name) return false
   if (!item.route.params) return true
   return Object.entries(item.route.params).every(([key, value]) => String(route.params[key]) === String(value))
@@ -443,21 +210,32 @@ function handleGlobalKeydown(event: KeyboardEvent) {
         </button>
       </nav>
       <nav v-else class="expanded-menu">
-        <section v-for="group in menuGroups" :key="group.id" class="menu-group">
-          <h3>{{ group.label }}</h3>
-          <button
-            v-for="item in group.items"
-            :key="item.id"
-            class="menu-item"
-            :class="{ active: item.active }"
-            @click="runMenuItem(item)"
+        <section v-for="group in menuGroups" :key="group.id" class="menu-group" :class="{ pinned: group.pinned }">
+          <h3
+            v-if="!group.pinned"
+            :class="{ collapsible: group.collapsible }"
+            @click="group.collapsible && toggleGroup(group.id)"
           >
-            <span class="menu-icon"><el-icon><component :is="item.icon" /></el-icon></span>
-            <span class="menu-copy">
-              <strong>{{ item.label }}</strong>
-              <small v-if="item.hint">{{ item.hint }}</small>
-            </span>
-          </button>
+            <span>{{ group.label }}</span>
+            <el-icon v-if="group.collapsible" class="grp-caret">
+              <component :is="isGroupOpen(group.id) ? 'ArrowDown' : 'ArrowRight'" />
+            </el-icon>
+          </h3>
+          <template v-if="group.pinned || !group.collapsible || isGroupOpen(group.id)">
+            <button
+              v-for="item in group.items"
+              :key="item.id"
+              class="menu-item"
+              :class="{ active: item.active, launcher: group.pinned }"
+              @click="runMenuItem(item)"
+            >
+              <span class="menu-icon"><el-icon><component :is="item.icon" /></el-icon></span>
+              <span class="menu-copy">
+                <strong>{{ item.label }}</strong>
+                <small v-if="item.hint">{{ item.hint }}</small>
+              </span>
+            </button>
+          </template>
         </section>
       </nav>
       <button class="rail-command" title="Command Center" @click="openCommand(null)">
@@ -684,6 +462,9 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   margin-bottom: 14px;
 }
 .menu-group h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 0 0 4px;
   padding: 0 8px;
   color: var(--eid-text-muted);
@@ -693,6 +474,38 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   letter-spacing: 0.12em;
   line-height: 1.4;
   text-transform: uppercase;
+}
+.menu-group h3.collapsible {
+  cursor: pointer;
+  user-select: none;
+  border-radius: 6px;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+.menu-group h3.collapsible:hover {
+  color: var(--eid-text-secondary);
+  background: rgba(34, 211, 238, 0.05);
+}
+.grp-caret {
+  font-size: 11px;
+  opacity: 0.7;
+}
+/* Pinned cockpit launcher — a prominent standalone entry, no group header. */
+.menu-group.pinned {
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--eid-accent) 16%, var(--eid-border));
+}
+.menu-item.launcher {
+  min-height: 46px;
+  border-color: color-mix(in srgb, var(--eid-accent) 30%, var(--eid-border));
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.10), transparent);
+}
+.menu-item.launcher .menu-copy strong {
+  font-size: 13px;
+  font-weight: 760;
+}
+.menu-item.launcher:hover {
+  box-shadow: 0 0 22px rgba(34, 211, 238, 0.12);
 }
 .menu-item {
   width: 100%;

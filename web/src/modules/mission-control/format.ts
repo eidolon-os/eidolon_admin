@@ -1,0 +1,61 @@
+// Pure, framework-free formatting helpers for the cockpit. No reactivity,
+// no side effects — safe to unit-test. De-duplicated from the two former
+// mission-control SFCs (fmtLatency/fmtTime/statusClass were identical).
+import type { RuntimeDevice } from '@/api/missionControl'
+import type { StreamState } from './types'
+
+export function fmtLatency(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return '—'
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+export function fmtTime(iso: string | null | undefined): string {
+  if (!iso) return '--:--:--'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '--:--:--'
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
+export function fmtClock(ms: number): string {
+  const d = new Date(ms)
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
+/** Maps a free-form status string to a semantic tone class. */
+export function statusClass(status: string | null | undefined): 'ok' | 'warn' | 'bad' | 'idle' {
+  const v = (status || '').toLowerCase()
+  if (['ok', 'done', 'succeeded', 'completed', 'active', 'success'].includes(v)) return 'ok'
+  if (['running', 'pending', 'queued', 'degraded', 'warn'].includes(v)) return 'warn'
+  if (['failed', 'error', 'errored', 'offline'].includes(v)) return 'bad'
+  return 'idle'
+}
+
+/** Human label for a device's embodiment (physical vs virtual body). */
+export function deviceType(d: RuntimeDevice): string {
+  const k = `${d.kind} ${d.role}`.toLowerCase()
+  if (k.includes('esp32') || k.includes('box') || k.includes('camera') || k.includes('atk') || k.includes('ptt')) return '物理身体'
+  if (k.includes('web') || k.includes('virtual')) return '虚拟身体'
+  return '设备'
+}
+
+/** Compact device name for tight tiles. */
+export function deviceShort(d: RuntimeDevice): string {
+  const n = d.name || d.device_id || ''
+  return n.length > 13 ? '…' + n.slice(-10) : n
+}
+
+export function privacyModeLabel(mode: string | null | undefined): string {
+  return ({ safe: '安全', summary: '摘要', restricted: '受限' } as Record<string, string>)[mode || 'safe'] || '安全'
+}
+
+export function systemStateLabel(state: string | null | undefined): string {
+  return ({ active: '正在处理', working: '后台推进', watching: '感知中', standby: '待命中' } as Record<string, string>)[state || 'standby'] || '待命中'
+}
+
+export function streamLabel(state: StreamState): string {
+  return ({ connecting: 'SYNC', live: 'ONLINE', degraded: 'UNSTABLE' } as Record<StreamState, string>)[state]
+}

@@ -9,6 +9,13 @@ export interface UseEventStreamOptions {
    * Default 5000; pass 0 to disable.
    */
   maxLines?: number
+  /**
+   * Listen to a named SSE event (`event: <name>` frames) instead of the
+   * default unnamed `message` event. Mission Control emits `runtime_event`
+   * frames, so it passes `eventName: 'runtime_event'`. When set, the default
+   * onmessage handler is not wired.
+   */
+  eventName?: string
 }
 
 export function useEventStream(opts: UseEventStreamOptions = {}) {
@@ -27,15 +34,20 @@ export function useEventStream(opts: UseEventStreamOptions = {}) {
     source.onopen = () => {
       connected.value = true
     }
-    source.onmessage = (e) => {
-      lines.value.push(e.data)
+    const handleFrame = (data: string) => {
+      lines.value.push(data)
       // Trim from the head when the buffer exceeds the cap. Slicing
       // creates a new array — fine for Vue reactivity, and infrequent
       // (only fires once we cross the threshold).
       if (maxLines > 0 && lines.value.length > maxLines) {
         lines.value = lines.value.slice(lines.value.length - maxLines)
       }
-      opts.onMessage?.(e.data)
+      opts.onMessage?.(data)
+    }
+    if (opts.eventName) {
+      source.addEventListener(opts.eventName, (e) => handleFrame((e as MessageEvent).data))
+    } else {
+      source.onmessage = (e) => handleFrame(e.data)
     }
     source.onerror = (e) => {
       // EventSource will auto-reconnect; we just flag "currently
