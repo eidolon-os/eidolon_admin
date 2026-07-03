@@ -83,6 +83,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const traceId = computed(() =>
     (activeTurn.value?.turn_id || snapshot.value?.owner?.owner_id || 'STANDBY').slice(0, 14).toUpperCase(),
   )
+  const evidenceChains = computed(() => snapshot.value?.evidence_chains || [])
+  const permissionLedger = computed(() => snapshot.value?.permission_ledger || [])
+  const demoMode = computed(() => snapshot.value?.demo_mode || 'live')
 
   function svc(id: string): RuntimeService | null {
     return services.value.find((s) => s.service_id === id) || null
@@ -229,7 +232,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     experience, memory, devices, services, jobs, companions,
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
     activeTurn, pipelineActive, completion, primaryCompanionId, privacyMode, deviceRatio,
-    recentEvents, traceId,
+    recentEvents, traceId, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,
     // infra rail

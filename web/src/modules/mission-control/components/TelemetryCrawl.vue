@@ -2,6 +2,7 @@
 import type { RuntimeEvent } from '@/api/missionControl'
 import { SVC_GLYPH } from '../constants'
 import { fmtTime } from '../format'
+import OriginBadge from '../primitives/OriginBadge.vue'
 
 defineProps<{ events: RuntimeEvent[]; pipelineActive: boolean }>()
 </script>
@@ -13,7 +14,7 @@ defineProps<{ events: RuntimeEvent[]; pipelineActive: boolean }>()
       <div v-if="events.length" class="crawl-run">
         <template v-for="pass in 2" :key="pass">
           <span v-for="e in events" :key="pass + e.event_id" class="cev" :class="'sev-' + e.severity">
-            <em>{{ fmtTime(e.ts) }}</em><b>{{ SVC_GLYPH[e.source] || '·' }} {{ e.source.toUpperCase() }}</b>{{ e.summary || e.type }}<u>◇</u>
+            <em>{{ fmtTime(e.ts) }}</em><OriginBadge :origin="e.event_origin" /><b>{{ SVC_GLYPH[e.source] || '·' }} {{ e.source.toUpperCase() }}</b>{{ e.summary || e.type }}<u>◇</u>
           </span>
         </template>
       </div>

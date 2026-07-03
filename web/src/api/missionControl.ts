@@ -11,6 +11,8 @@ export type RuntimeSource =
 
 export type RuntimeSeverity = 'info' | 'warn' | 'error'
 export type PrivacyMode = 'safe' | 'summary' | 'restricted'
+export type EventOrigin = 'live' | 'polling' | 'replay' | 'mock'
+export type DemoMode = 'live' | 'replay' | 'mixed'
 
 export interface SourceStatus {
   source: string
@@ -26,6 +28,7 @@ export interface RuntimeEvent {
   type: string
   severity: RuntimeSeverity
   privacy: PrivacyMode
+  event_origin: EventOrigin
   trace_id: string | null
   owner_id: string | null
   companion_id: string | null
@@ -178,6 +181,32 @@ export interface RuntimeExperience {
   next_best_action: string
 }
 
+export interface EvidenceStep {
+  key: string
+  label: string
+  done: boolean
+  detail: string
+}
+
+export interface EvidenceChain {
+  key: string
+  title: string
+  claim: string
+  status: 'pending' | 'partial' | 'proven' | string
+  confidence: number
+  steps: EvidenceStep[]
+}
+
+export interface PermissionLedgerItem {
+  ts: string | null
+  kind: string
+  device_id: string | null
+  status: string
+  privacy_level: string
+  raw_retention: string
+  summary: string
+}
+
 export interface RuntimeSnapshot {
   generated_at: string
   owner: RuntimeOwner | null
@@ -192,6 +221,9 @@ export interface RuntimeSnapshot {
   recent_events: RuntimeEvent[]
   source_status: SourceStatus[]
   experience: RuntimeExperience
+  evidence_chains: EvidenceChain[]
+  permission_ledger: PermissionLedgerItem[]
+  demo_mode: DemoMode
   privacy_notice: string
 }
 
