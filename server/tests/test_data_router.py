@@ -148,14 +148,19 @@ async def test_owner_scoped_data_overview_and_lists(
     assert body["counts"] == {
         "companions": 1,
         "persona_genomes": 1,
-        "devices": 1,
+        # The master companion is provisioned with a host-local web body,
+        # so device-a is the owner's *second* device.
+        "devices": 2,
         "conversations": 1,
         "memory_realms": 1,
         "jobs": 1,
-        "events": 5,
+        # +1 for device.web_body.provisioned.
+        "events": 6,
     }
     assert body["companions"][0]["companion_id"] == "c_owner-a_default"
-    assert body["devices"][0]["device_id"] == "device-a"
+    assert body["companions"][0]["is_master"] is True
+    device_ids = {device["device_id"] for device in body["devices"]}
+    assert device_ids == {"web-c_owner-a_default", "device-a"}
     assert body["conversations"][0]["conversation_id"] == "conversation-a"
     assert body["memory_realms"][0]["realm_id"] == "r_owner-a_default"
     assert body["jobs"][0]["job_id"] == "job-a"
@@ -168,6 +173,57 @@ async def test_owner_scoped_data_overview_and_lists(
 
     missing = await client.get("/api/owners/missing/workspace")
     assert missing.status_code == 404
+
+
+async def test_companion_web_body_and_multi_body_binding(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await client.post(
+        "/api/owners",
+        json={"owner_id": "owner-bodies", "display_name": "Owner", "kind": "person"},
+    )
+    initialized = await client.post(
+        "/api/owners/owner-bodies/workspace/initialize",
+        json={"companion_display_name": "Xiaoyi"},
+    )
+    assert initialized.status_code == 200
+    companion_id = initialized.json()["companion"]["companion_id"]
+    assert initialized.json()["companion"]["is_master"] is True
+
+    # Master already has a web body; the one-click endpoint is idempotent.
+    web1 = await client.post(
+        f"/api/owners/owner-bodies/companions/{companion_id}/devices/web"
+    )
+    assert web1.status_code == 200
+    assert web1.json()["kind"] == "web"
+    assert web1.json()["device_id"] == f"web-{companion_id}"
+    web2 = await client.post(
+        f"/api/owners/owner-bodies/companions/{companion_id}/devices/web"
+    )
+    assert web2.status_code == 200
+    assert web2.json()["device_id"] == web1.json()["device_id"]
+
+    # Associate a second, physical body to the same companion (previously blocked).
+    await data_store.devices.create_device(
+        device_id="esp-bodies",
+        owner_id="owner-bodies",
+        kind="esp32",
+        status="active",
+    )
+    bound = await client.post(
+        "/api/owners/owner-bodies/devices/esp-bodies/bind-companion",
+        params={"companion_id": companion_id},
+    )
+    assert bound.status_code == 200
+    assert bound.json()["bound_companion_id"] == companion_id
+
+    listing = await client.get(
+        f"/api/owners/owner-bodies/companions/{companion_id}/devices"
+    )
+    assert listing.status_code == 200
+    device_ids = {device["device_id"] for device in listing.json()["devices"]}
+    assert device_ids == {f"web-{companion_id}", "esp-bodies"}
 
 
 async def test_owner_nearby_devices_identify_and_add_to_owner(
@@ -242,8 +298,10 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert owner_identify.status_code == 200
         assert owner_identify.json()["op"] == "device.identify"
 
+        # A companion may hold multiple bodies, so binding a second device to
+        # the same companion is allowed (no longer a 409).
         fake_hub.devices["esp-second"] = _runtime_device("esp-second", name="Second ESP", approved=True)
-        duplicate_binding = await client.post(
+        second_body = await client.post(
             "/api/owners/owner-devices/nearby-devices/esp-second/claim",
             json={
                 "name": "Second ESP",
@@ -251,11 +309,13 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
                 "interaction_mode": "voice",
             },
         )
-        assert duplicate_binding.status_code == 409
+        assert second_body.status_code == 200
+        assert second_body.json()["bound_companion_id"] == "c_owner-devices_default"
 
+        # Both nearby devices are now claimed, so nothing remains unclaimed.
         empty_nearby = await client.get("/api/owners/owner-devices/nearby-devices")
         assert empty_nearby.status_code == 200
-        assert [row["device_id"] for row in empty_nearby.json()["devices"]] == ["esp-second"]
+        assert empty_nearby.json()["devices"] == []
 
         unbound = await client.post("/api/owners/owner-devices/devices/esp-near/bind-companion")
         assert unbound.status_code == 200

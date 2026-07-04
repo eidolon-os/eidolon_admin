@@ -169,6 +169,10 @@ async def initialize_owner_workspace(
     request: Request,
 ) -> WorkspaceInitializeResponse:
     store = _store(request)
+    # The owner's first companion is their master companion; it is provisioned
+    # with a host-local web body so a fresh owner is conversation-ready.
+    existing_companions = await store.companions.list_for_owner(owner_id)
+    is_master = not existing_companions
     try:
         result = await store.workspace_provisioning.provision_workspace(
             owner_id=owner_id,
@@ -188,6 +192,7 @@ async def initialize_owner_workspace(
             memory_engine_config_json=payload.memory_engine_config_json,
             memory_policy_json=payload.memory_policy_json,
             actor_type="admin",
+            is_master=is_master,
         )
     except OwnerWorkspaceError as exc:
         message = str(exc)
@@ -212,6 +217,48 @@ async def list_owner_companions(owner_id: str, request: Request) -> CompanionLis
     await _require_owner(store, owner_id)
     rows = await store.companions.list_for_owner(owner_id)
     return CompanionListResponse(companions=[_companion(row) for row in rows])
+
+
+@router.get(
+    "/owners/{owner_id}/companions/{companion_id}/devices",
+    response_model=DeviceListResponse,
+)
+async def list_companion_devices(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> DeviceListResponse:
+    """All bodies (web + physical) bound to a companion."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    rows = await store.devices.list_devices_for_companion(companion_id)
+    return DeviceListResponse(devices=[_device(row) for row in rows])
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/devices/web",
+    response_model=DeviceView,
+)
+async def ensure_companion_web_body(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> DeviceView:
+    """Idempotently attach a host-local web body to a companion (one click)."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    try:
+        row = await store.workspace_provisioning.ensure_web_body(
+            owner_id=owner_id, companion_id=companion_id
+        )
+    except OwnerWorkspaceError as exc:
+        message = str(exc)
+        if "not found" in message:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, message) from exc
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, message) from exc
+    return _device(row)
 
 
 @router.get("/owners/{owner_id}/persona-genomes", response_model=PersonaGenomeListResponse)
@@ -326,7 +373,6 @@ async def claim_nearby_device(
 
     if payload.companion_id:
         await _require_owner_companion(store, owner_id, payload.companion_id)
-        await _require_companion_unbound(store, owner_id, payload.companion_id)
 
     hub = _require_hub_device_client(request)
     try:
@@ -507,12 +553,6 @@ async def bind_owner_device(
     device = await _require_owner_device(store, owner_id, device_id)
     if companion_id is not None:
         await _require_owner_companion(store, owner_id, companion_id)
-        await _require_companion_unbound(
-            store,
-            owner_id,
-            companion_id,
-            except_device_id=device.device_id,
-        )
     try:
         row = await store.devices.bind_companion(device.device_id, companion_id=companion_id)
     except ValueError as exc:
@@ -669,27 +709,6 @@ async def _require_owner_companion(store: DataStore, owner_id: str, companion_id
     return companion
 
 
-async def _require_companion_unbound(
-    store: DataStore,
-    owner_id: str,
-    companion_id: str,
-    *,
-    except_device_id: str | None = None,
-) -> None:
-    devices = await store.devices.list_devices_for_owner(owner_id)
-    for device in devices:
-        if device.device_id == except_device_id:
-            continue
-        if device.bound_companion_id != companion_id:
-            continue
-        if device.revoked_at is not None or device.status == "revoked":
-            continue
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"companion is already bound to device {device.device_id}",
-        )
-
-
 async def _require_owner_job(store: DataStore, owner_id: str, job_id: str) -> Any:
     rows = await store.jobs.list_for_owner(owner_id, limit=500)
     for row in rows:
@@ -724,6 +743,7 @@ def _companion(row: Any) -> CompanionView:
         display_name=row.display_name,
         kind=row.kind,
         status=row.status,
+        is_master=bool(getattr(row, "is_master", False)),
         current_genome_id=row.current_genome_id,
         default_memory_realm_id=row.default_memory_realm_id,
         profile_json=row.profile_json or {},

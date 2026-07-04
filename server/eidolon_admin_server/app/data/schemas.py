@@ -46,6 +46,7 @@ class CompanionView(BaseModel):
     display_name: str
     kind: str
     status: str
+    is_master: bool = False
     current_genome_id: str | None = None
     default_memory_realm_id: str | None = None
     profile_json: JsonDict = Field(default_factory=dict)
