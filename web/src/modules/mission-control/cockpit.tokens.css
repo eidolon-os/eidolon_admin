@@ -16,7 +16,7 @@
   --cy-bg: #060210;
   --cy-panel: rgba(6, 4, 18, 0.55);
   --cy-txt: #d9e6ff;
-  --cy-txt-dim: #6d6a99;
+  --cy-txt-dim: #8b88ba;
   --cy-hair: rgba(0, 234, 255, 0.14);
   --cy-hair-strong: rgba(0, 234, 255, 0.4);
 
@@ -87,13 +87,13 @@
 .cy-pop .pop-h b { font: 800 15px/1 var(--eid-font-sans); color: #fff; }
 .cy-pop .pop-h em { font: 700 10px/1 var(--eid-font-mono); color: #00eaff; font-style: normal; }
 .cy-pop .pop-role { margin: 0 0 10px; font: 400 12px/1.55 var(--eid-font-sans); color: #b9c4e0; }
-.cy-pop .pop-role.dim { color: #6d6a99; }
+.cy-pop .pop-role.dim { color: #8b88ba; }
 .cy-pop .pop-rows { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid rgba(0, 234, 255, 0.14); border-bottom: 1px solid rgba(0, 234, 255, 0.14); }
 .cy-pop .pop-rows > div { display: flex; justify-content: space-between; gap: 12px; }
-.cy-pop .pop-rows dt { font: 700 10px/1.5 var(--eid-font-mono); color: #6d6a99; letter-spacing: 0.05em; flex: 0 0 auto; }
+.cy-pop .pop-rows dt { font: 700 10px/1.5 var(--eid-font-mono); color: #8b88ba; letter-spacing: 0.05em; flex: 0 0 auto; }
 .cy-pop .pop-rows dd { margin: 0; font: 700 11px/1.5 var(--eid-font-mono); color: #d9e6ff; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cy-pop .pop-rows dd.ok { color: #37f5b3; } .cy-pop .pop-rows dd.idle { color: #6d6a99; } .cy-pop .pop-rows dd.warn { color: #f7ff4a; } .cy-pop .pop-rows dd.bad { color: #ff2e88; }
+.cy-pop .pop-rows dd.ok { color: #37f5b3; } .cy-pop .pop-rows dd.idle { color: #8b88ba; } .cy-pop .pop-rows dd.warn { color: #f7ff4a; } .cy-pop .pop-rows dd.bad { color: #ff2e88; }
 .cy-pop .pop-ev { margin-top: 9px; }
 .cy-pop .pop-ev-h { font: 700 9px/1 var(--eid-font-mono); color: #ff2e88; letter-spacing: 0.1em; }
 .cy-pop .pop-ev p { display: flex; gap: 7px; margin: 5px 0 0; font-size: 11px; line-height: 1.4; color: #b9c4e0; }
-.cy-pop .pop-ev em { font: 700 9px/1.4 var(--eid-font-mono); color: #6d6a99; font-style: normal; flex: 0 0 auto; }
+.cy-pop .pop-ev em { font: 700 9px/1.4 var(--eid-font-mono); color: #8b88ba; font-style: normal; flex: 0 0 auto; }

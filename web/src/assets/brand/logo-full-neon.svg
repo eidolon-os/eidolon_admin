@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -14 348 162" width="348" height="162">
+  <defs>
+    <radialGradient id="fcore" cx="0.4" cy="0.32" r="0.9">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.3" stop-color="#FFC2E0"/>
+      <stop offset="0.65" stop-color="#FF3A90"/>
+      <stop offset="1" stop-color="#B01464"/>
+    </radialGradient>
+    <radialGradient id="fbloom" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FF3A90" stop-opacity="0.95"/>
+      <stop offset="0.45" stop-color="#FF2E88" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#FF2E88" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="fviolet" cx="0.5" cy="0.52" r="0.5">
+      <stop offset="0" stop-color="#A44BFF" stop-opacity="0.4"/>
+      <stop offset="0.6" stop-color="#7A3BE0" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#7A3BE0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="fspec" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="fb06" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="0.7"/></filter>
+    <filter id="fb4" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="4"/></filter>
+    <filter id="fb11" x="-150%" y="-150%" width="400%" height="400%"><feGaussianBlur stdDeviation="11"/></filter>
+    <filter id="fbw" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.4"/></filter>
+  </defs>
+
+  <circle cx="60" cy="60" r="40" fill="url(#fviolet)"/>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M72.12 33 L94.64 46 L94.64 86 L60 106 L25.36 86 L25.36 46 L47.88 33"
+          stroke="#00D4FF" stroke-width="11.5" opacity="0.45" filter="url(#fb11)"/>
+    <path d="M72.12 33 L94.64 46 L94.64 86 L60 106 L25.36 86 L25.36 46 L47.88 33"
+          stroke="#00EAFF" stroke-width="7" opacity="0.9" filter="url(#fb4)"/>
+    <path d="M72.12 33 L94.64 46 L94.64 86 L60 106 L25.36 86 L25.36 46 L47.88 33"
+          stroke="#5CF3FF" stroke-width="5" filter="url(#fb06)"/>
+    <path d="M72.12 33 L94.64 46 L94.64 86 L60 106 L25.36 86 L25.36 46 L47.88 33"
+          stroke="#E6FEFF" stroke-width="2.3"/>
+    <circle cx="60" cy="50" r="30" fill="url(#fbloom)" stroke="none"/>
+    <circle cx="60" cy="50" r="13" fill="#FF2E88" opacity="0.85" filter="url(#fb4)" stroke="none"/>
+    <circle cx="60" cy="50" r="10.5" fill="url(#fcore)" stroke="none"/>
+    <ellipse cx="56" cy="45.5" rx="4.2" ry="3.2" fill="url(#fspec)" filter="url(#fb06)" stroke="none"/>
+  </g>
+
+  <!-- wordmark: cyan glow beneath white-hot strokes -->
+  <g transform="translate(118,53)" fill="none" stroke="#00EAFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.6" filter="url(#fbw)">
+    <path d="M18 0 H0 V26 H18 M0 13 H14"/>
+    <path d="M37 0 V26"/>
+    <path d="M56 0 V26 M56 0 H61 A13 13 0 0 1 61 26 H56"/>
+    <ellipse cx="93" cy="13" rx="9" ry="13"/>
+    <path d="M112 0 V26 H130"/>
+    <ellipse cx="149" cy="13" rx="9" ry="13"/>
+    <path d="M168 26 V0 L186 26 V0"/>
+  </g>
+  <g transform="translate(118,53)" fill="none" stroke="#EAF6FF" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 0 H0 V26 H18 M0 13 H14"/>
+    <path d="M37 0 V26"/>
+    <path d="M56 0 V26 M56 0 H61 A13 13 0 0 1 61 26 H56"/>
+    <ellipse cx="93" cy="13" rx="9" ry="13"/>
+    <path d="M112 0 V26 H130"/>
+    <ellipse cx="149" cy="13" rx="9" ry="13"/>
+    <path d="M168 26 V0 L186 26 V0"/>
+  </g>
+  <text x="119" y="98" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="7.2"
+        fill="#7E8BB8" letter-spacing="2.8">PERSONAL SOVEREIGN AGENT OS</text>
+</svg>

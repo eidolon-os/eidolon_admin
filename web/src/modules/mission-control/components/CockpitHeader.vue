@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Back, Refresh } from '@element-plus/icons-vue'
 import DataNumber from '../primitives/DataNumber.vue'
+import logoUrl from '@/assets/brand/logo-full-neon.svg'
 import type { MissionControlStream } from '../useMissionControlStream'
 
 const props = defineProps<{ mc: MissionControlStream }>()
@@ -17,7 +18,7 @@ const {
 <template>
   <header class="cy-head">
     <div class="brand">
-      <h1 class="glitch" data-text="EIDOLON//OS">EIDOLON//OS</h1>
+      <img :src="logoUrl" class="brand-logo" alt="EIDOLON · Personal Sovereign Agent OS" />
       <div class="brand-meta">
         <span class="brand-state" :class="pipelineActive ? 'ok' : 'idle'"><i class="led" />{{ streamLabelText }}</span>
         <span v-if="replay" class="brand-replay">◇ REPLAY</span>
@@ -55,10 +56,7 @@ const {
 
 <style scoped>
 .cy-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.glitch { position: relative; margin: 0; font: 900 26px/1 var(--cy-mono); letter-spacing: 0.06em; color: #fff; text-shadow: 0 0 18px rgba(0, 234, 255, 0.5); }
-.glitch::before, .glitch::after { content: attr(data-text); position: absolute; inset: 0; pointer-events: none; }
-.glitch::before { color: var(--cy-mag); transform: translate(-2px, 0); text-shadow: 0 0 12px var(--cy-mag); animation: glitchA 3.2s steps(2) infinite; }
-.glitch::after { color: var(--cy-cyan); transform: translate(2px, 0); text-shadow: 0 0 12px var(--cy-cyan); animation: glitchB 2.6s steps(2) infinite; }
+.brand-logo { display: block; height: 46px; width: auto; filter: drop-shadow(0 0 12px rgba(0, 234, 255, 0.28)); }
 .brand { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; }
 .brand-meta { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
 .brand-state { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; font: 700 9px/1 var(--cy-mono); letter-spacing: 0.08em; border: 1px solid currentColor; clip-path: polygon(6px 0, 100% 0, 100% 100%, 0 100%, 0 6px); }
@@ -89,8 +87,5 @@ const {
 .icon-btn.ghost:hover { border-color: var(--cy-cyan); color: var(--cy-cyan); background: rgba(0, 234, 255, 0.08); }
 .spin { animation: spin 900ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes glitchA { 0%, 92%, 100% { clip-path: inset(0 0 0 0); transform: translate(-2px, 0); } 93% { clip-path: inset(20% 0 40% 0); transform: translate(-5px, -1px); } 96% { clip-path: inset(60% 0 10% 0); transform: translate(3px, 1px); } }
-@keyframes glitchB { 0%, 90%, 100% { clip-path: inset(0 0 0 0); transform: translate(2px, 0); } 91% { clip-path: inset(50% 0 20% 0); transform: translate(5px, 1px); } 95% { clip-path: inset(10% 0 60% 0); transform: translate(-3px, -1px); } }
-@media (prefers-reduced-motion: reduce) { .glitch::before, .glitch::after { animation: none !important; } }
 @media (max-width: 1080px) { .cy-head { flex-wrap: wrap; } }
 </style>
