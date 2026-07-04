@@ -36,6 +36,7 @@ const form = reactive({
   name: '',
   archetype: 'companion',
   description: '',
+  pronouns: '',
   values: '',
   taboos: '',
   unbreakable_rules: '',
@@ -43,6 +44,7 @@ const form = reactive({
   goals: '',
   pinned_facts: '',
   example_dialogs: '',
+  relationship_stage: '',
 })
 
 const cards = computed(() =>
@@ -84,6 +86,7 @@ function resetForm() {
   form.name = ''
   form.archetype = 'companion'
   form.description = ''
+  form.pronouns = ''
   form.values = ''
   form.taboos = ''
   form.unbreakable_rules = ''
@@ -91,6 +94,7 @@ function resetForm() {
   form.goals = ''
   form.pinned_facts = ''
   form.example_dialogs = ''
+  form.relationship_stage = ''
 }
 
 function openCreate() {
@@ -99,11 +103,47 @@ function openCreate() {
   dialogOpen.value = true
 }
 
+function currentGenomeFor(companionId: string): PersonaGenomeView | null {
+  const gs = genomes.value.filter((g) => g.companion_id === companionId)
+  const companion = companions.value.find((c) => c.companion_id === companionId)
+  return (
+    gs.find((g) => g.genome_id === companion?.current_genome_id) ||
+    [...gs].sort((a, b) => b.version - a.version)[0] ||
+    null
+  )
+}
+
+function textLines(value: unknown): string {
+  return Array.isArray(value) ? value.map((v) => String(v)).join('\n') : ''
+}
+
 function openEdit(companion: CompanionView) {
   isEdit.value = true
   resetForm()
   form.companion_id = companion.companion_id
   form.name = companion.display_name || companion.companion_id
+  // Preload the current genome's authored content so editing starts from what
+  // exists instead of a blank form (the genome is stored as a JSON blob).
+  const g = currentGenomeFor(companion.companion_id)?.genome_json as
+    | Record<string, any>
+    | undefined
+  if (g) {
+    const identity = (g.identity_core ?? {}) as Record<string, any>
+    const metadata = (g.metadata ?? {}) as Record<string, any>
+    const style = (g.style_compiler ?? {}) as Record<string, any>
+    form.name = String(metadata.name ?? form.name)
+    form.archetype = String(metadata.archetype ?? form.archetype)
+    form.description = String(metadata.description ?? '')
+    form.pronouns = String(identity.base_pronouns ?? '')
+    form.values = textLines(identity.values)
+    form.taboos = textLines(identity.taboos)
+    form.unbreakable_rules = textLines(identity.unbreakable_rules)
+    form.style = textLines(style.base_instructions)
+    form.goals = textLines(g.goals)
+    form.pinned_facts = textLines(g.pinned_facts)
+    form.example_dialogs = textLines(g.example_dialogs)
+    form.relationship_stage = String(g.relationship_stage ?? '')
+  }
   dialogOpen.value = true
 }
 
@@ -129,6 +169,7 @@ async function submit() {
       name: form.name.trim(),
       archetype: form.archetype.trim() || 'companion',
       description: form.description.trim(),
+      pronouns: form.pronouns.trim(),
       values: lines(form.values),
       taboos: lines(form.taboos),
       unbreakable_rules: lines(form.unbreakable_rules),
@@ -136,6 +177,7 @@ async function submit() {
       goals: lines(form.goals),
       pinned_facts: lines(form.pinned_facts),
       example_dialogs: lines(form.example_dialogs),
+      relationship_stage: form.relationship_stage.trim(),
     })
     ElMessage.success(isEdit.value ? '已出新版本基因' : '伙伴已创建并绑定基因')
     dialogOpen.value = false
@@ -251,8 +293,16 @@ async function reset(companion: CompanionView) {
           <el-form-item label="原型 archetype">
             <el-input v-model="form.archetype" />
           </el-form-item>
+          <el-form-item label="称谓/代词（如：她 / 我·你）">
+            <el-input v-model="form.pronouns" placeholder="留空默认「她」" />
+          </el-form-item>
+        </div>
+        <div class="row-2">
           <el-form-item label="TA 是谁（自由描述）">
             <el-input v-model="form.description" type="textarea" :rows="2" />
+          </el-form-item>
+          <el-form-item label="与主人的关系阶段">
+            <el-input v-model="form.relationship_stage" placeholder="如：刚认识 / 熟络 / 老友" />
           </el-form-item>
         </div>
         <p class="form-hint">下面每行一条（自由文本为主）：</p>
