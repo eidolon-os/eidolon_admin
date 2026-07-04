@@ -61,8 +61,10 @@ async function toggle() {
 .mem-rows dt { color: var(--cy-txt-dim); }
 .mem-rows dd { margin: 0; color: var(--cy-txt); }
 .mem-rows dd.ok { color: var(--cy-green); }
-.mem-graph { height: 240px; margin-top: 6px; border: 1px solid var(--cy-hair); }
-.mem-graph :deep(.palace-graph), .mem-graph :deep(div) { height: 100%; }
+.mem-graph { height: 240px; margin-top: 6px; border: 1px solid var(--cy-hair); overflow: hidden; }
+/* Fit the fixed-600px PalaceGraph into this compact box — only the container,
+   not every nested div (that would break vis-network's internal layout). */
+.mem-graph :deep(.palace-graph) { height: 100%; min-height: 0; }
 .mem-err { margin: 8px; font-size: 11px; color: var(--cy-mag); }
 .lane-idle { margin: 8px; font: 400 11px/1 var(--cy-sans); color: var(--cy-txt-dim); }
 </style>

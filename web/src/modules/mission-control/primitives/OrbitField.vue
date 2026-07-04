@@ -22,15 +22,17 @@ let nebulae: Nebula[] = []
 
 function setup() {
   const el = canvas.value
-  const parent = el?.parentElement
-  if (!el || !parent) return
+  if (!el) return
+  // Measure the canvas's own CSS box (it may bleed past the parent via inset)
+  // so the backing store matches exactly — no edge gap under parallax.
+  const w0 = el.clientWidth
+  const h0 = el.clientHeight
+  if (w0 === 0 || h0 === 0) return // not laid out yet; ResizeObserver retries
   dpr = Math.min(window.devicePixelRatio || 1, 2)
-  w = parent.clientWidth
-  h = parent.clientHeight
+  w = w0
+  h = h0
   el.width = Math.max(1, Math.round(w * dpr))
   el.height = Math.max(1, Math.round(h * dpr))
-  el.style.width = `${w}px`
-  el.style.height = `${h}px`
   ctx = el.getContext('2d')
   if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   seed()
@@ -93,8 +95,13 @@ function onVisibility() {
 
 onMounted(() => {
   setup()
-  ro = new ResizeObserver(() => setup())
-  if (canvas.value?.parentElement) ro.observe(canvas.value.parentElement)
+  // Observe the canvas itself; re-setup on resize, and under reduced motion
+  // repaint a static frame once layout is known (loop never runs).
+  ro = new ResizeObserver(() => {
+    setup()
+    if (prefersReducedMotion() && ctx) draw(performance.now())
+  })
+  if (canvas.value) ro.observe(canvas.value)
   if (prefersReducedMotion()) {
     requestAnimationFrame((t) => { start = t; draw(t) })
   } else {
