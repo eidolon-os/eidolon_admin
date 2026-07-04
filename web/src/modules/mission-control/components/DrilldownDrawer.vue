@@ -2,13 +2,14 @@
 import { computed } from 'vue'
 import { MODE_CN } from '../constants'
 import { deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
+import CapabilityRegistry from './CapabilityRegistry.vue'
 import type { CompanionUnit, DrawerTarget } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 
 const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | null }>()
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
 
-const { ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot } = props.mc
+const { ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot, experience } = props.mc
 
 const drawerComp = computed<CompanionUnit | null>(() => {
   const t = props.target
@@ -45,6 +46,8 @@ const drawerTurns = computed(() => {
               <i class="led" :class="statusClass(c.status)" /><b>{{ c.name }}</b><em>{{ c.devices.length }} 身体 · {{ c.realm ? '有记忆' : '无记忆' }}</em>
             </button>
           </div>
+          <span class="dw-sect">能力面 · CAPABILITY</span>
+          <CapabilityRegistry :cards="experience?.capability_cards || []" />
         </template>
 
         <template v-else-if="drawerComp">

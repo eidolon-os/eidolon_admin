@@ -8,8 +8,10 @@ import { useRoute, useRouter } from 'vue-router'
 import CockpitHeader from './components/CockpitHeader.vue'
 import DrilldownDrawer from './components/DrilldownDrawer.vue'
 import LiveTraceTimeline from './components/LiveTraceTimeline.vue'
+import MemoryEvidenceLane from './components/MemoryEvidenceLane.vue'
 import PermissionLedger from './components/PermissionLedger.vue'
 import ProofChainTiles from './components/ProofChainTiles.vue'
+import TaskWorkflowTimeline from './components/TaskWorkflowTimeline.vue'
 import RuntimeBusRail from './components/RuntimeBusRail.vue'
 import SovereignConstellation from './components/SovereignConstellation.vue'
 import TelemetryCrawl from './components/TelemetryCrawl.vue'
@@ -27,6 +29,7 @@ const mc = useMissionControlStream({ mode })
 const {
   pipelineActive, systemStateText, experience, error, recentEvents,
   infraNodes, hotService, activeTurn, evidenceChains, permissionLedger,
+  memory, jobs,
 } = mc
 
 const drawer = ref<DrawerTarget | null>(null)
@@ -91,8 +94,10 @@ function returnToConsole() { router.push({ name: 'owners' }) }
 
     <SovereignConstellation :mc="mc" :focused-id="focusedCompanionId" @open-owner="openOwner" @open-companion="openComp" @open-moon="openMoon" />
 
+    <LiveTraceTimeline :turn="activeTurn" />
     <div class="evidence-lanes">
-      <LiveTraceTimeline :turn="activeTurn" />
+      <MemoryEvidenceLane :memory="memory" />
+      <TaskWorkflowTimeline :jobs="jobs" />
       <PermissionLedger v-if="permissionLedger.length" :items="permissionLedger" />
     </div>
 
@@ -120,8 +125,7 @@ function returnToConsole() { router.push({ name: 'owners' }) }
 .cy-scan { position: absolute; inset: 0; z-index: 5; pointer-events: none; background: repeating-linear-gradient(transparent 0 2px, rgba(0, 0, 0, 0.22) 3px 4px); mix-blend-mode: multiply; opacity: 0.5; }
 .cy-flicker { position: absolute; inset: 0; z-index: 4; pointer-events: none; background: rgba(0, 234, 255, 0.02); animation: flicker 5s steps(30) infinite; }
 
-.evidence-lanes { display: flex; gap: 10px; position: relative; z-index: 1; align-items: stretch; }
-.evidence-lanes > :first-child { flex: 1 1 auto; min-width: 0; }
+.evidence-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; position: relative; z-index: 1; align-items: stretch; }
 .state-line { font-family: var(--cy-sans); font-size: 12.5px; color: var(--cy-txt); opacity: 0.82; line-height: 1.5; position: relative; z-index: 1; }
 .state-line b { margin-right: 8px; font-family: var(--cy-mono); font-size: 11px; }
 .cy-error { position: relative; z-index: 1; padding: 9px 13px; color: var(--cy-mag); border: 1px solid var(--cy-mag); background: rgba(255, 46, 136, 0.08); }
