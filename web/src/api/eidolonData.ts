@@ -268,6 +268,56 @@ export async function listOwnerPersonaGenomes(ownerId: string): Promise<PersonaG
   return data.persona_genomes
 }
 
+export interface AuthorGenomePayload {
+  name: string
+  archetype?: string
+  description?: string
+  pronouns?: string
+  values?: string[]
+  taboos?: string[]
+  unbreakable_rules?: string[]
+  style?: string[]
+  example_dialogs?: string[]
+  goals?: string[]
+  pinned_facts?: string[]
+  relationship_stage?: string
+  knobs?: Record<string, number>
+}
+
+export interface AuthoredGenomeResult {
+  owner_id: string
+  companion_id: string
+  version: number
+  genome_id: string
+  name: string
+  archetype: string
+}
+
+// Companion-first authoring. Proxied through the admin gateway to the agent's
+// authoring endpoint (persona schema/validation/render live in eidolon_agent).
+export async function authorCompanionGenome(
+  ownerId: string,
+  companionId: string,
+  payload: AuthorGenomePayload,
+): Promise<AuthoredGenomeResult> {
+  const { data } = await client.post<AuthoredGenomeResult>(
+    `/services/agent/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genome/author`,
+    payload,
+  )
+  return data
+}
+
+// Reset a companion to its authored origin (drops evolution drift). eidolon_data.
+export async function resetCompanionGenome(
+  ownerId: string,
+  companionId: string,
+): Promise<PersonaGenomeView> {
+  const { data } = await client.post<PersonaGenomeView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genome/reset-to-origin`,
+  )
+  return data
+}
+
 export async function listOwnerDevices(ownerId: string): Promise<DeviceView[]> {
   const { data } = await client.get<{ devices: DeviceView[] }>(
     `/owners/${encodeURIComponent(ownerId)}/devices`,

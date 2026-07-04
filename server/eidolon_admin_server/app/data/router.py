@@ -231,6 +231,25 @@ async def list_owner_persona_genomes(
     return PersonaGenomeListResponse(persona_genomes=[_persona_genome(row) for row in rows])
 
 
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/genome/reset-to-origin",
+    response_model=PersonaGenomeView,
+)
+async def reset_companion_genome_to_origin(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> PersonaGenomeView:
+    """Reset a companion to its authored origin genome (drops evolution drift)."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    try:
+        row = await store.persona.reset_to_origin(owner_id=owner_id, companion_id=companion_id)
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return _persona_genome(row)
+
+
 @router.get("/owners/{owner_id}/devices", response_model=DeviceListResponse)
 @router.get("/data/owners/{owner_id}/devices", response_model=DeviceListResponse, include_in_schema=False)
 async def list_owner_devices(owner_id: str, request: Request) -> DeviceListResponse:

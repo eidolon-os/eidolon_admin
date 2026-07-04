@@ -75,6 +75,14 @@ export const navigation: NavGroup[] = [
     icon: 'Avatar',
     items: [
       {
+        id: 'companions',
+        label: 'Companions',
+        hint: '伙伴与基因创作',
+        icon: 'Avatar',
+        route: { name: 'companions' },
+        entity: 'companion',
+      },
+      {
         id: 'agent-chat',
         label: 'Chat Test',
         hint: '实时请求链路',

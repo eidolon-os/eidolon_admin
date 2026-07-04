@@ -38,6 +38,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/benchmark/Overview.vue'),
       },
       {
+        path: 'companions/:section?',
+        name: 'companions',
+        component: () => import('@/modules/companions/Companions.vue'),
+      },
+      {
         path: 'devices/:tab?',
         name: 'devices',
         component: () => import('@/modules/devices/DeviceCenter.vue'),
