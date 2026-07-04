@@ -11,6 +11,7 @@ import TableSkeleton from '@/modules/common/TableSkeleton.vue'
 import { useOwnersStore } from '@/stores/owners'
 import {
   authorCompanionGenome,
+  createCompanionWebBody,
   listOwnerCompanions,
   listOwnerPersonaGenomes,
   resetCompanionGenome,
@@ -18,6 +19,7 @@ import {
   type PersonaGenomeView,
 } from '@/api/eidolonData'
 import { extractErrorMessage } from '@/utils/format'
+import { webBodyLaunchUrl } from '@/utils/clientWeb'
 
 const ownersStore = useOwnersStore()
 const ownerId = computed(() => ownersStore.currentId)
@@ -145,6 +147,30 @@ async function submit() {
   }
 }
 
+const launching = ref('')
+
+// Ensure a host-local web body exists (idempotent), then open the standalone
+// client in a new tab connected as that body. Works for any companion; the
+// master already has one provisioned.
+async function launchWebBody(companion: CompanionView) {
+  if (!ownerId.value) return
+  launching.value = companion.companion_id
+  try {
+    const body = await createCompanionWebBody(ownerId.value, companion.companion_id)
+    const url = webBodyLaunchUrl({
+      ownerId: ownerId.value,
+      companionId: companion.companion_id,
+      deviceId: body.device_id,
+    })
+    window.open(url, '_blank', 'noopener')
+    ElMessage.success('已启动本机身体（新标签页）')
+  } catch (e) {
+    ElMessage.error(extractErrorMessage(e))
+  } finally {
+    launching.value = ''
+  }
+}
+
 async function reset(companion: CompanionView) {
   try {
     await ElMessageBox.confirm(
@@ -183,7 +209,10 @@ async function reset(companion: CompanionView) {
             <b class="cmp-name">{{ card.companion.display_name || card.companion.companion_id }}</b>
             <span class="cmp-id mono">{{ card.companion.companion_id }}</span>
           </div>
-          <el-tag size="small" :type="card.companion.status === 'active' ? 'success' : 'info'">{{ card.companion.status }}</el-tag>
+          <div class="cmp-tags">
+            <el-tag v-if="card.companion.is_master" size="small" type="warning" effect="dark">★ 主</el-tag>
+            <el-tag size="small" :type="card.companion.status === 'active' ? 'success' : 'info'">{{ card.companion.status }}</el-tag>
+          </div>
         </div>
         <div class="cmp-meta">
           <span>genome v{{ card.current?.version ?? '—' }}</span>
@@ -196,6 +225,13 @@ async function reset(companion: CompanionView) {
         <div class="cmp-actions">
           <el-button size="small" @click="openEdit(card.companion)">重新创作</el-button>
           <el-button size="small" @click="reset(card.companion)">重置到初始</el-button>
+          <el-button
+            size="small"
+            type="primary"
+            plain
+            :loading="launching === card.companion.companion_id"
+            @click="launchWebBody(card.companion)"
+          >启动本机身体</el-button>
         </div>
       </el-card>
       <el-empty v-if="!cards.length" description="还没有伙伴，点右上角新建" />
@@ -246,6 +282,7 @@ async function reset(companion: CompanionView) {
 .cmp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .cmp-card { border: 1px solid var(--eid-border); }
 .cmp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cmp-tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .cmp-name { font-size: 15px; font-weight: 700; color: var(--eid-text-primary); }
 .cmp-id { display: block; margin-top: 2px; font-size: 11px; color: var(--eid-text-muted); }
 .mono { font-family: var(--eid-font-mono); }
@@ -253,7 +290,7 @@ async function reset(companion: CompanionView) {
 .cmp-preview { margin-bottom: 8px; }
 .cmp-preview summary { cursor: pointer; font-size: 12px; color: var(--eid-accent); }
 .cmp-preview pre { max-height: 220px; overflow: auto; margin: 6px 0 0; padding: 8px; background: var(--eid-bg-panel); border-radius: 6px; font-size: 11px; white-space: pre-wrap; }
-.cmp-actions { display: flex; gap: 8px; }
+.cmp-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-hint { margin: 4px 0 8px; font-size: 12px; color: var(--eid-text-muted); }
 </style>

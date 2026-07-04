@@ -1,16 +1,53 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { MODE_CN } from '../constants'
 import { deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
 import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
 import type { CompanionUnit, DrawerTarget } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
+import type { RuntimeDevice } from '@/api/missionControl'
+import { createCompanionWebBody } from '@/api/eidolonData'
+import { webBodyLaunchUrl } from '@/utils/clientWeb'
+import { extractErrorMessage } from '@/utils/format'
 
 const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | null }>()
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
 
-const { ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot, experience, traceSpans } = props.mc
+const { ownerId, ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot, experience, traceSpans, refresh } = props.mc
+
+const addingBody = ref(false)
+
+function launchBody(c: CompanionUnit, d: RuntimeDevice) {
+  if (!ownerId.value) return
+  window.open(
+    webBodyLaunchUrl({ ownerId: ownerId.value, companionId: c.id, deviceId: d.device_id }),
+    '_blank',
+    'noopener',
+  )
+}
+
+// Attach a host-local web body to this companion (idempotent), refresh the
+// snapshot so the new body satellite appears, then launch it in a new tab.
+async function addWebBody(c: CompanionUnit) {
+  if (!ownerId.value || addingBody.value) return
+  addingBody.value = true
+  try {
+    const body = await createCompanionWebBody(ownerId.value, c.id)
+    ElMessage.success('已创建本机 web 身体')
+    await refresh()
+    window.open(
+      webBodyLaunchUrl({ ownerId: ownerId.value, companionId: c.id, deviceId: body.device_id }),
+      '_blank',
+      'noopener',
+    )
+  } catch (e) {
+    ElMessage.error(extractErrorMessage(e))
+  } finally {
+    addingBody.value = false
+  }
+}
 
 const drawerComp = computed<CompanionUnit | null>(() => {
   const t = props.target
@@ -65,8 +102,10 @@ const drawerTurns = computed(() => {
           <div class="dw-list">
             <div v-for="d in drawerComp.devices" :key="d.device_id" class="dw-row">
               <i class="led" :class="d.online ? 'ok' : 'idle'" /><b>{{ deviceType(d) }}</b><em>{{ deviceShort(d) }} · {{ d.online ? '在线' : '离线' }}{{ d.interaction_mode ? ' · ' + d.interaction_mode : '' }}</em>
+              <button v-if="d.kind === 'web'" class="dw-mini" @click="launchBody(drawerComp, d)">启动</button>
             </div>
             <p v-if="!drawerComp.devices.length" class="dw-empty">未绑定身体</p>
+            <button class="dw-add" :disabled="addingBody" @click="addWebBody(drawerComp)">＋ 新建本机 web 身体</button>
           </div>
           <span class="dw-sect">最近对话</span>
           <div class="dw-list">
@@ -130,6 +169,11 @@ const drawerTurns = computed(() => {
 .dw-row .mono { font-family: var(--cy-mono); color: var(--cy-txt-dim); }
 .dw-ev { font-size: 11.5px; color: #aab6d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dw-empty { padding: 10px; font-size: 11.5px; color: var(--cy-txt-dim); }
+.dw-mini { margin-left: 8px; padding: 3px 8px; border: 1px solid rgba(0, 234, 255, 0.4); background: rgba(0, 234, 255, 0.08); color: var(--cy-cyan); font: 700 10px/1 var(--cy-mono); cursor: pointer; clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px); }
+.dw-mini:hover { background: rgba(0, 234, 255, 0.2); }
+.dw-add { width: 100%; padding: 8px 10px; border: 1px dashed rgba(0, 234, 255, 0.35); background: transparent; color: var(--cy-cyan); font: 700 11px/1 var(--cy-mono); cursor: pointer; }
+.dw-add:hover:not(:disabled) { background: rgba(0, 234, 255, 0.08); }
+.dw-add:disabled { opacity: 0.5; cursor: default; }
 .dw-enter-active, .dw-leave-active { transition: opacity var(--dur-base); }
 .dw-enter-active .dw-panel, .dw-leave-active .dw-panel { transition: transform var(--dur-base) var(--ease-out); }
 .dw-enter-from, .dw-leave-to { opacity: 0; }

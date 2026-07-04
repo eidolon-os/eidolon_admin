@@ -63,6 +63,7 @@ class RuntimeCompanion(BaseModel):
     display_name: str = ""
     kind: str = ""
     status: str = ""
+    is_master: bool = False
     genome_id: str | None = None
     memory_realm_id: str | None = None
 

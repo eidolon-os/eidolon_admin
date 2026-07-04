@@ -1216,6 +1216,7 @@ def _runtime_companion(row: Any) -> RuntimeCompanion:
         display_name=getattr(row, "display_name", "") or "",
         kind=getattr(row, "kind", "") or "",
         status=getattr(row, "status", "") or "",
+        is_master=bool(getattr(row, "is_master", False)),
         genome_id=getattr(row, "current_genome_id", None),
         memory_realm_id=getattr(row, "default_memory_realm_id", None),
     )

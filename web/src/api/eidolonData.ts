@@ -34,6 +34,7 @@ export interface CompanionView {
   display_name: string
   kind: string
   status: string
+  is_master: boolean
   current_genome_id: string | null
   default_memory_realm_id: string | null
   profile_json: JsonDict
@@ -259,6 +260,28 @@ export async function listOwnerCompanions(ownerId: string): Promise<CompanionVie
     `/owners/${encodeURIComponent(ownerId)}/companions`,
   )
   return data.companions
+}
+
+/** All bodies (host-local web + physical) bound to a companion. */
+export async function listCompanionDevices(
+  ownerId: string,
+  companionId: string,
+): Promise<DeviceView[]> {
+  const { data } = await client.get<{ devices: DeviceView[] }>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/devices`,
+  )
+  return data.devices
+}
+
+/** Idempotently attach a host-local web body to a companion (one click). */
+export async function createCompanionWebBody(
+  ownerId: string,
+  companionId: string,
+): Promise<DeviceView> {
+  const { data } = await client.post<DeviceView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/devices/web`,
+  )
+  return data
 }
 
 export async function listOwnerPersonaGenomes(ownerId: string): Promise<PersonaGenomeView[]> {

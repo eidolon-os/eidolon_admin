@@ -116,7 +116,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         devices: devs,
         turn,
         jobs: cJobs,
-        isPrimary: c.companion_id === primaryCompanionId.value,
+        // The master companion is authoritative when the snapshot carries the
+        // flag; fall back to the "default companion" heuristic otherwise.
+        isPrimary: c.is_master || c.companion_id === primaryCompanionId.value,
       }
     })
   })

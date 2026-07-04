@@ -52,6 +52,7 @@ export interface RuntimeCompanion {
   display_name: string
   kind: string
   status: string
+  is_master?: boolean
   genome_id: string | null
   memory_realm_id: string | null
 }
