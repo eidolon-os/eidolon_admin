@@ -23,6 +23,7 @@ from .schemas import (
     EvidenceChain,
     EvidenceStep,
     PermissionLedgerItem,
+    RuntimeTraceSpan,
     RuntimeCapabilityCard,
     RuntimeCompanion,
     RuntimeDevice,
@@ -124,6 +125,7 @@ async def build_snapshot(request: Request, owner_id: str | None = None) -> Runti
         recent_events=recent_events,
         source_status=source_status,
     )
+    trace_spans = _trace_spans(active_turn)
     permission_ledger = _permission_ledger(recent_events)
     evidence_chains = _evidence_chains(
         companion=companion,
@@ -152,6 +154,7 @@ async def build_snapshot(request: Request, owner_id: str | None = None) -> Runti
         recent_events=recent_events,
         source_status=source_status,
         experience=experience,
+        trace_spans=trace_spans,
         evidence_chains=evidence_chains,
         permission_ledger=permission_ledger,
         demo_mode="live",
@@ -845,6 +848,39 @@ def _evidence_chains(
         _chain("vision_permission", "视觉授权", "摄像头是受权限管理的视觉身体，默认只留摘要、不扩散原图。", vision),
         _chain("coworker_task", "Coworker 任务", "前台对话可把上下文交给后台数字员工并回报产物。", coworker),
     ]
+
+
+def _trace_spans(turn: RuntimeTurn | None) -> list[RuntimeTraceSpan]:
+    """Structured spans for the active turn, derived from its already-safe
+    stages + tool names. No extra agent fetch (no N+1); no text payloads."""
+    if turn is None:
+        return []
+    spans: list[RuntimeTraceSpan] = []
+    for stage in turn.stages:
+        key = str(stage.get("key") or "stage")
+        spans.append(
+            RuntimeTraceSpan(
+                span_id=f"{turn.turn_id}:{key}",
+                turn_id=turn.turn_id,
+                name=str(stage.get("label") or key),
+                kind=key,
+                status=str(stage.get("status") or "done"),
+                latency_ms=_int_or_none(stage.get("latency_ms")),
+                detail=str(stage.get("detail") or ""),
+            )
+        )
+    for idx, tool in enumerate(turn.tool_names):
+        spans.append(
+            RuntimeTraceSpan(
+                span_id=f"{turn.turn_id}:tool:{idx}",
+                turn_id=turn.turn_id,
+                name=str(tool),
+                kind="tool",
+                status="done",
+                detail="tool call",
+            )
+        )
+    return spans
 
 
 def _experience(

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { MODE_CN } from '../constants'
 import { deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
+import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
 import type { CompanionUnit, DrawerTarget } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -9,7 +10,7 @@ import type { MissionControlStream } from '../useMissionControlStream'
 const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | null }>()
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
 
-const { ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot, experience } = props.mc
+const { ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot, experience, traceSpans } = props.mc
 
 const drawerComp = computed<CompanionUnit | null>(() => {
   const t = props.target
@@ -74,6 +75,10 @@ const drawerTurns = computed(() => {
             </div>
             <p v-if="!drawerTurns.length" class="dw-empty">暂无对话记录</p>
           </div>
+          <template v-if="drawerComp.turn">
+            <span class="dw-sect">Agent 跨度 · SPANS</span>
+            <AgentSpanInspector :spans="traceSpans" />
+          </template>
         </template>
 
         <template v-else-if="target.type === 'service'">

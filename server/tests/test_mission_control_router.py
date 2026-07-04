@@ -144,6 +144,11 @@ async def test_snapshot_sorts_mixed_timezone_events(
     assert body["recent_events"][0]["source"] == "agent"
     data_event = next(item for item in body["recent_events"] if item["event_id"] == "event-naive-time")
     assert "[redacted:" in data_event["payload"]["content"]
+    # active turn yields structured spans, and they never carry text fields
+    assert body["trace_spans"], "active turn should yield spans"
+    for span in body["trace_spans"]:
+        assert {"span_id", "turn_id", "name", "kind"} <= set(span)
+        assert not any(k in span for k in ("content", "text", "transcript", "prompt"))
 
 
 async def test_events_stream_emits_startup_frame() -> None:

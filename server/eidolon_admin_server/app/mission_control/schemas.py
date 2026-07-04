@@ -185,6 +185,19 @@ class RuntimeExperience(BaseModel):
     next_best_action: str = "和任意已绑定设备说一句话，观察这条链路如何被点亮。"
 
 
+class RuntimeTraceSpan(BaseModel):
+    """A structured span of the active turn (region 3 · Agent Span Inspector).
+    Carries only counts/latency/labels — never prompt/transcript text."""
+
+    span_id: str
+    turn_id: str
+    name: str
+    kind: str  # input | memory_recall | model | tool | memory_write | routing
+    status: str = "done"
+    latency_ms: int | None = None
+    detail: str = ""
+
+
 class EvidenceStep(BaseModel):
     key: str
     label: str
@@ -229,6 +242,7 @@ class RuntimeSnapshot(BaseModel):
     recent_events: list[RuntimeEvent] = Field(default_factory=list)
     source_status: list[SourceStatus] = Field(default_factory=list)
     experience: RuntimeExperience = Field(default_factory=RuntimeExperience)
+    trace_spans: list[RuntimeTraceSpan] = Field(default_factory=list)
     evidence_chains: list[EvidenceChain] = Field(default_factory=list)
     permission_ledger: list[PermissionLedgerItem] = Field(default_factory=list)
     demo_mode: DemoMode = "live"

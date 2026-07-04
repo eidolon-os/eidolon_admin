@@ -181,6 +181,16 @@ export interface RuntimeExperience {
   next_best_action: string
 }
 
+export interface RuntimeTraceSpan {
+  span_id: string
+  turn_id: string
+  name: string
+  kind: string
+  status: string
+  latency_ms: number | null
+  detail: string
+}
+
 export interface EvidenceStep {
   key: string
   label: string
@@ -221,6 +231,7 @@ export interface RuntimeSnapshot {
   recent_events: RuntimeEvent[]
   source_status: SourceStatus[]
   experience: RuntimeExperience
+  trace_spans: RuntimeTraceSpan[]
   evidence_chains: EvidenceChain[]
   permission_ledger: PermissionLedgerItem[]
   demo_mode: DemoMode
