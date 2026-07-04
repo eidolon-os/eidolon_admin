@@ -9,7 +9,7 @@ defineEmits<{ (e: 'return-console'): void }>()
 const {
   owners, ownerId, ownerName, streamLabelText, systemStateText, traceId,
   pipelineActive, companions, onlineDevices, devices, deviceRatio, memory,
-  activeJobs, jobs, infraNodes, onlineServices, services, completion,
+  activeJobs, jobs, infraNodes, onlineServices, services,
   clock, now, loading, replay, refresh,
 } = props.mc
 </script>
@@ -39,9 +39,6 @@ const {
         <span class="mg">▦</span>
         <span class="svc-leds"><i v-for="n in infraNodes" :key="n.id" class="led" :class="'st-' + n.state" :title="`${n.cn} · ${n.stateCn}`" /></span>
         <small>底座 {{ onlineServices }}/{{ services.length }}</small>
-      </div>
-      <div class="meter meter-int">
-        <span class="int-ring" :style="{ '--v': completion }"><b class="num"><DataNumber :value="completion" /></b></span><small>完整度</small>
       </div>
     </div>
 
@@ -82,12 +79,6 @@ const {
 .mbar i { display: block; height: 100%; background: var(--cy-cyan); box-shadow: 0 0 8px var(--cy-cyan); transition: width var(--dur-slow) var(--ease-out); }
 .meter-svc .svc-leds { grid-column: 2; display: inline-flex; gap: 4px; }
 .svc-leds .led { width: 7px; height: 7px; }
-.meter-int { grid-template-columns: auto; justify-items: center; }
-.int-ring { position: relative; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(from -90deg, var(--cy-cyan) calc(var(--v) * 1%), rgba(0, 234, 255, 0.1) 0); }
-.int-ring::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--cy-bg); }
-.int-ring b { position: relative; font: 900 13px/1 var(--cy-mono); color: #fff; }
-.meter-int small { grid-column: 1; }
-
 .head-ctrl { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
 .clock { display: flex; flex-direction: column; align-items: flex-end; font: 900 18px/1 var(--cy-mono); color: var(--cy-cyan); text-shadow: 0 0 14px rgba(0, 234, 255, 0.5); }
 .clock em { margin-top: 3px; font: 600 9px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; letter-spacing: 0.08em; }

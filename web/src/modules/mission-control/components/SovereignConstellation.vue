@@ -16,7 +16,7 @@ defineEmits<{
   (e: 'open-moon', s: Sat): void
 }>()
 
-const { companionUnits, unboundDevices, ownerName, completion } = props.mc
+const { companionUnits, unboundDevices, ownerName } = props.mc
 
 // ── geometry ──────────────────────────────────────────────────────────
 const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, PI = Math.PI
@@ -114,7 +114,7 @@ function deviceOnline(d: RuntimeDevice) {
     <div class="gx-owner" :style="ptStyle(CX, CY)" title="点击查看主人全景" @click="$emit('open-owner')">
       <span class="o-kick">OWNER · 主人</span>
       <strong>{{ ownerName }}</strong>
-      <div class="o-int"><b class="num">{{ completion }}%</b><em>完整度</em></div>
+      <em class="o-sub">{{ companionUnits.length }} 位伙伴</em>
     </div>
 
     <el-popover v-for="n in galaxy.nodes" :key="'c' + n.c.id" placement="top" :width="300" trigger="hover" popper-class="cy-pop" :show-after="60">
@@ -208,8 +208,7 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-owner { width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255, 210, 63, 0.6); background: radial-gradient(circle at 42% 34%, rgba(255, 240, 190, 0.35), rgba(10, 6, 24, 0.92) 62%); box-shadow: 0 0 60px rgba(255, 210, 63, 0.4), inset 0 0 40px rgba(255, 210, 63, 0.2); animation: sun 5s ease-in-out infinite; z-index: 3; }
 .o-kick { font: 700 8.5px/1 var(--cy-mono); letter-spacing: 0.14em; color: var(--cy-yellow); }
 .gx-owner strong { display: block; max-width: 120px; margin: 5px auto 6px; font: 800 20px/1 var(--cy-sans); color: #fff; text-shadow: 0 0 16px rgba(255, 210, 63, 0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.o-int b { font: 900 22px/1 var(--cy-mono); color: var(--cy-cyan); }
-.o-int em { display: block; margin-top: 2px; font: 600 8px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; }
+.o-sub { display: block; margin-top: 4px; font: 600 9px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; }
 
 .gx-comp { width: 108px; height: 108px; border-radius: 50%; border: 1.5px solid var(--cy-cyan); background: radial-gradient(circle at 40% 34%, rgba(0, 234, 255, 0.22), rgba(8, 5, 20, 0.94) 66%); box-shadow: 0 0 26px rgba(0, 234, 255, 0.25); z-index: 2; transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
 .gx-comp:hover { transform: translate(-50%, -50%) scale(1.06); box-shadow: 0 0 36px rgba(0, 234, 255, 0.5); }

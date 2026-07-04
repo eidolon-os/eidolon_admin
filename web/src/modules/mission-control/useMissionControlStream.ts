@@ -69,7 +69,6 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     const t = snapshot.value?.active_turn
     return t ? ACTIVE_STATES.includes((t.status || '').toLowerCase()) : false
   })
-  const completion = computed(() => experience.value?.completion ?? 0)
   const primaryCompanionId = computed(() => snapshot.value?.companion?.companion_id || '')
   const privacyMode = computed(() =>
     privacyModeLabel(memory.value?.privacy_mode || activeTurn.value?.privacy_mode || 'safe'),
@@ -264,7 +263,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // primitives
     experience, memory, devices, services, jobs, companions,
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
-    activeTurn, pipelineActive, completion, primaryCompanionId, privacyMode, deviceRatio,
+    activeTurn, pipelineActive, primaryCompanionId, privacyMode, deviceRatio,
     recentEvents, traceId, traceSpans, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,

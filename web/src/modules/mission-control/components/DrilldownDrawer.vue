@@ -17,7 +17,7 @@ const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | nul
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
 
 const {
-  ownerId, ownerName, companionUnits, onlineDevices, devices, memory, completion,
+  ownerId, ownerName, companionUnits, onlineDevices, devices, memory,
   snapshot, experience, traceSpans, refresh,
   scopedTurn, companionEvents, focusedCompanion, evidenceChains,
 } = props.mc
@@ -81,7 +81,7 @@ const drawerTurns = computed(() => {
             <div><span>虚拟伙伴</span><b class="num">{{ companionUnits.length }}</b></div>
             <div><span>身体在线</span><b class="num">{{ onlineDevices }}/{{ devices.length }}</b></div>
             <div><span>记忆空间</span><b class="num">{{ memory?.realms_total ?? 0 }}</b></div>
-            <div><span>完整度</span><b class="num">{{ completion }}%</b></div>
+            <div><span>记忆召回</span><b class="num">{{ memory?.last_recall_hits ?? 0 }}</b></div>
           </div>
           <span class="dw-sect">伙伴</span>
           <div class="dw-list">
