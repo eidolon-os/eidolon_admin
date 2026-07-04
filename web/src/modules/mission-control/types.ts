@@ -14,6 +14,9 @@ export type StreamState = 'connecting' | 'live' | 'degraded'
 /** LIVE / POLLING / REPLAY / MOCK — event provenance (M2 backend field). */
 export type EventOrigin = 'live' | 'polling' | 'replay' | 'mock'
 
+/** Which architectural layer a substrate service belongs to. */
+export type InfraTier = 'service' | 'middleware' | 'external'
+
 /** Static definition of a runtime substrate service (the infra rail). */
 export interface InfraDef {
   id: string
@@ -21,6 +24,7 @@ export interface InfraDef {
   code: string
   role: string
   mode: string
+  tier: InfraTier
 }
 
 /** A substrate service enriched with live health for the bus rail. */
@@ -91,3 +95,4 @@ export type DrawerTarget =
   | { type: 'companion'; c: CompanionUnit }
   | { type: 'moon'; s: Sat }
   | { type: 'service'; n: InfraNode }
+  | { type: 'trace' }

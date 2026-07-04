@@ -26,7 +26,7 @@ function tone(status: string) {
 
 <template>
   <div class="lane task-lane">
-    <span class="lane-cap"><i class="led" :class="jobs.length ? 'warn' : 'idle'" />任务链路 · COWORKER</span>
+    <span class="lane-cap"><i class="led" :class="jobs.length ? 'warn' : 'idle'" />任务链路 · COWORKER<em v-if="jobs.length" class="lane-n">{{ jobs.length }}</em></span>
     <ul v-if="jobs.length" class="task-list">
       <li v-for="j in jobs.slice(0, 5)" :key="j.job_id" class="task-row">
         <b :class="tone(j.status)">{{ j.kind || j.provider || 'job' }}</b>
@@ -44,6 +44,7 @@ function tone(status: string) {
 .lane { display: flex; flex-direction: column; gap: 6px; padding: 8px 14px; border: 1px solid var(--cy-hair); background: var(--cy-panel); }
 .lane-cap { display: inline-flex; align-items: center; gap: 6px; font: 700 9px/1 var(--cy-mono); letter-spacing: 0.1em; color: var(--cy-txt-dim); }
 .lane-cap .led { width: 6px; height: 6px; }
+.lane-n { font-style: normal; color: var(--cy-yellow); }
 .task-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
 .task-row { display: flex; align-items: center; gap: 8px; font: 600 10.5px/1.3 var(--cy-mono); color: var(--cy-txt); }
 .task-row b { font-family: var(--cy-sans); font-weight: 700; flex: 0 0 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

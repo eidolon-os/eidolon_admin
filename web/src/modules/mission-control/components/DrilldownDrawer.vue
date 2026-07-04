@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { MODE_CN } from '../constants'
+import { MODE_CN, SVC_GLYPH } from '../constants'
 import { deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
 import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
+import ProofChainTiles from './ProofChainTiles.vue'
 import type { CompanionUnit, DrawerTarget } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 import type { RuntimeDevice } from '@/api/missionControl'
@@ -15,7 +16,11 @@ import { extractErrorMessage } from '@/utils/format'
 const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | null }>()
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
 
-const { ownerId, ownerName, companionUnits, onlineDevices, devices, memory, completion, snapshot, experience, traceSpans, refresh } = props.mc
+const {
+  ownerId, ownerName, companionUnits, onlineDevices, devices, memory, completion,
+  snapshot, experience, traceSpans, refresh,
+  scopedTurn, companionEvents, focusedCompanion, evidenceChains,
+} = props.mc
 
 const addingBody = ref(false)
 
@@ -86,6 +91,8 @@ const drawerTurns = computed(() => {
           </div>
           <span class="dw-sect">能力面 · CAPABILITY</span>
           <CapabilityRegistry :cards="experience?.capability_cards || []" />
+          <span class="dw-sect">证据链 · PROOF</span>
+          <div class="dw-proof"><ProofChainTiles :chains="evidenceChains" /></div>
         </template>
 
         <template v-else-if="drawerComp">
@@ -136,6 +143,31 @@ const drawerTurns = computed(() => {
             <p v-if="!target.n.events.length" class="dw-empty">暂无事件</p>
           </div>
         </template>
+
+        <template v-else-if="target.type === 'trace'">
+          <span class="dw-kick">LIVE TRACE · 实时链路</span>
+          <h3>{{ focusedCompanion?.name || '全局链路' }}</h3>
+          <p class="dw-role">一次对话从身体到大脑再回到身体的完整链路：阶段耗时、Agent 跨度、以及经过的事件流转。</p>
+          <span class="dw-sect">阶段 · STAGES</span>
+          <ol v-if="scopedTurn && scopedTurn.stages.length" class="dw-stages">
+            <li v-for="s in scopedTurn.stages" :key="s.key" class="dw-stage" :class="statusClass(s.status)">
+              <i class="led" :class="statusClass(s.status)" /><b>{{ s.label }}</b>
+              <em v-if="s.latency_ms != null" class="num">{{ fmtLatency(s.latency_ms) }}</em>
+            </li>
+          </ol>
+          <p v-else class="dw-empty">当前没有活跃对话</p>
+          <span class="dw-sect">Agent 跨度 · SPANS</span>
+          <AgentSpanInspector :spans="traceSpans" />
+          <span class="dw-sect">事件流转 · FLOW</span>
+          <div class="dw-list">
+            <div v-for="e in companionEvents.slice(0, 20)" :key="e.event_id" class="dw-row">
+              <em class="mono">{{ fmtTime(e.ts) }}</em>
+              <b class="dw-src">{{ SVC_GLYPH[e.source] || '·' }} {{ e.source.toUpperCase() }}</b>
+              <span class="dw-ev">{{ e.summary || e.type }}</span>
+            </div>
+            <p v-if="!companionEvents.length" class="dw-empty">暂无事件流转（设备↔智能体的流转将在这里呈现）</p>
+          </div>
+        </template>
       </div>
     </aside>
   </transition>
@@ -169,6 +201,14 @@ const drawerTurns = computed(() => {
 .dw-row .mono { font-family: var(--cy-mono); color: var(--cy-txt-dim); }
 .dw-ev { font-size: 11.5px; color: #aab6d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dw-empty { padding: 10px; font-size: 11.5px; color: var(--cy-txt-dim); }
+.dw-proof :deep(.proof-tiles) { grid-template-columns: 1fr; }
+.dw-stages { display: grid; gap: 5px; margin: 0 0 18px; padding: 0; list-style: none; }
+.dw-stage { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid rgba(255, 255, 255, 0.06); background: rgba(255, 255, 255, 0.02); }
+.dw-stage .led { width: 7px; height: 7px; }
+.dw-stage b { font: 700 12px/1 var(--cy-sans); color: var(--cy-txt); }
+.dw-stage em { margin-left: auto; font: 700 10px/1 var(--cy-mono); font-style: normal; color: var(--cy-txt-dim); }
+.dw-stage.ok b { color: var(--cy-green); } .dw-stage.warn b { color: var(--cy-yellow); } .dw-stage.bad b { color: var(--cy-mag); }
+.dw-src { flex: 0 0 auto; font: 700 10px/1 var(--cy-mono); color: var(--cy-cyan); }
 .dw-mini { margin-left: 8px; padding: 3px 8px; border: 1px solid rgba(0, 234, 255, 0.4); background: rgba(0, 234, 255, 0.08); color: var(--cy-cyan); font: 700 10px/1 var(--cy-mono); cursor: pointer; clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px); }
 .dw-mini:hover { background: rgba(0, 234, 255, 0.2); }
 .dw-add { width: 100%; padding: 8px 10px; border: 1px dashed rgba(0, 234, 255, 0.35); background: transparent; color: var(--cy-cyan); font: 700 11px/1 var(--cy-mono); cursor: pointer; }

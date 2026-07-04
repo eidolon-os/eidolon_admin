@@ -5,14 +5,14 @@ import type { InfraDef } from './types'
 // Runtime SUBSTRATE only. client-web is an end/client product (a web body),
 // not system infrastructure, so it lives with the devices — not here.
 export const INFRA: InfraDef[] = [
-  { id: 'hub', cn: '设备中枢', code: 'eidolon_hub', mode: 'proxy', role: '管理硬件身体的接入、发现与指令下发，签发 LiveKit 房间令牌。' },
-  { id: 'channel', cn: '语音通道', code: 'eidolon_channel', mode: 'process', role: '语音转文字（STT）、文字转语音（TTS），作为 LiveKit worker 运行在语音房间里，经 gRPC 调用智能体。' },
-  { id: 'agent', cn: '智能体引擎', code: 'eidolon_agent', mode: 'proxy', role: '通用推理引擎（PersonasService）：理解、规划、调用工具、生成回应。它运行每个伙伴的人格（persona / genome），伙伴的名字与身份存在 eidolon_data，不在这里。' },
-  { id: 'memory', cn: '记忆服务', code: 'eidolon_memory', mode: 'native', role: '保存与召回伙伴的长期记忆，经 NATS 消费对话轮次，管理记忆空间与后台整理。' },
-  { id: 'admin', cn: '控制台', code: 'eidolon_admin', mode: 'native', role: '你正在看的管理网关，聚合并转发各子项目的接口。' },
-  { id: 'mementos', cn: 'Mementos', code: 'mementos', mode: 'process', role: '后台数字员工 —— 承接智能体交办的长任务并产出产物。' },
-  { id: 'nats', cn: 'NATS', code: 'nats-server', mode: 'infra', role: '消息总线 / JetStream —— 各子项目之间的事件与数据流通道。' },
-  { id: 'livekit', cn: 'LiveKit', code: 'livekit-server', mode: 'infra', role: '实时音视频服务器 —— 承载语音房间，Hub 与语音通道都连它。' },
+  { id: 'hub', cn: '设备中枢', code: 'eidolon_hub', mode: 'proxy', tier: 'service', role: '管理硬件身体的接入、发现与指令下发，签发 LiveKit 房间令牌。' },
+  { id: 'channel', cn: '语音通道', code: 'eidolon_channel', mode: 'process', tier: 'service', role: '语音转文字（STT）、文字转语音（TTS），作为 LiveKit worker 运行在语音房间里，经 gRPC 调用智能体。' },
+  { id: 'agent', cn: '智能体引擎', code: 'eidolon_agent', mode: 'proxy', tier: 'service', role: '通用推理引擎（PersonasService）：理解、规划、调用工具、生成回应。它运行每个伙伴的人格（persona / genome），伙伴的名字与身份存在 eidolon_data，不在这里。' },
+  { id: 'memory', cn: '记忆服务', code: 'eidolon_memory', mode: 'native', tier: 'service', role: '保存与召回伙伴的长期记忆，经 NATS 消费对话轮次，管理记忆空间与后台整理。' },
+  { id: 'admin', cn: '控制台', code: 'eidolon_admin', mode: 'native', tier: 'service', role: '你正在看的管理网关（控制面），聚合并转发各子项目的接口。' },
+  { id: 'livekit', cn: 'LiveKit', code: 'livekit-server', mode: 'infra', tier: 'middleware', role: '实时音视频服务器 —— 承载语音房间，Hub 与语音通道都连它。' },
+  { id: 'nats', cn: 'NATS', code: 'nats-server', mode: 'infra', tier: 'middleware', role: '消息总线 / JetStream —— 各子项目之间的事件与数据流通道。' },
+  { id: 'mementos', cn: 'Mementos', code: 'mementos', mode: 'process', tier: 'external', role: '后台数字员工 —— 承接智能体交办的长任务并产出产物（外挂扩展，非核心链路）。' },
 ]
 
 export const SVC_GLYPH: Record<string, string> = {
@@ -20,18 +20,32 @@ export const SVC_GLYPH: Record<string, string> = {
   admin: '▦', mementos: '✦', nats: '⇄', livekit: '⧉',
 }
 
-/** Substrate architecture graph: node placement (in a 0..1000 × 0..300 space). */
+/** Substrate architecture graph: node placement (in a 0..1000 × 0..300 space).
+ * Laid out in three horizontal tiers so the hierarchy reads at a glance:
+ * 业务组件 (top) → 中间件 (middle) → 外挂 (bottom). Edges cross tiers to show
+ * real dependencies. */
 export const INFRA_VB = { w: 1000, h: 300 }
 export interface InfraLayoutNode { id: string; x: number; y: number }
 export const INFRA_LAYOUT: InfraLayoutNode[] = [
-  { id: 'admin', x: 340, y: 48 },
-  { id: 'hub', x: 130, y: 108 },
-  { id: 'livekit', x: 130, y: 232 },
-  { id: 'channel', x: 350, y: 232 },
-  { id: 'agent', x: 565, y: 150 },
-  { id: 'mementos', x: 565, y: 272 },
-  { id: 'memory', x: 810, y: 100 },
-  { id: 'nats', x: 810, y: 238 },
+  // 业务组件 — control plane above the request spine
+  { id: 'admin', x: 550, y: 38 },
+  { id: 'hub', x: 130, y: 102 },
+  { id: 'channel', x: 340, y: 102 },
+  { id: 'agent', x: 555, y: 102 },
+  { id: 'memory', x: 770, y: 102 },
+  // 中间件
+  { id: 'livekit', x: 250, y: 192 },
+  { id: 'nats', x: 660, y: 192 },
+  // 外挂 · 扩展
+  { id: 'mementos', x: 555, y: 262 },
+]
+
+export interface TierBand { tier: 'service' | 'middleware' | 'external'; label: string; y0: number; y1: number }
+/** Horizontal tier bands (in INFRA_VB coords) for background zones + captions. */
+export const TIER_BANDS: TierBand[] = [
+  { tier: 'service', label: '业务组件', y0: 8, y1: 138 },
+  { tier: 'middleware', label: '中间件', y0: 148, y1: 222 },
+  { tier: 'external', label: '外挂 · 扩展', y0: 232, y1: 292 },
 ]
 
 export type InfraEdgeKind = 'rtc' | 'grpc' | 'nats' | 'task' | 'ctrl'

@@ -28,6 +28,9 @@ export interface MissionControlMode {
 export function useMissionControlStream(opts: MissionControlMode = {}) {
   const owners = ref<OwnerView[]>([])
   const ownerId = ref('')
+  // A secondary selection layered on the owner scope: when set, companion-scoped
+  // modules (live trace, evidence lanes, event flow) re-scope to this companion.
+  const focusedCompanionId = ref('')
   const snapshot = ref<RuntimeSnapshot | null>(null)
   const liveEvents = ref<RuntimeEvent[]>([])
   const loading = ref(false)
@@ -127,6 +130,35 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     devices.value.filter((d) => !d.companion_id || !boundIds.value.has(d.companion_id)),
   )
 
+  // ── focused-companion scope (owner is the page scope; a companion is a focus) ──
+  const focusedCompanion = computed<CompanionUnit | null>(
+    () => companionUnits.value.find((c) => c.id === focusedCompanionId.value) || null,
+  )
+  const focusedDeviceIds = computed(
+    () => new Set((focusedCompanion.value?.devices || []).map((d) => d.device_id)),
+  )
+  // Live trace: the focused companion's turn, else the owner's active turn.
+  const scopedTurn = computed<RuntimeTurn | null>(() => {
+    const f = focusedCompanion.value
+    if (!f) return activeTurn.value
+    return f.turn || (snapshot.value?.recent_turns || []).find((t) => t.companion_id === f.id) || null
+  })
+  const scopedJobs = computed(() => (focusedCompanion.value ? focusedCompanion.value.jobs : jobs.value))
+  // permission_ledger carries device_id (no companion_id) — scope via device→companion.
+  const scopedPermissions = computed(() => {
+    const f = focusedCompanion.value
+    if (!f) return permissionLedger.value
+    const ids = focusedDeviceIds.value
+    return permissionLedger.value.filter((p) => p.device_id && ids.has(p.device_id))
+  })
+  // Per-companion event stream. Events already carry companion_id + device_id +
+  // turn_id, so this doubles as the hook for the future device→agent→return flow.
+  const companionEvents = computed(() =>
+    focusedCompanion.value
+      ? recentEvents.value.filter((e) => e.companion_id === focusedCompanion.value!.id)
+      : recentEvents.value,
+  )
+
   // ── infra rail (runtime substrate, demoted) ──────────────────────────
   const infraNodes = computed<InfraNode[]>(() =>
     INFRA.map((f) => {
@@ -220,6 +252,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     es.close()
   })
   watch(ownerId, async () => {
+    focusedCompanionId.value = ''
     liveEvents.value = []
     await refresh()
     openStream()
@@ -235,6 +268,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     recentEvents, traceId, traceSpans, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,
+    focusedCompanionId, focusedCompanion, scopedTurn, scopedJobs, scopedPermissions, companionEvents,
     // infra rail
     infraNodes, hotService,
     // header chrome

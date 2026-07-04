@@ -1,12 +1,40 @@
 <script setup lang="ts">
 // Region 4 · Memory Evidence Lane: recall/write/runner facts, with an on-demand
 // Palace graph (reuses the existing vis-network PalaceGraph + /memory/graph API).
-import { ref } from 'vue'
+// Owner scope shows the active-realm rollup; when a companion is focused it
+// shows that companion's realm.
+import { computed, ref } from 'vue'
 import { getPalaceGraph, type GraphSnapshot } from '@/api/memory'
 import PalaceGraph from '@/modules/memory/components/PalaceGraph.vue'
 import type { RuntimeMemory } from '@/api/missionControl'
+import type { CompanionUnit } from '../types'
 
-const props = defineProps<{ memory: RuntimeMemory | undefined }>()
+const props = defineProps<{ memory: RuntimeMemory | undefined; companion?: CompanionUnit | null }>()
+
+// A single view-model regardless of scope, so the template stays flat.
+const view = computed(() => {
+  const c = props.companion
+  if (c) {
+    const recall = c.isActiveRealm ? c.recall ?? 0 : null
+    return {
+      recallText: recall == null ? '—' : String(recall),
+      hasHit: recall != null && recall > 0,
+      write: c.write || '—',
+      runners: c.runners || '—',
+      realmText: c.realm || '未开通',
+      graphRealm: c.realm || '',
+    }
+  }
+  const m = props.memory
+  return {
+    recallText: String(m?.last_recall_hits ?? 0),
+    hasHit: (m?.last_recall_hits ?? 0) > 0,
+    write: m?.last_write_disposition || (m?.fanout_allowed ? 'ALLOW' : 'HOLD'),
+    runners: `${m?.runners_online ?? 0}/${m?.runners_total ?? 0}`,
+    realmText: `${m?.realms_total ?? 0} 个`,
+    graphRealm: m?.active_realm_id || '',
+  }
+})
 
 const expanded = ref(false)
 const loading = ref(false)
@@ -15,7 +43,7 @@ const graphError = ref('')
 
 async function toggle() {
   expanded.value = !expanded.value
-  const realm = props.memory?.active_realm_id
+  const realm = view.value.graphRealm
   if (expanded.value && !graph.value && realm) {
     loading.value = true
     try {
@@ -32,14 +60,14 @@ async function toggle() {
 <template>
   <div class="lane mem-lane">
     <div class="lane-head">
-      <span class="lane-cap"><i class="led" :class="memory && memory.last_recall_hits > 0 ? 'ok' : 'idle'" />记忆证据 · MEMORY</span>
-      <button v-if="memory?.active_realm_id" class="graph-btn" @click="toggle">{{ expanded ? '收起' : '宫殿图' }}</button>
+      <span class="lane-cap"><i class="led" :class="view.hasHit ? 'ok' : 'idle'" />记忆证据 · MEMORY</span>
+      <button v-if="view.graphRealm" class="graph-btn" @click="toggle">{{ expanded ? '收起' : '宫殿图' }}</button>
     </div>
     <div class="mem-rows">
-      <div><dt>召回命中</dt><dd class="num" :class="{ ok: (memory?.last_recall_hits ?? 0) > 0 }">{{ memory?.last_recall_hits ?? 0 }}</dd></div>
-      <div><dt>写入</dt><dd>{{ memory?.last_write_disposition || (memory?.fanout_allowed ? 'ALLOW' : 'HOLD') }}</dd></div>
-      <div><dt>后台整理</dt><dd class="num">{{ memory?.runners_online ?? 0 }}/{{ memory?.runners_total ?? 0 }}</dd></div>
-      <div><dt>记忆空间</dt><dd class="num">{{ memory?.realms_total ?? 0 }}</dd></div>
+      <div><dt>召回命中</dt><dd class="num" :class="{ ok: view.hasHit }">{{ view.recallText }}</dd></div>
+      <div><dt>写入</dt><dd>{{ view.write }}</dd></div>
+      <div><dt>后台整理</dt><dd class="num">{{ view.runners }}</dd></div>
+      <div><dt>记忆空间</dt><dd class="num">{{ view.realmText }}</dd></div>
     </div>
     <div v-if="expanded" class="mem-graph" v-loading="loading">
       <PalaceGraph v-if="graph" :snapshot="graph" />
@@ -59,7 +87,7 @@ async function toggle() {
 .mem-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 12px; }
 .mem-rows > div { display: flex; justify-content: space-between; gap: 8px; font: 600 10.5px/1.4 var(--cy-mono); }
 .mem-rows dt { color: var(--cy-txt-dim); }
-.mem-rows dd { margin: 0; color: var(--cy-txt); }
+.mem-rows dd { margin: 0; color: var(--cy-txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem-rows dd.ok { color: var(--cy-green); }
 .mem-graph { height: 240px; margin-top: 6px; border: 1px solid var(--cy-hair); overflow: hidden; }
 /* Fit the fixed-600px PalaceGraph into this compact box — only the container,

@@ -3,10 +3,9 @@
 // companion planets on an orbit, each with three asset moons (body / memory /
 // activity). Geometry + orbital motion are presentational and live here; the
 // data comes from the composable's `companionUnits`.
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
 import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
-import { prefersReducedMotion } from '../motion'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 
@@ -21,9 +20,18 @@ const { companionUnits, unboundDevices, ownerName, completion } = props.mc
 
 // ── geometry ──────────────────────────────────────────────────────────
 const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, PI = Math.PI
-const spin = ref(0)
-const paused = ref(false) // freeze the orbit while the pointer is over it, so nodes are clickable
-let spinTimer: number | undefined
+
+// Runtime state shown on every planet, always visible (no hover). This is the
+// extension point for the future device→agent→return event flow.
+function runtime(c: CompanionUnit): { text: string; cls: string } {
+  if (c.turn)
+    return {
+      text: c.turn.latency_ms != null ? `对话中 · ${fmtLatency(c.turn.latency_ms)}` : '对话中',
+      cls: 'live',
+    }
+  if (c.jobs.length) return { text: `${c.jobs.length} 个任务`, cls: 'warn' }
+  return { text: '空闲', cls: 'idle' }
+}
 
 function ptStyle(x: number, y: number) {
   return { left: `${(x / VBW) * 100}%`, top: `${(y / VBH) * 100}%` }
@@ -57,13 +65,13 @@ const galaxy = computed(() => {
   const comps = companionUnits.value
   const N = comps.length || 1
   const start = N === 1 ? 0 : -90 + 180 / N
-  const rev = spin.value * 0.22
-  const moonRev = spin.value * 1.1
+  // Static placement: planets and moons sit at fixed positions so runtime state
+  // is glanceable and every node is instantly clickable (no orbital chase).
   const nodes: GalaxyNode[] = comps.map((c, i) => {
-    const a = (start + (i * 360) / N + rev) * (PI / 180)
+    const a = (start + (i * 360) / N) * (PI / 180)
     const x = CX + RX * Math.cos(a), y = CY + RY * Math.sin(a)
     const sats: Sat[] = (['body', 'mem', 'act'] as SatKind[]).map((kind, si) => {
-      const sa = a + ((si - 1) * 42 + moonRev) * (PI / 180)
+      const sa = a + ((si - 1) * 42) * (PI / 180)
       const sx = x + RSAT * Math.cos(sa), sy = y + RSAT * Math.sin(sa)
       return { ...satOf(c, kind), c, x: sx, y: sy, link: `M${x.toFixed(1)} ${y.toFixed(1)} L${sx.toFixed(1)} ${sy.toFixed(1)}` }
     })
@@ -72,24 +80,13 @@ const galaxy = computed(() => {
   return { nodes, sats: nodes.flatMap((n) => n.sats), links: nodes.map((n) => ({ id: n.c.id, d: n.link, active: n.active })) }
 })
 
-onMounted(() => {
-  if (!prefersReducedMotion()) {
-    spinTimer = window.setInterval(() => {
-      if (!paused.value) spin.value = (spin.value + 0.35) % 3600
-    }, 66)
-  }
-})
-onBeforeUnmount(() => {
-  if (spinTimer) window.clearInterval(spinTimer)
-})
-
 function deviceOnline(d: RuntimeDevice) {
   return d.online
 }
 </script>
 
 <template>
-  <section class="galaxy" :class="{ 'has-focus': !!focusedId }" @pointerenter="paused = true" @pointerleave="paused = false">
+  <section class="galaxy" :class="{ 'has-focus': !!focusedId }">
     <svg class="gx-wires" :viewBox="`0 0 ${VBW} ${VBH}`" preserveAspectRatio="xMidYMid meet">
       <defs>
         <radialGradient id="sun" cx="50%" cy="42%" r="60%">
@@ -124,8 +121,8 @@ function deviceOnline(d: RuntimeDevice) {
       <template #reference>
         <div class="gx-comp" :class="{ primary: n.c.isPrimary, active: n.active, focused: n.c.id === focusedId }" :style="ptStyle(n.x, n.y)" @click="$emit('open-companion', n.c)">
           <i class="led" :class="statusClass(n.c.status)" />
-          <b>{{ n.c.name }}</b>
-          <em>{{ n.c.isPrimary ? '★ 主伙伴' : n.c.kind }}</em>
+          <b>{{ n.c.isPrimary ? '★ ' : '' }}{{ n.c.name }}</b>
+          <span class="c-rt" :class="'t-' + runtime(n.c).cls">{{ runtime(n.c).text }}</span>
         </div>
       </template>
       <div class="pop">
@@ -219,6 +216,11 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-comp .led { margin: 0 auto 4px; }
 .gx-comp b { display: block; max-width: 92px; font: 800 15px/1.05 var(--cy-sans); color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gx-comp em { display: block; margin-top: 3px; font: 700 9px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; }
+/* Always-on per-companion runtime state (replaces the hover-only activity moon). */
+.gx-comp .c-rt { display: inline-block; margin-top: 4px; padding: 1.5px 7px; font: 700 8.5px/1.35 var(--cy-mono); letter-spacing: 0.03em; border-radius: 8px; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-comp .c-rt.t-live { color: var(--cy-mag); background: rgba(255, 46, 136, 0.16); }
+.gx-comp .c-rt.t-warn { color: var(--cy-yellow); background: rgba(247, 255, 74, 0.12); }
+.gx-comp .c-rt.t-idle { color: var(--cy-txt-dim); background: rgba(255, 255, 255, 0.04); }
 .gx-comp.primary { border-color: var(--cy-yellow); box-shadow: 0 0 30px rgba(247, 255, 74, 0.35); background: radial-gradient(circle at 40% 34%, rgba(247, 255, 74, 0.2), rgba(8, 5, 20, 0.94) 66%); }
 .gx-comp.primary em { color: var(--cy-yellow); }
 .gx-comp.active { animation: nodepulse 1.5s ease-in-out infinite; }

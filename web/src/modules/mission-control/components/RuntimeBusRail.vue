@@ -4,7 +4,7 @@
 // request spine (hub→livekit→channel→agent→memory) flows when a turn is live;
 // the stage's service pulses. client-web is intentionally absent — it's a body.
 import { computed } from 'vue'
-import { EDGE_LABEL, INFRA_EDGES, INFRA_LAYOUT, INFRA_VB, MODE_CN, MODE_EXP } from '../constants'
+import { EDGE_LABEL, INFRA_EDGES, INFRA_LAYOUT, INFRA_VB, MODE_CN, MODE_EXP, TIER_BANDS } from '../constants'
 import { fmtTime } from '../format'
 import type { InfraNode } from '../types'
 
@@ -16,6 +16,13 @@ const props = defineProps<{
 defineEmits<{ (e: 'open-service', n: InfraNode): void }>()
 
 const layoutById = new Map(INFRA_LAYOUT.map((l) => [l.id, l]))
+
+// Tier bands (业务组件 / 中间件 / 外挂) as background zones + captions.
+const bandsView = TIER_BANDS.map((b) => ({
+  ...b,
+  top: (b.y0 / INFRA_VB.h) * 100,
+  height: ((b.y1 - b.y0) / INFRA_VB.h) * 100,
+}))
 
 const nodesView = computed(() =>
   INFRA_LAYOUT.map((l) => {
@@ -43,6 +50,15 @@ const edgesView = computed(() =>
   <footer class="cy-bus" :class="{ live: pipelineActive }">
     <span class="bus-cap">运行底座 · ARCHITECTURE</span>
     <div class="topo">
+      <div
+        v-for="b in bandsView"
+        :key="b.tier"
+        class="tier-band"
+        :class="'tb-' + b.tier"
+        :style="{ top: b.top + '%', height: b.height + '%' }"
+      >
+        <span class="tier-label">{{ b.label }}</span>
+      </div>
       <svg class="topo-wires" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         <path
           v-for="(e, i) in edgesView"
@@ -59,7 +75,7 @@ const edgesView = computed(() =>
         <template #reference>
           <div
             class="topo-node"
-            :class="[`st-${v.node.state}`, { hot: v.node.id === hotService }]"
+            :class="[`st-${v.node.state}`, `t-${v.node.tier}`, { hot: v.node.id === hotService }]"
             :style="{ left: v.px + '%', top: v.py + '%' }"
             @click="$emit('open-service', v.node)"
           >
@@ -89,8 +105,13 @@ const edgesView = computed(() =>
 <style scoped>
 .cy-bus { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border: 1px solid rgba(0, 234, 255, 0.2); background: var(--cy-panel); clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
 .bus-cap { font: 700 9px/1.3 var(--cy-mono); letter-spacing: 0.08em; color: var(--cy-txt-dim); }
-.topo { position: relative; width: 100%; height: 186px; }
+.topo { position: relative; width: 100%; height: 208px; }
 .topo-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.tier-band { position: absolute; left: 0; right: 0; border: 1px dashed rgba(255, 255, 255, 0.06); border-radius: 4px; pointer-events: none; }
+.tier-band.tb-service { background: rgba(0, 234, 255, 0.035); }
+.tier-band.tb-middleware { background: rgba(247, 255, 74, 0.03); }
+.tier-band.tb-external { background: rgba(255, 46, 136, 0.03); }
+.tier-label { position: absolute; top: 4px; left: 8px; font: 700 8px/1 var(--cy-mono); letter-spacing: 0.12em; color: var(--cy-txt-dim); }
 
 .edge { fill: none; stroke-width: 1.4; opacity: 0.5; }
 .edge.k-rtc { stroke: var(--cy-cyan); }
@@ -116,6 +137,12 @@ const edgesView = computed(() =>
 .tn-body b { font: 700 12px/1 var(--cy-sans); color: #fff; white-space: nowrap; }
 .tn-body em { display: inline-flex; align-items: center; gap: 4px; font: 600 8.5px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; white-space: nowrap; }
 .tn-body em .led { width: 6px; height: 6px; color: var(--cy-green); }
+/* Tier identity on the glyph (health stays on the led). State rules below win. */
+.topo-node.t-service .tn-glyph { color: var(--cy-cyan); }
+.topo-node.t-middleware .tn-glyph { color: var(--cy-yellow); }
+.topo-node.t-middleware { border-color: rgba(247, 255, 74, 0.28); }
+.topo-node.t-external .tn-glyph { color: var(--cy-mag); }
+.topo-node.t-external { border-color: rgba(255, 46, 136, 0.28); border-style: dashed; }
 .topo-node.st-offline { border-color: rgba(255, 46, 136, 0.4); }
 .topo-node.st-offline .tn-glyph, .topo-node.st-offline .tn-body em .led { color: var(--cy-mag); }
 .topo-node.st-offline .tn-body em { color: var(--cy-mag); }

@@ -3,18 +3,17 @@
 // Full-bleed, god's-eye observatory — reached from the sidebar launcher, with a
 // return-to-console affordance. This shell owns only layout + drawer routing;
 // all data/state lives in useMissionControlStream, all visuals in child comps.
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CockpitHeader from './components/CockpitHeader.vue'
 import DrilldownDrawer from './components/DrilldownDrawer.vue'
 import LiveTraceTimeline from './components/LiveTraceTimeline.vue'
 import MemoryEvidenceLane from './components/MemoryEvidenceLane.vue'
 import PermissionLedger from './components/PermissionLedger.vue'
-import ProofChainTiles from './components/ProofChainTiles.vue'
 import TaskWorkflowTimeline from './components/TaskWorkflowTimeline.vue'
 import RuntimeBusRail from './components/RuntimeBusRail.vue'
+import RecentEventsPanel from './components/RecentEventsPanel.vue'
 import SovereignConstellation from './components/SovereignConstellation.vue'
-import TelemetryCrawl from './components/TelemetryCrawl.vue'
 import OrbitField from './primitives/OrbitField.vue'
 import { useMissionControlStream } from './useMissionControlStream'
 import { prefersReducedMotion } from './motion'
@@ -27,25 +26,24 @@ const mode = route.query.mode === 'replay' ? 'replay' : 'live'
 const mc = useMissionControlStream({ mode })
 
 const {
-  pipelineActive, systemStateText, experience, error, recentEvents,
-  infraNodes, hotService, activeTurn, evidenceChains, permissionLedger,
-  memory, jobs,
+  pipelineActive, error,
+  infraNodes, hotService,
+  scopedTurn, scopedJobs, scopedPermissions, companionEvents,
+  memory, focusedCompanion, focusedCompanionId,
 } = mc
 
 const drawer = ref<DrawerTarget | null>(null)
-function openOwner() { drawer.value = { type: 'owner' } }
-function openComp(c: CompanionUnit) { drawer.value = { type: 'companion', c } }
-function openMoon(s: Sat) { drawer.value = { type: 'moon', s } }
+// Clicking a companion (planet or its moon) focuses it — this re-scopes the live
+// trace, evidence lanes and event stream — and opens the deep-dive drawer. Focus
+// persists after the drawer closes; the owner sun (or the evidence "全部" chip)
+// clears it back to owner scope.
+function openOwner() { focusedCompanionId.value = ''; drawer.value = { type: 'owner' } }
+function openComp(c: CompanionUnit) { focusedCompanionId.value = c.id; drawer.value = { type: 'companion', c } }
+function openMoon(s: Sat) { focusedCompanionId.value = s.c.id; drawer.value = { type: 'moon', s } }
 function openSvc(n: InfraNode) { drawer.value = { type: 'service', n } }
+function openTrace() { drawer.value = { type: 'trace' } }
 function closeDrawer() { drawer.value = null }
-
-// Semantic-zoom focus (A3.4): which companion the drawer is currently on.
-const focusedCompanionId = computed(() => {
-  const d = drawer.value
-  if (d?.type === 'companion') return d.c.id
-  if (d?.type === 'moon') return d.s.c.id
-  return ''
-})
+function clearFocus() { focusedCompanionId.value = '' }
 
 // Pointer parallax (A3.2): depth via subtle background offset. rAF-throttled,
 // off under reduced-motion. Drives --px/--py consumed by the ambient layers.
@@ -83,26 +81,27 @@ function returnToConsole() { router.push({ name: 'owners' }) }
     <div class="cy-flicker" aria-hidden="true" />
 
     <CockpitHeader :mc="mc" @return-console="returnToConsole" />
-
-    <p class="state-line">
-      <b :class="pipelineActive ? 'ok' : 'idle'">● {{ systemStateText }}</b>
-      {{ experience?.headline || 'Agent OS 待命中' }} —— {{ experience?.plain_summary || '下面所有虚拟伙伴、它们的身体和记忆，都属于这位主人。' }}
-    </p>
     <p v-if="error" class="cy-error">// {{ error }}</p>
-
-    <ProofChainTiles :chains="evidenceChains" />
 
     <SovereignConstellation :mc="mc" :focused-id="focusedCompanionId" @open-owner="openOwner" @open-companion="openComp" @open-moon="openMoon" />
 
-    <LiveTraceTimeline :turn="activeTurn" />
-    <div class="evidence-lanes">
-      <MemoryEvidenceLane :memory="memory" />
-      <TaskWorkflowTimeline :jobs="jobs" />
-      <PermissionLedger v-if="permissionLedger.length" :items="permissionLedger" />
-    </div>
+    <LiveTraceTimeline :turn="scopedTurn" :scope="focusedCompanion?.name || ''" @open="openTrace" />
+
+    <section class="evidence">
+      <div class="ev-head">
+        <span class="ev-cap">证据 · EVIDENCE</span>
+        <button v-if="focusedCompanion" class="ev-scope" @click="clearFocus">聚焦：{{ focusedCompanion.name }} <em>✕ 全部</em></button>
+        <span v-else class="ev-scope dim">全部伙伴</span>
+      </div>
+      <div class="evidence-lanes">
+        <MemoryEvidenceLane :memory="memory" :companion="focusedCompanion" />
+        <TaskWorkflowTimeline :jobs="scopedJobs" />
+        <PermissionLedger :items="scopedPermissions" />
+      </div>
+    </section>
 
     <RuntimeBusRail :nodes="infraNodes" :hot-service="hotService" :pipeline-active="pipelineActive" @open-service="openSvc" />
-    <TelemetryCrawl :events="recentEvents" :pipeline-active="pipelineActive" />
+    <RecentEventsPanel :events="companionEvents" :scope="focusedCompanion?.name || ''" />
 
     <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openComp" @close="closeDrawer" />
   </main>
@@ -125,9 +124,16 @@ function returnToConsole() { router.push({ name: 'owners' }) }
 .cy-scan { position: absolute; inset: 0; z-index: 5; pointer-events: none; background: repeating-linear-gradient(transparent 0 2px, rgba(0, 0, 0, 0.22) 3px 4px); mix-blend-mode: multiply; opacity: 0.5; }
 .cy-flicker { position: absolute; inset: 0; z-index: 4; pointer-events: none; background: rgba(0, 234, 255, 0.02); animation: flicker 5s steps(30) infinite; }
 
-.evidence-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; position: relative; z-index: 1; align-items: stretch; }
-.state-line { font-family: var(--cy-sans); font-size: 12.5px; color: var(--cy-txt); opacity: 0.82; line-height: 1.5; position: relative; z-index: 1; }
-.state-line b { margin-right: 8px; font-family: var(--cy-mono); font-size: 11px; }
+.evidence { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; }
+.ev-head { display: flex; align-items: center; gap: 12px; }
+.ev-cap { font: 700 10px/1 var(--cy-mono); letter-spacing: 0.1em; color: var(--cy-mag); }
+.ev-scope { font: 700 10px/1 var(--cy-mono); letter-spacing: 0.04em; color: var(--cy-cyan); background: rgba(0, 234, 255, 0.08); border: 1px solid rgba(0, 234, 255, 0.3); padding: 4px 8px; cursor: pointer; clip-path: polygon(5px 0, 100% 0, 100% 100%, 0 100%, 0 5px); }
+.ev-scope:hover { background: rgba(0, 234, 255, 0.18); }
+.ev-scope em { font-style: normal; color: var(--cy-txt-dim); margin-left: 4px; }
+.ev-scope.dim { color: var(--cy-txt-dim); background: none; border-color: var(--cy-hair); cursor: default; }
+/* Three fixed evidence modules; each keeps its own empty state (no column jumps). */
+.evidence-lanes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; align-items: stretch; }
+@media (max-width: 1080px) { .evidence-lanes { grid-template-columns: 1fr; } }
 .cy-error { position: relative; z-index: 1; padding: 9px 13px; color: var(--cy-mag); border: 1px solid var(--cy-mag); background: rgba(255, 46, 136, 0.08); }
 
 @keyframes gridrun { from { background-position: 0 0; } to { background-position: 0 46px; } }
