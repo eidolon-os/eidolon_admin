@@ -38,9 +38,14 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/benchmark/Overview.vue'),
       },
       {
+        path: 'devices/:tab?',
+        name: 'devices',
+        component: () => import('@/modules/devices/DeviceCenter.vue'),
+      },
+      // Legacy deep link — the ESP32 flasher is now the Device Center's firmware tab.
+      {
         path: 'tools/esp32',
-        name: 'tool-esp32',
-        component: () => import('@/modules/tools/Esp32.vue'),
+        redirect: { name: 'devices', params: { tab: 'firmware' } },
       },
       {
         path: 'services/:serviceId/:feature',
