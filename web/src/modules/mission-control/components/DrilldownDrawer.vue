@@ -6,6 +6,9 @@ import { deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../fo
 import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
 import ProofChainTiles from './ProofChainTiles.vue'
+import MemoryEvidenceLane from './MemoryEvidenceLane.vue'
+import TaskWorkflowTimeline from './TaskWorkflowTimeline.vue'
+import PermissionLedger from './PermissionLedger.vue'
 import type { CompanionUnit, DrawerTarget } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 import type { RuntimeDevice } from '@/api/missionControl'
@@ -19,7 +22,7 @@ defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void 
 const {
   ownerId, ownerName, companionUnits, onlineDevices, devices, memory,
   snapshot, experience, traceSpans, refresh,
-  scopedTurn, companionEvents, focusedCompanion, evidenceChains,
+  scopedTurn, scopedJobs, scopedPermissions, companionEvents, focusedCompanion, evidenceChains,
 } = props.mc
 
 const addingBody = ref(false)
@@ -125,6 +128,12 @@ const drawerTurns = computed(() => {
             <span class="dw-sect">Agent 跨度 · SPANS</span>
             <AgentSpanInspector :spans="traceSpans" />
           </template>
+          <span class="dw-sect">证据 · EVIDENCE</span>
+          <div class="dw-evidence">
+            <MemoryEvidenceLane :memory="memory" :companion="drawerComp" />
+            <TaskWorkflowTimeline :jobs="scopedJobs" />
+            <PermissionLedger :items="scopedPermissions" />
+          </div>
         </template>
 
         <template v-else-if="target.type === 'service'">
@@ -209,6 +218,7 @@ const drawerTurns = computed(() => {
 .dw-stage em { margin-left: auto; font: 700 10px/1 var(--cy-mono); font-style: normal; color: var(--cy-txt-dim); }
 .dw-stage.ok b { color: var(--cy-green); } .dw-stage.warn b { color: var(--cy-yellow); } .dw-stage.bad b { color: var(--cy-mag); }
 .dw-src { flex: 0 0 auto; font: 700 10px/1 var(--cy-mono); color: var(--cy-cyan); }
+.dw-evidence { display: grid; gap: 8px; margin-bottom: 18px; }
 .dw-mini { margin-left: 8px; padding: 3px 8px; border: 1px solid rgba(0, 234, 255, 0.4); background: rgba(0, 234, 255, 0.08); color: var(--cy-cyan); font: 700 10px/1 var(--cy-mono); cursor: pointer; clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px); }
 .dw-mini:hover { background: rgba(0, 234, 255, 0.2); }
 .dw-add { width: 100%; padding: 8px 10px; border: 1px dashed rgba(0, 234, 255, 0.35); background: transparent; color: var(--cy-cyan); font: 700 11px/1 var(--cy-mono); cursor: pointer; }
