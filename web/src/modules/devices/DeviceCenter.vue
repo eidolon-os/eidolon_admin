@@ -7,9 +7,12 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Fleet from '@/modules/hub/Devices.vue'
 import Firmware from '@/modules/tools/Esp32.vue'
+import FleetGrouping from './FleetGrouping.vue'
+import { useOwnersStore } from '@/stores/owners'
 
 const route = useRoute()
 const router = useRouter()
+const ownersStore = useOwnersStore()
 
 const tab = computed<'fleet' | 'firmware'>({
   get: () => (route.params.tab === 'firmware' ? 'firmware' : 'fleet'),
@@ -21,7 +24,10 @@ const tab = computed<'fleet' | 'firmware'>({
   <div class="device-center">
     <el-tabs v-model="tab" class="dc-tabs">
       <el-tab-pane label="设备舰队" name="fleet">
-        <Fleet v-if="tab === 'fleet'" />
+        <template v-if="tab === 'fleet'">
+          <FleetGrouping :owner-id="ownersStore.currentId" />
+          <Fleet />
+        </template>
       </el-tab-pane>
       <el-tab-pane label="固件烧录" name="firmware">
         <Firmware v-if="tab === 'firmware'" />
