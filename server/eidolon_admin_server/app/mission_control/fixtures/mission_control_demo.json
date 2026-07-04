@@ -1,0 +1,13 @@
+[
+  { "source": "hub", "type": "device.presence.probe_cycle", "severity": "info", "device_id": "waveshare-2.06", "summary": "2.06 口袋控制器上线", "delay": 1.0 },
+  { "source": "hub", "type": "device.command.updated", "severity": "info", "device_id": "waveshare-2.06", "summary": "2.06 PTT 按下 · 开始录音", "delay": 1.2 },
+  { "source": "channel", "type": "channel.stt.final", "severity": "info", "summary": "STT 完成 · 用户交办一条记忆", "delay": 1.2 },
+  { "source": "agent", "type": "agent.turn.observed", "severity": "info", "summary": "Agent 轮次开始 · 规划中", "delay": 1.2 },
+  { "source": "memory", "type": "memory.write.queued", "severity": "info", "summary": "记忆写入排队 · disposition=ALLOW", "delay": 1.4 },
+  { "source": "hub", "type": "device.presence.probe_cycle", "severity": "info", "device_id": "esp-box-3-desk", "summary": "ESP-BOX-3 上线 · 切换身体", "delay": 1.4 },
+  { "source": "agent", "type": "agent.turn.observed", "severity": "info", "summary": "BOX-3 提问 → 记忆召回 3 命中", "delay": 1.4 },
+  { "source": "channel", "type": "channel.tts.start", "severity": "info", "device_id": "esp-box-3-desk", "summary": "TTS 路由到 BOX-3 播报", "delay": 1.4 },
+  { "source": "hub", "type": "device.command.updated", "severity": "warn", "device_id": "atk-camera", "summary": "self.camera.take_photo → 已授权（仅摘要，不留原图）", "delay": 1.6 },
+  { "source": "agent", "type": "task.job.updated", "severity": "info", "summary": "coworker: 整理演示清单 → 运行中", "delay": 1.6 },
+  { "source": "agent", "type": "task.job.updated", "severity": "info", "summary": "coworker: 产物完成 → 主动播报", "delay": 1.8 }
+]

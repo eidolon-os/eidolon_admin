@@ -14,6 +14,7 @@ from eidolon_sdk.core.streaming import encode_sse_comment, encode_sse_event
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
+from .replay import replay_events
 from .schemas import RuntimeEvent, RuntimeSnapshot
 from .service import build_snapshot, hub_event_to_runtime
 
@@ -26,23 +27,32 @@ router = APIRouter(prefix="/mission-control", tags=["mission-control"])
 async def snapshot(
     request: Request,
     owner_id: str | None = Query(default=None),
+    mode: str | None = Query(default=None),
 ) -> RuntimeSnapshot:
-    return await build_snapshot(request, owner_id=owner_id)
+    return await build_snapshot(request, owner_id=owner_id, demo_mode="replay" if mode == "replay" else "live")
 
 
 @router.get("/events")
 async def events(
     request: Request,
     owner_id: str | None = Query(default=None),
+    mode: str | None = Query(default=None),
 ) -> StreamingResponse:
-    return StreamingResponse(_runtime_event_stream(request, owner_id), media_type="text/event-stream")
+    return StreamingResponse(_runtime_event_stream(request, owner_id, mode), media_type="text/event-stream")
 
 
 async def _runtime_event_stream(
     request: Request,
     owner_id: str | None,
+    mode: str | None = None,
 ) -> AsyncIterator[bytes]:
     _ = owner_id  # Reserved for Phase 2 owner-scoped NATS subscriptions.
+    if mode == "replay":
+        # Recorded demo playback — never touches Hub; every frame is replay-origin.
+        yield encode_sse_event("runtime_event", _startup_event(origin="replay").model_dump(mode="json"))
+        async for event in replay_events(request.is_disconnected):
+            yield encode_sse_event("runtime_event", event.model_dump(mode="json"))
+        return
     yield encode_sse_event("runtime_event", _startup_event().model_dump(mode="json"))
     async for item in _hub_stream(request):
         if await request.is_disconnected():
@@ -101,14 +111,14 @@ async def _hub_stream(request: Request) -> AsyncIterator[bytes]:
             await asyncio.sleep(3)
 
 
-def _startup_event() -> RuntimeEvent:
+def _startup_event(origin: str = "live") -> RuntimeEvent:
     return RuntimeEvent(
         event_id=f"mc-start-{uuid4().hex}",
         ts=datetime.now(UTC),
         source="mission_control",
         type="mission_control.connected",
         severity="info",
-        event_origin="live",
+        event_origin=origin,  # type: ignore[arg-type]
         summary="Mission Control event stream connected",
         payload={},
     )

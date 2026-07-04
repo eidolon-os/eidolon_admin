@@ -167,6 +167,33 @@ async def test_events_stream_emits_startup_frame() -> None:
     assert '"event_origin"' in first and '"live"' in first
 
 
+async def test_events_stream_replay_is_replay_origin() -> None:
+    class FakeRequest:
+        async def is_disconnected(self) -> bool:
+            return True
+
+    stream = _runtime_event_stream(FakeRequest(), None, "replay")  # type: ignore[arg-type]
+    try:
+        first = (await anext(stream)).decode("utf-8")
+    finally:
+        await stream.aclose()
+
+    assert "mission_control.connected" in first
+    assert '"event_origin"' in first and '"replay"' in first
+
+
+async def test_snapshot_replay_sets_demo_mode(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await data_store.owner_service.create_owner(
+        owner_id="owner-r", display_name="R", actor_type="test"
+    )
+    resp = await client.get("/api/mission-control/snapshot?owner_id=owner-r&mode=replay")
+    assert resp.status_code == 200
+    assert resp.json()["demo_mode"] == "replay"
+
+
 async def test_snapshot_exposes_contract_layer(
     client: httpx.AsyncClient,
     data_store: DataStore,

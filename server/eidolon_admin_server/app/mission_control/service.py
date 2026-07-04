@@ -56,7 +56,9 @@ _TEXT_KEYS = {
 }
 
 
-async def build_snapshot(request: Request, owner_id: str | None = None) -> RuntimeSnapshot:
+async def build_snapshot(
+    request: Request, owner_id: str | None = None, demo_mode: str = "live"
+) -> RuntimeSnapshot:
     started = time.perf_counter()
     generated_at = datetime.now(UTC)
     statuses: list[SourceStatus] = []
@@ -157,7 +159,7 @@ async def build_snapshot(request: Request, owner_id: str | None = None) -> Runti
         trace_spans=trace_spans,
         evidence_chains=evidence_chains,
         permission_ledger=permission_ledger,
-        demo_mode="live",
+        demo_mode=demo_mode,  # type: ignore[arg-type]
     )
 
 

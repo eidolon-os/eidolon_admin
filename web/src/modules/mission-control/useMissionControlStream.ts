@@ -196,7 +196,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   async function refresh() {
     loading.value = true
     try {
-      snapshot.value = await getMissionControlSnapshot(ownerId.value || undefined)
+      snapshot.value = await getMissionControlSnapshot(ownerId.value || undefined, replay ? 'replay' : undefined)
       error.value = ''
     } catch (e: any) {
       error.value = e?.response?.data?.detail || e?.message || 'LINK FAULT // MCC OFFLINE'

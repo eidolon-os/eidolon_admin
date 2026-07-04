@@ -238,9 +238,12 @@ export interface RuntimeSnapshot {
   privacy_notice: string
 }
 
-export async function getMissionControlSnapshot(ownerId?: string): Promise<RuntimeSnapshot> {
+export async function getMissionControlSnapshot(ownerId?: string, mode?: string): Promise<RuntimeSnapshot> {
+  const params: Record<string, string> = {}
+  if (ownerId) params.owner_id = ownerId
+  if (mode) params.mode = mode
   const { data } = await client.get<RuntimeSnapshot>('/mission-control/snapshot', {
-    params: ownerId ? { owner_id: ownerId } : undefined,
+    params: Object.keys(params).length ? params : undefined,
     suppressToast: true,
   })
   return data
