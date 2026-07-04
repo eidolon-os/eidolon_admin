@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import CatalogPage from '@/modules/common/CatalogPage.vue'
+import TableSkeleton from '@/modules/common/TableSkeleton.vue'
 import { useOwnersStore } from '@/stores/owners'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 
@@ -78,7 +79,8 @@ async function submitCreate() {
       <el-button size="small" type="primary" :icon="Plus" @click="openCreate">新建 Owner</el-button>
     </template>
 
-    <el-table :data="store.owners" v-loading="store.loading" size="small" stripe>
+    <TableSkeleton v-if="store.loading && !store.owners.length" :rows="6" />
+    <el-table v-else :data="store.owners" v-loading="store.loading" size="small" stripe>
       <el-table-column prop="owner_id" label="owner_id" min-width="180" />
       <el-table-column prop="display_name" label="显示名" min-width="160" />
       <el-table-column prop="kind" label="类型" width="110">

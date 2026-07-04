@@ -33,6 +33,7 @@ defineProps<{
 
 <template>
   <div class="page">
+    <slot name="breadcrumb" />
     <header class="page-head">
       <div>
         <h2>{{ title }}</h2>

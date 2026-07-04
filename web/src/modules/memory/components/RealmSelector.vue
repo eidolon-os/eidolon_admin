@@ -7,7 +7,9 @@ const store = useMemoryRealmStore()
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
-  await store.load(true)
+  // Respect a prior selection (sticky across sessions); don't force-reset to
+  // the backend default on every mount. The interval still force-refreshes.
+  await store.load()
   refreshTimer = setInterval(() => {
     if (!store.loading) void store.load(true)
   }, 10_000)

@@ -2,9 +2,11 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useOwnersStore } from '@/stores/owners'
+import { useServicesStore } from '@/stores/services'
 import { navigation, type NavGroup, type NavItem, type RouteTarget } from './navigation'
 
 const ownersStore = useOwnersStore()
+const servicesStore = useServicesStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -60,6 +62,7 @@ type MenuGroup = Omit<NavGroup, 'items'> & {
 
 onMounted(() => {
   ownersStore.load()
+  servicesStore.load()
   window.addEventListener('keydown', handleGlobalKeydown)
 })
 
@@ -67,8 +70,29 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
+// Data-driven nav: services curated by the entity IA are "covered"; any other
+// service in the backend registry (e.g. a newly added mementos/nats/livekit)
+// is auto-surfaced under System · Infra as a managed-process entry — adding a
+// service to services.yaml then needs zero frontend edits.
+const coveredServiceIds = computed(() => {
+  const ids = new Set<string>(['admin', 'client-web'])
+  for (const group of navigation)
+    for (const item of group.items)
+      if (item.route.name === 'feature' && item.route.params?.serviceId) ids.add(item.route.params.serviceId)
+  return ids
+})
+const effectiveNav = computed<NavGroup[]>(() => {
+  const generated: NavItem[] = servicesStore.services
+    .filter((s) => !coveredServiceIds.value.has(s.id))
+    .map((s) => ({ id: `svc-${s.id}`, label: s.name, hint: '托管进程', icon: 'Cpu', route: { name: 'supervisor' } }))
+  if (!generated.length) return navigation
+  return navigation.map((group) =>
+    group.id === 'system' ? { ...group, items: [...group.items, ...generated] } : group,
+  )
+})
+
 const menuGroups = computed<MenuGroup[]>(() =>
-  navigation.map((group) => ({
+  effectiveNav.value.map((group) => ({
     ...group,
     items: group.items.map((item) => ({
       ...item,
@@ -111,7 +135,7 @@ const currentTitle = computed(() => {
 
 const scopeLabel = computed(() => {
   if (!commandScope.value) return 'All systems'
-  return navigation.find((group) => group.id === commandScope.value)?.label || commandScope.value
+  return effectiveNav.value.find((group) => group.id === commandScope.value)?.label || commandScope.value
 })
 
 const filteredCommands = computed(() => {
@@ -174,7 +198,7 @@ function toggleSidebar() {
 }
 
 function handleRailClick(id: string) {
-  const group = navigation.find((entry) => entry.id === id)
+  const group = effectiveNav.value.find((entry) => entry.id === id)
   if (group?.items[0]) router.push(group.items[0].route)
 }
 
@@ -292,7 +316,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
         <div class="scope-strip">
           <button :class="{ active: commandScope === null }" @click="openCommand(null)">All</button>
           <button
-            v-for="group in navigation"
+            v-for="group in effectiveNav"
             :key="group.id"
             :class="{ active: commandScope === group.id }"
             @click="openCommand(group.id)"

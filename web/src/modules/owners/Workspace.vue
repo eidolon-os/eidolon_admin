@@ -29,6 +29,7 @@ import {
   type PersonaGenomeView,
 } from '@/api/eidolonData'
 import CatalogPage from '@/modules/common/CatalogPage.vue'
+import Breadcrumb from '@/modules/common/Breadcrumb.vue'
 import { useOwnersStore } from '@/stores/owners'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -395,6 +396,9 @@ function defaultPromptMarkdown(name: string): string {
     :title="owner?.display_name || ownerId"
     :hint="`Owner workspace · ${ownerId}`"
   >
+    <template #breadcrumb>
+      <Breadcrumb :items="[{ label: 'Owners', to: { name: 'owners' } }, { label: owner?.display_name || ownerId }]" />
+    </template>
     <template #head-actions>
       <el-button size="small" @click="refresh">刷新</el-button>
     </template>
