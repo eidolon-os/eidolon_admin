@@ -32,6 +32,7 @@ from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .data import router as data_router
 from .data.hub_client import HubDeviceRuntimeClient
+from .devices import router as devices_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.router import router as memory_router
@@ -164,6 +165,7 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
+    app.include_router(devices_router, prefix="/api")
     app.include_router(resolve_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")
     app.include_router(mission_control_router, prefix="/api")

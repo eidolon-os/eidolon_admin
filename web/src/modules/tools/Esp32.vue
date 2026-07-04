@@ -36,7 +36,6 @@ import {
   type Esp32Port,
   type Esp32ProbeResult,
 } from '@/api/esp32Tools'
-import { listDevices, sendCommand, type AdminDevice } from '@/api/hub'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 
 const boards = ref<Esp32BoardProfile[]>([])
@@ -44,7 +43,6 @@ const ports = ref<Esp32Port[]>([])
 const environment = ref<Esp32EnvironmentStatus | null>(null)
 const boardInfo = ref<Esp32BoardInfo | null>(null)
 const jobs = ref<Esp32Job[]>([])
-const hubDevices = ref<AdminDevice[]>([])
 const selectedBoardId = ref(localStorage.getItem('eidolon-admin.esp32.board') || '')
 const selectedPort = ref(localStorage.getItem('eidolon-admin.esp32.port') || '')
 const baud = ref(Number(localStorage.getItem('eidolon-admin.esp32.baud') || 115200))
@@ -62,7 +60,6 @@ const serialFollow = ref(true)
 const jobFollow = ref(true)
 const probeResult = ref<Esp32ProbeResult | null>(null)
 const probing = ref(false)
-const hubRoomDraft = ref<Record<string, string>>({})
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -172,18 +169,16 @@ async function refreshAll() {
   loading.value = true
   error.value = ''
   try {
-    const [nextBoards, nextPorts, nextEnvironment, nextJobs, nextDevices] = await Promise.all([
+    const [nextBoards, nextPorts, nextEnvironment, nextJobs] = await Promise.all([
       listEsp32Boards(),
       listEsp32Ports(),
       getEsp32Environment(),
       listEsp32Jobs(),
-      listDevices().catch(() => []),
     ])
     boards.value = nextBoards
     ports.value = nextPorts
     environment.value = nextEnvironment
     jobs.value = nextJobs
-    hubDevices.value = nextDevices.filter((device) => device.kind === 'esp32' || device.device_id.startsWith('esp32'))
     ensureDefaults()
     await loadBoardInfo()
   } catch (err: unknown) {
@@ -195,14 +190,12 @@ async function refreshAll() {
 
 async function refreshLight() {
   try {
-    const [nextJobs, nextPorts, nextDevices] = await Promise.all([
+    const [nextJobs, nextPorts] = await Promise.all([
       listEsp32Jobs(),
       listEsp32Ports(),
-      listDevices().catch(() => []),
     ])
     jobs.value = nextJobs
     ports.value = nextPorts
-    hubDevices.value = nextDevices.filter((device) => device.kind === 'esp32' || device.device_id.startsWith('esp32'))
     if (currentJob.value) {
       currentJob.value = nextJobs.find((job) => job.id === currentJob.value?.id) || currentJob.value
       rememberSuccessfulPort(currentJob.value)
@@ -376,20 +369,6 @@ function openJobLog(job: Esp32Job) {
 function closeDrawer() {
   drawerOpen.value = false
   drawerStream.close()
-}
-
-async function sendDeviceOp(device: AdminDevice, op: 'config.refresh' | 'playback.stop' | 'room.join') {
-  try {
-    const room = hubRoomDraft.value[device.device_id] || device.room_name || ''
-    await sendCommand(device.device_id, {
-      topic: 'eidolon.control',
-      op,
-      payload: { source: 'admin_esp32_tools', ...(op === 'room.join' && room ? { room } : {}) },
-    } as any)
-    ElMessage.success(`已发送 ${op}`)
-  } catch (err: unknown) {
-    ElMessage.error(extractErrorMessage(err))
-  }
 }
 
 function retryWithRepair(job: Esp32Job) {
@@ -803,36 +782,6 @@ function portBusyText(port: Esp32Port) {
           </el-table>
         </section>
 
-        <section class="panel hub-panel">
-          <div class="panel-head">
-            <h2>Hub 在线设备</h2>
-            <span class="hint">USB 串口设备和 Hub 设备首版并排展示，不自动绑定。</span>
-          </div>
-          <el-table :data="hubDevices" stripe>
-            <el-table-column label="Device" min-width="180" prop="device_id" />
-            <el-table-column label="Status" width="110">
-              <template #default="{ row }">
-                <el-tag :type="statusType(row.status)" size="small">{{ row.status || '-' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Room" min-width="160" prop="room_name" />
-            <el-table-column label="Last Seen" width="180">
-              <template #default="{ row }">{{ row.last_seen_at || row.last_seen ? formatTimestamp(row.last_seen_at || row.last_seen) : '-' }}</template>
-            </el-table-column>
-            <el-table-column label="Room" min-width="180">
-              <template #default="{ row }">
-                <el-input v-model="hubRoomDraft[row.device_id]" :placeholder="row.room_name || 'room'" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column label="控制" width="290">
-              <template #default="{ row }">
-                <el-button size="small" @click="sendDeviceOp(row, 'config.refresh')">刷新配置</el-button>
-                <el-button size="small" @click="sendDeviceOp(row, 'playback.stop')">停止播放</el-button>
-                <el-button size="small" @click="sendDeviceOp(row, 'room.join')">入房</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </section>
       </el-tab-pane>
     </el-tabs>
 

@@ -1,79 +1,51 @@
 <script setup lang="ts">
-// Owner → companion ownership overview for the Device Center. Groups the
-// owner's devices by their bound companion (+ an unclaimed bucket), so the
-// fleet reads as "who owns which body" before the flat access list below.
-import { computed, onMounted, ref, watch } from 'vue'
-import { listOwnerCompanions, listOwnerDevices, type CompanionView, type DeviceView } from '@/api/eidolonData'
+// Owner → companion ownership overview for the Device Center, backed by the
+// server-side /api/devices/fleet join (hub presence/approval + data ownership)
+// so the banner reflects real online state in a single call.
+import { onMounted, ref, watch } from 'vue'
+import { getFleet, type FleetResponse } from '@/api/devices'
 
 const props = defineProps<{ ownerId: string }>()
 
-const companions = ref<CompanionView[]>([])
-const devices = ref<DeviceView[]>([])
+const fleet = ref<FleetResponse | null>(null)
 const loading = ref(false)
 
 async function load() {
   if (!props.ownerId) {
-    companions.value = []
-    devices.value = []
+    fleet.value = null
     return
   }
   loading.value = true
   try {
-    const [c, d] = await Promise.all([listOwnerCompanions(props.ownerId), listOwnerDevices(props.ownerId)])
-    companions.value = c
-    devices.value = d
+    fleet.value = await getFleet(props.ownerId)
+  } catch {
+    fleet.value = null
   } finally {
     loading.value = false
   }
 }
 onMounted(load)
 watch(() => props.ownerId, load)
-
-const groups = computed(() => {
-  const byComp = new Map<string, DeviceView[]>()
-  const unbound: DeviceView[] = []
-  for (const dev of devices.value) {
-    if (dev.bound_companion_id) {
-      const arr = byComp.get(dev.bound_companion_id) || []
-      arr.push(dev)
-      byComp.set(dev.bound_companion_id, arr)
-    } else {
-      unbound.push(dev)
-    }
-  }
-  return {
-    companions: companions.value.map((c) => ({
-      id: c.companion_id,
-      name: c.display_name || c.companion_id,
-      devices: byComp.get(c.companion_id) || [],
-    })),
-    unbound,
-  }
-})
-
-function isOnline(d: DeviceView) {
-  return (d.status || '').toLowerCase() === 'online'
-}
 </script>
 
 <template>
   <div v-if="ownerId" class="fleet-grouping" v-loading="loading">
     <div class="fg-cap">归属概览 · OWNER → COMPANION → 身体</div>
     <div class="fg-grid">
-      <div v-for="g in groups.companions" :key="g.id" class="fg-card">
-        <div class="fg-h"><b>{{ g.name }}</b><em>{{ g.devices.length }} 身体</em></div>
+      <div v-for="g in fleet?.groups || []" :key="g.companion_id" class="fg-card">
+        <div class="fg-h"><b>{{ g.companion_name }}</b><em>{{ g.devices.length }} 身体</em></div>
         <ul>
-          <li v-for="d in g.devices" :key="d.device_id"><i class="dot" :class="{ on: isOnline(d) }" />{{ d.name || d.device_id }}<span>{{ d.kind }}</span></li>
+          <li v-for="d in g.devices" :key="d.device_id"><i class="dot" :class="{ on: d.online }" />{{ d.name || d.device_id }}<span>{{ d.kind }}</span></li>
           <li v-if="!g.devices.length" class="empty">未绑定身体</li>
         </ul>
       </div>
-      <div v-if="groups.unbound.length" class="fg-card unbound">
-        <div class="fg-h"><b>未认领</b><em>{{ groups.unbound.length }}</em></div>
+      <div v-if="fleet?.unbound?.length" class="fg-card unbound">
+        <div class="fg-h"><b>未认领</b><em>{{ fleet.unbound.length }}</em></div>
         <ul>
-          <li v-for="d in groups.unbound" :key="d.device_id"><i class="dot" :class="{ on: isOnline(d) }" />{{ d.name || d.device_id }}<span>{{ d.kind }}</span></li>
+          <li v-for="d in fleet.unbound" :key="d.device_id"><i class="dot" :class="{ on: d.online }" />{{ d.name || d.device_id }}<span>{{ d.kind }}</span></li>
         </ul>
       </div>
-      <div v-if="!groups.companions.length && !groups.unbound.length" class="fg-empty">当前 owner 暂无设备</div>
+      <div v-if="!(fleet?.groups?.length) && !(fleet?.unbound?.length)" class="fg-empty">当前 owner 暂无设备</div>
     </div>
   </div>
 </template>

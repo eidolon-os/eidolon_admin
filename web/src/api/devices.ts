@@ -1,4 +1,26 @@
 import client from './client'
+import type { RuntimeDevice } from './missionControl'
+
+// Server-side fleet join (hub presence/approval + eidolon_data ownership),
+// grouped by owner → companion. See app/devices/router.py.
+export interface FleetGroup {
+  companion_id: string
+  companion_name: string
+  devices: RuntimeDevice[]
+}
+export interface FleetResponse {
+  owner_id: string
+  groups: FleetGroup[]
+  unbound: RuntimeDevice[]
+}
+
+export async function getFleet(ownerId?: string): Promise<FleetResponse> {
+  const { data } = await client.get<FleetResponse>('/devices/fleet', {
+    params: ownerId ? { owner_id: ownerId } : undefined,
+    suppressToast: true,
+  })
+  return data
+}
 
 export type DeviceKind = 'web' | 'esp32' | 'mobile' | 'unknown'
 export type DevicePresenceStatus = 'online' | 'degraded' | 'offline' | 'unknown'
