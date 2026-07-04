@@ -22,6 +22,7 @@ const { companionUnits, unboundDevices, ownerName, completion } = props.mc
 // ── geometry ──────────────────────────────────────────────────────────
 const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, PI = Math.PI
 const spin = ref(0)
+const paused = ref(false) // freeze the orbit while the pointer is over it, so nodes are clickable
 let spinTimer: number | undefined
 
 function ptStyle(x: number, y: number) {
@@ -72,7 +73,11 @@ const galaxy = computed(() => {
 })
 
 onMounted(() => {
-  if (!prefersReducedMotion()) spinTimer = window.setInterval(() => (spin.value = (spin.value + 0.35) % 3600), 66)
+  if (!prefersReducedMotion()) {
+    spinTimer = window.setInterval(() => {
+      if (!paused.value) spin.value = (spin.value + 0.35) % 3600
+    }, 66)
+  }
 })
 onBeforeUnmount(() => {
   if (spinTimer) window.clearInterval(spinTimer)
@@ -84,7 +89,7 @@ function deviceOnline(d: RuntimeDevice) {
 </script>
 
 <template>
-  <section class="galaxy" :class="{ 'has-focus': !!focusedId }">
+  <section class="galaxy" :class="{ 'has-focus': !!focusedId }" @pointerenter="paused = true" @pointerleave="paused = false">
     <svg class="gx-wires" :viewBox="`0 0 ${VBW} ${VBH}`" preserveAspectRatio="xMidYMid meet">
       <defs>
         <radialGradient id="sun" cx="50%" cy="42%" r="60%">
