@@ -2,14 +2,15 @@
 // its request-flow ordering, glyphs and integration-mode copy.
 import type { InfraDef } from './types'
 
+// Runtime SUBSTRATE only. client-web is an end/client product (a web body),
+// not system infrastructure, so it lives with the devices — not here.
 export const INFRA: InfraDef[] = [
-  { id: 'hub', cn: '设备中枢', code: 'eidolon_hub', mode: 'proxy', role: '管理硬件身体的接入、发现与指令下发，连接 LiveKit 语音房间。' },
-  { id: 'channel', cn: '语音通道', code: 'eidolon_channel', mode: 'process', role: '语音转文字（STT）、文字转语音（TTS），运行在语音房间里。' },
+  { id: 'hub', cn: '设备中枢', code: 'eidolon_hub', mode: 'proxy', role: '管理硬件身体的接入、发现与指令下发，签发 LiveKit 房间令牌。' },
+  { id: 'channel', cn: '语音通道', code: 'eidolon_channel', mode: 'process', role: '语音转文字（STT）、文字转语音（TTS），作为 LiveKit worker 运行在语音房间里，经 gRPC 调用智能体。' },
   { id: 'agent', cn: '智能体引擎', code: 'eidolon_agent', mode: 'proxy', role: '通用推理引擎（PersonasService）：理解、规划、调用工具、生成回应。它运行每个伙伴的人格（persona / genome），伙伴的名字与身份存在 eidolon_data，不在这里。' },
-  { id: 'memory', cn: '记忆服务', code: 'eidolon_memory', mode: 'native', role: '保存与召回伙伴的长期记忆，管理记忆空间与后台整理。' },
+  { id: 'memory', cn: '记忆服务', code: 'eidolon_memory', mode: 'native', role: '保存与召回伙伴的长期记忆，经 NATS 消费对话轮次，管理记忆空间与后台整理。' },
   { id: 'admin', cn: '控制台', code: 'eidolon_admin', mode: 'native', role: '你正在看的管理网关，聚合并转发各子项目的接口。' },
-  { id: 'client-web', cn: '网页端', code: 'client_web', mode: 'process', role: '浏览器里的对话入口页面。' },
-  { id: 'mementos', cn: 'Mementos', code: 'mementos', mode: 'process', role: '回忆 / 纪念相关扩展服务。' },
+  { id: 'mementos', cn: 'Mementos', code: 'mementos', mode: 'process', role: '后台数字员工 —— 承接智能体交办的长任务并产出产物。' },
   { id: 'nats', cn: 'NATS', code: 'nats-server', mode: 'infra', role: '消息总线 / JetStream —— 各子项目之间的事件与数据流通道。' },
   { id: 'livekit', cn: 'LiveKit', code: 'livekit-server', mode: 'infra', role: '实时音视频服务器 —— 承载语音房间，Hub 与语音通道都连它。' },
 ]
@@ -19,9 +20,39 @@ export const SVC_GLYPH: Record<string, string> = {
   admin: '▦', mementos: '✦', nats: '⇄', livekit: '⧉',
 }
 
-/** Bus spine — sub-projects wired in request-flow order (the demoted rail). */
-export const BUS_SPINE = ['client-web', 'hub', 'channel', 'agent', 'memory']
-export const BUS_AUX = ['admin', 'mementos', 'nats', 'livekit']
+/** Substrate architecture graph: node placement (in a 0..1000 × 0..300 space). */
+export const INFRA_VB = { w: 1000, h: 300 }
+export interface InfraLayoutNode { id: string; x: number; y: number }
+export const INFRA_LAYOUT: InfraLayoutNode[] = [
+  { id: 'admin', x: 340, y: 48 },
+  { id: 'hub', x: 130, y: 108 },
+  { id: 'livekit', x: 130, y: 232 },
+  { id: 'channel', x: 350, y: 232 },
+  { id: 'agent', x: 565, y: 150 },
+  { id: 'mementos', x: 565, y: 272 },
+  { id: 'memory', x: 810, y: 100 },
+  { id: 'nats', x: 810, y: 238 },
+]
+
+export type InfraEdgeKind = 'rtc' | 'grpc' | 'nats' | 'task' | 'ctrl'
+export interface InfraEdge { from: string; to: string; kind: InfraEdgeKind; spine?: boolean }
+/** Edges reflect real relationships (see reverse-engineered topology). */
+export const INFRA_EDGES: InfraEdge[] = [
+  { from: 'hub', to: 'livekit', kind: 'rtc', spine: true },
+  { from: 'livekit', to: 'channel', kind: 'rtc', spine: true },
+  { from: 'channel', to: 'agent', kind: 'grpc', spine: true },
+  { from: 'agent', to: 'memory', kind: 'nats', spine: true },
+  { from: 'agent', to: 'nats', kind: 'nats' },
+  { from: 'memory', to: 'nats', kind: 'nats' },
+  { from: 'hub', to: 'nats', kind: 'nats' },
+  { from: 'agent', to: 'mementos', kind: 'task' },
+  { from: 'admin', to: 'hub', kind: 'ctrl' },
+  { from: 'admin', to: 'agent', kind: 'ctrl' },
+  { from: 'admin', to: 'memory', kind: 'ctrl' },
+]
+export const EDGE_LABEL: Record<InfraEdgeKind, string> = {
+  rtc: 'RTC', grpc: 'gRPC', nats: 'NATS', task: 'task', ctrl: 'ctrl',
+}
 
 export const MODE_CN: Record<string, string> = {
   native: '内建', proxy: '代理', process: '托管', device: '设备', infra: '基础',

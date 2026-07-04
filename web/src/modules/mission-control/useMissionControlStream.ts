@@ -13,7 +13,7 @@ import {
   type RuntimeTurn,
 } from '@/api/missionControl'
 import { useEventStream } from '@/components/useEventStream'
-import { INFRA, SVC_GLYPH, BUS_SPINE, BUS_AUX, STAGE_SVC } from './constants'
+import { INFRA, SVC_GLYPH, STAGE_SVC } from './constants'
 import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
 
@@ -145,10 +145,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       }
     }),
   )
-  const busSpine = computed(() => BUS_SPINE.map((id) => infraNodes.value.find((n) => n.id === id)).filter(Boolean) as InfraNode[])
-  const busAux = computed(() => BUS_AUX.map((id) => infraNodes.value.find((n) => n.id === id)).filter(Boolean) as InfraNode[])
-
-  // Which bus node the active turn's current stage lights (signal flow).
+  // Which infra node the active turn's current stage lights (signal flow).
   const hotService = computed(() => {
     const t = snapshot.value?.active_turn
     if (!t) return ''
@@ -236,7 +233,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // sovereign-domain view
     companionUnits, unboundDevices,
     // infra rail
-    infraNodes, busSpine, busAux, hotService,
+    infraNodes, hotService,
     // header chrome
     clock, streamLabelText, systemStateText,
     // actions

@@ -26,7 +26,7 @@ const mc = useMissionControlStream({ mode })
 
 const {
   pipelineActive, systemStateText, experience, error, recentEvents,
-  busSpine, busAux, hotService, activeTurn, evidenceChains, permissionLedger,
+  infraNodes, hotService, activeTurn, evidenceChains, permissionLedger,
 } = mc
 
 const drawer = ref<DrawerTarget | null>(null)
@@ -96,7 +96,7 @@ function returnToConsole() { router.push({ name: 'owners' }) }
       <PermissionLedger v-if="permissionLedger.length" :items="permissionLedger" />
     </div>
 
-    <RuntimeBusRail :bus-spine="busSpine" :bus-aux="busAux" :hot-service="hotService" :pipeline-active="pipelineActive" @open-service="openSvc" />
+    <RuntimeBusRail :nodes="infraNodes" :hot-service="hotService" :pipeline-active="pipelineActive" @open-service="openSvc" />
     <TelemetryCrawl :events="recentEvents" :pipeline-active="pipelineActive" />
 
     <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openComp" @close="closeDrawer" />
