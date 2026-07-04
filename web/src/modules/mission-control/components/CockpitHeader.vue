@@ -10,7 +10,7 @@ defineEmits<{ (e: 'return-console'): void }>()
 const {
   owners, ownerId, ownerName, streamLabelText, systemStateText, traceId,
   pipelineActive, companions, onlineDevices, devices, deviceRatio, memory,
-  activeJobs, jobs, infraNodes, onlineServices, services,
+  activeJobs, jobs, infraNodes,
   clock, now, loading, replay, refresh,
 } = props.mc
 </script>
@@ -39,7 +39,7 @@ const {
       <div class="meter meter-svc">
         <span class="mg">▦</span>
         <span class="svc-leds"><i v-for="n in infraNodes" :key="n.id" class="led" :class="'st-' + n.state" :title="`${n.cn} · ${n.stateCn}`" /></span>
-        <small>底座 {{ onlineServices }}/{{ services.length }}</small>
+        <small>底座 {{ infraNodes.filter((n) => n.online).length }}/{{ infraNodes.length }}</small>
       </div>
     </div>
 
