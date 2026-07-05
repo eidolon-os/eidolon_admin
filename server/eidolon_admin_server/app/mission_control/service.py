@@ -698,17 +698,24 @@ def _dedupe_jobs(jobs: list[RuntimeJob]) -> list[RuntimeJob]:
 def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
     events = []
     for row in rows:
+        # Prefer the persisted classification columns (Phase 1); fall back to the
+        # legacy string heuristics only for rows written before they existed.
+        source = getattr(row, "source", None) or _event_source(row.event_type)
+        severity = getattr(row, "severity", None) or (
+            "warn" if "revoked" in row.event_type or "cancel" in row.event_type else "info"
+        )
         events.append(
             RuntimeEvent(
                 event_id=row.event_id,
-                ts=_as_utc(row.created_at) or datetime.now(UTC),
-                source=_event_source(row.event_type),
+                ts=_as_utc(getattr(row, "occurred_at", None) or row.created_at) or datetime.now(UTC),
+                source=source,
                 type=row.event_type,
+                severity=severity,
                 owner_id=row.owner_id,
+                companion_id=getattr(row, "companion_id", None),
                 device_id=row.subject_id if row.subject_type == "device" else None,
                 job_id=row.subject_id if row.subject_type == "job" else None,
                 turn_id=row.subject_id if row.subject_type == "turn" else None,
-                severity="warn" if "revoked" in row.event_type or "cancel" in row.event_type else "info",
                 summary=_event_summary(row.event_type, row.subject_type, row.subject_id),
                 payload=_safe_payload(row.payload_json or {}),
             )

@@ -216,12 +216,21 @@ class JobListResponse(BaseModel):
 class EventView(BaseModel):
     event_id: str
     owner_id: str
+    companion_id: str | None = None
     subject_type: str
     subject_id: str
     event_type: str
+    event_class: str = "audit"
+    source: str = "data"
+    severity: str = "info"
+    outcome: str = "success"
+    reason: str | None = None
     actor_type: str
     actor_id: str | None = None
+    trace_id: str | None = None
+    data_classification: str = "safe"
     payload_json: JsonDict = Field(default_factory=dict)
+    occurred_at: datetime | None = None
     created_at: datetime
 
 

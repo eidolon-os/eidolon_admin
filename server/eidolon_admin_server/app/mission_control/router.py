@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 
 from .replay import replay_events
 from .schemas import RuntimeEvent, RuntimeSnapshot
-from .service import build_snapshot, hub_event_to_runtime
+from .service import _as_utc, _events_from_data, build_snapshot, hub_event_to_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,6 @@ async def _runtime_event_stream(
     owner_id: str | None,
     mode: str | None = None,
 ) -> AsyncIterator[bytes]:
-    _ = owner_id  # Reserved for Phase 2 owner-scoped NATS subscriptions.
     if mode == "replay":
         # Recorded demo playback — never touches Hub; every frame is replay-origin.
         yield encode_sse_event("runtime_event", _startup_event(origin="replay").model_dump(mode="json"))
@@ -54,10 +53,75 @@ async def _runtime_event_stream(
             yield encode_sse_event("runtime_event", event.model_dump(mode="json"))
         return
     yield encode_sse_event("runtime_event", _startup_event().model_dump(mode="json"))
-    async for item in _hub_stream(request):
-        if await request.is_disconnected():
-            break
-        yield item
+
+    # Merge two live sources into one SSE: the proxied Hub device stream and a
+    # cursor tail of owner-scoped audit events from the shared DB (cross-process,
+    # no bus coupling — every service writes the same events table). Each source
+    # runs as a task feeding one queue; both are cancelled on disconnect.
+    queue: asyncio.Queue[bytes] = asyncio.Queue()
+
+    async def _pump_hub() -> None:
+        async for item in _hub_stream(request):
+            await queue.put(item)
+
+    async def _pump_events() -> None:
+        async for event in _events_tail(request, owner_id):
+            await queue.put(encode_sse_event("runtime_event", event.model_dump(mode="json")))
+
+    tasks = [asyncio.create_task(_pump_hub()), asyncio.create_task(_pump_events())]
+    try:
+        while not await request.is_disconnected():
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=5.0)
+            except TimeoutError:
+                yield encode_sse_comment("keepalive")
+                continue
+            yield item
+    finally:
+        for task in tasks:
+            task.cancel()
+
+
+async def _events_tail(
+    request: Request,
+    owner_id: str | None,
+    *,
+    interval: float = 1.5,
+    since: datetime | None = None,
+) -> AsyncIterator[RuntimeEvent]:
+    """Cursor tail of owner-scoped audit events → live RuntimeEvents.
+
+    Cross-process near-real-time without a bus: poll the shared events table by
+    created_at cursor. Starts at 'now' so only NEW events stream (the periodic
+    snapshot carries history and is the miss-backstop). Best-effort: a failed poll
+    never kills the stream; callers dedupe by event_id.
+    """
+    app = getattr(request, "app", None)
+    state = getattr(app, "state", None)
+    store = getattr(state, "data_store", None)
+    if store is None or not owner_id:
+        return
+    # aware-UTC throughout; SQLite reads created_at back naive, so normalize before
+    # comparing (SQLAlchemy strips tz when binding the query param, so SQL is fine).
+    cursor = _as_utc(since) if since is not None else datetime.now(UTC)
+    seen: set[str] = set()
+    while not await request.is_disconnected():
+        try:
+            rows = await store.events.list_for_owner_since(owner_id, after=cursor, limit=200)
+        except Exception:  # noqa: BLE001 - a bad poll must not kill the stream
+            rows = []
+        for row in rows:
+            if row.event_id in seen:
+                continue
+            seen.add(row.event_id)
+            row_ts = _as_utc(row.created_at)
+            if row_ts is not None and row_ts > cursor:
+                cursor = row_ts
+            for event in _events_from_data([row]):
+                yield event
+        if len(seen) > 2048:
+            seen.clear()  # cursor advanced past all yielded rows; a re-send is client-deduped
+        await asyncio.sleep(interval)
 
 
 async def _hub_stream(request: Request) -> AsyncIterator[bytes]:

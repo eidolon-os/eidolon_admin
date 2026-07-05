@@ -95,7 +95,7 @@ async def update_owner(owner_id: str, payload: OwnerUpdateRequest, request: Requ
         )
     except KeyError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "owner not found") from exc
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="owner",
@@ -115,7 +115,7 @@ async def archive_owner(owner_id: str, request: Request) -> OwnerView:
         row = await store.owners.archive(owner_id)
     except KeyError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "owner not found") from exc
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="owner",
@@ -421,7 +421,7 @@ async def claim_nearby_device(
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -430,7 +430,7 @@ async def claim_nearby_device(
         actor_type="admin",
         payload_json={"previous_owner_id": None},
     )
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -452,7 +452,7 @@ async def approve_owner_device(owner_id: str, device_id: str, request: Request) 
     await _require_owner(store, owner_id)
     device = await _require_owner_device(store, owner_id, device_id)
     row = await store.devices.approve(device.device_id, actor_id="admin")
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -481,7 +481,7 @@ async def revoke_owner_device(owner_id: str, device_id: str, request: Request) -
     await _require_owner(store, owner_id)
     device = await _require_owner_device(store, owner_id, device_id)
     row = await store.devices.revoke(device.device_id)
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -498,7 +498,7 @@ async def release_owner_device(owner_id: str, device_id: str, request: Request) 
     await _require_owner(store, owner_id)
     device = await _require_owner_device(store, owner_id, device_id)
     row = await store.devices.release(device.device_id)
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -529,7 +529,7 @@ async def update_owner_device(
         name=payload.name.strip() if isinstance(payload.name, str) and payload.name.strip() else None,
         metadata_json=metadata_json,
     )
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -557,7 +557,7 @@ async def bind_owner_device(
         row = await store.devices.bind_companion(device.device_id, companion_id=companion_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
@@ -622,7 +622,7 @@ async def cancel_owner_job(owner_id: str, job_id: str, request: Request) -> JobV
         status="cancelled",
         progress_json={**(job.progress_json or {}), "cancel_requested_by": "admin"},
     )
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="job",
@@ -644,7 +644,7 @@ async def retry_owner_job(owner_id: str, job_id: str, request: Request) -> JobVi
         progress_json={**(job.progress_json or {}), "retry_requested_by": "admin"},
         error_json={},
     )
-    await store.events.append(
+    await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="job",
@@ -864,11 +864,20 @@ def _event(row: Any) -> EventView:
     return EventView(
         event_id=row.event_id,
         owner_id=row.owner_id,
+        companion_id=getattr(row, "companion_id", None),
         subject_type=row.subject_type,
         subject_id=row.subject_id,
         event_type=row.event_type,
+        event_class=getattr(row, "event_class", "audit"),
+        source=getattr(row, "source", "data"),
+        severity=getattr(row, "severity", "info"),
+        outcome=getattr(row, "outcome", "success"),
+        reason=getattr(row, "reason", None),
         actor_type=row.actor_type,
         actor_id=row.actor_id,
+        trace_id=getattr(row, "trace_id", None),
+        data_classification=getattr(row, "data_classification", "safe"),
         payload_json=row.payload_json or {},
+        occurred_at=getattr(row, "occurred_at", None),
         created_at=row.created_at,
     )

@@ -11,7 +11,7 @@ from fastapi import FastAPI
 
 from eidolon_admin_server.app.mission_control import service as mission_control_service
 from eidolon_admin_server.app.mission_control import router as mission_control_router
-from eidolon_admin_server.app.mission_control.router import _runtime_event_stream
+from eidolon_admin_server.app.mission_control.router import _events_tail, _runtime_event_stream
 
 
 @pytest.fixture
@@ -165,6 +165,59 @@ async def test_events_stream_emits_startup_frame() -> None:
     assert first.startswith("event: runtime_event\n")
     assert "mission_control.connected" in first
     assert '"event_origin"' in first and '"live"' in first
+
+
+async def test_events_tail_streams_new_db_events(data_store: DataStore) -> None:
+    """P2d — the cursor tail turns owner-scoped audit rows into live RuntimeEvents."""
+    await data_store.owner_service.create_owner(
+        owner_id="owner-tail-x", display_name="Tail", actor_type="test"
+    )
+    await data_store.events.record_event(
+        event_type="owner.updated",
+        owner_id="owner-tail-x",
+        subject_type="owner",
+        subject_id="owner-tail-x",
+        actor_type="admin",
+    )
+    await data_store.events.record_event(
+        event_type="device.revoked",
+        owner_id="owner-tail-x",
+        subject_type="device",
+        subject_id="d1",
+        actor_type="admin",
+    )
+
+    calls = {"n": 0}
+
+    async def _is_disconnected() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1  # False on the first loop check, True after one poll
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(data_store=data_store)),
+        is_disconnected=_is_disconnected,
+    )
+    since = datetime(2020, 1, 1, tzinfo=UTC)
+    events = [
+        event
+        async for event in _events_tail(request, "owner-tail-x", interval=0.0, since=since)  # type: ignore[arg-type]
+    ]
+
+    by_type = {event.type: event for event in events}
+    assert {"owner.created", "owner.updated", "device.revoked"} <= set(by_type)
+    # classification columns flow onto the live event (not string-guessed).
+    assert by_type["device.revoked"].source == "admin"
+    assert by_type["device.revoked"].severity == "warn"
+    assert by_type["device.revoked"].device_id == "d1"
+
+
+async def test_events_tail_noop_without_owner_or_store() -> None:
+    class _Req:
+        async def is_disconnected(self) -> bool:
+            return False
+
+    # No owner → immediate return (no infinite loop, no store access).
+    assert [e async for e in _events_tail(_Req(), None, interval=0.0)] == []  # type: ignore[arg-type]
 
 
 async def test_events_stream_replay_is_replay_origin() -> None:
