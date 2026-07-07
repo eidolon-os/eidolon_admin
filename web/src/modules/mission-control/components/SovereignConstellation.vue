@@ -3,7 +3,7 @@
 // companion planets on an orbit, each with three asset moons (body / memory /
 // activity). Geometry + orbital motion are presentational and live here; the
 // data comes from the composable's `companionUnits`.
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
 import { currentStageKey, directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
 import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
@@ -17,7 +17,21 @@ defineEmits<{
   (e: 'open-moon', s: Sat): void
 }>()
 
-const { companionUnits, unboundDevices, ownerName, activePulses } = props.mc
+const { companionUnits, unboundDevices, ownerName, activePulses, pipelineActive } = props.mc
+
+// D5 ignite/settle: when a turn takes the pipeline idle→live, the sovereign core
+// flares once ("点火"). Wire hot/cold + node glows ease via CSS transition
+// ("收束") rather than snapping on each snapshot swap.
+const igniting = ref(false)
+let igniteTimer = 0
+watch(pipelineActive, (live, was) => {
+  if (live && !was) {
+    igniting.value = true
+    clearTimeout(igniteTimer)
+    igniteTimer = window.setTimeout(() => (igniting.value = false), 900)
+  }
+})
+onBeforeUnmount(() => clearTimeout(igniteTimer))
 
 // ── geometry ──────────────────────────────────────────────────────────
 const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, PI = Math.PI
@@ -222,7 +236,7 @@ function deviceOnline(d: RuntimeDevice) {
       <circle :cx="CX" :cy="CY" r="150" fill="url(#sun)" opacity="0.5" />
     </svg>
 
-    <div class="gx-owner" :style="ptStyle(CX, CY)" title="点击查看主人全景" @click="$emit('open-owner')">
+    <div class="gx-owner" :class="{ igniting }" :style="ptStyle(CX, CY)" title="点击查看主人全景" @click="$emit('open-owner')">
       <span class="o-kick">OWNER · 主人</span>
       <strong>{{ ownerName }}</strong>
       <em class="o-sub">{{ companionUnits.length }} 位伙伴</em>
@@ -308,7 +322,7 @@ function deviceOnline(d: RuntimeDevice) {
 .galaxy { position: relative; flex: 1 1 auto; width: 100%; max-width: 1480px; aspect-ratio: 1000 / 700; max-height: 72vh; margin: 0 auto; }
 .gx-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .wire { fill: none; }
-.wire.comp { stroke: rgba(0, 234, 255, 0.4); stroke-width: 1.4; }
+.wire.comp { stroke: rgba(0, 234, 255, 0.4); stroke-width: 1.4; transition: stroke var(--dur-base) var(--ease-out), stroke-width var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
 .wire.comp.hot { stroke: var(--cy-cyan); stroke-width: 2.2; filter: drop-shadow(0 0 5px var(--cy-cyan)); }
 .wire.sat { stroke: rgba(0, 234, 255, 0.24); stroke-width: 1; stroke-dasharray: 3 4; }
 .wire.sat.dim { stroke: rgba(109, 106, 153, 0.3); }
@@ -326,6 +340,15 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-owner, .gx-comp, .gx-sat, .gx-unbound { position: absolute; transform: translate(-50%, -50%); display: grid; place-content: center; text-align: center; }
 .gx-owner, .gx-comp, .gx-sat { cursor: pointer; }
 .gx-owner { width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255, 46, 136, 0.6); background: radial-gradient(circle at 42% 34%, rgba(255, 255, 255, 0.32), rgba(164, 75, 255, 0.22) 40%, rgba(10, 6, 24, 0.92) 70%); box-shadow: 0 0 14px rgba(255, 255, 255, 0.42), 0 0 44px rgba(255, 46, 136, 0.5), 0 0 92px rgba(255, 46, 136, 0.28), 0 0 132px rgba(164, 75, 255, 0.24), inset 0 0 42px rgba(164, 75, 255, 0.22); animation: sun 5s ease-in-out infinite; z-index: 3; }
+/* D5 "点火": a one-shot flare (scale + brightness) when a turn brings the
+   pipeline live. Rides alongside the steady `sun` breathing; ends on scale(1)
+   so it settles back with no jump. Disabled under reduced-motion via `.gx-owner`. */
+.gx-owner.igniting { animation: sun 5s ease-in-out infinite, ignite 0.9s var(--ease-out); }
+@keyframes ignite {
+  0% { transform: translate(-50%, -50%) scale(1); filter: brightness(1); }
+  22% { transform: translate(-50%, -50%) scale(1.09); filter: brightness(1.75); }
+  100% { transform: translate(-50%, -50%) scale(1); filter: brightness(1); }
+}
 .o-kick { font: 700 8.5px/1 var(--cy-mono); letter-spacing: 0.14em; color: var(--cy-sun); }
 .gx-owner strong { display: block; max-width: 120px; margin: 5px auto 6px; font: 800 20px/1 var(--cy-sans); color: #fff; text-shadow: 0 0 16px rgba(255, 46, 136, 0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .o-sub { display: block; margin-top: 4px; font: 600 9px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; }
