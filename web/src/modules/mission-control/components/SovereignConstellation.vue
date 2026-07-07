@@ -5,7 +5,7 @@
 // data comes from the composable's `companionUnits`.
 import { computed } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
-import { directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, type FlowLeg, type PulseTone } from '../flow'
+import { currentStageKey, directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
 import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -65,7 +65,10 @@ function satOf(c: CompanionUnit, kind: SatKind): Omit<Sat, 'c' | 'x' | 'y' | 'li
 const galaxy = computed(() => {
   const comps = companionUnits.value
   const N = comps.length || 1
-  const start = N === 1 ? 0 : -90 + 180 / N
+  // Diagonal distribution (rotated −45°): small N never collapses onto the flat
+  // horizontal axis, so companions use the vertical extent instead of leaving a
+  // void above and below. N=2 → upper-right + lower-left; N=4 → an X.
+  const start = -45
   // Static placement: planets and moons sit at fixed positions so runtime state
   // is glanceable and every node is instantly clickable (no orbital chase).
   const nodes: GalaxyNode[] = comps.map((c, i) => {
@@ -85,9 +88,11 @@ const galaxy = computed(() => {
 // with an active turn circulates; its body / memory legs light per device
 // presence + recall hits. Reuses the same `.pulse` + <animateMotion> mechanism
 // as the sun→planet line — no new animation machinery, no new deps.
-const flows = computed(() =>
-  galaxy.value.nodes
-    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.turn))
+const flows = computed(() => {
+  const nodes = galaxy.value.nodes
+  const activeCount = nodes.filter((n) => !!n.c.turn).length
+  return nodes
+    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.turn, { activeCount }))
     .map((n) => {
       const body = n.sats.find((s) => s.kind === 'body')
       const mem = n.sats.find((s) => s.kind === 'mem')
@@ -95,8 +100,8 @@ const flows = computed(() =>
       const path = body && mem ? flowPath({ x: n.x, y: n.y }, body, mem, legs) : ''
       return { id: n.c.id, path, legs, dur: flowDur(path), stagger: flowStagger(path) }
     })
-    .filter((f) => f.path),
-)
+    .filter((f) => f.path)
+})
 // Which sat legs a flow lights, keyed `id:kind` → brightness, so the underlying
 // leg wire can glow as an energized conduit (memory leg scales with hits).
 const flowLegBright = computed(() => {
@@ -153,6 +158,22 @@ const eventPulses = computed<EventPulseVM[]>(() =>
     })
     .filter((p): p is EventPulseVM => p !== null),
 )
+
+// §one signal: light the moon matching each active companion's current stage, so
+// the constellation points at the same moment as the bus wavefront (hot service)
+// and the trace playhead. Keyed `id:kind`.
+const stageHere = computed(() => {
+  const m = new Set<string>()
+  for (const n of galaxy.value.nodes) {
+    if (!n.c.turn) continue
+    const moon = stageMoon(currentStageKey(n.c.turn))
+    if (moon) m.add(`${n.c.id}:${moon}`)
+  }
+  return m
+})
+function isStageHere(s: Sat): boolean {
+  return stageHere.value.has(`${s.c.id}:${s.kind}`)
+}
 
 function deviceOnline(d: RuntimeDevice) {
   return d.online
@@ -229,7 +250,7 @@ function deviceOnline(d: RuntimeDevice) {
 
     <el-popover v-for="s in galaxy.sats" :key="'s' + s.c.id + s.kind" placement="top" :width="290" trigger="hover" popper-class="cy-pop" :show-after="60">
       <template #reference>
-        <div class="gx-sat" :class="[`a-${s.accent}`, `t-${s.tone}`, { empty: s.empty, 'focused-sat': s.c.id === focusedId }]" :style="ptStyle(s.x, s.y)" @click="$emit('open-moon', s)">
+        <div class="gx-sat" :class="[`a-${s.accent}`, `t-${s.tone}`, { empty: s.empty, 'focused-sat': s.c.id === focusedId, 'stage-here': isStageHere(s) }]" :style="ptStyle(s.x, s.y)" @click="$emit('open-moon', s)">
           <i class="s-glyph">{{ s.glyph }}</i>
           <span class="s-label">{{ s.label }}</span>
           <b class="s-val">{{ s.value }}</b>
@@ -330,6 +351,9 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-sat.a-cyan { color: var(--cy-cyan); }
 .gx-sat.t-off { border-style: dashed; border-color: var(--cy-txt-dim); color: var(--cy-txt-dim); opacity: 0.62; }
 .gx-sat.t-live { animation: nodepulse var(--dur-breath) ease-in-out infinite; }
+/* §one signal: the moon matching the current stage pulses + rings, tracking the
+   signal to the body / memory / activity in step with the bus wavefront + trace. */
+.gx-sat.stage-here { animation: nodepulse var(--dur-breath) ease-in-out infinite; box-shadow: 0 0 22px currentColor; border-width: 1.5px; }
 .s-glyph { font-size: 15px; font-style: normal; line-height: 1; color: currentColor; text-shadow: 0 0 8px currentColor; }
 .s-label { display: block; margin: 3px 0 2px; font: 700 8.5px/1 var(--cy-mono); color: var(--cy-txt-dim); letter-spacing: 0.04em; }
 .s-val { display: block; max-width: 68px; margin: 0 auto; font: 800 10px/1.05 var(--cy-sans); color: #eaf6ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -351,7 +375,7 @@ function deviceOnline(d: RuntimeDevice) {
 @keyframes sun { 0%, 100% { box-shadow: 0 0 50px rgba(255, 46, 136, 0.35), inset 0 0 36px rgba(164, 75, 255, 0.18); } 50% { box-shadow: 0 0 76px rgba(255, 46, 136, 0.5), inset 0 0 44px rgba(164, 75, 255, 0.26); } }
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 16px currentColor; } 50% { box-shadow: 0 0 30px currentColor; } }
 @media (prefers-reduced-motion: reduce) {
-  .gx-owner, .gx-comp.active, .gx-sat.t-live, .orbit-ring { animation: none !important; }
+  .gx-owner, .gx-comp.active, .gx-sat.t-live, .gx-sat.stage-here, .orbit-ring { animation: none !important; }
   /* Hide the travelling dots entirely (not just their motion) so they don't
      clump at the origin. Lit flow legs stay brightened — a static, motion-free
      signal of which conduits are active. */

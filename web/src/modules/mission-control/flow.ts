@@ -61,18 +61,38 @@ export function spineReached(hot: string, edgeTo: string): boolean {
   return hi < 0 || ti < 0 ? true : ti <= hi
 }
 
+/** Which of a companion's three moons the current stage lights: input arrives at
+ * the body, recall/write touch memory, the agent turn (+ its tools) is the
+ * activity itself. '' when the stage maps to no moon. Same stage vocabulary as
+ * STAGE_SVC, so constellation moon, bus wavefront and trace playhead agree. */
+export type StageMoon = 'body' | 'mem' | 'act'
+const STAGE_MOON: Record<string, StageMoon> = {
+  input: 'body', memory_recall: 'mem', agent_turn: 'act', tools: 'act', memory_write: 'mem',
+}
+export function stageMoon(stageKey: string): StageMoon | '' {
+  return STAGE_MOON[stageKey] || ''
+}
+
+/** Active-companion count at/below which unfocused companions still circulate. */
+export const AUTO_FLOW_MAX = 2
+
 /**
- * Whether a companion should show internal circulation. Tier 1 is deliberately
- * narrow: ONLY the focused companion flows, and only while it has an active
- * turn. Active-but-unfocused companions keep the lighter `.gx-comp.active`
- * node pulse — no screen-wide traffic (density restraint, A3.3).
+ * Whether a companion should show internal circulation. The focused companion
+ * always circulates. Adaptive (F2): when few companions are active at once,
+ * unfocused active companions circulate too, so the default god's-eye view looks
+ * alive without a click; denser scenes fall back to the lighter node pulse
+ * (density restraint, A3.3). Never circulates without an active turn.
  */
 export function shouldFlow(
   companionId: string,
   focusedId: string | undefined,
   hasTurn: boolean,
+  auto?: { activeCount: number; threshold?: number },
 ): boolean {
-  return !!focusedId && companionId === focusedId && hasTurn
+  if (!hasTurn) return false
+  if (focusedId && companionId === focusedId) return true
+  if (auto && auto.activeCount <= (auto.threshold ?? AUTO_FLOW_MAX)) return true
+  return false
 }
 
 /** Recall hits at which the memory leg reaches full brightness. */

@@ -29,6 +29,7 @@ import {
   pulseThrottled,
   shouldFlow,
   spineReached,
+  stageMoon,
   type FlowLegs,
   type Pt,
 } from '../src/modules/mission-control/flow'
@@ -76,6 +77,17 @@ describe('shouldFlow', () => {
   })
   it('does not flow the focused companion when it has no active turn', () => {
     expect(shouldFlow('c1', 'c1', false)).toBe(false)
+  })
+  it('adaptively flows an unfocused active companion when few are active', () => {
+    expect(shouldFlow('c1', '', true, { activeCount: 1 })).toBe(true)
+    expect(shouldFlow('c1', '', true, { activeCount: 2 })).toBe(true)
+  })
+  it('stops adaptive flow once the active count exceeds the threshold', () => {
+    expect(shouldFlow('c1', '', true, { activeCount: 3 })).toBe(false)
+    expect(shouldFlow('c1', '', true, { activeCount: 5, threshold: 4 })).toBe(false)
+  })
+  it('never adaptively flows an inactive companion', () => {
+    expect(shouldFlow('c1', '', false, { activeCount: 1 })).toBe(false)
   })
 })
 
@@ -313,5 +325,24 @@ describe('spineReached', () => {
   })
   it('flows the whole spine for an off-spine hot service rather than going dark', () => {
     expect(spineReached('mementos', 'agent')).toBe(true)
+  })
+})
+
+// ── stageMoon: constellation moon for the current stage ────────────────────
+describe('stageMoon', () => {
+  it('maps input to the body moon', () => {
+    expect(stageMoon('input')).toBe('body')
+  })
+  it('maps recall and write to the memory moon', () => {
+    expect(stageMoon('memory_recall')).toBe('mem')
+    expect(stageMoon('memory_write')).toBe('mem')
+  })
+  it('maps the agent turn and its tools to the activity moon', () => {
+    expect(stageMoon('agent_turn')).toBe('act')
+    expect(stageMoon('tools')).toBe('act')
+  })
+  it('is empty for an unknown or empty stage', () => {
+    expect(stageMoon('')).toBe('')
+    expect(stageMoon('nonsense')).toBe('')
   })
 })
