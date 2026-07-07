@@ -25,6 +25,7 @@ import {
   isDemoFlowTarget,
   loopSegments,
   PULSE_MIN_GAP_MS,
+  pulseInScope,
   pulseThrottled,
   shouldFlow,
   spineReached,
@@ -243,6 +244,22 @@ describe('eventTone', () => {
   })
   it("'bad' wins over 'warn' when both signals disagree", () => {
     expect(eventTone('warn', 'failure')).toBe('bad')
+  })
+})
+
+describe('pulseInScope', () => {
+  it("'focused' scope emits only for the focused companion", () => {
+    expect(pulseInScope('c1', 'c1', 'focused')).toBe(true)
+    expect(pulseInScope('c2', 'c1', 'focused')).toBe(false)
+  })
+  it("'focused' scope emits nothing when no companion is focused", () => {
+    expect(pulseInScope('c1', '', 'focused')).toBe(false)
+    expect(pulseInScope('c1', undefined, 'focused')).toBe(false)
+  })
+  it("'all' scope emits for every companion (even unfocused / no focus)", () => {
+    expect(pulseInScope('c2', 'c1', 'all')).toBe(true)
+    expect(pulseInScope('c9', '', 'all')).toBe(true)
+    expect(pulseInScope('c9', undefined, 'all')).toBe(true)
   })
 })
 

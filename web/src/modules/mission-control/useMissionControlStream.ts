@@ -21,8 +21,10 @@ import {
   eventTone,
   EVENT_PULSE_MS,
   isDemoFlowTarget,
+  pulseInScope,
   pulseThrottled,
   type FlowLeg,
+  type PulseScope,
   type PulseTone,
 } from './flow'
 import { INFRA, SVC_GLYPH, STAGE_SVC } from './constants'
@@ -43,10 +45,14 @@ export interface MissionControlMode {
   demoFlow?: string
   /**
    * Tier-2 directed pulses: overlay one-shot darts from the live event stream on
-   * top of the Tier-1 loop, scoped to the focused companion. On by default; pass
-   * false (via `?flow2=off`) to disable.
+   * top of the Tier-1 loop. On by default; pass false (via `?flow2=off`) to disable.
    */
   flowEvents?: boolean
+  /**
+   * Which companions' events emit darts: 'focused' (default, restrained) or
+   * 'all' (`?flow2=all`, every companion).
+   */
+  flowEventsScope?: PulseScope
 }
 
 /** A transient Tier-2 pulse: a companion leg lit briefly by one event. */
@@ -65,6 +71,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Tier-2 directed pulses: on by default (focused companion only); `?flow2=off`
   // opts it out. No longer dev-gated — it only reacts to real events.
   const flowEventsEnabled = opts.flowEvents ?? true
+  const pulseScope: PulseScope = opts.flowEventsScope ?? 'focused'
   const owners = ref<OwnerView[]>([])
   const ownerId = ref('')
   // A secondary selection layered on the owner scope: when set, companion-scoped
@@ -180,8 +187,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   )
 
   // Tier-2: translate the newest live event into a one-shot directed pulse.
-  // Scoped to the focused companion to match Tier-1's restraint (no screen-wide
-  // traffic). Dedup by event_id so the same head event never fires twice;
+  // Scope defaults to the focused companion (Tier-1 restraint, no screen-wide
+  // traffic); `?flow2=all` broadens it. Dedup by event_id so the same head event
+  // never fires twice;
   // per-leg throttle (§9 flood control) — except 'bad' tones, which always show
   // so failures are never swallowed; self-expire after the dart crosses.
   const pulseTimers = new Set<number>()
@@ -194,7 +202,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       if (!e || e.event_id === lastPulseEventId) return
       lastPulseEventId = e.event_id
       const cid = e.companion_id
-      if (!cid || !focusedCompanionId.value || cid !== focusedCompanionId.value) return
+      if (!cid || !pulseInScope(cid, focusedCompanionId.value, pulseScope)) return
       const p = eventToPulse(e.source)
       if (!p) return
       const tone = eventTone(e.severity, e.outcome)

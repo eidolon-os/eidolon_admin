@@ -24,10 +24,11 @@ const mode = route.query.mode === 'replay' ? 'replay' : 'live'
 // a synthetic active turn so the companion circulation effect is visible without
 // a live conversation. The composable ignores it outside dev builds.
 const demoFlow = 'demoFlow' in route.query ? String(route.query.demoFlow ?? '') : undefined
-// Tier-2 directed pulses are on by default (focused companion only); `?flow2=off`
-// disables them. undefined lets the composable apply its default (on).
+// Tier-2 directed pulses: on by default (focused companion). `?flow2=off` disables;
+// `?flow2=all` broadens to every companion. undefined = composable default.
 const flowEvents = route.query.flow2 === 'off' ? false : undefined
-const mc = useMissionControlStream({ mode, demoFlow, flowEvents })
+const flowEventsScope = route.query.flow2 === 'all' ? 'all' : undefined
+const mc = useMissionControlStream({ mode, demoFlow, flowEvents, flowEventsScope })
 
 const {
   pipelineActive, error,

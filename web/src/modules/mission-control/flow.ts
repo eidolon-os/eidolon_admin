@@ -184,12 +184,13 @@ export function isDemoFlowTarget(companionId: string, index: number, demoFlow: s
   return demoFlow ? companionId === demoFlow : index === 0
 }
 
-// ── Tier 2: event-driven directed pulses (§11, P4 skeleton) ────────────────
+// ── Tier 2: event-driven directed pulses (§11) ─────────────────────────────
 // Where Tier 1 is a state-driven ambient loop, Tier 2 overlays discrete,
 // one-shot darts fired by real activity events off the SSE stream: each event
 // maps by `source` to a leg + direction. Baseline loop = 底色; these = 定向脉冲.
 // Pure geometry/mapping here; the transient queue + render live in the
-// composable/component and are gated to dev behind `?flow2`.
+// composable/component. On by default for the focused companion (`?flow2=off`
+// disables, `?flow2=all` broadens to every companion).
 
 /** A leg the circuit can light. (`agent` has no leg — it rides the body return.) */
 export type FlowLeg = 'body' | 'mem'
@@ -261,4 +262,17 @@ export const PULSE_MIN_GAP_MS = EVENT_PULSE_MS
  */
 export function pulseThrottled(lastMs: number, nowMs: number, minGapMs: number = PULSE_MIN_GAP_MS): boolean {
   return nowMs - lastMs < minGapMs
+}
+
+/** Which companions' events emit darts. */
+export type PulseScope = 'focused' | 'all'
+
+/**
+ * Whether an event pulse for `companionId` is in scope. Default 'focused' keeps
+ * Tier-2 restrained to the focused companion (matches Tier-1, no screen-wide
+ * traffic); 'all' (`?flow2=all`) broadens to every companion.
+ */
+export function pulseInScope(companionId: string, focusedId: string | undefined, scope: PulseScope): boolean {
+  if (scope === 'all') return true
+  return !!focusedId && companionId === focusedId
 }
