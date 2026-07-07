@@ -92,7 +92,7 @@ const flows = computed(() => {
   const nodes = galaxy.value.nodes
   const activeCount = nodes.filter((n) => !!n.c.turn).length
   return nodes
-    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.turn, { activeCount }))
+    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.turn, activeCount))
     .map((n) => {
       const body = n.sats.find((s) => s.kind === 'body')
       const mem = n.sats.find((s) => s.kind === 'mem')
@@ -325,7 +325,7 @@ function deviceOnline(d: RuntimeDevice) {
 
 .gx-owner, .gx-comp, .gx-sat, .gx-unbound { position: absolute; transform: translate(-50%, -50%); display: grid; place-content: center; text-align: center; }
 .gx-owner, .gx-comp, .gx-sat { cursor: pointer; }
-.gx-owner { width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255, 46, 136, 0.6); background: radial-gradient(circle at 42% 34%, rgba(255, 255, 255, 0.32), rgba(164, 75, 255, 0.22) 40%, rgba(10, 6, 24, 0.92) 70%); box-shadow: 0 0 60px rgba(255, 46, 136, 0.4), inset 0 0 40px rgba(164, 75, 255, 0.2); animation: sun 5s ease-in-out infinite; z-index: 3; }
+.gx-owner { width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255, 46, 136, 0.6); background: radial-gradient(circle at 42% 34%, rgba(255, 255, 255, 0.32), rgba(164, 75, 255, 0.22) 40%, rgba(10, 6, 24, 0.92) 70%); box-shadow: 0 0 14px rgba(255, 255, 255, 0.42), 0 0 44px rgba(255, 46, 136, 0.5), 0 0 92px rgba(255, 46, 136, 0.28), 0 0 132px rgba(164, 75, 255, 0.24), inset 0 0 42px rgba(164, 75, 255, 0.22); animation: sun 5s ease-in-out infinite; z-index: 3; }
 .o-kick { font: 700 8.5px/1 var(--cy-mono); letter-spacing: 0.14em; color: var(--cy-sun); }
 .gx-owner strong { display: block; max-width: 120px; margin: 5px auto 6px; font: 800 20px/1 var(--cy-sans); color: #fff; text-shadow: 0 0 16px rgba(255, 46, 136, 0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .o-sub { display: block; margin-top: 4px; font: 600 9px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; }
@@ -372,7 +372,10 @@ function deviceOnline(d: RuntimeDevice) {
 .galaxy.has-focus .wire.comp:not(.hot) { stroke-opacity: 0.4; }
 .gx-comp.focused { transform: translate(-50%, -50%) scale(1.14); box-shadow: 0 0 46px rgba(0, 234, 255, 0.6); border-width: 2px; z-index: 5; }
 .gx-comp.focused:hover { transform: translate(-50%, -50%) scale(1.16); }
-@keyframes sun { 0%, 100% { box-shadow: 0 0 50px rgba(255, 46, 136, 0.35), inset 0 0 36px rgba(164, 75, 255, 0.18); } 50% { box-shadow: 0 0 76px rgba(255, 46, 136, 0.5), inset 0 0 44px rgba(164, 75, 255, 0.26); } }
+@keyframes sun {
+  0%, 100% { box-shadow: 0 0 13px rgba(255, 255, 255, 0.38), 0 0 40px rgba(255, 46, 136, 0.44), 0 0 84px rgba(255, 46, 136, 0.26), 0 0 120px rgba(164, 75, 255, 0.22), inset 0 0 40px rgba(164, 75, 255, 0.2); }
+  50% { box-shadow: 0 0 18px rgba(255, 255, 255, 0.55), 0 0 56px rgba(255, 46, 136, 0.6), 0 0 110px rgba(255, 46, 136, 0.34), 0 0 152px rgba(164, 75, 255, 0.3), inset 0 0 48px rgba(164, 75, 255, 0.28); }
+}
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 16px currentColor; } 50% { box-shadow: 0 0 30px currentColor; } }
 @media (prefers-reduced-motion: reduce) {
   .gx-owner, .gx-comp.active, .gx-sat.t-live, .gx-sat.stage-here, .orbit-ring { animation: none !important; }

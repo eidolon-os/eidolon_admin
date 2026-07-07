@@ -78,21 +78,20 @@ export const AUTO_FLOW_MAX = 2
 
 /**
  * Whether a companion should show internal circulation. The focused companion
- * always circulates. Adaptive (F2): when few companions are active at once,
- * unfocused active companions circulate too, so the default god's-eye view looks
- * alive without a click; denser scenes fall back to the lighter node pulse
- * (density restraint, A3.3). Never circulates without an active turn.
+ * always circulates; otherwise an active companion circulates while few are
+ * active at once (<= AUTO_FLOW_MAX), so the default god's-eye view looks alive
+ * without a click and denser scenes fall back to the lighter node pulse (density
+ * restraint, A3.3). Never circulates without an active turn.
  */
 export function shouldFlow(
   companionId: string,
   focusedId: string | undefined,
   hasTurn: boolean,
-  auto?: { activeCount: number; threshold?: number },
+  activeCount: number,
 ): boolean {
   if (!hasTurn) return false
   if (focusedId && companionId === focusedId) return true
-  if (auto && auto.activeCount <= (auto.threshold ?? AUTO_FLOW_MAX)) return true
-  return false
+  return activeCount <= AUTO_FLOW_MAX
 }
 
 /** Recall hits at which the memory leg reaches full brightness. */

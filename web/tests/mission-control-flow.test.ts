@@ -64,30 +64,22 @@ function companion(over: Partial<CompanionUnit> = {}): CompanionUnit {
 
 // ── shouldFlow: which companions circulate ────────────────────────────────
 describe('shouldFlow', () => {
-  it('flows only the focused companion with an active turn', () => {
-    expect(shouldFlow('c1', 'c1', true)).toBe(true)
+  it('flows the focused companion with an active turn, at any active count', () => {
+    expect(shouldFlow('c1', 'c1', true, 9)).toBe(true)
   })
-  it('does not flow when no companion is focused', () => {
-    expect(shouldFlow('c1', '', true)).toBe(false)
-    expect(shouldFlow('c1', undefined, true)).toBe(false)
+  it('never flows without an active turn', () => {
+    expect(shouldFlow('c1', 'c1', false, 1)).toBe(false)
+    expect(shouldFlow('c1', '', false, 1)).toBe(false)
   })
-  it('does not flow a non-focused companion even if active', () => {
-    // active-but-unfocused keeps the lighter node pulse, not screen-wide traffic
-    expect(shouldFlow('c2', 'c1', true)).toBe(false)
+  it('flows an unfocused active companion while few are active', () => {
+    expect(shouldFlow('c1', '', true, 1)).toBe(true)
+    expect(shouldFlow('c1', '', true, 2)).toBe(true)
+    expect(shouldFlow('c1', undefined, true, 2)).toBe(true)
   })
-  it('does not flow the focused companion when it has no active turn', () => {
-    expect(shouldFlow('c1', 'c1', false)).toBe(false)
-  })
-  it('adaptively flows an unfocused active companion when few are active', () => {
-    expect(shouldFlow('c1', '', true, { activeCount: 1 })).toBe(true)
-    expect(shouldFlow('c1', '', true, { activeCount: 2 })).toBe(true)
-  })
-  it('stops adaptive flow once the active count exceeds the threshold', () => {
-    expect(shouldFlow('c1', '', true, { activeCount: 3 })).toBe(false)
-    expect(shouldFlow('c1', '', true, { activeCount: 5, threshold: 4 })).toBe(false)
-  })
-  it('never adaptively flows an inactive companion', () => {
-    expect(shouldFlow('c1', '', false, { activeCount: 1 })).toBe(false)
+  it('drops unfocused flow once the active count exceeds AUTO_FLOW_MAX', () => {
+    // a non-focused companion in a busy scene keeps only the lighter node pulse
+    expect(shouldFlow('c2', 'c1', true, 3)).toBe(false)
+    expect(shouldFlow('c1', '', true, 3)).toBe(false)
   })
 })
 
