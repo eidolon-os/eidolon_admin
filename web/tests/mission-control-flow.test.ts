@@ -11,6 +11,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  currentStageKey,
   demoFlowDevice,
   demoFlowTurn,
   directedLegPath,
@@ -26,12 +27,13 @@ import {
   PULSE_MIN_GAP_MS,
   pulseThrottled,
   shouldFlow,
+  spineReached,
   type FlowLegs,
   type Pt,
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
-import type { RuntimeDevice, RuntimeTurn } from '../src/api/missionControl'
+import type { RuntimeDevice, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
 
 // ── fixtures ────────────────────────────────────────────────────────────
 function device(over: Partial<RuntimeDevice> = {}): RuntimeDevice {
@@ -254,5 +256,45 @@ describe('pulseThrottled', () => {
   })
   it('never throttles the first pulse on a leg (lastMs 0)', () => {
     expect(pulseThrottled(0, 1_000_000)).toBe(false)
+  })
+})
+
+// ── currentStageKey: the one shared playhead ───────────────────────────────
+describe('currentStageKey', () => {
+  const stage = (key: string, status: string): RuntimeTurnStage => ({ key, label: key, status, latency_ms: null })
+  it('is empty for a null/undefined turn or one with no stages', () => {
+    expect(currentStageKey(null)).toBe('')
+    expect(currentStageKey(undefined)).toBe('')
+    expect(currentStageKey(turn({ stages: [] }))).toBe('')
+  })
+  it('points at the running/pending stage when one is in flight', () => {
+    expect(currentStageKey(turn({ stages: [stage('input', 'done'), stage('agent_turn', 'running')] }))).toBe('agent_turn')
+  })
+  it('falls back to the last completed stage when nothing runs', () => {
+    expect(currentStageKey(turn({ stages: [stage('input', 'done'), stage('memory_recall', 'done')] }))).toBe('memory_recall')
+  })
+  it('prefers a running stage over an already-completed later one', () => {
+    expect(currentStageKey(turn({ stages: [stage('input', 'running'), stage('memory_recall', 'done')] }))).toBe('input')
+  })
+})
+
+// ── spineReached: the bus wavefront ────────────────────────────────────────
+describe('spineReached', () => {
+  it('flows the whole spine when there is no current stage (graceful default)', () => {
+    expect(spineReached('', 'memory')).toBe(true)
+    expect(spineReached('', 'livekit')).toBe(true)
+  })
+  it('flows only edges up to and including the current service', () => {
+    // hot = agent → hub/livekit/channel/agent reached; memory (later) not yet
+    expect(spineReached('agent', 'channel')).toBe(true)
+    expect(spineReached('agent', 'agent')).toBe(true)
+    expect(spineReached('agent', 'memory')).toBe(false)
+  })
+  it('reaches the whole spine once memory (the tail) is current', () => {
+    expect(spineReached('memory', 'memory')).toBe(true)
+    expect(spineReached('memory', 'livekit')).toBe(true)
+  })
+  it('flows the whole spine for an off-spine hot service rather than going dark', () => {
+    expect(spineReached('mementos', 'agent')).toBe(true)
   })
 })

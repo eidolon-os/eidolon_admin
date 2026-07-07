@@ -14,6 +14,7 @@ import {
 } from '@/api/missionControl'
 import { useEventStream } from '@/components/useEventStream'
 import {
+  currentStageKey,
   demoFlowDevice,
   demoFlowTurn,
   eventToPulse,
@@ -282,12 +283,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   )
   // Which infra node the active turn's current stage lights (signal flow).
   const hotService = computed(() => {
-    const t = snapshot.value?.active_turn
-    if (!t) return ''
-    const stages = t.stages || []
-    const running = stages.find((s) => ['running', 'pending', 'active'].includes(String(s.status || '').toLowerCase()))
-    const last = [...stages].reverse().find((s) => ['done', 'ok', 'succeeded'].includes(String(s.status || '').toLowerCase()))
-    const key = (running || last)?.key
+    const key = currentStageKey(snapshot.value?.active_turn)
     return key ? STAGE_SVC[key] || '' : ''
   })
 

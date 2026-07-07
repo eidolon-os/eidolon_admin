@@ -108,9 +108,9 @@ function returnToConsole() { router.push({ name: 'owners' }) }
   isolation: isolate;
 }
 .cy-orbit { position: absolute; inset: -24px; z-index: -4; pointer-events: none; transform: translate(calc(var(--px, 0) * -16px), calc(var(--py, 0) * -12px)); transition: transform 0.35s var(--ease-out); }
-.cy-grid { position: absolute; inset: 0; z-index: -3; pointer-events: none; background-image: linear-gradient(rgba(0, 234, 255, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 46, 136, 0.16) 1px, transparent 1px); background-size: 46px 46px; transform: perspective(440px) rotateX(70deg); transform-origin: bottom; mask-image: linear-gradient(to top, #000, transparent 60%); animation: gridrun 5s linear infinite; opacity: 0.45; }
+.cy-grid { position: absolute; inset: 0; z-index: -3; pointer-events: none; background-image: linear-gradient(rgba(0, 234, 255, 0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 46, 136, 0.16) 1px, transparent 1px); background-size: 46px 46px; transform: perspective(440px) rotateX(70deg); transform-origin: bottom; mask-image: linear-gradient(to top, #000, transparent 60%); animation: gridrun 5s linear infinite; opacity: 0.3; }
 .cy-glow { position: absolute; inset: -30px; z-index: -2; pointer-events: none; background: radial-gradient(circle at 50% 46%, rgba(164, 75, 255, 0.16), transparent 52%); transform: translate(calc(var(--px, 0) * 20px), calc(var(--py, 0) * 14px)); transition: transform 0.4s var(--ease-out); }
-.cy-scan { position: absolute; inset: 0; z-index: 5; pointer-events: none; background: repeating-linear-gradient(transparent 0 2px, rgba(0, 0, 0, 0.22) 3px 4px); mix-blend-mode: multiply; opacity: 0.5; }
+.cy-scan { position: absolute; inset: 0; z-index: 5; pointer-events: none; background: repeating-linear-gradient(transparent 0 2px, rgba(0, 0, 0, 0.22) 3px 4px); mix-blend-mode: multiply; opacity: 0.28; }
 .cy-flicker { position: absolute; inset: 0; z-index: 4; pointer-events: none; background: rgba(0, 234, 255, 0.02); animation: flicker 5s steps(30) infinite; }
 
 .cy-error { position: relative; z-index: 1; padding: 9px 13px; color: var(--cy-mag); border: 1px solid var(--cy-mag); background: rgba(255, 46, 136, 0.08); }

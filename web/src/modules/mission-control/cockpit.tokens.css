@@ -11,6 +11,10 @@
   --cy-yellow: #f7ff4a;
   --cy-purple: #a44bff;
   --cy-green: #37f5b3;
+  /* Sovereignty core — the one incandescent point (owner sun + master
+     companion). Aliased to magenta so identity/sovereignty reads as one hue,
+     freeing yellow for agent/warn only. */
+  --cy-sun: var(--cy-mag);
 
   /* Surfaces & ink. */
   --cy-bg: #060210;
@@ -43,6 +47,9 @@
   --dur-fast: 160ms;
   --dur-base: 260ms;
   --dur-slow: 420ms;
+  /* One shared "breath" for every idle/hot node pulse, so nothing drifts out
+     of phase against its neighbours (tempo grid). */
+  --dur-breath: 1.6s;
 
   /* Typography — data uses mono + tabular figures for precise instruments. */
   --cy-mono: var(--eid-font-mono, ui-monospace, monospace);

@@ -81,5 +81,10 @@ export const STAGE_SVC: Record<string, string> = {
   input: 'channel', memory_recall: 'memory', agent_turn: 'agent', tools: 'agent', memory_write: 'memory',
 }
 
+/** Request-spine order (hub→…→memory). The wavefront flows only the edges whose
+ * target the current stage's service has reached, so the signal reads as
+ * travelling to where it is now — not the whole spine lighting at once. */
+export const SPINE_ORDER = ['hub', 'livekit', 'channel', 'agent', 'memory']
+
 /** Numbered signal-flow annotations absorbed from the circuit-board cockpit. */
 export const BUS_FLOW_STEPS = ['①身体→通道', '②输入→大脑', '③记忆召回', '④工具调用', '⑤权限校验']

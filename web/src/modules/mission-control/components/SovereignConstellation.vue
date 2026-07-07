@@ -122,8 +122,9 @@ function flowStyle(s: Sat): Record<string, string> | undefined {
   }
 }
 
-// Tier-2 (P4 preview): resolve each in-flight event pulse to a directed dart on
-// the right companion's leg. `activePulses` is empty unless ?flow2 enabled it.
+// Tier-2: resolve each in-flight event pulse to a directed dart on the right
+// companion's leg. `activePulses` fills for the focused companion (on by default;
+// `?flow2=off` disables). Colour comes from tone (leg hue, or alarm palette).
 const EVENT_DUR = flowEventDur()
 // Normal darts take the leg's own hue; warn/bad override to the alarm palette
 // (matches the cockpit tone tokens) so failures read at a glance regardless of leg.
@@ -163,7 +164,7 @@ function deviceOnline(d: RuntimeDevice) {
     <svg class="gx-wires" :viewBox="`0 0 ${VBW} ${VBH}`" preserveAspectRatio="xMidYMid meet">
       <defs>
         <radialGradient id="sun" cx="50%" cy="42%" r="60%">
-          <stop offset="0%" stop-color="#fff7cc" /><stop offset="30%" stop-color="#ffd23f" /><stop offset="100%" stop-color="rgba(164,75,255,0)" />
+          <stop offset="0%" stop-color="#ffffff" /><stop offset="34%" stop-color="#ff2e88" /><stop offset="70%" stop-color="rgba(164,75,255,.45)" /><stop offset="100%" stop-color="rgba(164,75,255,0)" />
         </radialGradient>
       </defs>
       <ellipse :cx="CX" :cy="CY" :rx="RX" :ry="RY" fill="none" stroke="rgba(0,234,255,.14)" stroke-width="1" stroke-dasharray="3 7" class="orbit-ring" />
@@ -283,7 +284,7 @@ function deviceOnline(d: RuntimeDevice) {
 </template>
 
 <style scoped>
-.galaxy { position: relative; flex: 1 1 auto; width: 100%; max-width: 1180px; aspect-ratio: 1000 / 700; max-height: 66vh; margin: 0 auto; }
+.galaxy { position: relative; flex: 1 1 auto; width: 100%; max-width: 1480px; aspect-ratio: 1000 / 700; max-height: 72vh; margin: 0 auto; }
 .gx-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .wire { fill: none; }
 .wire.comp { stroke: rgba(0, 234, 255, 0.4); stroke-width: 1.4; }
@@ -303,9 +304,9 @@ function deviceOnline(d: RuntimeDevice) {
 
 .gx-owner, .gx-comp, .gx-sat, .gx-unbound { position: absolute; transform: translate(-50%, -50%); display: grid; place-content: center; text-align: center; }
 .gx-owner, .gx-comp, .gx-sat { cursor: pointer; }
-.gx-owner { width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255, 210, 63, 0.6); background: radial-gradient(circle at 42% 34%, rgba(255, 240, 190, 0.35), rgba(10, 6, 24, 0.92) 62%); box-shadow: 0 0 60px rgba(255, 210, 63, 0.4), inset 0 0 40px rgba(255, 210, 63, 0.2); animation: sun 5s ease-in-out infinite; z-index: 3; }
-.o-kick { font: 700 8.5px/1 var(--cy-mono); letter-spacing: 0.14em; color: var(--cy-yellow); }
-.gx-owner strong { display: block; max-width: 120px; margin: 5px auto 6px; font: 800 20px/1 var(--cy-sans); color: #fff; text-shadow: 0 0 16px rgba(255, 210, 63, 0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-owner { width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(255, 46, 136, 0.6); background: radial-gradient(circle at 42% 34%, rgba(255, 255, 255, 0.32), rgba(164, 75, 255, 0.22) 40%, rgba(10, 6, 24, 0.92) 70%); box-shadow: 0 0 60px rgba(255, 46, 136, 0.4), inset 0 0 40px rgba(164, 75, 255, 0.2); animation: sun 5s ease-in-out infinite; z-index: 3; }
+.o-kick { font: 700 8.5px/1 var(--cy-mono); letter-spacing: 0.14em; color: var(--cy-sun); }
+.gx-owner strong { display: block; max-width: 120px; margin: 5px auto 6px; font: 800 20px/1 var(--cy-sans); color: #fff; text-shadow: 0 0 16px rgba(255, 46, 136, 0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .o-sub { display: block; margin-top: 4px; font: 600 9px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; }
 
 .gx-comp { width: 108px; height: 108px; border-radius: 50%; border: 1.5px solid var(--cy-cyan); background: radial-gradient(circle at 40% 34%, rgba(0, 234, 255, 0.22), rgba(8, 5, 20, 0.94) 66%); box-shadow: 0 0 26px rgba(0, 234, 255, 0.25); z-index: 2; transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
@@ -318,9 +319,9 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-comp .c-rt.t-live { color: var(--cy-mag); background: rgba(255, 46, 136, 0.16); }
 .gx-comp .c-rt.t-warn { color: var(--cy-yellow); background: rgba(247, 255, 74, 0.12); }
 .gx-comp .c-rt.t-idle { color: var(--cy-txt-dim); background: rgba(255, 255, 255, 0.04); }
-.gx-comp.primary { border-color: var(--cy-yellow); box-shadow: 0 0 30px rgba(247, 255, 74, 0.35); background: radial-gradient(circle at 40% 34%, rgba(247, 255, 74, 0.2), rgba(8, 5, 20, 0.94) 66%); }
-.gx-comp.primary em { color: var(--cy-yellow); }
-.gx-comp.active { animation: nodepulse 1.5s ease-in-out infinite; }
+.gx-comp.primary { border-color: var(--cy-sun); box-shadow: 0 0 30px rgba(255, 46, 136, 0.35); background: radial-gradient(circle at 40% 34%, rgba(255, 46, 136, 0.2), rgba(8, 5, 20, 0.94) 66%); }
+.gx-comp.primary em { color: var(--cy-sun); }
+.gx-comp.active { animation: nodepulse var(--dur-breath) ease-in-out infinite; }
 
 .gx-sat { width: 78px; height: 78px; border-radius: 50%; border: 1px solid var(--cy-cyan); background: radial-gradient(circle at 42% 36%, rgba(0, 234, 255, 0.16), rgba(8, 5, 20, 0.95) 68%); z-index: 2; transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
 .gx-sat:hover { transform: translate(-50%, -50%) scale(1.1); box-shadow: 0 0 22px currentColor; }
@@ -328,7 +329,7 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-sat.a-mag { border-color: var(--cy-mag); color: var(--cy-mag); background: radial-gradient(circle at 42% 36%, rgba(255, 46, 136, 0.14), rgba(8, 5, 20, 0.95) 68%); }
 .gx-sat.a-cyan { color: var(--cy-cyan); }
 .gx-sat.t-off { border-style: dashed; border-color: var(--cy-txt-dim); color: var(--cy-txt-dim); opacity: 0.62; }
-.gx-sat.t-live { animation: nodepulse 1.3s ease-in-out infinite; }
+.gx-sat.t-live { animation: nodepulse var(--dur-breath) ease-in-out infinite; }
 .s-glyph { font-size: 15px; font-style: normal; line-height: 1; color: currentColor; text-shadow: 0 0 8px currentColor; }
 .s-label { display: block; margin: 3px 0 2px; font: 700 8.5px/1 var(--cy-mono); color: var(--cy-txt-dim); letter-spacing: 0.04em; }
 .s-val { display: block; max-width: 68px; margin: 0 auto; font: 800 10px/1.05 var(--cy-sans); color: #eaf6ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -347,7 +348,7 @@ function deviceOnline(d: RuntimeDevice) {
 .galaxy.has-focus .wire.comp:not(.hot) { stroke-opacity: 0.4; }
 .gx-comp.focused { transform: translate(-50%, -50%) scale(1.14); box-shadow: 0 0 46px rgba(0, 234, 255, 0.6); border-width: 2px; z-index: 5; }
 .gx-comp.focused:hover { transform: translate(-50%, -50%) scale(1.16); }
-@keyframes sun { 0%, 100% { box-shadow: 0 0 50px rgba(255, 210, 63, 0.35), inset 0 0 36px rgba(255, 210, 63, 0.18); } 50% { box-shadow: 0 0 76px rgba(255, 210, 63, 0.5), inset 0 0 44px rgba(255, 210, 63, 0.26); } }
+@keyframes sun { 0%, 100% { box-shadow: 0 0 50px rgba(255, 46, 136, 0.35), inset 0 0 36px rgba(164, 75, 255, 0.18); } 50% { box-shadow: 0 0 76px rgba(255, 46, 136, 0.5), inset 0 0 44px rgba(164, 75, 255, 0.26); } }
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 16px currentColor; } 50% { box-shadow: 0 0 30px currentColor; } }
 @media (prefers-reduced-motion: reduce) {
   .gx-owner, .gx-comp.active, .gx-sat.t-live, .orbit-ring { animation: none !important; }

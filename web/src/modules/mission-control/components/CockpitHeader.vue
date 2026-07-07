@@ -9,7 +9,7 @@ defineEmits<{ (e: 'return-console'): void }>()
 
 const {
   owners, ownerId, ownerName, streamLabelText, systemStateText, traceId,
-  pipelineActive, companions, onlineDevices, devices, deviceRatio, memory,
+  streamState, companions, onlineDevices, devices, deviceRatio, memory,
   activeJobs, jobs, infraNodes,
   clock, now, loading, replay, refresh,
 } = props.mc
@@ -20,7 +20,7 @@ const {
     <div class="brand">
       <img :src="logoUrl" class="brand-logo" alt="EIDOLON · Personal Sovereign Agent OS" />
       <div class="brand-meta">
-        <span class="brand-state" :class="pipelineActive ? 'ok' : 'idle'"><i class="led" />{{ streamLabelText }}</span>
+        <span class="brand-state" :class="streamState === 'live' ? 'ok' : streamState === 'degraded' ? 'bad' : 'idle'"><i class="led" />{{ streamLabelText }}</span>
         <span v-if="replay" class="brand-replay">◇ REPLAY</span>
         <span class="brand-owner">OWNER · {{ ownerName }}</span>
         <span class="brand-trace">SYS {{ systemStateText }} · TRACE::{{ traceId }}</span>

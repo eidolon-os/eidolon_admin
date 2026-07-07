@@ -5,6 +5,7 @@
 // the stage's service pulses. client-web is intentionally absent — it's a body.
 import { computed } from 'vue'
 import { EDGE_LABEL, INFRA_EDGES, INFRA_LAYOUT, INFRA_VB, MODE_CN, MODE_EXP, TIER_BANDS } from '../constants'
+import { spineReached } from '../flow'
 import { fmtTime } from '../format'
 import type { InfraNode } from '../types'
 
@@ -65,7 +66,7 @@ const edgesView = computed(() =>
           :key="i"
           :d="e.d"
           class="edge"
-          :class="[`k-${e.kind}`, { spine: e.spine, flow: pipelineActive && e.spine }]"
+          :class="[`k-${e.kind}`, { spine: e.spine, flow: pipelineActive && e.spine && spineReached(hotService, e.to), front: pipelineActive && e.spine && e.to === hotService }]"
           vector-effect="non-scaling-stroke"
         />
       </svg>
@@ -121,6 +122,9 @@ const edgesView = computed(() =>
 .edge.k-ctrl { stroke: var(--cy-txt-dim); stroke-dasharray: 3 4; opacity: 0.35; }
 .edge.spine { opacity: 0.7; stroke-width: 1.8; }
 .cy-bus.live .edge.flow { opacity: 1; stroke-dasharray: 5 5; animation: dashflow 0.7s linear infinite; }
+/* The wavefront's leading edge (arriving at the current service) runs faster
+   and glows, so the eye lands on where the signal is right now. */
+.cy-bus.live .edge.flow.front { animation-duration: 0.42s; filter: drop-shadow(0 0 3px currentColor); }
 @keyframes dashflow { to { stroke-dashoffset: -20; } }
 
 .edge-label { position: absolute; transform: translate(-50%, -50%); padding: 0 3px; font: 700 8px/1.2 var(--cy-mono); letter-spacing: 0.04em; color: var(--cy-txt-dim); background: rgba(6, 4, 18, 0.7); pointer-events: none; }
@@ -148,7 +152,7 @@ const edgesView = computed(() =>
 .topo-node.st-offline .tn-body em { color: var(--cy-mag); }
 .topo-node.st-unknown { border-style: dashed; border-color: rgba(247, 255, 74, 0.32); }
 .topo-node.st-unknown .tn-glyph, .topo-node.st-unknown .tn-body em .led { color: var(--cy-yellow); }
-.topo-node.hot { border-color: var(--cy-cyan); box-shadow: 0 0 22px rgba(0, 234, 255, 0.5); animation: nodepulse 1.2s ease-in-out infinite; z-index: 3; }
+.topo-node.hot { border-color: var(--cy-cyan); box-shadow: 0 0 22px rgba(0, 234, 255, 0.5); animation: nodepulse var(--dur-breath) ease-in-out infinite; z-index: 3; }
 .topo-node.hot .tn-glyph, .topo-node.hot .tn-body em .led { color: var(--cy-cyan); }
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 14px rgba(0, 234, 255, 0.3); } 50% { box-shadow: 0 0 26px rgba(0, 234, 255, 0.6); } }
 

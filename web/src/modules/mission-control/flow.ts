@@ -10,6 +10,7 @@
 // behaviour is unit-testable. Motion timing comes from the shared `motion.ts`
 // tokens — never hardcoded.
 import type { RuntimeDevice, RuntimeTurn } from '@/api/missionControl'
+import { SPINE_ORDER } from './constants'
 import { DURATION } from './motion'
 import type { CompanionUnit } from './types'
 
@@ -27,6 +28,37 @@ export interface FlowLegs {
   mem: boolean
   /** 0..1 memory-leg intensity, saturating with recall hit count. */
   memBright: number
+}
+
+// ── shared "current stage" (one playhead) ─────────────────────────────────
+// Single source of truth for "which stage is a turn at right now", so the bus
+// rail (which service is hot) and the live-trace playhead point at the same
+// moment instead of each re-deriving it. A running/pending stage wins; else the
+// last completed one.
+const STAGE_RUNNING = ['running', 'pending', 'active']
+const STAGE_DONE = ['done', 'ok', 'succeeded']
+
+/** Key of the stage a turn is currently at, or '' when there are none. */
+export function currentStageKey(turn: RuntimeTurn | null | undefined): string {
+  const stages = turn?.stages || []
+  const running = stages.find((s) => STAGE_RUNNING.includes(String(s.status || '').toLowerCase()))
+  if (running) return running.key
+  const last = [...stages].reverse().find((s) => STAGE_DONE.includes(String(s.status || '').toLowerCase()))
+  return last?.key || ''
+}
+
+/**
+ * Whether the request-spine edge ending at `edgeTo` has been reached by the
+ * current stage's service `hot` — i.e. the signal has travelled at least this
+ * far, so the flow reads as a wavefront arriving where it is now rather than the
+ * whole spine lighting at once. Empty `hot` (no stage info) or an off-spine hot
+ * service flows the whole spine as a graceful default (never goes dark).
+ */
+export function spineReached(hot: string, edgeTo: string): boolean {
+  if (!hot) return true
+  const hi = SPINE_ORDER.indexOf(hot)
+  const ti = SPINE_ORDER.indexOf(edgeTo)
+  return hi < 0 || ti < 0 ? true : ti <= hi
 }
 
 /**
@@ -119,7 +151,16 @@ export function demoFlowTurn(companionId: string): RuntimeTurn {
     turn_id: `demo-flow-${companionId}`, conversation_id: 'demo-flow',
     owner_id: '', companion_id: companionId, device_id: null, status: 'running',
     trigger: 'demo', started_at: null, finished_at: null, latency_ms: 180,
-    memory_hits: 4, tool_names: [], privacy_mode: null, stages: [],
+    memory_hits: 4, tool_names: [], privacy_mode: null,
+    // A mid-flight turn so the demo also exercises the shared playhead: input +
+    // recall done, agent_turn running (→ hotService 'agent', bus wavefront +
+    // trace playhead land on it), write still pending.
+    stages: [
+      { key: 'input', label: '输入', status: 'done', latency_ms: 40 },
+      { key: 'memory_recall', label: '记忆召回', status: 'done', latency_ms: 55 },
+      { key: 'agent_turn', label: '推理', status: 'running', latency_ms: null },
+      { key: 'memory_write', label: '写回', status: 'pending', latency_ms: null },
+    ],
   }
 }
 
