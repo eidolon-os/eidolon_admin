@@ -13,7 +13,17 @@ import {
   type RuntimeTurn,
 } from '@/api/missionControl'
 import { useEventStream } from '@/components/useEventStream'
-import { demoFlowDevice, demoFlowTurn, eventToPulse, EVENT_PULSE_MS, isDemoFlowTarget, type FlowLeg } from './flow'
+import {
+  demoFlowDevice,
+  demoFlowTurn,
+  eventToPulse,
+  eventTone,
+  EVENT_PULSE_MS,
+  isDemoFlowTarget,
+  pulseThrottled,
+  type FlowLeg,
+  type PulseTone,
+} from './flow'
 import { INFRA, SVC_GLYPH, STAGE_SVC } from './constants'
 import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
@@ -31,8 +41,9 @@ export interface MissionControlMode {
    */
   demoFlow?: string
   /**
-   * Tier-2 preview (P4 skeleton): overlay one-shot directed pulses from the live
-   * event stream on top of the Tier-1 loop. Off by default; DEV-only.
+   * Tier-2 directed pulses: overlay one-shot darts from the live event stream on
+   * top of the Tier-1 loop, scoped to the focused companion. On by default; pass
+   * false (via `?flow2=off`) to disable.
    */
   flowEvents?: boolean
 }
@@ -43,14 +54,16 @@ export interface FlowPulse {
   companionId: string
   leg: FlowLeg
   dir: 'in' | 'out'
+  tone: PulseTone
 }
 
 export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Gate the demo hook to dev builds so a stray `?demoFlow` can never fabricate
   // an active turn in production.
   const demoFlow = import.meta.env.DEV ? opts.demoFlow : undefined
-  // Tier-2 is an unfinished P4 preview — dev-only, opt-in.
-  const flowEventsEnabled = import.meta.env.DEV && !!opts.flowEvents
+  // Tier-2 directed pulses: on by default (focused companion only); `?flow2=off`
+  // opts it out. No longer dev-gated — it only reacts to real events.
+  const flowEventsEnabled = opts.flowEvents ?? true
   const owners = ref<OwnerView[]>([])
   const ownerId = ref('')
   // A secondary selection layered on the owner scope: when set, companion-scoped
@@ -165,11 +178,13 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     devices.value.filter((d) => !d.companion_id || !boundIds.value.has(d.companion_id)),
   )
 
-  // Tier-2 (P4 skeleton): translate the newest live event into a one-shot
-  // directed pulse. Scoped to the focused companion to match Tier-1's restraint
-  // (no screen-wide traffic); P4 could broaden this. Dedup by event_id so the
-  // same head event never fires twice, and self-expire after the dart crosses.
+  // Tier-2: translate the newest live event into a one-shot directed pulse.
+  // Scoped to the focused companion to match Tier-1's restraint (no screen-wide
+  // traffic). Dedup by event_id so the same head event never fires twice;
+  // per-leg throttle (§9 flood control) — except 'bad' tones, which always show
+  // so failures are never swallowed; self-expire after the dart crosses.
   const pulseTimers = new Set<number>()
+  const lastLegEmit = new Map<string, number>() // `cid:leg` → last emit ms
   let lastPulseEventId = ''
   let pulseSeq = 0
   if (flowEventsEnabled) {
@@ -181,8 +196,15 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       if (!cid || !focusedCompanionId.value || cid !== focusedCompanionId.value) return
       const p = eventToPulse(e.source)
       if (!p) return
+      // `outcome` isn't on the RuntimeEvent wire yet — read defensively from the
+      // payload so tone is forward-compatible; today severity drives it.
+      const tone = eventTone(e.severity, (e.payload as { outcome?: string } | undefined)?.outcome)
+      const key = `${cid}:${p.leg}`
+      const nowMs = Date.now()
+      if (tone !== 'bad' && pulseThrottled(lastLegEmit.get(key) ?? 0, nowMs)) return
+      lastLegEmit.set(key, nowMs)
       const id = `fp-${pulseSeq++}`
-      activePulses.value = [...activePulses.value, { id, companionId: cid, leg: p.leg, dir: p.dir }].slice(-12)
+      activePulses.value = [...activePulses.value, { id, companionId: cid, leg: p.leg, dir: p.dir, tone }].slice(-12)
       const timer = window.setTimeout(() => {
         activePulses.value = activePulses.value.filter((x) => x.id !== id)
         pulseTimers.delete(timer)
@@ -337,6 +359,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     focusedCompanionId.value = ''
     liveEvents.value = []
     activePulses.value = []
+    lastLegEmit.clear()
     await refresh()
     openStream()
   })

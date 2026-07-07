@@ -193,3 +193,30 @@ export const EVENT_PULSE_MS = DURATION.slow
 export function flowEventDur(): string {
   return `${(DURATION.slow / 1000).toFixed(2)}s`
 }
+
+/** Health tone of a directed pulse — drives its colour. */
+export type PulseTone = 'normal' | 'warn' | 'bad'
+
+/**
+ * Resolve a pulse's tone from event health. `severity` (info/warn/error) is on
+ * the RuntimeEvent wire today; `outcome` is not surfaced there yet, so it's
+ * optional and forward-compatible — a failed outcome or an error escalates to
+ * 'bad' (alarm), a degraded outcome or a warn to 'warn' (caution), else 'normal'.
+ */
+export function eventTone(severity?: string, outcome?: string): PulseTone {
+  if (outcome === 'failure' || severity === 'error') return 'bad'
+  if (outcome === 'degraded' || severity === 'warn') return 'warn'
+  return 'normal'
+}
+
+/** Min gap between darts on the same leg — one dart finishes before the next. */
+export const PULSE_MIN_GAP_MS = EVENT_PULSE_MS
+
+/**
+ * Whether a new pulse on a leg should be dropped as too soon after the last one
+ * (flood control, §9). Callers let 'bad' tones bypass this so failures are never
+ * swallowed. Pure so the throttle window is unit-testable.
+ */
+export function pulseThrottled(lastMs: number, nowMs: number, minGapMs: number = PULSE_MIN_GAP_MS): boolean {
+  return nowMs - lastMs < minGapMs
+}

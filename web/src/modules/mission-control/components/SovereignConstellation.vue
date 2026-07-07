@@ -5,7 +5,7 @@
 // data comes from the composable's `companionUnits`.
 import { computed } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
-import { directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, type FlowLeg } from '../flow'
+import { directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, type FlowLeg, type PulseTone } from '../flow'
 import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -125,7 +125,13 @@ function flowStyle(s: Sat): Record<string, string> | undefined {
 // Tier-2 (P4 preview): resolve each in-flight event pulse to a directed dart on
 // the right companion's leg. `activePulses` is empty unless ?flow2 enabled it.
 const EVENT_DUR = flowEventDur()
+// Normal darts take the leg's own hue; warn/bad override to the alarm palette
+// (matches the cockpit tone tokens) so failures read at a glance regardless of leg.
 const LEG_COLOR: Record<FlowLeg, string> = { body: '#9ff0ff', mem: '#fbff9f' }
+const TONE_COLOR: Record<Exclude<PulseTone, 'normal'>, string> = { warn: '#f7ff4a', bad: '#ff2e88' }
+function pulseColor(leg: FlowLeg, tone: PulseTone): string {
+  return tone === 'normal' ? LEG_COLOR[leg] : TONE_COLOR[tone]
+}
 interface EventPulseVM {
   id: string
   path: string
@@ -137,7 +143,7 @@ const eventPulses = computed<EventPulseVM[]>(() =>
       const node = galaxy.value.nodes.find((n) => n.c.id === p.companionId)
       const moon = node?.sats.find((s) => s.kind === p.leg)
       if (!node || !moon) return null
-      const color = LEG_COLOR[p.leg]
+      const color = pulseColor(p.leg, p.tone)
       return {
         id: p.id,
         path: directedLegPath({ x: node.x, y: node.y }, moon, p.dir),

@@ -15,6 +15,7 @@ import {
   demoFlowTurn,
   directedLegPath,
   eventToPulse,
+  eventTone,
   flowDur,
   flowEventDur,
   flowLegs,
@@ -22,6 +23,8 @@ import {
   flowStagger,
   isDemoFlowTarget,
   loopSegments,
+  PULSE_MIN_GAP_MS,
+  pulseThrottled,
   shouldFlow,
   type FlowLegs,
   type Pt,
@@ -216,5 +219,39 @@ describe('directedLegPath', () => {
   it('derives the dart duration from a motion token, non-zero', () => {
     expect(flowEventDur()).toMatch(/^\d+\.\d{2}s$/)
     expect(parseFloat(flowEventDur())).toBeGreaterThan(0)
+  })
+})
+
+describe('eventTone', () => {
+  it("escalates errors and failed outcomes to 'bad'", () => {
+    expect(eventTone('error')).toBe('bad')
+    expect(eventTone('info', 'failure')).toBe('bad')
+    // a failed outcome outranks an otherwise-info severity
+    expect(eventTone(undefined, 'failure')).toBe('bad')
+  })
+  it("maps warnings and degraded outcomes to 'warn'", () => {
+    expect(eventTone('warn')).toBe('warn')
+    expect(eventTone('info', 'degraded')).toBe('warn')
+  })
+  it("treats info / success / missing signals as 'normal'", () => {
+    expect(eventTone('info')).toBe('normal')
+    expect(eventTone(undefined, 'success')).toBe('normal')
+    expect(eventTone()).toBe('normal')
+  })
+  it("'bad' wins over 'warn' when both signals disagree", () => {
+    expect(eventTone('warn', 'failure')).toBe('bad')
+  })
+})
+
+describe('pulseThrottled', () => {
+  it('drops a pulse that arrives inside the min gap', () => {
+    expect(pulseThrottled(1000, 1000 + PULSE_MIN_GAP_MS - 1)).toBe(true)
+  })
+  it('allows a pulse once the min gap has elapsed', () => {
+    expect(pulseThrottled(1000, 1000 + PULSE_MIN_GAP_MS)).toBe(false)
+    expect(pulseThrottled(1000, 5000)).toBe(false)
+  })
+  it('never throttles the first pulse on a leg (lastMs 0)', () => {
+    expect(pulseThrottled(0, 1_000_000)).toBe(false)
   })
 })
