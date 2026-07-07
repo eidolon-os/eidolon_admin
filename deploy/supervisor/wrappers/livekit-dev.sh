@@ -16,14 +16,90 @@ detect_lan_ip() {
   fi
 
   python3 - <<'PY'
+import re
 import socket
+import subprocess
+
+
+def usable(ip: str) -> bool:
+    return bool(ip) and not ip.startswith(("127.", "169.254."))
+
+
+def run(cmd: list[str]) -> str:
+    try:
+        return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+    except Exception:
+        return ""
+
+
+def ips_for_device(device: str) -> list[str]:
+    out = run(["ifconfig", device])
+    if "status: active" not in out:
+        return []
+    return [ip for ip in re.findall(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\b", out) if usable(ip)]
+
+
+def mac_primary_wifi_ip() -> str | None:
+    out = run(["networksetup", "-listallhardwareports"])
+    blocks = re.split(r"\n\s*\n", out)
+    preferred: list[str] = []
+    fallback: list[str] = []
+    for block in blocks:
+        device_match = re.search(r"^Device:\s*(\S+)", block, re.MULTILINE)
+        if not device_match:
+            continue
+        device = device_match.group(1)
+        port_match = re.search(r"^Hardware Port:\s*(.+)", block, re.MULTILINE)
+        port = port_match.group(1).lower() if port_match else ""
+        if "wi-fi" in port or "airport" in port:
+            preferred.append(device)
+        else:
+            fallback.append(device)
+    for device in [*preferred, *fallback]:
+        ips = ips_for_device(device)
+        if ips:
+            return ips[0]
+    return None
+
+
+def active_ifconfig_ip() -> str | None:
+    out = run(["ifconfig"])
+    candidates: list[tuple[int, str, str]] = []
+    for block in re.split(r"\n(?=\S)", out):
+        name_match = re.match(r"^([^:\s]+):", block)
+        if not name_match:
+            continue
+        name = name_match.group(1)
+        if name.startswith(("lo", "utun", "awdl", "llw", "gif", "stf")):
+            continue
+        if "status: active" not in block:
+            continue
+        priority = 0 if name == "en0" else 1 if name.startswith("en") else 2
+        for ip in re.findall(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\b", block):
+            if usable(ip):
+                candidates.append((priority, name, ip))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][2]
+
+
+ip = mac_primary_wifi_ip()
+if usable(ip or ""):
+    print(ip)
+    raise SystemExit(0)
+
+ip = active_ifconfig_ip()
+if usable(ip or ""):
+    print(ip)
+    raise SystemExit(0)
 
 for target in ("8.8.8.8", "1.1.1.1"):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect((target, 80))
         ip = sock.getsockname()[0]
-        if ip and not ip.startswith("127."):
+        if usable(ip):
             print(ip)
             raise SystemExit(0)
     except OSError:
