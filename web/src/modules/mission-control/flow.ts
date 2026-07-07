@@ -198,14 +198,15 @@ export function flowEventDur(): string {
 export type PulseTone = 'normal' | 'warn' | 'bad'
 
 /**
- * Resolve a pulse's tone from event health. `severity` (info/warn/error) is on
- * the RuntimeEvent wire today; `outcome` is not surfaced there yet, so it's
- * optional and forward-compatible — a failed outcome or an error escalates to
- * 'bad' (alarm), a degraded outcome or a warn to 'warn' (caution), else 'normal'.
+ * Resolve a pulse's tone from event health, using both wire axes: `severity`
+ * ("how loud": info/warn/error) and `outcome` ("what happened": success/failure/
+ * denied/deferred). A failure or an error escalates to 'bad' (alarm); a denied
+ * outcome or a warn to 'warn' (caution); success/deferred/info stay 'normal'.
+ * `outcome` is optional so synthesised/legacy events without it still map.
  */
 export function eventTone(severity?: string, outcome?: string): PulseTone {
   if (outcome === 'failure' || severity === 'error') return 'bad'
-  if (outcome === 'degraded' || severity === 'warn') return 'warn'
+  if (outcome === 'denied' || severity === 'warn') return 'warn'
   return 'normal'
 }
 

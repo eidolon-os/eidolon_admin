@@ -196,9 +196,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       if (!cid || !focusedCompanionId.value || cid !== focusedCompanionId.value) return
       const p = eventToPulse(e.source)
       if (!p) return
-      // `outcome` isn't on the RuntimeEvent wire yet — read defensively from the
-      // payload so tone is forward-compatible; today severity drives it.
-      const tone = eventTone(e.severity, (e.payload as { outcome?: string } | undefined)?.outcome)
+      const tone = eventTone(e.severity, e.outcome)
       const key = `${cid}:${p.leg}`
       const nowMs = Date.now()
       if (tone !== 'bad' && pulseThrottled(lastLegEmit.get(key) ?? 0, nowMs)) return

@@ -19,6 +19,9 @@ RuntimeSource = Literal[
     "mission_control",
 ]
 RuntimeSeverity = Literal["info", "warn", "error"]
+# Mirrors eidolon_data's Outcome set (events.outcome column). Orthogonal to
+# severity: "how loud" (severity) vs "what happened" (outcome).
+RuntimeOutcome = Literal["success", "failure", "denied", "deferred"]
 PrivacyMode = Literal["safe", "summary", "restricted"]
 EventOrigin = Literal["live", "polling", "replay", "mock"]
 DemoMode = Literal["live", "replay", "mixed"]
@@ -37,6 +40,9 @@ class RuntimeEvent(BaseModel):
     source: RuntimeSource
     type: str
     severity: RuntimeSeverity = "info"
+    # Result classification (Phase 1). Projected from the events table where
+    # available; defaults to "success" for non-audit / synthesised events.
+    outcome: RuntimeOutcome = "success"
     privacy: PrivacyMode = "safe"
     # Provenance: live (SSE), polling (snapshot-derived), replay (fixture), mock.
     event_origin: EventOrigin = "polling"

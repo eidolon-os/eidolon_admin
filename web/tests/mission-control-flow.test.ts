@@ -229,13 +229,14 @@ describe('eventTone', () => {
     // a failed outcome outranks an otherwise-info severity
     expect(eventTone(undefined, 'failure')).toBe('bad')
   })
-  it("maps warnings and degraded outcomes to 'warn'", () => {
+  it("maps warnings and denied outcomes to 'warn'", () => {
     expect(eventTone('warn')).toBe('warn')
-    expect(eventTone('info', 'degraded')).toBe('warn')
+    expect(eventTone('info', 'denied')).toBe('warn')
   })
-  it("treats info / success / missing signals as 'normal'", () => {
+  it("treats info / success / deferred / missing signals as 'normal'", () => {
     expect(eventTone('info')).toBe('normal')
     expect(eventTone(undefined, 'success')).toBe('normal')
+    expect(eventTone('info', 'deferred')).toBe('normal')
     expect(eventTone()).toBe('normal')
   })
   it("'bad' wins over 'warn' when both signals disagree", () => {

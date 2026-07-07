@@ -704,6 +704,7 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
         severity = getattr(row, "severity", None) or (
             "warn" if "revoked" in row.event_type or "cancel" in row.event_type else "info"
         )
+        outcome = getattr(row, "outcome", None) or "success"
         events.append(
             RuntimeEvent(
                 event_id=row.event_id,
@@ -711,6 +712,7 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
                 source=source,
                 type=row.event_type,
                 severity=severity,
+                outcome=outcome,
                 owner_id=row.owner_id,
                 companion_id=getattr(row, "companion_id", None),
                 device_id=row.subject_id if row.subject_type == "device" else None,

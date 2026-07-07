@@ -10,6 +10,8 @@ export type RuntimeSource =
   | 'mission_control'
 
 export type RuntimeSeverity = 'info' | 'warn' | 'error'
+// Result classification (orthogonal to severity). Mirrors the backend Outcome set.
+export type RuntimeOutcome = 'success' | 'failure' | 'denied' | 'deferred'
 export type PrivacyMode = 'safe' | 'summary' | 'restricted'
 export type EventOrigin = 'live' | 'polling' | 'replay' | 'mock'
 export type DemoMode = 'live' | 'replay' | 'mixed'
@@ -27,6 +29,7 @@ export interface RuntimeEvent {
   source: RuntimeSource
   type: string
   severity: RuntimeSeverity
+  outcome: RuntimeOutcome
   privacy: PrivacyMode
   event_origin: EventOrigin
   trace_id: string | null
