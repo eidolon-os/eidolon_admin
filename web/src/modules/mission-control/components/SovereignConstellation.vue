@@ -5,7 +5,7 @@
 // data comes from the composable's `companionUnits`.
 import { computed } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
-import { flowDur, flowLegs, flowPath, flowStagger, shouldFlow } from '../flow'
+import { directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, type FlowLeg } from '../flow'
 import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -17,7 +17,7 @@ defineEmits<{
   (e: 'open-moon', s: Sat): void
 }>()
 
-const { companionUnits, unboundDevices, ownerName } = props.mc
+const { companionUnits, unboundDevices, ownerName, activePulses } = props.mc
 
 // ── geometry ──────────────────────────────────────────────────────────
 const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, PI = Math.PI
@@ -122,6 +122,31 @@ function flowStyle(s: Sat): Record<string, string> | undefined {
   }
 }
 
+// Tier-2 (P4 preview): resolve each in-flight event pulse to a directed dart on
+// the right companion's leg. `activePulses` is empty unless ?flow2 enabled it.
+const EVENT_DUR = flowEventDur()
+const LEG_COLOR: Record<FlowLeg, string> = { body: '#9ff0ff', mem: '#fbff9f' }
+interface EventPulseVM {
+  id: string
+  path: string
+  style: Record<string, string>
+}
+const eventPulses = computed<EventPulseVM[]>(() =>
+  activePulses.value
+    .map((p): EventPulseVM | null => {
+      const node = galaxy.value.nodes.find((n) => n.c.id === p.companionId)
+      const moon = node?.sats.find((s) => s.kind === p.leg)
+      if (!node || !moon) return null
+      const color = LEG_COLOR[p.leg]
+      return {
+        id: p.id,
+        path: directedLegPath({ x: node.x, y: node.y }, moon, p.dir),
+        style: { fill: color, filter: `drop-shadow(0 0 7px ${color})` },
+      }
+    })
+    .filter((p): p is EventPulseVM => p !== null),
+)
+
 function deviceOnline(d: RuntimeDevice) {
   return d.online
 }
@@ -162,6 +187,10 @@ function deviceOnline(d: RuntimeDevice) {
         <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" repeatCount="indefinite" :path="f.path" /></circle>
         <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" :begin="f.stagger" repeatCount="indefinite" :path="f.path" /></circle>
       </template>
+      <!-- Tier-2: one-shot directed pulses fired by live events (?flow2). -->
+      <circle v-for="p in eventPulses" :key="p.id" r="4.4" class="pulse event-dot" :style="p.style">
+        <animateMotion :dur="EVENT_DUR" fill="freeze" :path="p.path" />
+      </circle>
       <circle :cx="CX" :cy="CY" r="150" fill="url(#sun)" opacity="0.5" />
     </svg>
 

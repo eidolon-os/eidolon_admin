@@ -142,3 +142,54 @@ export function isDemoFlowTarget(companionId: string, index: number, demoFlow: s
   if (demoFlow === undefined) return false
   return demoFlow ? companionId === demoFlow : index === 0
 }
+
+// ── Tier 2: event-driven directed pulses (§11, P4 skeleton) ────────────────
+// Where Tier 1 is a state-driven ambient loop, Tier 2 overlays discrete,
+// one-shot darts fired by real activity events off the SSE stream: each event
+// maps by `source` to a leg + direction. Baseline loop = 底色; these = 定向脉冲.
+// Pure geometry/mapping here; the transient queue + render live in the
+// composable/component and are gated to dev behind `?flow2`.
+
+/** A leg the circuit can light. (`agent` has no leg — it rides the body return.) */
+export type FlowLeg = 'body' | 'mem'
+
+/** A directed pulse: which leg, and whether it travels toward or away from the brain. */
+export interface DirectedPulse {
+  leg: FlowLeg
+  /** 'in' = moon → brain (input/return); 'out' = brain → moon (query/response). */
+  dir: 'in' | 'out'
+}
+
+/**
+ * Map a runtime event's `source` to a directed pulse on the circuit:
+ *   channel / hub → device input arriving   (body → brain, 'in')
+ *   memory        → recall / write          (brain → mem,  'out')
+ *   agent         → response to the body     (brain → body, 'out')
+ * Sources that don't touch a leg (data / admin / mission_control) return null.
+ * Mapping kept in one place so P4 can refine it (e.g. per event type/outcome).
+ */
+export function eventToPulse(source: string): DirectedPulse | null {
+  switch (source) {
+    case 'channel':
+    case 'hub':
+      return { leg: 'body', dir: 'in' }
+    case 'memory':
+      return { leg: 'mem', dir: 'out' }
+    case 'agent':
+      return { leg: 'body', dir: 'out' }
+    default:
+      return null
+  }
+}
+
+/** Single-leg path: 'in' travels moon→brain, 'out' travels brain→moon. */
+export function directedLegPath(brain: Pt, moon: Pt, dir: 'in' | 'out'): string {
+  const P = (p: Pt) => `${f1(p.x)} ${f1(p.y)}`
+  return dir === 'in' ? `M${P(moon)} L${P(brain)}` : `M${P(brain)} L${P(moon)}`
+}
+
+/** How long a one-shot event dart takes to cross a leg (from the motion token). */
+export const EVENT_PULSE_MS = DURATION.slow
+export function flowEventDur(): string {
+  return `${(DURATION.slow / 1000).toFixed(2)}s`
+}

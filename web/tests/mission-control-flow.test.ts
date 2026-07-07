@@ -13,7 +13,10 @@ import { describe, expect, it } from 'vitest'
 import {
   demoFlowDevice,
   demoFlowTurn,
+  directedLegPath,
+  eventToPulse,
   flowDur,
+  flowEventDur,
   flowLegs,
   flowPath,
   flowStagger,
@@ -178,5 +181,40 @@ describe('demo flow hook', () => {
     expect(legs.memBright).toBeGreaterThan(0)
     expect(demoFlowTurn('c1').memory_hits).toBeGreaterThan(0)
     expect(demoFlowDevice('c1').online).toBe(true)
+  })
+})
+
+// ── Tier 2: event-driven directed pulses ──────────────────────────────────
+describe('eventToPulse', () => {
+  it('maps device sources to an inbound body pulse', () => {
+    expect(eventToPulse('channel')).toEqual({ leg: 'body', dir: 'in' })
+    expect(eventToPulse('hub')).toEqual({ leg: 'body', dir: 'in' })
+  })
+  it('maps memory to an outbound memory pulse (brain→mem)', () => {
+    expect(eventToPulse('memory')).toEqual({ leg: 'mem', dir: 'out' })
+  })
+  it('maps agent to an outbound body pulse (response returning)', () => {
+    expect(eventToPulse('agent')).toEqual({ leg: 'body', dir: 'out' })
+  })
+  it('returns null for sources that touch no leg', () => {
+    expect(eventToPulse('data')).toBeNull()
+    expect(eventToPulse('admin')).toBeNull()
+    expect(eventToPulse('mission_control')).toBeNull()
+    expect(eventToPulse('nonsense')).toBeNull()
+  })
+})
+
+describe('directedLegPath', () => {
+  const brain: Pt = { x: 100, y: 100 }
+  const moon: Pt = { x: 40, y: 160 }
+  it("'in' travels moon → brain", () => {
+    expect(directedLegPath(brain, moon, 'in')).toBe('M40.0 160.0 L100.0 100.0')
+  })
+  it("'out' travels brain → moon (reverse of 'in')", () => {
+    expect(directedLegPath(brain, moon, 'out')).toBe('M100.0 100.0 L40.0 160.0')
+  })
+  it('derives the dart duration from a motion token, non-zero', () => {
+    expect(flowEventDur()).toMatch(/^\d+\.\d{2}s$/)
+    expect(parseFloat(flowEventDur())).toBeGreaterThan(0)
   })
 })

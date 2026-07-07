@@ -13,7 +13,7 @@ import {
   type RuntimeTurn,
 } from '@/api/missionControl'
 import { useEventStream } from '@/components/useEventStream'
-import { demoFlowDevice, demoFlowTurn, isDemoFlowTarget } from './flow'
+import { demoFlowDevice, demoFlowTurn, eventToPulse, EVENT_PULSE_MS, isDemoFlowTarget, type FlowLeg } from './flow'
 import { INFRA, SVC_GLYPH, STAGE_SVC } from './constants'
 import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
@@ -30,12 +30,27 @@ export interface MissionControlMode {
    * seen without staging a real agent turn. Ignored outside `import.meta.env.DEV`.
    */
   demoFlow?: string
+  /**
+   * Tier-2 preview (P4 skeleton): overlay one-shot directed pulses from the live
+   * event stream on top of the Tier-1 loop. Off by default; DEV-only.
+   */
+  flowEvents?: boolean
+}
+
+/** A transient Tier-2 pulse: a companion leg lit briefly by one event. */
+export interface FlowPulse {
+  id: string
+  companionId: string
+  leg: FlowLeg
+  dir: 'in' | 'out'
 }
 
 export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Gate the demo hook to dev builds so a stray `?demoFlow` can never fabricate
   // an active turn in production.
   const demoFlow = import.meta.env.DEV ? opts.demoFlow : undefined
+  // Tier-2 is an unfinished P4 preview — dev-only, opt-in.
+  const flowEventsEnabled = import.meta.env.DEV && !!opts.flowEvents
   const owners = ref<OwnerView[]>([])
   const ownerId = ref('')
   // A secondary selection layered on the owner scope: when set, companion-scoped
@@ -43,6 +58,8 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const focusedCompanionId = ref('')
   const snapshot = ref<RuntimeSnapshot | null>(null)
   const liveEvents = ref<RuntimeEvent[]>([])
+  // Tier-2: transient directed pulses currently in flight (auto-expire).
+  const activePulses = ref<FlowPulse[]>([])
   const loading = ref(false)
   const error = ref('')
   const streamState = ref<StreamState>('connecting')
@@ -147,6 +164,32 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const unboundDevices = computed(() =>
     devices.value.filter((d) => !d.companion_id || !boundIds.value.has(d.companion_id)),
   )
+
+  // Tier-2 (P4 skeleton): translate the newest live event into a one-shot
+  // directed pulse. Scoped to the focused companion to match Tier-1's restraint
+  // (no screen-wide traffic); P4 could broaden this. Dedup by event_id so the
+  // same head event never fires twice, and self-expire after the dart crosses.
+  const pulseTimers = new Set<number>()
+  let lastPulseEventId = ''
+  let pulseSeq = 0
+  if (flowEventsEnabled) {
+    watch(liveEvents, (events) => {
+      const e = events[0]
+      if (!e || e.event_id === lastPulseEventId) return
+      lastPulseEventId = e.event_id
+      const cid = e.companion_id
+      if (!cid || !focusedCompanionId.value || cid !== focusedCompanionId.value) return
+      const p = eventToPulse(e.source)
+      if (!p) return
+      const id = `fp-${pulseSeq++}`
+      activePulses.value = [...activePulses.value, { id, companionId: cid, leg: p.leg, dir: p.dir }].slice(-12)
+      const timer = window.setTimeout(() => {
+        activePulses.value = activePulses.value.filter((x) => x.id !== id)
+        pulseTimers.delete(timer)
+      }, EVENT_PULSE_MS + 120)
+      pulseTimers.add(timer)
+    })
+  }
 
   // DEV-only: once companions load, auto-focus the ?demoFlow target so the
   // circulation shows without a click. Applies once, then the user is free to
@@ -286,11 +329,14 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   onBeforeUnmount(() => {
     if (pollTimer) window.clearInterval(pollTimer)
     if (clockTimer) window.clearInterval(clockTimer)
+    pulseTimers.forEach((t) => window.clearTimeout(t))
+    pulseTimers.clear()
     es.close()
   })
   watch(ownerId, async () => {
     focusedCompanionId.value = ''
     liveEvents.value = []
+    activePulses.value = []
     await refresh()
     openStream()
   })
@@ -306,6 +352,8 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // sovereign-domain view
     companionUnits, unboundDevices,
     focusedCompanionId, focusedCompanion, scopedTurn, scopedJobs, scopedPermissions, companionEvents,
+    // Tier-2 event pulses (P4 preview)
+    activePulses, flowEventsEnabled,
     // infra rail
     infraNodes, hotService,
     // header chrome
