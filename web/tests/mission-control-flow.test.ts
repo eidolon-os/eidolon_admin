@@ -11,10 +11,13 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  demoFlowDevice,
+  demoFlowTurn,
   flowDur,
   flowLegs,
   flowPath,
   flowStagger,
+  isDemoFlowTarget,
   loopSegments,
   shouldFlow,
   type FlowLegs,
@@ -149,5 +152,31 @@ describe('flow timing', () => {
     expect(s.startsWith('-')).toBe(true)
     // half of the loop duration
     expect(Math.abs(parseFloat(s))).toBeCloseTo(parseFloat(flowDur(four)) / 2)
+  })
+})
+
+// ── dev-only demo hook: ?demoFlow ─────────────────────────────────────────
+describe('demo flow hook', () => {
+  it('targets an exact companion id, or the first when the param is empty', () => {
+    expect(isDemoFlowTarget('c2', 1, 'c2')).toBe(true)
+    expect(isDemoFlowTarget('c1', 0, 'c2')).toBe(false)
+    // bare `?demoFlow` (empty string) → first companion only
+    expect(isDemoFlowTarget('c1', 0, '')).toBe(true)
+    expect(isDemoFlowTarget('c2', 1, '')).toBe(false)
+  })
+  it('never targets anything when the param is absent (undefined)', () => {
+    expect(isDemoFlowTarget('c1', 0, undefined)).toBe(false)
+  })
+  it('synthesises a turn + body that light BOTH flow legs', () => {
+    const c = companion({
+      turn: demoFlowTurn('c1'),
+      devices: [demoFlowDevice('c1')],
+    })
+    const legs = flowLegs(c)
+    expect(legs.body).toBe(true)
+    expect(legs.mem).toBe(true)
+    expect(legs.memBright).toBeGreaterThan(0)
+    expect(demoFlowTurn('c1').memory_hits).toBeGreaterThan(0)
+    expect(demoFlowDevice('c1').online).toBe(true)
   })
 })

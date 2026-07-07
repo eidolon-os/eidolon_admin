@@ -20,7 +20,11 @@ import './cockpit.tokens.css'
 const route = useRoute()
 const router = useRouter()
 const mode = route.query.mode === 'replay' ? 'replay' : 'live'
-const mc = useMissionControlStream({ mode })
+// DEV-only visual hook: `?demoFlow=<companionId>` (or bare `?demoFlow`) overlays
+// a synthetic active turn so the companion circulation effect is visible without
+// a live conversation. The composable ignores it outside dev builds.
+const demoFlow = 'demoFlow' in route.query ? String(route.query.demoFlow ?? '') : undefined
+const mc = useMissionControlStream({ mode, demoFlow })
 
 const {
   pipelineActive, error,

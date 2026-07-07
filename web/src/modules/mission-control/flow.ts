@@ -9,6 +9,7 @@
 // predicates (no Vue, no side-effects) so the component stays thin and the
 // behaviour is unit-testable. Motion timing comes from the shared `motion.ts`
 // tokens — never hardcoded.
+import type { RuntimeDevice, RuntimeTurn } from '@/api/missionControl'
 import { DURATION } from './motion'
 import type { CompanionUnit } from './types'
 
@@ -103,4 +104,41 @@ export function flowDur(path: string): string {
 export function flowStagger(path: string): string {
   const secs = (DURATION.ambient * Math.max(1, loopSegments(path))) / 2000
   return `-${secs.toFixed(2)}s`
+}
+
+// ── dev-only demo hook ────────────────────────────────────────────────────
+// `?demoFlow=<companionId>` (or bare `?demoFlow` → first companion) overlays a
+// synthetic in-conversation turn + online body onto one companion so the
+// circulation effect can be *seen* without staging a real agent turn (replay
+// mode doesn't help — its companions/active_turn still come from the real DB).
+// Wired in useMissionControlStream, gated to import.meta.env.DEV — inert in prod.
+
+/** Synthetic "running" turn with recall hits, so both flow legs light. */
+export function demoFlowTurn(companionId: string): RuntimeTurn {
+  return {
+    turn_id: `demo-flow-${companionId}`, conversation_id: 'demo-flow',
+    owner_id: '', companion_id: companionId, device_id: null, status: 'running',
+    trigger: 'demo', started_at: null, finished_at: null, latency_ms: 180,
+    memory_hits: 4, tool_names: [], privacy_mode: null, stages: [],
+  }
+}
+
+/** Synthetic online body, so the body leg lights when a demo companion has none. */
+export function demoFlowDevice(companionId: string): RuntimeDevice {
+  return {
+    device_id: `demo-body-${companionId}`, name: 'demo body', role: '', kind: 'virtual',
+    status: 'online', online: true, approved: true, owner_id: null,
+    companion_id: companionId, interaction_mode: null, room_name: '',
+    participant_sid: '', last_seen_at: null, capabilities: [], signals: {},
+  }
+}
+
+/**
+ * Whether a companion is the `?demoFlow` target: an exact id match, or — when
+ * the param is present but empty (bare `?demoFlow`) — the first companion.
+ * `undefined` (param absent) never matches.
+ */
+export function isDemoFlowTarget(companionId: string, index: number, demoFlow: string | undefined): boolean {
+  if (demoFlow === undefined) return false
+  return demoFlow ? companionId === demoFlow : index === 0
 }

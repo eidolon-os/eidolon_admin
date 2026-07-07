@@ -13,6 +13,7 @@ import {
   type RuntimeTurn,
 } from '@/api/missionControl'
 import { useEventStream } from '@/components/useEventStream'
+import { demoFlowDevice, demoFlowTurn, isDemoFlowTarget } from './flow'
 import { INFRA, SVC_GLYPH, STAGE_SVC } from './constants'
 import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
@@ -23,9 +24,18 @@ const ACTIVE_STATES = ['running', 'active', 'pending', 'queued']
 export interface MissionControlMode {
   /** 'replay' streams recorded fixtures (M4); 'live' is the default. */
   mode?: 'live' | 'replay'
+  /**
+   * DEV-only visual hook: id of a companion to overlay a synthetic active turn
+   * onto (or '' for the first companion) so the Tier-1 circulation effect can be
+   * seen without staging a real agent turn. Ignored outside `import.meta.env.DEV`.
+   */
+  demoFlow?: string
 }
 
 export function useMissionControlStream(opts: MissionControlMode = {}) {
+  // Gate the demo hook to dev builds so a stray `?demoFlow` can never fabricate
+  // an active turn in production.
+  const demoFlow = import.meta.env.DEV ? opts.demoFlow : undefined
   const owners = ref<OwnerView[]>([])
   const ownerId = ref('')
   // A secondary selection layered on the owner scope: when set, companion-scoped
@@ -99,10 +109,19 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     const t = snapshot.value?.active_turn
     const m = memory.value
     const activeRealm = m?.active_realm_id
-    return companions.value.map((c) => {
-      const devs = devices.value.filter((d) => d.companion_id === c.companion_id)
+    return companions.value.map((c, i) => {
+      let devs = devices.value.filter((d) => d.companion_id === c.companion_id)
       const cJobs = jobs.value.filter((j) => j.companion_id === c.companion_id)
-      const turn = t && t.companion_id === c.companion_id ? t : null
+      let turn = t && t.companion_id === c.companion_id ? t : null
+      // DEV-only: overlay a synthetic turn + online body on the demo target so
+      // both flow legs light. Purely presentational — never touches the wire.
+      if (isDemoFlowTarget(c.companion_id, i, demoFlow)) {
+        if (!turn) turn = demoFlowTurn(c.companion_id || 'demo')
+        if (!devs.some((d) => d.online))
+          devs = devs.length
+            ? devs.map((d, di) => (di === 0 ? { ...d, online: true } : d))
+            : [demoFlowDevice(c.companion_id || 'demo')]
+      }
       const isActiveRealm = !!c.memory_realm_id && c.memory_realm_id === activeRealm
       return {
         id: c.companion_id || 'unknown',
@@ -128,6 +147,25 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const unboundDevices = computed(() =>
     devices.value.filter((d) => !d.companion_id || !boundIds.value.has(d.companion_id)),
   )
+
+  // DEV-only: once companions load, auto-focus the ?demoFlow target so the
+  // circulation shows without a click. Applies once, then the user is free to
+  // click elsewhere.
+  if (demoFlow !== undefined) {
+    let applied = false
+    watch(
+      companions,
+      (list) => {
+        if (applied || !list.length) return
+        const target = demoFlow || list[0]?.companion_id || ''
+        if (target) {
+          focusedCompanionId.value = target
+          applied = true
+        }
+      },
+      { immediate: true },
+    )
+  }
 
   // ── focused-companion scope (owner is the page scope; a companion is a focus) ──
   const focusedCompanion = computed<CompanionUnit | null>(
