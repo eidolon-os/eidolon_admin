@@ -5,6 +5,7 @@
 // data comes from the composable's `companionUnits`.
 import { computed } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
+import { flowDur, flowLegs, flowPath, flowStagger, shouldFlow } from '../flow'
 import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -80,6 +81,47 @@ const galaxy = computed(() => {
   return { nodes, sats: nodes.flatMap((n) => n.sats), links: nodes.map((n) => ({ id: n.c.id, d: n.link, active: n.active })) }
 })
 
+// Per-companion internal circulation (§11 Tier 1). Only the focused companion
+// with an active turn circulates; its body / memory legs light per device
+// presence + recall hits. Reuses the same `.pulse` + <animateMotion> mechanism
+// as the sun→planet line — no new animation machinery, no new deps.
+const flows = computed(() =>
+  galaxy.value.nodes
+    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.turn))
+    .map((n) => {
+      const body = n.sats.find((s) => s.kind === 'body')
+      const mem = n.sats.find((s) => s.kind === 'mem')
+      const legs = flowLegs(n.c)
+      const path = body && mem ? flowPath({ x: n.x, y: n.y }, body, mem, legs) : ''
+      return { id: n.c.id, path, legs, dur: flowDur(path), stagger: flowStagger(path) }
+    })
+    .filter((f) => f.path),
+)
+// Which sat legs a flow lights, keyed `id:kind` → brightness, so the underlying
+// leg wire can glow as an energized conduit (memory leg scales with hits).
+const flowLegBright = computed(() => {
+  const m = new Map<string, number>()
+  for (const f of flows.value) {
+    if (f.legs.body) m.set(`${f.id}:body`, 1)
+    if (f.legs.mem) m.set(`${f.id}:mem`, f.legs.memBright)
+  }
+  return m
+})
+function legBright(s: Sat): number | undefined {
+  return flowLegBright.value.get(`${s.c.id}:${s.kind}`)
+}
+// Concrete (JS-resolved) glow for a lit flow leg. Chrome doesn't resolve
+// `calc(var(--fb))` inside SVG stroke-opacity / filter, so we bind the numbers
+// directly; the CSS rule keeps only the transition so changes still ease.
+function flowStyle(s: Sat): Record<string, string> | undefined {
+  const b = legBright(s)
+  if (b === undefined) return undefined
+  return {
+    strokeOpacity: (0.4 + 0.5 * b).toFixed(3),
+    filter: `drop-shadow(0 0 ${(2 + 2 * b).toFixed(1)}px rgba(0, 234, 255, ${(0.5 * b).toFixed(2)}))`,
+  }
+}
+
 function deviceOnline(d: RuntimeDevice) {
   return d.online
 }
@@ -102,11 +144,23 @@ function deviceOnline(d: RuntimeDevice) {
           <animateTransform attributeName="transform" type="rotate" :from="`360 ${CX} ${CY}`" :to="`0 ${CX} ${CY}`" dur="40s" repeatCount="indefinite" />
         </circle>
       </g>
-      <path v-for="s in galaxy.sats" :key="'sl' + s.c.id + s.kind" :d="s.link" class="wire sat" :class="{ dim: s.empty }" />
+      <path
+        v-for="s in galaxy.sats"
+        :key="'sl' + s.c.id + s.kind"
+        :d="s.link"
+        class="wire sat"
+        :class="{ dim: s.empty, flow: legBright(s) !== undefined }"
+        :style="flowStyle(s)"
+      />
       <path v-for="l in galaxy.links" :key="'cl' + l.id" :d="l.d" class="wire comp" :class="{ hot: l.active }" />
       <template v-for="l in galaxy.links.filter((x) => x.active)" :key="'p' + l.id">
         <circle r="4" class="pulse"><animateMotion dur="1.4s" repeatCount="indefinite" :path="l.d" /></circle>
         <circle r="4" class="pulse"><animateMotion dur="1.4s" begin="0.7s" repeatCount="indefinite" :path="l.d" /></circle>
+      </template>
+      <!-- Companion internal circulation: body↔brain↔memory loop (focused + active only). -->
+      <template v-for="f in flows" :key="'fp' + f.id">
+        <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" repeatCount="indefinite" :path="f.path" /></circle>
+        <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" :begin="f.stagger" repeatCount="indefinite" :path="f.path" /></circle>
       </template>
       <circle :cx="CX" :cy="CY" r="150" fill="url(#sun)" opacity="0.5" />
     </svg>
@@ -201,7 +255,16 @@ function deviceOnline(d: RuntimeDevice) {
 .wire.comp.hot { stroke: var(--cy-cyan); stroke-width: 2.2; filter: drop-shadow(0 0 5px var(--cy-cyan)); }
 .wire.sat { stroke: rgba(0, 234, 255, 0.24); stroke-width: 1; stroke-dasharray: 3 4; }
 .wire.sat.dim { stroke: rgba(109, 106, 153, 0.3); }
+/* A lit flow leg reads as an energized conduit: solid, brighter than the idle
+   dashed leg. stroke-opacity + glow are bound inline (JS-resolved, scaled by
+   the memory-leg brightness); here we set the conduit look and let brightness
+   changes ease with the shared motion tokens (mirrors motion.ts). */
+.wire.sat.flow {
+  stroke: var(--cy-cyan); stroke-dasharray: none; stroke-width: 1.2;
+  transition: stroke-opacity var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out);
+}
 .pulse { fill: #d6fbff; filter: drop-shadow(0 0 6px var(--cy-cyan)); }
+.flow-dot { fill: #eafcff; }
 
 .gx-owner, .gx-comp, .gx-sat, .gx-unbound { position: absolute; transform: translate(-50%, -50%); display: grid; place-content: center; text-align: center; }
 .gx-owner, .gx-comp, .gx-sat { cursor: pointer; }
@@ -252,7 +315,11 @@ function deviceOnline(d: RuntimeDevice) {
 @keyframes sun { 0%, 100% { box-shadow: 0 0 50px rgba(255, 210, 63, 0.35), inset 0 0 36px rgba(255, 210, 63, 0.18); } 50% { box-shadow: 0 0 76px rgba(255, 210, 63, 0.5), inset 0 0 44px rgba(255, 210, 63, 0.26); } }
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 16px currentColor; } 50% { box-shadow: 0 0 30px currentColor; } }
 @media (prefers-reduced-motion: reduce) {
-  .gx-owner, .gx-comp.active, .gx-sat.t-live, .pulse, .orbit-ring { animation: none !important; }
+  .gx-owner, .gx-comp.active, .gx-sat.t-live, .orbit-ring { animation: none !important; }
+  /* Hide the travelling dots entirely (not just their motion) so they don't
+     clump at the origin. Lit flow legs stay brightened — a static, motion-free
+     signal of which conduits are active. */
+  .gx-wires .pulse { display: none; }
   .gx-wires animateTransform, .gx-wires animateMotion { display: none; }
 }
 @media (max-width: 1080px) { .galaxy { max-height: none; } }
