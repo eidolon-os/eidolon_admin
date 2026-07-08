@@ -87,11 +87,23 @@ def _now() -> str:
 
 
 class Esp32ToolService:
-    def __init__(self, *, jobs_root: Path | None = None, catalog_file: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        jobs_root: Path | None = None,
+        job_logs_root: Path | None = None,
+        catalog_file: Path | None = None,
+    ) -> None:
         self.catalog_file = catalog_file
         self.client_root = catalog.catalog_client_root(catalog_file=catalog_file)
         self.jobs_root = jobs_root or catalog.ADMIN_ROOT / "var/esp32-tools/jobs"
         self.jobs_root.mkdir(parents=True, exist_ok=True)
+        self.job_logs_root = job_logs_root or (
+            self.jobs_root
+            if jobs_root is not None
+            else Path.home() / "eidolon" / "logs" / "admin" / "esp32-tools" / "jobs"
+        )
+        self.job_logs_root.mkdir(parents=True, exist_ok=True)
         self.backups_root = self.jobs_root / "backups"
         self.backups_root.mkdir(parents=True, exist_ok=True)
         self.index_path = self.jobs_root / "index.jsonl"
@@ -186,7 +198,7 @@ class Esp32ToolService:
         steps = self._steps(board, req)
         preview = " && ".join(" ".join(_quote(a) for a in step.args) for step in steps) or req.action
         job_id = uuid.uuid4().hex[:12]
-        log_path = self.jobs_root / f"{job_id}.log"
+        log_path = self.job_logs_root / f"{job_id}.log"
         model = Esp32Job(
             id=job_id,
             board_id=board.id,

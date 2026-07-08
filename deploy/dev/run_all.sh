@@ -44,7 +44,7 @@ header(){ echo -e "${CYAN}==== $* ====${NC}"; }
 
 # --- Paths ------------------------------------------------------------------
 VAR_DIR="${ROOT}/var"
-LOG_DIR="${HOME}/eidolon/logs"
+LOG_DIR="${EIDOLON_LOG_ROOT:-${HOME}/eidolon/logs}"
 RUN_DIR="${HOME}/eidolon/run"
 
 # Log layout: ~/eidolon/logs/<project>/<file>.log
@@ -59,7 +59,7 @@ RUN_DIR="${HOME}/eidolon/run"
 # supervisord refuses to spawn a program if its log dir doesn't exist; pre-
 # create everything our own configs reference so the user never sees a phantom
 # "no such file" on first start.
-LOG_PROJECTS=(admin nats livekit memory hub agent channel)
+LOG_PROJECTS=(admin nats livekit memory hub agent channel client-web mementos admin/esp32-tools/jobs)
 for _p in "${LOG_PROJECTS[@]}"; do
   mkdir -p "${LOG_DIR}/${_p}"
 done
@@ -69,6 +69,8 @@ mkdir -p "$VAR_DIR" "$RUN_DIR" "${LOG_DIR}/admin/childlogs"
 WEB_PID_FILE="${RUN_DIR}/eidolon-admin-gateway-web.pid"
 LEGACY_WEB_PID_FILE="${RUN_DIR}/eidolon-admin-web.pid"
 WEB_LOG_FILE="${LOG_DIR}/admin/gateway-web.log"
+API_FOREGROUND_LOG_FILE="${LOG_DIR}/admin/gateway-api.foreground.log"
+WEB_FOREGROUND_LOG_FILE="${LOG_DIR}/admin/gateway-web.foreground.log"
 
 API_HOST="${EIDOLON_ADMIN_API_HOST:-127.0.0.1}"
 API_PORT="${EIDOLON_ADMIN_API_PORT:-9000}"
@@ -694,15 +696,22 @@ do_foreground() {
   trap cleanup EXIT INT TERM
 
   "${VENV}/bin/uvicorn" eidolon_admin_server.app.main:app \
-    --host "$API_HOST" --port "$API_PORT" &
+    --host "$API_HOST" --port "$API_PORT" \
+    > >(tee -a "$API_FOREGROUND_LOG_FILE") 2>&1 &
   API_PID=$!
-  (cd "$WEB_DIR" && "./${VITE_BIN_REL}" --port "$WEB_PORT" --strictPort) &
+  (
+    cd "$WEB_DIR"
+    "./${VITE_BIN_REL}" --port "$WEB_PORT" --strictPort \
+      > >(tee -a "$WEB_FOREGROUND_LOG_FILE") 2>&1
+  ) &
   WEB_PID=$!
 
   echo
   info "eidolon-admin (foreground) — supervisord NOT touched (NATS / sub-projects not started)"
   echo "  API: http://${API_HOST}:${API_PORT}/docs"
   echo "  Web: http://127.0.0.1:${WEB_PORT}/"
+  echo "  API log: $API_FOREGROUND_LOG_FILE"
+  echo "  Web log: $WEB_FOREGROUND_LOG_FILE"
   echo "  Use '$0 start' for the full stack (NATS, memory, hub, agent, channel, … + vite)."
   echo "  Foreground mode still serves the UI; /api/devices needs NATS from 'start'."
   echo "  Ctrl+C to stop."

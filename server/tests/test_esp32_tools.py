@@ -12,6 +12,7 @@ import pytest
 
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig
+from eidolon_admin_server.app.tools.esp32 import catalog as esp32_catalog
 from eidolon_admin_server.app.tools.esp32.schemas import Esp32Job, Esp32JobRequest, Esp32Port
 from eidolon_admin_server.app.tools.esp32.service import (
     Esp32JobConflict,
@@ -24,6 +25,29 @@ from eidolon_admin_server.app.tools.esp32.service import (
 
 def _service(tmp_path: Path) -> Esp32ToolService:
     return Esp32ToolService(jobs_root=tmp_path / "jobs")
+
+
+def test_default_job_logs_root_uses_admin_log_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    catalog_file = tmp_path / "esp32_tools.yaml"
+    catalog_file.write_text(
+        f"""\
+version: 1
+client_root: {tmp_path / "esp32-client"}
+boards: []
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(esp32_catalog, "ADMIN_ROOT", tmp_path / "admin")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+
+    svc = Esp32ToolService(catalog_file=catalog_file)
+
+    assert svc.jobs_root == tmp_path / "admin" / "var/esp32-tools/jobs"
+    assert svc.index_path == svc.jobs_root / "index.jsonl"
+    assert svc.backups_root == svc.jobs_root / "backups"
+    assert svc.job_logs_root == tmp_path / "home" / "eidolon/logs/admin/esp32-tools/jobs"
 
 
 @pytest.mark.asyncio
