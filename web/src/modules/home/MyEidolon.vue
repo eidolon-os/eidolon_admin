@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
   createOnboardingCompanion,
@@ -21,6 +21,7 @@ const loading = ref(true)
 const saving = ref(false)
 const launching = ref(false)
 const creatingCompanion = ref(false)
+const deletingOwner = ref(false)
 const companionDialogOpen = ref(false)
 const wizardStep = ref(0)
 const state = ref<OnboardingState | null>(null)
@@ -218,6 +219,40 @@ async function createCompanion() {
     if (response.launch_identity) openLaunch(response.launch_identity)
   } finally {
     creatingCompanion.value = false
+  }
+}
+
+async function deleteCurrentOwner() {
+  if (!ownerId.value) return
+  let confirmed = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      `删除后会移除 ${ownerName.value} 的 owner、companions、devices、memory、conversations、jobs 和事件数据。请输入 owner_id 确认。`,
+      '删除当前身份',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        inputPlaceholder: ownerId.value,
+        inputValidator: (value) => value === ownerId.value || `请输入 ${ownerId.value}`,
+        confirmButtonClass: 'el-button--danger',
+        type: 'warning',
+      },
+    )
+    confirmed = String(result.value || '')
+  } catch {
+    return
+  }
+  deletingOwner.value = true
+  try {
+    await ownersStore.deleteLocal(ownerId.value, confirmed)
+    state.value = await getOnboardingState(ownersStore.currentId || undefined)
+    resetCompanionForm()
+    setupForm.owner_display_name = ''
+    setupForm.companion_display_name = ''
+    wizardStep.value = 0
+    ElMessage.success('当前身份已删除')
+  } finally {
+    deletingOwner.value = false
   }
 }
 
@@ -456,25 +491,27 @@ function statusText(value: string) {
               </div>
               <el-button @click="startChat(companion)">启动</el-button>
             </article>
-            <button class="create-tile" @click="companionDialogOpen = true">
-              <el-icon><Plus /></el-icon>
-              <span>创建新伙伴</span>
-            </button>
           </div>
         </section>
 
-        <section class="section-band compact-band">
-          <div class="quick-actions">
-            <button @click="goDevices">
-              <el-icon><Monitor /></el-icon>
-              <span>设备</span>
-              <small>绑定网页端或实体设备</small>
-            </button>
-            <button @click="router.push({ name: 'feature', params: { serviceId: 'agent', feature: 'conversations' } })">
-              <el-icon><Tickets /></el-icon>
-              <span>Activity</span>
-              <small>查看对话与事件</small>
-            </button>
+        <section v-if="state?.owner" class="section-band owner-band">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">IDENTITY</p>
+              <h3>当前身份</h3>
+            </div>
+          </div>
+          <div class="owner-row">
+            <div class="owner-meta">
+              <el-icon><UserFilled /></el-icon>
+              <div>
+                <strong>{{ ownerName }}</strong>
+                <span>{{ state.owner.owner_id }}</span>
+              </div>
+            </div>
+            <el-button type="danger" plain :loading="deletingOwner" @click="deleteCurrentOwner">
+              删除当前身份
+            </el-button>
           </div>
         </section>
       </section>
@@ -746,7 +783,7 @@ function statusText(value: string) {
   margin-top: 14px;
 }
 .companion-card,
-.create-tile {
+.owner-row {
   min-width: 0;
   min-height: 86px;
   display: flex;
@@ -789,63 +826,43 @@ function statusText(value: string) {
   color: var(--eid-text-muted);
   font-size: 12px;
 }
-.create-tile {
-  justify-content: center;
-  color: var(--eid-text-secondary);
-  cursor: pointer;
+.owner-band {
+  border-color: color-mix(in srgb, var(--eid-danger) 22%, var(--eid-border));
 }
-.create-tile:hover {
-  border-color: color-mix(in srgb, var(--eid-accent) 42%, var(--eid-border));
-  color: var(--eid-accent-hover);
+.owner-row {
+  margin-top: 14px;
+  min-height: 72px;
 }
-.compact-band {
-  padding: 0;
-  overflow: hidden;
-}
-.quick-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.quick-actions button {
-  min-width: 0;
-  min-height: 88px;
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  gap: 3px 12px;
+.owner-meta {
+  display: flex;
   align-items: center;
-  padding: 16px;
-  border: 0;
-  border-right: 1px solid var(--eid-border);
-  background: transparent;
-  color: var(--eid-text-secondary);
-  cursor: pointer;
-  text-align: left;
+  min-width: 0;
+  gap: 10px;
 }
-.quick-actions button:last-child {
-  border-right: 0;
-}
-.quick-actions button:hover {
-  background: var(--eid-bg-elev);
-}
-.quick-actions .el-icon {
-  grid-row: 1 / span 2;
+.owner-meta > .el-icon {
+  flex: 0 0 auto;
   color: var(--eid-accent);
-  font-size: 22px;
 }
-.quick-actions span,
-.quick-actions small {
+.owner-meta div {
+  min-width: 0;
+}
+.owner-meta strong,
+.owner-meta span {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.quick-actions span {
+.owner-meta strong {
   color: var(--eid-text-primary);
-  font-weight: 720;
+  font-size: 14px;
 }
-.quick-actions small {
+.owner-meta span {
+  margin-top: 4px;
   color: var(--eid-text-muted);
+  font-family: var(--eid-font-mono);
+  font-size: 12px;
 }
 :deep(.el-step__title) {
   white-space: nowrap;
@@ -880,25 +897,19 @@ function statusText(value: string) {
     align-items: flex-start;
     flex-direction: column;
   }
-  .two-fields,
-  .quick-actions {
+  .two-fields {
     grid-template-columns: 1fr;
-  }
-  .quick-actions button {
-    border-right: 0;
-    border-bottom: 1px solid var(--eid-border);
-  }
-  .quick-actions button:last-child {
-    border-bottom: 0;
   }
   .companion-grid {
     grid-template-columns: 1fr;
   }
-  .companion-card {
+  .companion-card,
+  .owner-row {
     align-items: stretch;
     flex-direction: column;
   }
-  .companion-card .el-button {
+  .companion-card .el-button,
+  .owner-row .el-button {
     width: 100%;
   }
   .primary-actions .el-button {

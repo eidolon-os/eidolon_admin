@@ -228,6 +228,45 @@ async def test_companion_web_body_and_multi_body_binding(
     assert device_ids == {f"web-{companion_id}", "esp-bodies"}
 
 
+async def test_delete_owner_requires_confirmation_and_removes_tree(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    created = await client.post(
+        "/api/owners",
+        json={"owner_id": "owner-delete", "display_name": "Delete Me"},
+    )
+    assert created.status_code == 201
+    initialized = await client.post(
+        "/api/owners/owner-delete/workspace/initialize",
+        json={"companion_display_name": "Delete Companion"},
+    )
+    assert initialized.status_code == 200
+    companion_id = initialized.json()["companion"]["companion_id"]
+
+    rejected = await client.delete(
+        "/api/owners/owner-delete",
+        params={"confirm_owner_id": "wrong", "purge_memory": "false"},
+    )
+    assert rejected.status_code == 412
+    assert await data_store.owners.get("owner-delete") is not None
+
+    deleted = await client.delete(
+        "/api/owners/owner-delete",
+        params={"confirm_owner_id": "owner-delete", "purge_memory": "false"},
+    )
+    assert deleted.status_code == 200
+    body = deleted.json()
+    assert body["deleted"] is True
+    assert body["owner_id"] == "owner-delete"
+    assert body["counts"]["companions"] == 1
+    assert body["counts"]["memory_realms"] == 1
+    assert body["realm_ids"] == ["r_owner-delete_default"]
+    assert await data_store.owners.get("owner-delete") is None
+    assert await data_store.companions.get(companion_id) is None
+    assert await data_store.devices.get_device(f"web-{companion_id}") is None
+
+
 async def test_owner_nearby_devices_identify_and_add_to_owner(
     data_store: DataStore,
 ) -> None:

@@ -35,6 +35,7 @@ from .schemas import (
     NearbyDeviceView,
     OwnerCounts,
     OwnerCreateRequest,
+    OwnerDeleteResponse,
     OwnerListResponse,
     OwnerOverviewResponse,
     OwnerUpdateRequest,
@@ -215,6 +216,58 @@ async def archive_owner(owner_id: str, request: Request) -> OwnerView:
         actor_type="admin",
     )
     return _owner(row)
+
+
+@router.delete("/owners/{owner_id}", response_model=OwnerDeleteResponse)
+async def delete_owner(
+    owner_id: str,
+    request: Request,
+    confirm_owner_id: str = Query(
+        default="",
+        description="Must exactly match owner_id. Required to prevent accidental deletion.",
+    ),
+    purge_memory: bool = Query(
+        default=True,
+        description="Also stop memory workers and trash memory palaces for removed realms.",
+    ),
+) -> OwnerDeleteResponse:
+    """Hard-delete an owner and all owner-scoped data after explicit
+    confirmation. This removes the owner row, companions, devices, memories,
+    runtime rows, conversations, jobs, events, and persona genomes."""
+    if confirm_owner_id != owner_id:
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            "confirm_owner_id must exactly match owner_id",
+        )
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    result = await store.dev_maintenance.delete_owner_tree(owner_id)
+    if not result.deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "owner not found")
+
+    memory: dict[str, Any] = {"purged": False}
+    if purge_memory and result.realm_ids:
+        memory = await _purge_memory_realms(request, result.realm_ids)
+    return OwnerDeleteResponse(
+        owner_id=owner_id,
+        deleted=True,
+        counts={
+            "devices": result.devices,
+            "companions": result.companions,
+            "persona_genomes": result.persona_genomes,
+            "memory_realms": result.memory_realms,
+            "body_commands": result.body_commands,
+            "runtime_callers": result.runtime_callers,
+            "runtime_sessions": result.runtime_sessions,
+            "messages": result.messages,
+            "turns": result.turns,
+            "conversations": result.conversations,
+            "jobs": result.jobs,
+            "events": result.events,
+        },
+        realm_ids=result.realm_ids,
+        memory=memory,
+    )
 
 
 @router.get("/owners/{owner_id}/workspace", response_model=OwnerOverviewResponse)

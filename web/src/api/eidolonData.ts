@@ -28,6 +28,14 @@ export interface OwnerUpdateRequest {
   settings_json?: JsonDict
 }
 
+export interface OwnerDeleteResponse {
+  owner_id: string
+  deleted: boolean
+  counts: JsonDict
+  realm_ids: string[]
+  memory: JsonDict
+}
+
 export interface CompanionView {
   companion_id: string
   owner_id: string
@@ -230,6 +238,18 @@ export async function updateOwner(ownerId: string, body: OwnerUpdateRequest): Pr
 
 export async function archiveOwner(ownerId: string): Promise<OwnerView> {
   const { data } = await client.post<OwnerView>(`/owners/${encodeURIComponent(ownerId)}/archive`)
+  return data
+}
+
+export async function deleteOwner(
+  ownerId: string,
+  confirmOwnerId: string,
+  purgeMemory = true,
+): Promise<OwnerDeleteResponse> {
+  const { data } = await client.delete<OwnerDeleteResponse>(
+    `/owners/${encodeURIComponent(ownerId)}`,
+    { params: { confirm_owner_id: confirmOwnerId, purge_memory: purgeMemory } },
+  )
   return data
 }
 

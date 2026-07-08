@@ -274,6 +274,14 @@ class OwnerOverviewResponse(BaseModel):
     events: list[EventView]
 
 
+class OwnerDeleteResponse(BaseModel):
+    owner_id: str
+    deleted: bool
+    counts: JsonDict = Field(default_factory=dict)
+    realm_ids: list[str] = Field(default_factory=list)
+    memory: JsonDict = Field(default_factory=dict)
+
+
 class WorkspaceInitializeResponse(BaseModel):
     companion: CompanionView
     persona_genome: PersonaGenomeView

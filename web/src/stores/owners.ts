@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import {
   archiveOwner,
   createOwner,
+  deleteOwner,
   listOwners,
   updateOwner,
   type OwnerCreateRequest,
@@ -61,6 +62,17 @@ export const useOwnersStore = defineStore('owners', () => {
     return owner
   }
 
+  async function deleteLocal(ownerId: string, confirmOwnerId: string) {
+    const result = await deleteOwner(ownerId, confirmOwnerId)
+    owners.value = owners.value.filter((item) => item.owner_id !== ownerId)
+    if (currentId.value === ownerId) {
+      currentId.value = owners.value[0]?.owner_id || ''
+      persist()
+    }
+    loaded.value = true
+    return result
+  }
+
   function persist() {
     if (currentId.value) localStorage.setItem(STORAGE_KEY, currentId.value)
     else localStorage.removeItem(STORAGE_KEY)
@@ -77,5 +89,6 @@ export const useOwnersStore = defineStore('owners', () => {
     createAndSelect,
     updateLocal,
     archiveLocal,
+    deleteLocal,
   }
 })
