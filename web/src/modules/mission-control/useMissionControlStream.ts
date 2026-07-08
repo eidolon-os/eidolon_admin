@@ -37,6 +37,8 @@ const ACTIVE_STATES = ['running', 'active', 'pending', 'queued']
 export interface MissionControlMode {
   /** 'replay' streams recorded fixtures (M4); 'live' is the default. */
   mode?: 'live' | 'replay'
+  /** Initial owner selected by the caller, usually from My Eidolon. */
+  ownerId?: string
   /**
    * DEV-only visual hook: id of a companion to overlay a synthetic active turn
    * onto (or '' for the first companion) so the Tier-1 circulation effect can be
@@ -73,7 +75,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const flowEventsEnabled = opts.flowEvents ?? true
   const pulseScope: PulseScope = opts.flowEventsScope ?? 'focused'
   const owners = ref<OwnerView[]>([])
-  const ownerId = ref('')
+  const ownerId = ref(opts.ownerId || '')
   // A secondary selection layered on the owner scope: when set, companion-scoped
   // modules (live trace, evidence lanes, event flow) re-scope to this companion.
   const focusedCompanionId = ref('')

@@ -20,6 +20,7 @@ import './cockpit.tokens.css'
 const route = useRoute()
 const router = useRouter()
 const mode = route.query.mode === 'replay' ? 'replay' : 'live'
+const initialOwnerId = typeof route.query.owner_id === 'string' ? route.query.owner_id : ''
 // DEV-only visual hook: `?demoFlow=<companionId>` (or bare `?demoFlow`) overlays
 // a synthetic active turn so the companion circulation effect is visible without
 // a live conversation. The composable ignores it outside dev builds.
@@ -28,7 +29,7 @@ const demoFlow = 'demoFlow' in route.query ? String(route.query.demoFlow ?? '') 
 // `?flow2=all` broadens to every companion. undefined = composable default.
 const flowEvents = route.query.flow2 === 'off' ? false : undefined
 const flowEventsScope = route.query.flow2 === 'all' ? 'all' : undefined
-const mc = useMissionControlStream({ mode, demoFlow, flowEvents, flowEventsScope })
+const mc = useMissionControlStream({ mode, ownerId: initialOwnerId, demoFlow, flowEvents, flowEventsScope })
 
 const {
   pipelineActive, error,
@@ -67,7 +68,7 @@ function onPointerMove(e: PointerEvent) {
   if (!pRaf) pRaf = requestAnimationFrame(applyParallax)
 }
 
-function returnToConsole() { router.push({ name: 'owners' }) }
+function returnToConsole() { router.push({ name: 'home' }) }
 </script>
 
 <template>

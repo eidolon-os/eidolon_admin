@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import AsyncIterator
 
@@ -14,6 +15,7 @@ from eidolon_admin_server.app.data.owner_delete_finalizer import (
     OwnerDeleteJournal,
     finalize_owner_delete_jobs,
 )
+from eidolon_admin_server.app.memory.runners import memory_palace_path
 
 
 def _runtime_device(
@@ -242,6 +244,14 @@ async def test_delete_owner_requires_confirmation_and_removes_tree(
         "EIDOLON_OWNER_DELETE_JOURNAL_DIR",
         str(tmp_path / "owner-delete-journal"),
     )
+    monkeypatch.setenv(
+        "EIDOLON_OWNER_BACKUP_ROOT",
+        str(tmp_path / "backup"),
+    )
+    monkeypatch.setenv(
+        "EIDOLON_MEMORY_PALACES_ROOT",
+        str(tmp_path / "mempalaces"),
+    )
     created = await client.post(
         "/api/owners",
         json={"owner_id": "owner-delete", "display_name": "Delete Me"},
@@ -253,6 +263,9 @@ async def test_delete_owner_requires_confirmation_and_removes_tree(
     )
     assert initialized.status_code == 200
     companion_id = initialized.json()["companion"]["companion_id"]
+    palace = Path(memory_palace_path("r_owner-delete_default"))
+    palace.mkdir(parents=True)
+    (palace / "memory.txt").write_text("remember this", encoding="utf-8")
 
     rejected = await client.delete(
         "/api/owners/owner-delete",
@@ -272,6 +285,19 @@ async def test_delete_owner_requires_confirmation_and_removes_tree(
     assert body["counts"]["companions"] == 1
     assert body["counts"]["memory_realms"] == 1
     assert body["realm_ids"] == ["r_owner-delete_default"]
+    assert body["backup"]["backup_id"].startswith("owner-delete-")
+    assert Path(body["backup"]["manifest_path"]).is_file()
+    palace_backups = body["backup"]["memory_palaces"]
+    assert palace_backups[0]["realm_id"] == "r_owner-delete_default"
+    assert Path(palace_backups[0]["target"], "memory.txt").read_text(encoding="utf-8") == "remember this"
+    assert [item["key"] for item in body["progress"]] == [
+        "confirmed",
+        "backup",
+        "journal",
+        "database",
+        "memory",
+        "done",
+    ]
     assert await data_store.owners.get("owner-delete") is None
     assert await data_store.companions.get(companion_id) is None
     assert await data_store.devices.get_device(f"web-{companion_id}") is None

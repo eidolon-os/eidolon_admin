@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from .hub_client import HubRuntimeUnavailable
+from .owner_backup import create_owner_backup
 from .owner_delete_finalizer import (
     OwnerDeleteJournal,
     finalize_owner_delete_jobs,
@@ -243,15 +244,46 @@ async def delete_owner(
         )
     store = _store(request)
     await _require_owner(store, owner_id)
+    progress: list[dict[str, Any]] = [
+        _delete_progress("confirmed", "二次确认", "completed", 10),
+    ]
     realm_ids = [
         row.realm_id for row in await store.memory_repo.list_realms_for_owner(owner_id)
     ]
+    try:
+        backup = await create_owner_backup(store, owner_id)
+    except Exception as exc:  # noqa: BLE001 - abort before writing delete journal
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            f"owner backup failed; delete aborted: {exc}",
+        ) from exc
+    progress.append(
+        _delete_progress(
+            "backup",
+            "备份 owner / companion / memory",
+            "completed",
+            35,
+            {"backup_id": backup.get("backup_id"), "path": backup.get("path")},
+        )
+    )
     journal = OwnerDeleteJournal()
-    job = journal.create_or_load(owner_id=owner_id, realm_ids=realm_ids)
+    job = journal.create_or_load(owner_id=owner_id, realm_ids=realm_ids, backup=backup)
+    progress.append(
+        _delete_progress(
+            "journal",
+            "写入可恢复删除任务",
+            "completed",
+            45,
+            {"job_id": job["job_id"]},
+        )
+    )
     result = await store.dev_maintenance.delete_owner_tree(owner_id)
     if not result.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "owner not found")
     job = journal.mark_db_deleted(job, result)
+    progress.append(
+        _delete_progress("database", "删除 owner 数据库关系树", "completed", 70)
+    )
 
     memory: dict[str, Any] = {
         "purged": False,
@@ -265,11 +297,34 @@ async def delete_owner(
             journal=journal,
             only_owner_id=owner_id,
         )
+    else:
+        memory["pending"] = 1
+        memory["skipped_immediate_purge"] = True
+    memory_complete = bool(purge_memory and memory.get("pending", 0) == 0)
+    progress.append(
+        _delete_progress(
+            "memory",
+            "清理 memory runtime 和 palace",
+            "completed" if memory_complete else "pending",
+            95 if memory_complete else 82,
+            memory,
+        )
+    )
+    progress.append(
+        _delete_progress(
+            "done",
+            "删除流程完成",
+            "completed" if memory_complete else "pending",
+            100 if memory_complete else 90,
+        )
+    )
     return OwnerDeleteResponse(
         owner_id=owner_id,
         deleted=True,
         counts=owner_cleanup_counts(result),
         realm_ids=job.get("realm_ids", result.realm_ids),
+        backup=backup,
+        progress=progress,
         memory=memory,
     )
 
@@ -949,6 +1004,24 @@ def _event_id() -> str:
     from uuid import uuid4
 
     return f"evt-{uuid4().hex}"
+
+
+def _delete_progress(
+    key: str,
+    label: str,
+    status_text: str,
+    progress: int,
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "key": key,
+        "label": label,
+        "status": status_text,
+        "progress": progress,
+    }
+    if detail:
+        item["detail"] = detail
+    return item
 
 
 def _owner(row: Any) -> OwnerView:

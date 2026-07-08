@@ -279,6 +279,8 @@ class OwnerDeleteResponse(BaseModel):
     deleted: bool
     counts: JsonDict = Field(default_factory=dict)
     realm_ids: list[str] = Field(default_factory=list)
+    backup: JsonDict = Field(default_factory=dict)
+    progress: list[JsonDict] = Field(default_factory=list)
     memory: JsonDict = Field(default_factory=dict)
 
 

@@ -207,7 +207,13 @@ class OwnerDeleteJournal:
         self.root = Path(root).expanduser() if root is not None else _default_journal_dir()
         self.completed_root = self.root / "completed"
 
-    def create_or_load(self, *, owner_id: str, realm_ids: list[str]) -> dict[str, Any]:
+    def create_or_load(
+        self,
+        *,
+        owner_id: str,
+        realm_ids: list[str],
+        backup: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         for job in self.pending():
             if job.get("owner_id") == owner_id:
                 merged = sorted(
@@ -217,6 +223,8 @@ class OwnerDeleteJournal:
                     }
                 )
                 job["realm_ids"] = merged
+                if backup:
+                    job["backup"] = backup
                 job["updated_at"] = _now()
                 self.save(job)
                 return job
@@ -234,6 +242,8 @@ class OwnerDeleteJournal:
             "updated_at": _now(),
             "last_error": "",
         }
+        if backup:
+            job["backup"] = backup
         self.save(job)
         return job
 

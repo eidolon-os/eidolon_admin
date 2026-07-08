@@ -33,6 +33,8 @@ export interface OwnerDeleteResponse {
   deleted: boolean
   counts: JsonDict
   realm_ids: string[]
+  backup: JsonDict
+  progress: JsonDict[]
   memory: JsonDict
 }
 
