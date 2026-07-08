@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import shutil
+import time
+from pathlib import Path
 from typing import Any
 
 from eidolon_data import DataStore
-from eidolon_data.services import OwnerWorkspaceError
+from eidolon_data.services import CompanionDeletionError, OwnerWorkspaceError
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from .hub_client import HubRuntimeUnavailable
 from .schemas import (
+    BootstrapResponse,
     CompanionListResponse,
     CompanionView,
     ConversationListResponse,
@@ -47,6 +53,91 @@ router = APIRouter(tags=["owners"])
 async def list_owners(request: Request) -> OwnerListResponse:
     rows = await _store(request).owners.list()
     return OwnerListResponse(owners=[_owner(row) for row in rows])
+
+
+@router.get("/bootstrap", response_model=BootstrapResponse)
+async def bootstrap_local_body(
+    request: Request,
+    owner_id: str | None = Query(
+        default=None,
+        description="Resolve this specific owner (used by the client's fallback picker). "
+        "When omitted, the host-local default owner is auto-resolved.",
+    ),
+) -> BootstrapResponse:
+    """Resolve an owner → master companion → web body so the web client can
+    auto-connect with zero forms.
+
+    Owner resolution: the explicit ``owner_id`` if given, else the sole active
+    owner, else the one named by ``EIDOLON_LOCAL_OWNER_ID``; otherwise 409
+    (ambiguous). The master is used if present, provisioned if the owner has no
+    companions, or a lone non-master companion is promoted; multiple companions
+    with no master is 409.
+    """
+    store = _store(request)
+    owners = [o for o in await store.owners.list() if o.status == "active"]
+    requested = (owner_id or "").strip()
+    configured = (os.environ.get("EIDOLON_LOCAL_OWNER_ID") or "").strip()
+    if requested:
+        owner = next((o for o in owners if o.owner_id == requested), None)
+        if owner is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"owner {requested!r} not found among active owners",
+            )
+    elif configured:
+        owner = next((o for o in owners if o.owner_id == configured), None)
+        if owner is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"EIDOLON_LOCAL_OWNER_ID={configured!r} not found among active owners",
+            )
+    elif len(owners) == 1:
+        owner = owners[0]
+    elif not owners:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no active owner exists")
+    else:
+        ids = ", ".join(o.owner_id for o in owners)
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"multiple owners ({ids}); set EIDOLON_LOCAL_OWNER_ID to disambiguate",
+        )
+
+    companions = await store.companions.list_for_owner(owner.owner_id)
+    active = [c for c in companions if c.status == "active"]
+    master = next((c for c in active if bool(getattr(c, "is_master", False))), None)
+    master_source = "existing"
+    try:
+        if master is None and not active:
+            result = await store.workspace_provisioning.provision_workspace(
+                owner_id=owner.owner_id, is_master=True
+            )
+            master = result.companion
+            master_source = "provisioned"
+        elif master is None and len(active) == 1:
+            master = await store.workspace_provisioning.promote_to_master(
+                owner_id=owner.owner_id, companion_id=active[0].companion_id
+            )
+            master_source = "promoted"
+        elif master is None:
+            ids = ", ".join(c.companion_id for c in active)
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"owner {owner.owner_id!r} has multiple companions ({ids}) but no master",
+            )
+        device = await store.workspace_provisioning.ensure_web_body(
+            owner_id=owner.owner_id, companion_id=master.companion_id
+        )
+    except OwnerWorkspaceError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    return BootstrapResponse(
+        owner_id=owner.owner_id,
+        owner_display_name=owner.display_name or owner.owner_id,
+        companion_id=master.companion_id,
+        companion_display_name=master.display_name or master.companion_id,
+        device_id=device.device_id,
+        master_source=master_source,
+    )
 
 
 @router.post("/owners", response_model=OwnerView, status_code=status.HTTP_201_CREATED)
@@ -152,7 +243,7 @@ async def get_owner_overview(owner_id: str, request: Request) -> OwnerOverviewRe
             jobs=len(jobs),
             events=len(events),
         ),
-        initialized=bool(companions and persona_genomes and memory_realms),
+        initialized=_master_ready(companions, persona_genomes, memory_realms, devices),
         companions=[_companion(row) for row in companions[:10]],
         devices=[_device(row) for row in devices[:10]],
         conversations=[_conversation(row) for row in conversations],
@@ -259,6 +350,133 @@ async def ensure_companion_web_body(
             raise HTTPException(status.HTTP_404_NOT_FOUND, message) from exc
         raise HTTPException(status.HTTP_400_BAD_REQUEST, message) from exc
     return _device(row)
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/promote-master",
+    response_model=CompanionView,
+)
+async def promote_companion_master(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> CompanionView:
+    """Make a companion the owner's master and ensure it is conversation-ready
+    (current genome + memory realm + host-local web body). Demotes any prior
+    master. Idempotent."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    try:
+        row = await store.workspace_provisioning.promote_to_master(
+            owner_id=owner_id, companion_id=companion_id
+        )
+    except OwnerWorkspaceError as exc:
+        message = str(exc)
+        code = status.HTTP_404_NOT_FOUND if "not found" in message else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(code, message) from exc
+    # Best-effort: nudge the memory supervisor so the (possibly new) realm's
+    # worker comes up without waiting for the next periodic reconcile.
+    client = getattr(request.app.state, "memory_supervisor_client", None)
+    if client is not None:
+        try:
+            await client.reconcile()
+        except Exception:  # noqa: BLE001 - purely a convenience nudge
+            pass
+    return _companion(row)
+
+
+@router.delete("/owners/{owner_id}/companions/{companion_id}")
+async def delete_companion(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+    purge_memory: bool = Query(
+        default=True,
+        description="Also stop the worker and trash the memory palace for each removed realm.",
+    ),
+) -> dict[str, Any]:
+    """Hard-delete a non-master companion and everything referencing it, then
+    (optionally) purge its memory palaces. Refuses to delete a master companion
+    — promote a replacement first."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    companion = await store.companions.get(companion_id)
+    if companion is None or companion.owner_id != owner_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion not found")
+    if bool(getattr(companion, "is_master", False)):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "refusing to delete master companion; promote a replacement first",
+        )
+    try:
+        result = await store.companion_deletion.delete_companion(
+            owner_id=owner_id, companion_id=companion_id
+        )
+    except CompanionDeletionError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    memory: dict[str, Any] = {"purged": False}
+    if purge_memory and result.realm_ids:
+        memory = await _purge_memory_realms(request, result.realm_ids)
+    return {
+        "owner_id": owner_id,
+        "companion_id": companion_id,
+        "deleted": True,
+        "counts": result.counts,
+        "realm_ids": result.realm_ids,
+        "device_ids": result.device_ids,
+        "memory": memory,
+    }
+
+
+async def _purge_memory_realms(request: Request, realm_ids: list[str]) -> dict[str, Any]:
+    """Reconcile the memory supervisor (so orphaned workers for the now-removed
+    realms are reaped) then move each realm's palace directory to
+    ``~/.eidolon-trash/``. Best-effort: the DB delete has already committed, so
+    failures here are reported, not raised."""
+    from ..memory.runners import memory_palace_path
+
+    client = getattr(request.app.state, "memory_supervisor_client", None)
+    reconciled = False
+    if client is not None:
+        try:
+            await client.reconcile()
+            reconciled = True
+            pending = set(realm_ids)
+            deadline = time.monotonic() + 15.0
+            while pending and time.monotonic() < deadline:
+                data = await client.list_realms()
+                live = {
+                    (r.get("spec") or {}).get("memory_realm_id")
+                    for r in data.get("realms", [])
+                }
+                pending = {rid for rid in pending if rid in live}
+                if pending:
+                    await asyncio.sleep(0.5)
+        except Exception as exc:  # noqa: BLE001 - report, don't fail the delete
+            return {"purged": False, "reconciled": reconciled, "error": str(exc)}
+
+    trash_root = Path.home() / ".eidolon-trash"
+    realms: list[dict[str, Any]] = []
+    for rid in realm_ids:
+        entry: dict[str, Any] = {"realm_id": rid}
+        try:
+            palace = Path(memory_palace_path(rid))
+            if palace.exists():
+                trash_root.mkdir(parents=True, exist_ok=True)
+                target = trash_root / f"{palace.name}_{int(time.time())}"
+                counter = 1
+                while target.exists():
+                    target = trash_root / f"{palace.name}_{int(time.time())}_{counter}"
+                    counter += 1
+                shutil.move(str(palace), str(target))
+                entry["palace_trashed_to"] = str(target)
+            else:
+                entry["palace_missing"] = True
+        except Exception as exc:  # noqa: BLE001
+            entry["error"] = str(exc)
+        realms.append(entry)
+    return {"purged": True, "reconciled": reconciled, "realms": realms}
 
 
 @router.get("/owners/{owner_id}/persona-genomes", response_model=PersonaGenomeListResponse)
@@ -744,6 +962,14 @@ def _companion(row: Any) -> CompanionView:
         kind=row.kind,
         status=row.status,
         is_master=bool(getattr(row, "is_master", False)),
+        companion_type=str(
+            getattr(
+                row,
+                "companion_type",
+                "master" if bool(getattr(row, "is_master", False)) else "slave",
+            )
+            or ("master" if bool(getattr(row, "is_master", False)) else "slave")
+        ),
         current_genome_id=row.current_genome_id,
         default_memory_realm_id=row.default_memory_realm_id,
         profile_json=row.profile_json or {},
@@ -752,6 +978,45 @@ def _companion(row: Any) -> CompanionView:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _master_ready(
+    companions: list[Any],
+    persona_genomes: list[Any],
+    memory_realms: list[Any],
+    devices: list[Any],
+) -> bool:
+    active = [row for row in companions if getattr(row, "status", "") == "active"]
+    master = next(
+        (
+            row
+            for row in active
+            if getattr(row, "companion_type", "") == "master"
+            or bool(getattr(row, "is_master", False))
+        ),
+        None,
+    )
+    if master is None:
+        return False
+    if not getattr(master, "current_genome_id", None):
+        return False
+    has_current_genome = any(
+        row.genome_id == master.current_genome_id and row.companion_id == master.companion_id
+        for row in persona_genomes
+    )
+    has_memory_realm = any(
+        row.realm_id == master.default_memory_realm_id
+        and row.companion_id == master.companion_id
+        and row.status == "active"
+        for row in memory_realms
+    )
+    has_web_device = any(
+        row.bound_companion_id == master.companion_id
+        and row.kind == "web"
+        and row.revoked_at is None
+        for row in devices
+    )
+    return has_current_genome and has_memory_realm and has_web_device
 
 
 def _persona_genome(row: Any) -> PersonaGenomeView:

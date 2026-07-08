@@ -11,7 +11,11 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: AdminLayout,
     children: [
-      { path: '', redirect: { name: 'owners' } },
+      {
+        path: '',
+        name: 'home',
+        component: () => import('@/modules/home/MyEidolon.vue'),
+      },
       {
         path: 'supervisor',
         name: 'supervisor',

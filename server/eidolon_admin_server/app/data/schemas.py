@@ -18,6 +18,19 @@ class OwnerCreateRequest(BaseModel):
     settings_json: JsonDict = Field(default_factory=dict)
 
 
+class BootstrapResponse(BaseModel):
+    """Everything the host-local web client needs to auto-connect as the
+    owner's master companion's web body — no forms, no URL params."""
+
+    owner_id: str
+    owner_display_name: str
+    companion_id: str
+    companion_display_name: str
+    device_id: str
+    # How the master was resolved: "existing" | "provisioned" | "promoted".
+    master_source: str = "existing"
+
+
 class OwnerUpdateRequest(BaseModel):
     display_name: str | None = None
     kind: str | None = None
@@ -47,6 +60,7 @@ class CompanionView(BaseModel):
     kind: str
     status: str
     is_master: bool = False
+    companion_type: str = "slave"
     current_genome_id: str | None = None
     default_memory_realm_id: str | None = None
     profile_json: JsonDict = Field(default_factory=dict)

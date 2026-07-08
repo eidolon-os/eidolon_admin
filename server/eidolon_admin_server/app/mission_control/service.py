@@ -1226,6 +1226,14 @@ def _runtime_companion(row: Any) -> RuntimeCompanion:
         kind=getattr(row, "kind", "") or "",
         status=getattr(row, "status", "") or "",
         is_master=bool(getattr(row, "is_master", False)),
+        companion_type=str(
+            getattr(
+                row,
+                "companion_type",
+                "master" if bool(getattr(row, "is_master", False)) else "slave",
+            )
+            or ("master" if bool(getattr(row, "is_master", False)) else "slave")
+        ),
         genome_id=getattr(row, "current_genome_id", None),
         memory_realm_id=getattr(row, "default_memory_realm_id", None),
     )

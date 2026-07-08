@@ -40,6 +40,7 @@ from .mission_control import router as mission_control_router
 from .memory.nats_publisher import JetStreamPublisher
 from .memory.supervisor_client import build_memory_supervisor_client
 from .nats_kv import KVClient
+from .onboarding import router as onboarding_router
 from .resolve import router as resolve_router
 from .resolve.orchestrator import ResolveOrchestrator
 from .routers.overview import router as overview_router
@@ -164,6 +165,7 @@ def create_app(
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
+    app.include_router(onboarding_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
     app.include_router(resolve_router, prefix="/api")

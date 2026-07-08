@@ -56,6 +56,7 @@ export interface RuntimeCompanion {
   kind: string
   status: string
   is_master?: boolean
+  companion_type?: 'master' | 'slave' | string
   genome_id: string | null
   memory_realm_id: string | null
 }

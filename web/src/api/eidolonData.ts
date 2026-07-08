@@ -35,6 +35,7 @@ export interface CompanionView {
   kind: string
   status: string
   is_master: boolean
+  companion_type: 'master' | 'slave' | string
   current_genome_id: string | null
   default_memory_realm_id: string | null
   profile_json: JsonDict

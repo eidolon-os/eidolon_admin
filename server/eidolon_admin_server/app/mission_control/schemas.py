@@ -70,6 +70,7 @@ class RuntimeCompanion(BaseModel):
     kind: str = ""
     status: str = ""
     is_master: bool = False
+    companion_type: str = "slave"
     genome_id: str | None = None
     memory_realm_id: str | None = None
 

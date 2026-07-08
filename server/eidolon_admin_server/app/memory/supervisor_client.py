@@ -10,6 +10,17 @@ from eidolon_sdk.core.http import ServiceHTTPClient
 
 
 class MemorySupervisorClient(ServiceHTTPClient):
+    async def reconcile(self) -> dict[str, Any]:
+        """Force the supervisor to re-read the admin registry and start/stop
+        workers to match. Used after a realm is removed from the registry so
+        its orphaned worker is reaped before its palace is trashed."""
+        r = await self._request("POST", "/api/admin/reconcile", timeout=30.0)
+        return r.json()
+
+    async def list_realms(self) -> dict[str, Any]:
+        r = await self._request("GET", "/api/admin/realms", timeout=15.0)
+        return r.json()
+
     async def rebuild_index(self, memory_realm_id: str) -> dict[str, Any]:
         realm = quote(memory_realm_id, safe="")
         r = await self._request(

@@ -21,6 +21,8 @@ const commandOpen = ref(false)
 const commandQuery = ref('')
 const commandScope = ref<string | null>(null)
 const sidebarOpen = ref(localStorage.getItem('eidolon-admin.sidebar_open') !== '0')
+const compactLayout = ref(false)
+const effectiveSidebarOpen = computed(() => sidebarOpen.value && !compactLayout.value)
 
 // Per-group collapse state (only collapsible groups participate). Persisted so
 // the System · Infrastructure section stays folded across sessions by default.
@@ -61,12 +63,15 @@ type MenuGroup = Omit<NavGroup, 'items'> & {
 }
 
 onMounted(() => {
+  updateCompactLayout()
   ownersStore.load()
   servicesStore.load()
+  window.addEventListener('resize', updateCompactLayout)
   window.addEventListener('keydown', handleGlobalKeydown)
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateCompactLayout)
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
@@ -197,6 +202,10 @@ function toggleSidebar() {
   localStorage.setItem('eidolon-admin.sidebar_open', sidebarOpen.value ? '1' : '0')
 }
 
+function updateCompactLayout() {
+  compactLayout.value = window.innerWidth <= 760
+}
+
 function handleRailClick(id: string) {
   const group = effectiveNav.value.find((entry) => entry.id === id)
   if (group?.items[0]) router.push(group.items[0].route)
@@ -212,15 +221,15 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 <template>
   <el-container class="admin-shell">
-    <el-aside :width="sidebarOpen ? '272px' : '72px'" class="aside" :class="{ expanded: sidebarOpen }">
+    <el-aside :width="effectiveSidebarOpen ? '272px' : '72px'" class="aside" :class="{ expanded: effectiveSidebarOpen }">
       <div class="logo">
         <span class="logo-dot" />
-        <span v-if="sidebarOpen" class="logo-word">Eidolon Admin</span>
-        <button class="sidebar-toggle" :title="sidebarOpen ? 'Collapse menu' : 'Expand menu'" @click="toggleSidebar">
-          <el-icon><Fold v-if="sidebarOpen" /><Expand v-else /></el-icon>
+        <span v-if="effectiveSidebarOpen" class="logo-word">Eidolon</span>
+        <button class="sidebar-toggle" :title="effectiveSidebarOpen ? 'Collapse menu' : 'Expand menu'" @click="toggleSidebar">
+          <el-icon><Fold v-if="effectiveSidebarOpen" /><Expand v-else /></el-icon>
         </button>
       </div>
-      <nav v-if="!sidebarOpen" class="rail">
+      <nav v-if="!effectiveSidebarOpen" class="rail">
         <button
           v-for="item in railItems"
           :key="item.id"
@@ -264,7 +273,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
       </nav>
       <button class="rail-command" title="Command Center" @click="openCommand(null)">
         <el-icon><Search /></el-icon>
-        <span v-if="sidebarOpen">Command Center</span>
+        <span v-if="effectiveSidebarOpen">Command Center</span>
       </button>
     </el-aside>
     <el-container class="workspace">
@@ -902,15 +911,33 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 @media (max-width: 760px) {
   .header {
+    gap: 8px;
     padding: 0 12px;
   }
   .command-chip {
-    min-width: 0;
-    width: 100%;
+    width: 38px;
+    min-width: 38px;
+    justify-content: center;
+    padding: 0;
   }
+  .crumb,
   .chip-kicker,
   .command-chip kbd {
     display: none;
+  }
+  .header-actions {
+    min-width: 0;
+    flex: 1;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  :deep(.owner-selector) {
+    min-width: 0;
+    flex: 1;
+    justify-content: flex-end;
+  }
+  :deep(.owner-select) {
+    width: min(180px, 100%);
   }
   :deep(.el-main) {
     padding: 12px;

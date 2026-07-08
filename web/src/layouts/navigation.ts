@@ -1,7 +1,6 @@
 // Sovereign-domain navigation model, extracted from AdminLayout so the IA is
-// declarative and one place. Structure: a pinned Cockpit launcher at the top,
-// entity-centric groups (Fleet / Companions / Devices / Memory / Activity), and
-// a collapsed "System · Infrastructure" section holding the runtime substrate.
+// declarative and one place. The default shape is user-first: My Eidolon,
+// Companions, Devices, Activity. Engineering surfaces live in Advanced.
 //
 // M1 scope: items point at EXISTING routes only (Device Center temporarily
 // resolves to the current hub/devices page; the consolidated center + companion
@@ -37,33 +36,18 @@ export type NavGroup = {
 
 export const navigation: NavGroup[] = [
   {
-    id: 'cockpit',
-    label: 'Cockpit',
-    code: 'OS',
-    icon: 'Aim',
+    id: 'home',
+    label: 'My Eidolon',
+    code: 'ME',
+    icon: 'HomeFilled',
     pinned: true,
     items: [
       {
-        id: 'mission-control',
-        label: 'Mission Control',
-        hint: '运行时驾驶舱',
-        icon: 'Aim',
-        route: { name: 'mission-control' },
-      },
-    ],
-  },
-  {
-    id: 'fleet',
-    label: 'Fleet',
-    code: 'OWN',
-    icon: 'UserFilled',
-    items: [
-      {
-        id: 'owners',
-        label: 'Owners',
-        hint: '主人 / 主权域',
-        icon: 'UserFilled',
-        route: { name: 'owners' },
+        id: 'my-eidolon',
+        label: '我的 Eidolon',
+        hint: '启动 / 创建 / 修复',
+        icon: 'HomeFilled',
+        route: { name: 'home' },
         entity: 'owner',
       },
     ],
@@ -77,17 +61,10 @@ export const navigation: NavGroup[] = [
       {
         id: 'companions',
         label: 'Companions',
-        hint: '伙伴与基因创作',
+        hint: '伙伴与人格',
         icon: 'Avatar',
         route: { name: 'companions' },
         entity: 'companion',
-      },
-      {
-        id: 'agent-chat',
-        label: 'Chat Test',
-        hint: '实时请求链路',
-        icon: 'ChatLineRound',
-        route: { name: 'feature', params: { serviceId: 'agent', feature: 'chat-test' } },
       },
     ],
   },
@@ -99,33 +76,12 @@ export const navigation: NavGroup[] = [
     items: [
       {
         id: 'device-center',
-        label: 'Device Center',
-        hint: '接入 / 绑定 / 命令',
+        label: 'Devices',
+        hint: '接入 / 绑定',
         icon: 'Monitor',
         route: { name: 'devices', params: { tab: 'fleet' } },
         entity: 'device',
       },
-      {
-        id: 'device-firmware',
-        label: 'Firmware Tool',
-        hint: '烧录 / 串口',
-        icon: 'Tools',
-        route: { name: 'devices', params: { tab: 'firmware' } },
-      },
-    ],
-  },
-  {
-    id: 'memory',
-    label: 'Memory',
-    code: 'MEM',
-    icon: 'Collection',
-    items: [
-      { id: 'memory-items', label: 'Memories', hint: '记忆记录', icon: 'Collection', route: { name: 'feature', params: { serviceId: 'memory', feature: 'memories' } } },
-      { id: 'memory-search', label: 'Search', hint: '召回检索', icon: 'Search', route: { name: 'feature', params: { serviceId: 'memory', feature: 'search' } } },
-      { id: 'memory-graph', label: 'Graph', hint: '记忆宫殿图', icon: 'Share', route: { name: 'feature', params: { serviceId: 'memory', feature: 'graph' } } },
-      { id: 'memory-kg', label: 'Knowledge Graph', hint: '三元组 / 事实', icon: 'Connection', route: { name: 'feature', params: { serviceId: 'memory', feature: 'kg' } } },
-      { id: 'memory-runners', label: 'Runners', hint: '工作进程', icon: 'Operation', route: { name: 'feature', params: { serviceId: 'memory', feature: 'runners' } } },
-      { id: 'memory-mcp', label: 'MCP Tools', hint: '工具面', icon: 'SetUp', route: { name: 'feature', params: { serviceId: 'memory', feature: 'mcp' } } },
     ],
   },
   {
@@ -135,19 +91,26 @@ export const navigation: NavGroup[] = [
     icon: 'Tickets',
     items: [
       { id: 'agent-conversations', label: 'Conversations', hint: '对话轮次', icon: 'Tickets', route: { name: 'feature', params: { serviceId: 'agent', feature: 'conversations' } } },
-      { id: 'agent-tasks', label: 'Long Tasks', hint: '协作任务队列', icon: 'Timer', route: { name: 'feature', params: { serviceId: 'agent', feature: 'long-tasks' } } },
-      { id: 'agent-reports', label: 'Replay Reports', hint: '评测产物', icon: 'DocumentChecked', route: { name: 'feature', params: { serviceId: 'agent', feature: 'replay-reports' } } },
-      { id: 'hub-events', label: 'Hub Events', hint: '设备事件流', icon: 'Bell', route: { name: 'feature', params: { serviceId: 'hub', feature: 'events' } } },
+      { id: 'hub-events', label: 'Device Events', hint: '设备事件流', icon: 'Bell', route: { name: 'feature', params: { serviceId: 'hub', feature: 'events' } } },
     ],
   },
   {
     id: 'system',
-    label: 'System · Infra',
-    code: 'SYS',
-    icon: 'Cpu',
+    label: 'Advanced',
+    code: 'ADV',
+    icon: 'Operation',
     collapsible: true,
     defaultCollapsed: true,
     items: [
+      { id: 'mission-control', label: 'Mission Control', hint: '运行时驾驶舱', icon: 'Aim', route: { name: 'mission-control' } },
+      { id: 'owners', label: 'Owners', hint: '主权域管理', icon: 'UserFilled', route: { name: 'owners' }, entity: 'owner' },
+      { id: 'memory-items', label: 'Memory', hint: '记忆 / 召回 / 图谱', icon: 'Collection', route: { name: 'feature', params: { serviceId: 'memory', feature: 'memories' } } },
+      { id: 'memory-search', label: 'Memory Search', hint: '召回检索', icon: 'Search', route: { name: 'feature', params: { serviceId: 'memory', feature: 'search' } } },
+      { id: 'memory-runners', label: 'Memory Runners', hint: '工作进程', icon: 'Operation', route: { name: 'feature', params: { serviceId: 'memory', feature: 'runners' } } },
+      { id: 'agent-chat', label: 'Chat Test', hint: '实时请求链路', icon: 'ChatLineRound', route: { name: 'feature', params: { serviceId: 'agent', feature: 'chat-test' } } },
+      { id: 'agent-tasks', label: 'Long Tasks', hint: '协作任务队列', icon: 'Timer', route: { name: 'feature', params: { serviceId: 'agent', feature: 'long-tasks' } } },
+      { id: 'agent-reports', label: 'Replay Reports', hint: '评测产物', icon: 'DocumentChecked', route: { name: 'feature', params: { serviceId: 'agent', feature: 'replay-reports' } } },
+      { id: 'device-firmware', label: 'Firmware Tool', hint: '烧录 / 串口', icon: 'Tools', route: { name: 'devices', params: { tab: 'firmware' } } },
       { id: 'supervisor', label: 'Supervisor', hint: '进程与健康', icon: 'Cpu', route: { name: 'supervisor' } },
       { id: 'configs', label: 'Service Configs', hint: '运行时配置', icon: 'Document', route: { name: 'configs' } },
       { id: 'benchmark-agent', label: 'Benchmarks', hint: '基准产物', icon: 'DataAnalysis', route: { name: 'benchmarks', params: { project: 'agent' } } },

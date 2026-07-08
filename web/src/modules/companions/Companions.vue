@@ -58,6 +58,10 @@ const cards = computed(() =>
   }),
 )
 
+function isPrimaryCompanion(companion: CompanionView): boolean {
+  return companion.companion_type === 'master' || companion.is_master
+}
+
 async function load() {
   if (!ownerId.value) {
     companions.value = []
@@ -252,7 +256,7 @@ async function reset(companion: CompanionView) {
             <span class="cmp-id mono">{{ card.companion.companion_id }}</span>
           </div>
           <div class="cmp-tags">
-            <el-tag v-if="card.companion.is_master" size="small" type="warning" effect="dark">★ 主</el-tag>
+            <el-tag v-if="isPrimaryCompanion(card.companion)" size="small" type="warning" effect="dark">默认</el-tag>
             <el-tag size="small" :type="card.companion.status === 'active' ? 'success' : 'info'">{{ card.companion.status }}</el-tag>
           </div>
         </div>

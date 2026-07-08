@@ -113,6 +113,7 @@ async def test_owner_scoped_data_overview_and_lists(
     )
     assert initialized.status_code == 200
     assert initialized.json()["companion"]["companion_id"] == "c_owner-a_default"
+    assert initialized.json()["companion"]["companion_type"] == "master"
     assert initialized.json()["persona_genome"]["genome_id"] == "g_owner-a_default_v1"
     assert initialized.json()["persona_genome"]["status"] == "committed"
     assert initialized.json()["persona_genome"]["prompt_markdown"].startswith("# Xiaoyi")
@@ -159,6 +160,7 @@ async def test_owner_scoped_data_overview_and_lists(
     }
     assert body["companions"][0]["companion_id"] == "c_owner-a_default"
     assert body["companions"][0]["is_master"] is True
+    assert body["companions"][0]["companion_type"] == "master"
     device_ids = {device["device_id"] for device in body["devices"]}
     assert device_ids == {"web-c_owner-a_default", "device-a"}
     assert body["conversations"][0]["conversation_id"] == "conversation-a"
@@ -349,3 +351,154 @@ async def test_data_router_returns_503_without_datastore() -> None:
     ) as ac:
         response = await ac.get("/api/owners")
     assert response.status_code == 503
+
+
+async def test_delete_non_master_companion(client: httpx.AsyncClient) -> None:
+    await client.post(
+        "/api/owners", json={"owner_id": "od", "display_name": "OD", "kind": "person"}
+    )
+    # First initialize -> master companion.
+    await client.post("/api/owners/od/workspace/initialize", json={})
+    # Second initialize with explicit ids -> a non-master companion.
+    second = await client.post(
+        "/api/owners/od/workspace/initialize",
+        json={"companion_id": "c_side", "genome_id": "g_side", "realm_id": "r_side"},
+    )
+    assert second.status_code == 200
+    assert second.json()["companion"]["is_master"] is False
+
+    deleted = await client.request(
+        "DELETE", "/api/owners/od/companions/c_side", params={"purge_memory": "false"}
+    )
+    assert deleted.status_code == 200
+    body = deleted.json()
+    assert body["deleted"] is True
+    assert "r_side" in body["realm_ids"]
+    assert body["counts"]["companions"] == 1
+
+    remaining = await client.get("/api/owners/od/companions")
+    ids = {c["companion_id"] for c in remaining.json()["companions"]}
+    assert "c_side" not in ids
+    assert "c_od_default" in ids
+
+
+async def test_delete_master_companion_is_refused(client: httpx.AsyncClient) -> None:
+    await client.post(
+        "/api/owners", json={"owner_id": "om", "display_name": "OM", "kind": "person"}
+    )
+    init = await client.post("/api/owners/om/workspace/initialize", json={})
+    master_id = init.json()["companion"]["companion_id"]
+    refused = await client.request(
+        "DELETE", f"/api/owners/om/companions/{master_id}", params={"purge_memory": "false"}
+    )
+    assert refused.status_code == 409
+
+
+async def test_promote_companion_to_master(client: httpx.AsyncClient) -> None:
+    await client.post(
+        "/api/owners", json={"owner_id": "op", "display_name": "OP", "kind": "person"}
+    )
+    await client.post("/api/owners/op/workspace/initialize", json={})  # master c_op_default
+    await client.post(
+        "/api/owners/op/workspace/initialize",
+        json={"companion_id": "c_two", "genome_id": "g_two", "realm_id": "r_two"},
+    )
+    promoted = await client.post("/api/owners/op/companions/c_two/promote-master")
+    assert promoted.status_code == 200
+    assert promoted.json()["is_master"] is True
+
+    devices = await client.get("/api/owners/op/companions/c_two/devices")
+    assert "web" in {d["kind"] for d in devices.json()["devices"]}
+
+    companions = await client.get("/api/owners/op/companions")
+    masters = [c["companion_id"] for c in companions.json()["companions"] if c["is_master"]]
+    assert masters == ["c_two"]
+
+
+async def test_bootstrap_uses_existing_master(
+    client: httpx.AsyncClient, monkeypatch
+) -> None:
+    monkeypatch.delenv("EIDOLON_LOCAL_OWNER_ID", raising=False)
+    await client.post(
+        "/api/owners", json={"owner_id": "solo", "display_name": "Solo", "kind": "person"}
+    )
+    await client.post("/api/owners/solo/workspace/initialize", json={})
+    resp = await client.get("/api/bootstrap")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["owner_id"] == "solo"
+    assert body["master_source"] == "existing"
+    assert body["companion_id"] == "c_solo_default"
+    assert body["device_id"] == "web-c_solo_default"
+
+
+async def test_bootstrap_provisions_master_when_owner_has_none(
+    client: httpx.AsyncClient, monkeypatch
+) -> None:
+    monkeypatch.delenv("EIDOLON_LOCAL_OWNER_ID", raising=False)
+    await client.post(
+        "/api/owners", json={"owner_id": "fresh", "display_name": "Fresh", "kind": "person"}
+    )
+    resp = await client.get("/api/bootstrap")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["master_source"] == "provisioned"
+    assert body["companion_id"] == "c_fresh_default"
+    assert body["device_id"] == "web-c_fresh_default"
+
+
+async def test_bootstrap_promotes_lone_non_master(
+    client: httpx.AsyncClient, data_store: DataStore, monkeypatch
+) -> None:
+    monkeypatch.delenv("EIDOLON_LOCAL_OWNER_ID", raising=False)
+    await client.post(
+        "/api/owners", json={"owner_id": "lone", "display_name": "Lone", "kind": "person"}
+    )
+    # Create a single NON-master companion directly (the API's initialize would
+    # force the first companion to master).
+    await data_store.workspace_provisioning.provision_workspace(
+        owner_id="lone", companion_id="c_only", genome_id="g_only", realm_id="r_only", is_master=False
+    )
+    resp = await client.get("/api/bootstrap")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["master_source"] == "promoted"
+    assert body["companion_id"] == "c_only"
+    assert body["device_id"] == "web-c_only"
+
+
+async def test_bootstrap_ambiguous_multiple_owners(
+    client: httpx.AsyncClient, monkeypatch
+) -> None:
+    monkeypatch.delenv("EIDOLON_LOCAL_OWNER_ID", raising=False)
+    await client.post("/api/owners", json={"owner_id": "a1", "kind": "person"})
+    await client.post("/api/owners", json={"owner_id": "a2", "kind": "person"})
+    resp = await client.get("/api/bootstrap")
+    assert resp.status_code == 409
+
+    # EIDOLON_LOCAL_OWNER_ID disambiguates.
+    monkeypatch.setenv("EIDOLON_LOCAL_OWNER_ID", "a2")
+    resp2 = await client.get("/api/bootstrap")
+    assert resp2.status_code == 200
+    assert resp2.json()["owner_id"] == "a2"
+
+
+async def test_bootstrap_no_owner_is_404(client: httpx.AsyncClient, monkeypatch) -> None:
+    monkeypatch.delenv("EIDOLON_LOCAL_OWNER_ID", raising=False)
+    resp = await client.get("/api/bootstrap")
+    assert resp.status_code == 404
+
+
+async def test_bootstrap_explicit_owner_id(client: httpx.AsyncClient, monkeypatch) -> None:
+    monkeypatch.delenv("EIDOLON_LOCAL_OWNER_ID", raising=False)
+    await client.post("/api/owners", json={"owner_id": "p1", "kind": "person"})
+    await client.post("/api/owners", json={"owner_id": "p2", "kind": "person"})
+    # Ambiguous without a hint...
+    assert (await client.get("/api/bootstrap")).status_code == 409
+    # ...but explicit owner_id resolves that owner (fallback-picker path).
+    resp = await client.get("/api/bootstrap", params={"owner_id": "p2"})
+    assert resp.status_code == 200
+    assert resp.json()["owner_id"] == "p2"
+    assert resp.json()["device_id"] == "web-c_p2_default"
+    # Unknown explicit owner -> 404.
+    assert (await client.get("/api/bootstrap", params={"owner_id": "nope"})).status_code == 404

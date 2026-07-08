@@ -33,7 +33,7 @@ function syncFromRoute() {
 async function handleSelect(value: string | number) {
   const ownerId = String(value)
   store.setCurrent(ownerId)
-  if (ownerId) {
+  if (ownerId && route.name !== 'home') {
     await router.push({ name: 'owner-workspace', params: { ownerId, section: 'overview' } })
   }
 }
@@ -48,7 +48,7 @@ function openCreate() {
 async function submit() {
   const ownerId = form.owner_id.trim()
   if (!ownerId) {
-    ElMessage.warning('请输入 owner_id')
+    ElMessage.warning('请输入身份 ID')
     return
   }
   submitting.value = true
@@ -59,13 +59,15 @@ async function submit() {
       kind: form.kind,
     })
     dialogOpen.value = false
-    ElMessage.success('Owner 已创建')
-    await router.push({
-      name: 'owner-workspace',
-      params: { ownerId: owner.owner_id, section: 'overview' },
-    })
+    ElMessage.success('身份已创建')
+    if (route.name !== 'home') {
+      await router.push({
+        name: 'owner-workspace',
+        params: { ownerId: owner.owner_id, section: 'overview' },
+      })
+    }
   } catch (e) {
-    ElMessage.error(`创建 Owner 失败: ${extractErrorMessage(e)}`)
+    ElMessage.error(`创建身份失败: ${extractErrorMessage(e)}`)
   } finally {
     submitting.value = false
   }
@@ -78,7 +80,7 @@ async function submit() {
       :model-value="store.currentId"
       size="small"
       filterable
-      placeholder="Select owner"
+      placeholder="当前身份"
       :loading="store.loading"
       class="owner-select"
       @change="handleSelect"
@@ -95,9 +97,9 @@ async function submit() {
     </el-select>
     <el-button size="small" :icon="Plus" @click="openCreate" />
 
-    <el-dialog v-model="dialogOpen" title="Create Owner" width="420px" append-to-body>
+    <el-dialog v-model="dialogOpen" title="创建身份" width="420px" append-to-body>
       <el-form label-width="92px" @submit.prevent="submit">
-        <el-form-item label="owner_id">
+        <el-form-item label="身份 ID">
           <el-input v-model="form.owner_id" placeholder="owner-default" />
         </el-form-item>
         <el-form-item label="显示名">
