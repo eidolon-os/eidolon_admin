@@ -32,6 +32,7 @@ from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .data import router as data_router
 from .data.hub_client import HubDeviceRuntimeClient
+from .data.owner_delete_finalizer import finalize_owner_delete_jobs
 from .devices import router as devices_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
@@ -92,6 +93,15 @@ def create_app(
             app.state.resolve_orchestrator = ResolveOrchestrator(
                 data_store=data_store
             )
+            try:
+                cleanup = await finalize_owner_delete_jobs(
+                    data_store,
+                    app.state.memory_supervisor_client,
+                )
+                if cleanup.get("attempted"):
+                    logger.info("owner delete cleanup resumed: %s", cleanup)
+            except Exception:  # noqa: BLE001
+                logger.exception("owner delete cleanup finalizer failed at startup")
             logger.info("eidolon_data owner store ready")
         except Exception:  # noqa: BLE001
             logger.exception(

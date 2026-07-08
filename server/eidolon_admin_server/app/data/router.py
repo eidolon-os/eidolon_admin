@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
-import shutil
-import time
-from pathlib import Path
 from typing import Any
 
 from eidolon_data import DataStore
@@ -15,6 +11,12 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from .hub_client import HubRuntimeUnavailable
+from .owner_delete_finalizer import (
+    OwnerDeleteJournal,
+    finalize_owner_delete_jobs,
+    owner_cleanup_counts,
+    purge_memory_realms,
+)
 from .schemas import (
     BootstrapResponse,
     CompanionListResponse,
@@ -241,31 +243,33 @@ async def delete_owner(
         )
     store = _store(request)
     await _require_owner(store, owner_id)
+    realm_ids = [
+        row.realm_id for row in await store.memory_repo.list_realms_for_owner(owner_id)
+    ]
+    journal = OwnerDeleteJournal()
+    job = journal.create_or_load(owner_id=owner_id, realm_ids=realm_ids)
     result = await store.dev_maintenance.delete_owner_tree(owner_id)
     if not result.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "owner not found")
+    job = journal.mark_db_deleted(job, result)
 
-    memory: dict[str, Any] = {"purged": False}
-    if purge_memory and result.realm_ids:
-        memory = await _purge_memory_realms(request, result.realm_ids)
+    memory: dict[str, Any] = {
+        "purged": False,
+        "journaled": True,
+        "job_id": job["job_id"],
+    }
+    if purge_memory:
+        memory = await finalize_owner_delete_jobs(
+            store,
+            getattr(request.app.state, "memory_supervisor_client", None),
+            journal=journal,
+            only_owner_id=owner_id,
+        )
     return OwnerDeleteResponse(
         owner_id=owner_id,
         deleted=True,
-        counts={
-            "devices": result.devices,
-            "companions": result.companions,
-            "persona_genomes": result.persona_genomes,
-            "memory_realms": result.memory_realms,
-            "body_commands": result.body_commands,
-            "runtime_callers": result.runtime_callers,
-            "runtime_sessions": result.runtime_sessions,
-            "messages": result.messages,
-            "turns": result.turns,
-            "conversations": result.conversations,
-            "jobs": result.jobs,
-            "events": result.events,
-        },
-        realm_ids=result.realm_ids,
+        counts=owner_cleanup_counts(result),
+        realm_ids=job.get("realm_ids", result.realm_ids),
         memory=memory,
     )
 
@@ -470,7 +474,10 @@ async def delete_companion(
 
     memory: dict[str, Any] = {"purged": False}
     if purge_memory and result.realm_ids:
-        memory = await _purge_memory_realms(request, result.realm_ids)
+        memory = await purge_memory_realms(
+            getattr(request.app.state, "memory_supervisor_client", None),
+            result.realm_ids,
+        )
     return {
         "owner_id": owner_id,
         "companion_id": companion_id,
@@ -480,56 +487,6 @@ async def delete_companion(
         "device_ids": result.device_ids,
         "memory": memory,
     }
-
-
-async def _purge_memory_realms(request: Request, realm_ids: list[str]) -> dict[str, Any]:
-    """Reconcile the memory supervisor (so orphaned workers for the now-removed
-    realms are reaped) then move each realm's palace directory to
-    ``~/.eidolon-trash/``. Best-effort: the DB delete has already committed, so
-    failures here are reported, not raised."""
-    from ..memory.runners import memory_palace_path
-
-    client = getattr(request.app.state, "memory_supervisor_client", None)
-    reconciled = False
-    if client is not None:
-        try:
-            await client.reconcile()
-            reconciled = True
-            pending = set(realm_ids)
-            deadline = time.monotonic() + 15.0
-            while pending and time.monotonic() < deadline:
-                data = await client.list_realms()
-                live = {
-                    (r.get("spec") or {}).get("memory_realm_id")
-                    for r in data.get("realms", [])
-                }
-                pending = {rid for rid in pending if rid in live}
-                if pending:
-                    await asyncio.sleep(0.5)
-        except Exception as exc:  # noqa: BLE001 - report, don't fail the delete
-            return {"purged": False, "reconciled": reconciled, "error": str(exc)}
-
-    trash_root = Path.home() / ".eidolon-trash"
-    realms: list[dict[str, Any]] = []
-    for rid in realm_ids:
-        entry: dict[str, Any] = {"realm_id": rid}
-        try:
-            palace = Path(memory_palace_path(rid))
-            if palace.exists():
-                trash_root.mkdir(parents=True, exist_ok=True)
-                target = trash_root / f"{palace.name}_{int(time.time())}"
-                counter = 1
-                while target.exists():
-                    target = trash_root / f"{palace.name}_{int(time.time())}_{counter}"
-                    counter += 1
-                shutil.move(str(palace), str(target))
-                entry["palace_trashed_to"] = str(target)
-            else:
-                entry["palace_missing"] = True
-        except Exception as exc:  # noqa: BLE001
-            entry["error"] = str(exc)
-        realms.append(entry)
-    return {"purged": True, "reconciled": reconciled, "realms": realms}
 
 
 @router.get("/owners/{owner_id}/persona-genomes", response_model=PersonaGenomeListResponse)

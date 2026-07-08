@@ -10,6 +10,10 @@ from eidolon_data import DataSettings, DataStore
 from fastapi import FastAPI
 
 from eidolon_admin_server.app.data import router as data_router
+from eidolon_admin_server.app.data.owner_delete_finalizer import (
+    OwnerDeleteJournal,
+    finalize_owner_delete_jobs,
+)
 
 
 def _runtime_device(
@@ -231,7 +235,13 @@ async def test_companion_web_body_and_multi_body_binding(
 async def test_delete_owner_requires_confirmation_and_removes_tree(
     client: httpx.AsyncClient,
     data_store: DataStore,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
+    monkeypatch.setenv(
+        "EIDOLON_OWNER_DELETE_JOURNAL_DIR",
+        str(tmp_path / "owner-delete-journal"),
+    )
     created = await client.post(
         "/api/owners",
         json={"owner_id": "owner-delete", "display_name": "Delete Me"},
@@ -265,6 +275,45 @@ async def test_delete_owner_requires_confirmation_and_removes_tree(
     assert await data_store.owners.get("owner-delete") is None
     assert await data_store.companions.get(companion_id) is None
     assert await data_store.devices.get_device(f"web-{companion_id}") is None
+
+
+async def test_owner_delete_finalizer_resumes_after_interruption(
+    data_store: DataStore,
+    tmp_path,
+) -> None:
+    await data_store.owner_service.create_owner(
+        owner_id="owner-resume",
+        display_name="Resume Owner",
+    )
+    result = await data_store.workspace_provisioning.provision_workspace(
+        owner_id="owner-resume",
+        companion_id="c_resume",
+        genome_id="g_resume",
+        realm_id="r_resume",
+        is_master=True,
+    )
+    device = await data_store.workspace_provisioning.ensure_web_body(
+        owner_id="owner-resume",
+        companion_id=result.companion.companion_id,
+    )
+
+    journal = OwnerDeleteJournal(tmp_path / "owner-delete-journal")
+    journal.create_or_load(owner_id="owner-resume", realm_ids=["r_resume"])
+
+    cleanup = await finalize_owner_delete_jobs(
+        data_store,
+        None,
+        journal=journal,
+    )
+
+    assert cleanup["attempted"] == 1
+    assert cleanup["finalized"] == 1
+    assert cleanup["pending"] == 0
+    assert await data_store.owners.get("owner-resume") is None
+    assert await data_store.companions.get("c_resume") is None
+    assert await data_store.devices.get_device(device.device_id) is None
+    assert journal.pending() == []
+    assert list((tmp_path / "owner-delete-journal" / "completed").glob("*.json"))
 
 
 async def test_owner_nearby_devices_identify_and_add_to_owner(
