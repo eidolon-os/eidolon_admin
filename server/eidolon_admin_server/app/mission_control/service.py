@@ -48,7 +48,6 @@ _TEXT_KEYS = {
     "user_text",
     "assistant_text",
     "prompt",
-    "prompt_markdown",
     "image",
     "image_url",
     "raw_image",

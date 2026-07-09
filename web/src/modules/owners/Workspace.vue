@@ -81,13 +81,45 @@ const initForm = ref({
   genome_id: '',
   genome_source_json: '{}',
   genome_json: JSON.stringify({
-    identity: { name: 'Companion', archetype: 'companion' },
-    style: { tone: 'warm', initiative: 'balanced' },
-    boundaries: {},
-    evolution: { enabled: true },
+    schema_version: 'eidolon.persona_genome.v1',
+    identity_core: {
+      name: 'Companion',
+      archetype: 'companion',
+      values: ['be warm', 'be honest', 'respect owner sovereignty'],
+      boundaries: [],
+    },
+    relationship: {
+      stage: 'new',
+      pinned_facts: [],
+      owner_preferences: {},
+      safety_boundaries: [],
+    },
+    traits: {
+      'core.playfulness': { value: 0.5, confidence: 0.5, source: 'template' },
+      'core.grounding': { value: 0.65, confidence: 0.5, source: 'template' },
+      'core.structure': { value: 0.55, confidence: 0.5, source: 'template' },
+    },
+    style_compiler: {
+      base_instructions: ['Warm, clear, and grounded.'],
+      trait_mappings: {},
+      spoken_phrases: [],
+    },
+    memory_adapter: {
+      recall_policy: {},
+      relation_policies: {},
+    },
+    evolution_policy: {
+      enabled: true,
+      auto_apply_low_risk: true,
+      max_delta_per_commit: 0.05,
+      review_required_traits: [],
+    },
+    provenance: {
+      origin: 'owner_authored',
+      base_genome_id: null,
+      evidence_refs: [],
+    },
   }, null, 2),
-  prompt_markdown: defaultPromptMarkdown('Companion'),
-  evolution_state_json: JSON.stringify({ version: 1, mode: 'continuous' }, null, 2),
   realm_id: '',
   memory_engine: 'mempalace',
   memory_policy_json: JSON.stringify({ scope: 'owner', recall: 'companion_default' }, null, 2),
@@ -326,8 +358,6 @@ async function submitInitialize() {
       genome_id: nullableText(initForm.value.genome_id),
       genome_source_json: parseJson(initForm.value.genome_source_json, 'Genome source JSON'),
       genome_json: normalizedGenomeJson(companionName),
-      prompt_markdown: initForm.value.prompt_markdown.trim() || defaultPromptMarkdown(companionName || 'Companion'),
-      evolution_state_json: parseJson(initForm.value.evolution_state_json, 'Evolution state JSON'),
       realm_id: nullableText(initForm.value.realm_id),
       memory_engine: initForm.value.memory_engine.trim() || 'mempalace',
       memory_engine_config_json: {},
@@ -361,33 +391,12 @@ function parseJson(value: string, label: string): Record<string, any> {
 
 function normalizedGenomeJson(companionName: string): Record<string, any> {
   const genome = parseJson(initForm.value.genome_json, 'Genome JSON')
-  const identity = { ...(genome.identity || {}) }
+  const identity = { ...(genome.identity_core || {}) }
   if (!String(identity.name || '').trim()) identity.name = companionName || 'Companion'
   if (!String(identity.archetype || '').trim()) identity.archetype = 'companion'
-  genome.identity = identity
+  genome.schema_version = genome.schema_version || 'eidolon.persona_genome.v1'
+  genome.identity_core = identity
   return genome
-}
-
-function defaultPromptMarkdown(name: string): string {
-  return [
-    `# ${name}`,
-    '',
-    '## Identity',
-    '',
-    `- Name: ${name}`,
-    '- Archetype: companion',
-    '',
-    '## Style',
-    '',
-    '- Warm, clear, and grounded.',
-    "- Respond to the user's intent before adding suggestions.",
-    '- Keep healthy boundaries and avoid pretending to know what was not provided.',
-    '',
-    '## Evolution',
-    '',
-    '- This persona may evolve through reviewed or policy-approved genome versions.',
-    '',
-  ].join('\n')
 }
 </script>
 
@@ -497,15 +506,9 @@ function defaultPromptMarkdown(name: string): string {
           <el-form-item label="genome_id">
             <el-input v-model="initForm.genome_id" placeholder="g:owner-default:default:v1" />
           </el-form-item>
-          <el-form-item label="prompt_markdown">
-            <el-input v-model="initForm.prompt_markdown" type="textarea" :rows="12" />
-          </el-form-item>
           <div class="json-grid">
             <el-form-item label="genome_json">
               <el-input v-model="initForm.genome_json" type="textarea" :rows="9" />
-            </el-form-item>
-            <el-form-item label="evolution_state_json">
-              <el-input v-model="initForm.evolution_state_json" type="textarea" :rows="9" />
             </el-form-item>
           </div>
           <el-collapse>
@@ -557,11 +560,9 @@ function defaultPromptMarkdown(name: string): string {
       <el-table-column prop="version" label="version" width="100" />
       <el-table-column prop="status" label="status" width="120" />
       <el-table-column prop="base_genome_id" label="base" min-width="180" />
+      <el-table-column prop="genome_hash" label="hash" min-width="220" />
       <el-table-column label="source" min-width="180">
         <template #default="{ row }">{{ jsonSummary(row.source_json) }}</template>
-      </el-table-column>
-      <el-table-column label="markdown" width="110">
-        <template #default="{ row }">{{ row.prompt_markdown ? 'yes' : '—' }}</template>
       </el-table-column>
       <el-table-column label="updated" width="190">
         <template #default="{ row }">{{ formatTimestamp(row.updated_at) }}</template>

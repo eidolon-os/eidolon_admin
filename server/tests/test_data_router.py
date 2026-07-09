@@ -113,7 +113,6 @@ async def test_owner_scoped_data_overview_and_lists(
         json={
             "companion_display_name": "Xiaoyi",
             "genome_json": {"tone": "warm"},
-            "prompt_markdown": "# Xiaoyi\n\n## Style\n\n- Warm.\n",
             "memory_policy_json": {"scope": "owner"},
         },
     )
@@ -122,7 +121,8 @@ async def test_owner_scoped_data_overview_and_lists(
     assert initialized.json()["companion"]["companion_type"] == "master"
     assert initialized.json()["persona_genome"]["genome_id"] == "g_owner-a_default_v1"
     assert initialized.json()["persona_genome"]["status"] == "committed"
-    assert initialized.json()["persona_genome"]["prompt_markdown"].startswith("# Xiaoyi")
+    assert initialized.json()["persona_genome"]["schema_version"] == "eidolon.persona_genome.v1"
+    assert initialized.json()["persona_genome"]["genome_hash"].startswith("pgv1_")
     assert initialized.json()["memory_realm"]["realm_id"] == "r_owner-a_default"
 
     await data_store.devices.create_device(
@@ -177,7 +177,7 @@ async def test_owner_scoped_data_overview_and_lists(
     genomes = await client.get("/api/owners/owner-a/persona-genomes")
     assert genomes.status_code == 200
     assert genomes.json()["persona_genomes"][0]["genome_id"] == "g_owner-a_default_v1"
-    assert genomes.json()["persona_genomes"][0]["prompt_markdown"].startswith("# Xiaoyi")
+    assert genomes.json()["persona_genomes"][0]["genome_hash"].startswith("pgv1_")
 
     missing = await client.get("/api/owners/missing/workspace")
     assert missing.status_code == 404

@@ -61,10 +61,13 @@ export interface PersonaGenomeView {
   version: number
   status: string
   base_genome_id: string | null
+  schema_version: string
+  genome_hash: string
+  compiler_version: string
+  stable_prompt_hash: string | null
+  applied_event_id: string | null
   source_json: JsonDict
   genome_json: JsonDict
-  prompt_markdown: string
-  evolution_state_json: JsonDict
   change_summary: string
   created_at: string
   updated_at: string
@@ -80,8 +83,6 @@ export interface WorkspaceInitializeRequest {
   genome_id?: string | null
   genome_source_json?: JsonDict
   genome_json?: JsonDict
-  prompt_markdown?: string
-  evolution_state_json?: JsonDict
   realm_id?: string | null
   memory_engine?: string
   memory_engine_config_json?: JsonDict

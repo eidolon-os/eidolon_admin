@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Companion-first genome authoring surface. Owners create a companion and author
 // its genome directly (free-text-primary), edit it (new version), reset it to the
-// authored origin, and preview the rendered prompt_markdown. Authoring proxies to
+// authored origin, and preview the stored genome snapshot. Authoring proxies to
 // the agent (assembly/validation there); reads + reset use eidolon_data.
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -263,10 +263,11 @@ async function reset(companion: CompanionView) {
         <div class="cmp-meta">
           <span>genome v{{ card.current?.version ?? '—' }}</span>
           <span>{{ card.current?.status || '—' }}</span>
+          <span class="mono">{{ card.current?.genome_hash || '—' }}</span>
         </div>
-        <details v-if="card.current?.prompt_markdown" class="cmp-preview">
-          <summary>prompt 预览</summary>
-          <pre>{{ card.current.prompt_markdown }}</pre>
+        <details v-if="card.current?.genome_json" class="cmp-preview">
+          <summary>genome 预览</summary>
+          <pre>{{ JSON.stringify(card.current.genome_json, null, 2) }}</pre>
         </details>
         <div class="cmp-actions">
           <el-button size="small" @click="openEdit(card.companion)">重新创作</el-button>

@@ -12,6 +12,14 @@ from uuid import uuid4
 
 from eidolon_data import DataStore
 from eidolon_data.services import OwnerWorkspaceError
+from eidolon_sdk.biz.persona import (
+    PersonaGenomeV1,
+    PersonaIdentityCore,
+    PersonaRelationship,
+    PersonaStyleCompilerV1,
+    PersonaTraitState,
+    persona_genome_to_json,
+)
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
@@ -162,7 +170,6 @@ async def initialize_onboarding(
                 genome_id=ids["genome_id"],
                 genome_source_json={"source_type": "owner_onboarding", "owner_id": owner.owner_id},
                 genome_json=_genome_json(payload, companion_type=COMPANION_TYPE_MASTER),
-                prompt_markdown=_prompt_markdown(payload, companion_type=COMPANION_TYPE_MASTER),
                 realm_id=ids["realm_id"],
                 actor_type="admin",
                 actor_id="onboarding",
@@ -217,7 +224,6 @@ async def create_onboarding_companion(
             genome_id=ids["genome_id"],
             genome_source_json={"source_type": "owner_onboarding", "owner_id": owner.owner_id},
             genome_json=_genome_json(payload, companion_type=COMPANION_TYPE_SLAVE),
-            prompt_markdown=_prompt_markdown(payload, companion_type=COMPANION_TYPE_SLAVE),
             realm_id=ids["realm_id"],
             actor_type="admin",
             actor_id="onboarding",
@@ -335,8 +341,6 @@ async def _ensure_master_ready(
                 companion_id=master.companion_id,
                 source_json={"source_type": "owner_onboarding_repair", "owner_id": owner_id},
                 genome_json=_genome_json(payload, companion_type=COMPANION_TYPE_MASTER),
-                prompt_markdown=_prompt_markdown(payload, companion_type=COMPANION_TYPE_MASTER),
-                evolution_state_json={"version": 1, "mode": "continuous"},
                 change_summary="Onboarding repair genome",
             )
         await store.companions.set_current_genome(master.companion_id, latest.genome_id)
@@ -462,39 +466,36 @@ def _companion_profile(payload: Any) -> JsonDict:
 
 def _genome_json(payload: Any, *, companion_type: str) -> JsonDict:
     name = (payload.companion_display_name or "").strip() or "Eidolon"
-    return {
-        "identity": {
-            "name": name,
-            "companion_type": companion_type,
-            "description": (payload.companion_description or "").strip(),
-        },
-        "relationship": (payload.relationship or "").strip(),
-        "speaking_style": (payload.speaking_style or "").strip(),
-        "pinned_facts": _split_lines(payload.important_memories or ""),
-        "source": "owner_onboarding",
-    }
-
-
-def _prompt_markdown(payload: Any, *, companion_type: str) -> str:
-    name = (payload.companion_display_name or "").strip() or "Eidolon"
-    lines = [
-        f"# {name}",
-        "",
-        f"- Internal companion type: {companion_type}",
-    ]
     description = (payload.companion_description or "").strip()
     relationship = (payload.relationship or "").strip()
-    style = (payload.speaking_style or "").strip()
-    memories = _split_lines(payload.important_memories or "")
-    if description:
-        lines.extend(["", "## Identity", description])
-    if relationship:
-        lines.extend(["", "## Relationship", relationship])
-    if style:
-        lines.extend(["", "## Speaking Style", style])
-    if memories:
-        lines.extend(["", "## Important Memories", *[f"- {item}" for item in memories]])
-    return "\n".join(lines).strip() + "\n"
+    speaking_style = (payload.speaking_style or "").strip()
+    genome = PersonaGenomeV1(
+        identity_core=PersonaIdentityCore(
+            name=name,
+            archetype="companion",
+            values=[description] if description else [],
+            boundaries=[],
+            companion_type=companion_type,
+            description=description,
+        ),
+        relationship=PersonaRelationship(
+            stage="new",
+            pinned_facts=_split_lines(payload.important_memories or ""),
+            owner_preferences={"relationship": relationship} if relationship else {},
+        ),
+        traits={
+            "core.playfulness": PersonaTraitState(value=0.5),
+            "core.structure": PersonaTraitState(value=0.55),
+            "core.grounding": PersonaTraitState(value=0.65),
+        },
+        style_compiler=PersonaStyleCompilerV1(
+            base_instructions=[speaking_style] if speaking_style else [],
+            trait_mappings={},
+            spoken_phrases=[],
+        ),
+        provenance={"origin": "owner_onboarding"},
+    )
+    return persona_genome_to_json(genome)
 
 
 def _split_lines(value: str) -> list[str]:
@@ -612,10 +613,13 @@ def _persona_genome(row: Any) -> PersonaGenomeView:
         version=row.version,
         status=row.status,
         base_genome_id=row.base_genome_id,
+        schema_version=row.schema_version,
+        genome_hash=row.genome_hash,
+        compiler_version=row.compiler_version,
+        stable_prompt_hash=row.stable_prompt_hash,
+        applied_event_id=row.applied_event_id,
         source_json=row.source_json or {},
         genome_json=row.genome_json or {},
-        prompt_markdown=row.prompt_markdown or "",
-        evolution_state_json=row.evolution_state_json or {},
         change_summary=row.change_summary or "",
         created_at=row.created_at,
         updated_at=row.updated_at,

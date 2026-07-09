@@ -84,8 +84,6 @@ class WorkspaceInitializeRequest(BaseModel):
     genome_id: str | None = None
     genome_source_json: JsonDict = Field(default_factory=dict)
     genome_json: JsonDict = Field(default_factory=dict)
-    prompt_markdown: str = ""
-    evolution_state_json: JsonDict = Field(default_factory=dict)
     realm_id: str | None = None
     memory_engine: str = "mempalace"
     memory_engine_config_json: JsonDict = Field(default_factory=dict)
@@ -98,10 +96,13 @@ class PersonaGenomeView(BaseModel):
     version: int
     status: str
     base_genome_id: str | None = None
+    schema_version: str
+    genome_hash: str
+    compiler_version: str
+    stable_prompt_hash: str | None = None
+    applied_event_id: str | None = None
     source_json: JsonDict = Field(default_factory=dict)
     genome_json: JsonDict = Field(default_factory=dict)
-    prompt_markdown: str = ""
-    evolution_state_json: JsonDict = Field(default_factory=dict)
     change_summary: str = ""
     created_at: datetime
     updated_at: datetime

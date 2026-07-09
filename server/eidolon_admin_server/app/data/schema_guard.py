@@ -56,6 +56,19 @@ _COLUMN_REPAIRS: tuple[ColumnRepair, ...] = (
         "runtime_session_id VARCHAR(128) REFERENCES runtime_sessions(session_id) ON DELETE SET NULL",
     ),
     ColumnRepair("turns", "trace_id", "trace_id VARCHAR(64)"),
+    ColumnRepair(
+        "persona_genomes",
+        "schema_version",
+        "schema_version VARCHAR(64) NOT NULL DEFAULT 'eidolon.persona_genome.v1'",
+    ),
+    ColumnRepair("persona_genomes", "genome_hash", "genome_hash VARCHAR(80) NOT NULL DEFAULT ''"),
+    ColumnRepair(
+        "persona_genomes",
+        "compiler_version",
+        "compiler_version VARCHAR(64) NOT NULL DEFAULT 'eidolon.persona_compiler.v1'",
+    ),
+    ColumnRepair("persona_genomes", "stable_prompt_hash", "stable_prompt_hash VARCHAR(80)"),
+    ColumnRepair("persona_genomes", "applied_event_id", "applied_event_id VARCHAR(64)"),
     ColumnRepair("events", "companion_id", "companion_id VARCHAR(64)"),
     ColumnRepair("events", "event_class", "event_class VARCHAR(8) NOT NULL DEFAULT 'audit'"),
     ColumnRepair("events", "source", "source VARCHAR(16) NOT NULL DEFAULT 'data'"),
@@ -78,6 +91,10 @@ _INDEX_REPAIRS: tuple[IndexRepair, ...] = (
     IndexRepair("conversations", "ix_conversations_runtime_session_id", ("runtime_session_id",)),
     IndexRepair("turns", "ix_turns_runtime_session_id", ("runtime_session_id",)),
     IndexRepair("turns", "ix_turns_trace_id", ("trace_id",)),
+    IndexRepair("persona_genomes", "ix_persona_genomes_schema_version", ("schema_version",)),
+    IndexRepair("persona_genomes", "ix_persona_genomes_genome_hash", ("genome_hash",)),
+    IndexRepair("persona_genomes", "ix_persona_genomes_stable_prompt_hash", ("stable_prompt_hash",)),
+    IndexRepair("persona_genomes", "ix_persona_genomes_applied_event_id", ("applied_event_id",)),
     IndexRepair("events", "ix_events_companion_id", ("companion_id",)),
     IndexRepair("events", "ix_events_event_class", ("event_class",)),
     IndexRepair("events", "ix_events_source", ("source",)),
@@ -181,6 +198,13 @@ async def _backfill_safe_defaults(
 async def _assert_required_columns(conn: AsyncConnection) -> None:
     required: dict[str, set[str]] = {
         "companions": {"is_master", "companion_type"},
+        "persona_genomes": {
+            "schema_version",
+            "genome_hash",
+            "compiler_version",
+            "stable_prompt_hash",
+            "applied_event_id",
+        },
         "turns": {"trace_id", "runtime_session_id"},
         "events": {"trace_id", "event_class", "source", "severity", "outcome"},
     }

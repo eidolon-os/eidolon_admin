@@ -13,6 +13,9 @@ class ResolvedContext(BaseModel):
     device_id: str | None = None
     memory_realm_id: str
     genome_id: str
+    schema_version: str
+    genome_hash: str
+    compiler_version: str
     interaction_mode: str | None = None
 
 

@@ -111,10 +111,17 @@ class ResolveOrchestrator:
             )
         if genome.status != "committed":
             raise ResolvePrecondition(f"genome {genome_id!r} is {genome.status}")
+        if not genome.genome_hash:
+            raise ResolvePrecondition(f"genome {genome_id!r} has no genome_hash")
+        if not genome.schema_version:
+            raise ResolvePrecondition(f"genome {genome_id!r} has no schema_version")
         return ResolvedContext(
             owner_id=companion.owner_id,
             companion_id=companion.companion_id,
             device_id=None,
             memory_realm_id=memory_realm_id,
             genome_id=genome_id,
+            schema_version=genome.schema_version,
+            genome_hash=genome.genome_hash,
+            compiler_version=genome.compiler_version,
         )
