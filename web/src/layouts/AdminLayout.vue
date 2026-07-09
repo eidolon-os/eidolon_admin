@@ -48,6 +48,8 @@ type CommandItem = {
   id: string
   label: string
   group: string
+  section?: string
+  path: string
   hint: string
   icon: string
   route: RouteTarget
@@ -59,6 +61,11 @@ type MenuItem = NavItem & {
 }
 
 type MenuGroup = Omit<NavGroup, 'items'> & {
+  items: MenuItem[]
+}
+
+type MenuSection = {
+  name: string
   items: MenuItem[]
 }
 
@@ -89,7 +96,7 @@ const coveredServiceIds = computed(() => {
 const effectiveNav = computed<NavGroup[]>(() => {
   const generated: NavItem[] = servicesStore.services
     .filter((s) => !coveredServiceIds.value.has(s.id))
-    .map((s) => ({ id: `svc-${s.id}`, label: s.name, hint: '托管进程', icon: 'Cpu', route: { name: 'supervisor' } }))
+    .map((s) => ({ id: `svc-${s.id}`, label: s.name, hint: '托管进程', icon: 'Cpu', section: 'Runtime', route: { name: 'supervisor' } }))
   if (!generated.length) return navigation
   return navigation.map((group) =>
     group.id === 'system' ? { ...group, items: [...group.items, ...generated] } : group,
@@ -116,7 +123,7 @@ const activeMenuItem = computed(() => {
   return null
 })
 
-const isMemoryRoute = computed(() => activeMenuItem.value?.group.id === 'memory')
+const isMemoryRoute = computed(() => activeMenuItem.value?.item.section === 'Memory')
 
 const commandItems = computed<CommandItem[]>(() =>
   menuGroups.value.flatMap((group) =>
@@ -124,6 +131,8 @@ const commandItems = computed<CommandItem[]>(() =>
       id: item.id,
       label: item.label,
       group: group.label,
+      section: item.section,
+      path: item.section ? `${group.label} / ${item.section}` : group.label,
       hint: item.hint || group.label,
       icon: item.icon,
       route: item.route,
@@ -134,7 +143,10 @@ const commandItems = computed<CommandItem[]>(() =>
 
 const currentTitle = computed(() => {
   if (route.name === 'owner-workspace') return `Owner / ${route.params.ownerId || ''}`
-  if (activeMenuItem.value) return `${activeMenuItem.value.group.label} / ${activeMenuItem.value.item.label}`
+  if (activeMenuItem.value) {
+    const { group, item } = activeMenuItem.value
+    return item.section ? `${group.label} / ${item.section} / ${item.label}` : `${group.label} / ${item.label}`
+  }
   return 'Command Center'
 })
 
@@ -155,9 +167,9 @@ const filteredCommands = computed(() => {
 const groupedCommands = computed(() => {
   const groups: Array<{ name: string; items: CommandItem[] }> = []
   for (const item of filteredCommands.value) {
-    let group = groups.find((g) => g.name === item.group)
+    let group = groups.find((g) => g.name === item.path)
     if (!group) {
-      group = { name: item.group, items: [] }
+      group = { name: item.path, items: [] }
       groups.push(group)
     }
     group.items.push(item)
@@ -195,6 +207,20 @@ function runCommand(item: CommandItem) {
 
 function runMenuItem(item: MenuItem) {
   router.push(item.route)
+}
+
+function menuSections(group: MenuGroup): MenuSection[] {
+  const sections: MenuSection[] = []
+  for (const item of group.items) {
+    const name = item.section || ''
+    let section = sections.find((entry) => entry.name === name)
+    if (!section) {
+      section = { name, items: [] }
+      sections.push(section)
+    }
+    section.items.push(item)
+  }
+  return sections
 }
 
 function toggleSidebar() {
@@ -255,19 +281,26 @@ function handleGlobalKeydown(event: KeyboardEvent) {
             </el-icon>
           </h3>
           <template v-if="group.pinned || !group.collapsible || isGroupOpen(group.id)">
-            <button
-              v-for="item in group.items"
-              :key="item.id"
-              class="menu-item"
-              :class="{ active: item.active, launcher: group.pinned }"
-              @click="runMenuItem(item)"
+            <div
+              v-for="section in menuSections(group)"
+              :key="section.name || 'main'"
+              class="menu-section"
             >
-              <span class="menu-icon"><el-icon><component :is="item.icon" /></el-icon></span>
-              <span class="menu-copy">
-                <strong>{{ item.label }}</strong>
-                <small v-if="item.hint">{{ item.hint }}</small>
-              </span>
-            </button>
+              <div v-if="section.name" class="menu-section-label">{{ section.name }}</div>
+              <button
+                v-for="item in section.items"
+                :key="item.id"
+                class="menu-item"
+                :class="{ active: item.active, launcher: group.pinned }"
+                @click="runMenuItem(item)"
+              >
+                <span class="menu-icon"><el-icon><component :is="item.icon" /></el-icon></span>
+                <span class="menu-copy">
+                  <strong>{{ item.label }}</strong>
+                  <small v-if="item.hint">{{ item.hint }}</small>
+                </span>
+              </button>
+            </div>
           </template>
         </section>
       </nav>
@@ -521,6 +554,26 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 .grp-caret {
   font-size: 11px;
   opacity: 0.7;
+}
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.menu-section + .menu-section {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--eid-accent) 12%, transparent);
+}
+.menu-section-label {
+  padding: 0 8px 2px;
+  color: color-mix(in srgb, var(--eid-text-muted) 88%, var(--eid-accent));
+  font-family: var(--eid-font-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 /* Pinned cockpit launcher — a prominent standalone entry, no group header. */
 .menu-group.pinned {
