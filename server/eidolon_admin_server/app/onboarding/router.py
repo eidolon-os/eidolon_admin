@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import re
 from typing import Any
@@ -23,6 +25,7 @@ from ..data.schemas import (
 )
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
+logger = logging.getLogger(__name__)
 
 JsonDict = dict[str, Any]
 COMPANION_TYPE_MASTER = "master"
@@ -180,7 +183,7 @@ async def initialize_onboarding(
     except IntegrityError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "workspace already initialized") from exc
 
-    await _reconcile_memory_supervisor(request)
+    _schedule_memory_supervisor_reconcile(request)
     return OnboardingInitializeResponse(
         state=await _build_state(store, owner_id=owner.owner_id),
     )
@@ -232,7 +235,7 @@ async def create_onboarding_companion(
     except IntegrityError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "companion already exists") from exc
 
-    await _reconcile_memory_supervisor(request)
+    _schedule_memory_supervisor_reconcile(request)
     return OnboardingCompanionCreateResponse(
         companion=_companion(result.companion),
         persona_genome=_persona_genome(result.persona_genome),
@@ -529,7 +532,22 @@ async def _reconcile_memory_supervisor(request: Request) -> None:
     try:
         await client.reconcile()
     except Exception:  # noqa: BLE001 - convenience nudge only
+        logger.exception("memory supervisor reconcile failed after onboarding")
+
+
+def _schedule_memory_supervisor_reconcile(request: Request) -> None:
+    client = getattr(request.app.state, "memory_supervisor_client", None)
+    if client is None:
         return
+    tasks: set[asyncio.Task] = getattr(request.app.state, "onboarding_background_tasks", set())
+    request.app.state.onboarding_background_tasks = tasks
+
+    async def _run() -> None:
+        await _reconcile_memory_supervisor(request)
+
+    task = asyncio.create_task(_run(), name="onboarding-memory-supervisor-reconcile")
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
 
 
 def _store(request: Request) -> DataStore:

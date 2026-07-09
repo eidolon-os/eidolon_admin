@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { listMemories, type MemoryRecord } from '@/api/memory'
 import { useMemoryRealmStore } from '@/stores/memoryRealm'
+import { memoryAgentStatus } from '@/utils/memoryRuntime'
 import MemoryPageShell from './components/MemoryPageShell.vue'
 
 const store = useMemoryRealmStore()
@@ -12,9 +13,46 @@ const loading = ref(false)
 const limit = ref(50)
 const offset = ref(0)
 const includePrivate = ref(false)
+const currentRealm = computed(() => store.currentRealm)
+const runtimeStatus = computed(() =>
+  currentRealm.value
+    ? memoryAgentStatus(currentRealm.value)
+    : { type: 'info' as const, label: 'NO REALM', hint: 'No memory realm selected.' },
+)
+const memoryReady = computed(() =>
+  Boolean(currentRealm.value?.enabled && currentRealm.value?.agent_reachable),
+)
+
+let runtimeTimer: ReturnType<typeof setInterval> | null = null
+
+function startRuntimePolling() {
+  if (runtimeTimer || memoryReady.value) return
+  runtimeTimer = setInterval(async () => {
+    if (store.loading) return
+    await store.load(true)
+    if (memoryReady.value) {
+      stopRuntimePolling()
+      await load()
+    }
+  }, 5000)
+}
+
+function stopRuntimePolling() {
+  if (!runtimeTimer) return
+  clearInterval(runtimeTimer)
+  runtimeTimer = null
+}
 
 async function load() {
+  if (!store.loaded) await store.load()
   if (!store.currentId) return
+  if (!memoryReady.value) {
+    records.value = []
+    totalHint.value = 0
+    startRuntimePolling()
+    return
+  }
+  stopRuntimePolling()
   loading.value = true
   try {
     const data = await listMemories(store.currentId, limit.value, offset.value, includePrivate.value)
@@ -25,8 +63,19 @@ async function load() {
   }
 }
 
-onMounted(load)
-watch(() => store.currentId, () => { offset.value = 0; load() })
+onMounted(async () => {
+  await store.load()
+  await load()
+})
+onBeforeUnmount(stopRuntimePolling)
+watch(
+  [
+    () => store.currentId,
+    () => currentRealm.value?.agent_reachable,
+    () => currentRealm.value?.runtime_state,
+  ],
+  () => { offset.value = 0; load() },
+)
 
 function nextPage() {
   if (records.value.length < limit.value) return
@@ -47,7 +96,17 @@ function shortText(s: string | undefined, max = 200): string {
 <template>
   <MemoryPageShell title="Memories">
     <template #default>
-      <el-card>
+      <el-alert
+        v-if="currentRealm && !memoryReady"
+        class="runtime-alert"
+        :type="runtimeStatus.type"
+        :closable="false"
+        show-icon
+        :title="runtimeStatus.label"
+        :description="runtimeStatus.hint"
+      />
+
+      <el-card v-else>
         <template #header>
           <div class="bar">
             <el-form inline>
@@ -93,4 +152,5 @@ function shortText(s: string | undefined, max = 200): string {
 .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
 .hint { font-size: 12px; color: var(--eid-text-muted); }
 .actions { display: flex; gap: 8px; }
+.runtime-alert { margin-bottom: 14px; }
 </style>

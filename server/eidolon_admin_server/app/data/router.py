@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from typing import Any
 
@@ -50,6 +52,7 @@ from .schemas import (
 )
 
 router = APIRouter(tags=["owners"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/owners", response_model=OwnerListResponse)
@@ -406,6 +409,7 @@ async def initialize_owner_workspace(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, message) from exc
     except IntegrityError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, "workspace already initialized") from exc
+    _schedule_memory_supervisor_reconcile(request, reason="workspace-initialize")
     return WorkspaceInitializeResponse(
         companion=_companion(result.companion),
         persona_genome=_persona_genome(result.persona_genome),
@@ -487,13 +491,9 @@ async def promote_companion_master(
         code = status.HTTP_404_NOT_FOUND if "not found" in message else status.HTTP_400_BAD_REQUEST
         raise HTTPException(code, message) from exc
     # Best-effort: nudge the memory supervisor so the (possibly new) realm's
-    # worker comes up without waiting for the next periodic reconcile.
-    client = getattr(request.app.state, "memory_supervisor_client", None)
-    if client is not None:
-        try:
-            await client.reconcile()
-        except Exception:  # noqa: BLE001 - purely a convenience nudge
-            pass
+    # worker comes up without waiting for the next periodic reconcile.  Do not
+    # make the operator wait for memory worker warm-up inside this request.
+    _schedule_memory_supervisor_reconcile(request, reason="promote-master")
     return _companion(row)
 
 
@@ -1229,3 +1229,21 @@ def _event(row: Any) -> EventView:
         occurred_at=getattr(row, "occurred_at", None),
         created_at=row.created_at,
     )
+
+
+def _schedule_memory_supervisor_reconcile(request: Request, *, reason: str) -> None:
+    client = getattr(request.app.state, "memory_supervisor_client", None)
+    if client is None:
+        return
+    tasks: set[asyncio.Task] = getattr(request.app.state, "data_background_tasks", set())
+    request.app.state.data_background_tasks = tasks
+
+    async def _run() -> None:
+        try:
+            await client.reconcile()
+        except Exception:  # noqa: BLE001 - convenience nudge only
+            logger.exception("memory supervisor reconcile failed after %s", reason)
+
+    task = asyncio.create_task(_run(), name=f"data-memory-supervisor-reconcile-{reason}")
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)

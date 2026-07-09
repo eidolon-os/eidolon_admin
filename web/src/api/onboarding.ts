@@ -82,14 +82,18 @@ export async function getOnboardingState(ownerId?: string | null): Promise<Onboa
 export async function initializeOnboarding(
   body: OnboardingInitializeRequest,
 ): Promise<OnboardingInitializeResponse> {
-  const { data } = await client.post<OnboardingInitializeResponse>('/onboarding/initialize', body)
+  const { data } = await client.post<OnboardingInitializeResponse>('/onboarding/initialize', body, {
+    timeout: 120_000,
+  })
   return data
 }
 
 export async function createOnboardingCompanion(
   body: OnboardingCompanionCreateRequest,
 ): Promise<OnboardingCompanionCreateResponse> {
-  const { data } = await client.post<OnboardingCompanionCreateResponse>('/onboarding/companions', body)
+  const { data } = await client.post<OnboardingCompanionCreateResponse>('/onboarding/companions', body, {
+    timeout: 120_000,
+  })
   return data
 }
 

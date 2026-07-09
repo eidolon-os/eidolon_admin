@@ -33,6 +33,7 @@ from .configs.router import router as configs_router
 from .data import router as data_router
 from .data.hub_client import HubDeviceRuntimeClient
 from .data.owner_delete_finalizer import finalize_owner_delete_jobs
+from .data.schema_guard import ensure_eidolon_data_schema
 from .devices import router as devices_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
@@ -89,6 +90,7 @@ def create_app(
         try:
             data_store = DataStore.open(load_settings())
             await data_store.init_schema()
+            await ensure_eidolon_data_schema(data_store)
             app.state.data_store = data_store
             app.state.resolve_orchestrator = ResolveOrchestrator(
                 data_store=data_store
