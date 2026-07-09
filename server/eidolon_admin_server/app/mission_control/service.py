@@ -562,6 +562,38 @@ def _device_role(device_id: str, name: str, kind: str, caps: list[str]) -> str:
     return "Body Node"
 
 
+def _is_prepared_web_body(device: RuntimeDevice) -> bool:
+    source = str(device.signals.get("source") or "").lower()
+    return (
+        not device.online
+        and device.kind.lower() == "web"
+        and (device.status == "active" or source in {"data", "hub+data"})
+    )
+
+
+def _device_lane_status(device: RuntimeDevice) -> str:
+    if device.online:
+        return "done"
+    if _is_prepared_web_body(device):
+        return "idle"
+    if device.status == "degraded":
+        return "degraded"
+    return "idle"
+
+
+def _device_lane_detail(device: RuntimeDevice) -> str:
+    caps = "、".join(_friendly_capability(cap) for cap in device.capabilities[:4])
+    if _is_prepared_web_body(device):
+        suffix = f" · {caps}" if caps else ""
+        return f"已准备，可启动{suffix}"
+    if device.online:
+        suffix = f" · {caps}" if caps else ""
+        return f"在线{suffix}"
+    if caps:
+        return caps
+    return "等待连接"
+
+
 def _turn(row: dict[str, Any]) -> RuntimeTurn:
     obs = row.get("observability_summary") or {}
     memory = obs.get("memory") or {}
@@ -1063,13 +1095,13 @@ def _experience_lanes(
             title="身体网络",
             headline=f"{len(online_devices)}/{len(devices)} 个身体在线",
             detail="2.06、BOX-3、摄像头板和 Web body 都可以成为同一个 companion 的入口。",
-            status="done" if online_devices else "pending",
+            status="done" if online_devices else ("idle" if devices else "pending"),
             items=[
                 RuntimeLaneItem(
                     label=device.role,
                     value=device.name or device.device_id,
-                    status="done" if device.online else "idle",
-                    detail="、".join(_friendly_capability(cap) for cap in device.capabilities[:4]),
+                    status=_device_lane_status(device),
+                    detail=_device_lane_detail(device),
                 )
                 for device in devices[:5]
             ],

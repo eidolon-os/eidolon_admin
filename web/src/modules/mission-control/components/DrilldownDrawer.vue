@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { MODE_CN, SVC_GLYPH } from '../constants'
-import { deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
+import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
 import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
 import ProofChainTiles from './ProofChainTiles.vue'
@@ -111,7 +111,7 @@ const drawerTurns = computed(() => {
           <span class="dw-sect">身体 / 化身 · {{ drawerComp.devices.length }}</span>
           <div class="dw-list">
             <div v-for="d in drawerComp.devices" :key="d.device_id" class="dw-row">
-              <i class="led" :class="d.online ? 'ok' : 'idle'" /><b>{{ deviceType(d) }}</b><em>{{ deviceShort(d) }} · {{ d.online ? '在线' : '离线' }}{{ d.interaction_mode ? ' · ' + d.interaction_mode : '' }}</em>
+              <i class="led" :class="devicePresenceClass(d)" /><b>{{ deviceType(d) }}</b><em>{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}{{ d.interaction_mode ? ' · ' + d.interaction_mode : '' }}</em>
               <button v-if="d.kind === 'web'" class="dw-mini" @click="launchBody(drawerComp, d)">启动</button>
             </div>
             <p v-if="!drawerComp.devices.length" class="dw-empty">未绑定身体</p>

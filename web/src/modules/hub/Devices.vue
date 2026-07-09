@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// Hub > Devices is the product entry for device access and reachability.
-// Device facts come from Hub; routing facts are Admin-owned and shown read-only.
+// Hub hardware table: device access, approval, and reachability for physical
+// bodies discovered by Hub. Host-local web bodies live in the owner inventory
+// above this table and do not need Hub approval.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Bell, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -449,9 +450,9 @@ async function onMoreCommand(command: string, d: DeviceView) {
   <div class="page">
     <div class="topbar">
       <div>
-        <h2 class="title">Devices</h2>
+        <h2 class="title">Hub 硬件设备</h2>
         <div class="subtitle">
-          {{ devices.length }} devices · Hub access and reachability
+          {{ devices.length }} hardware devices · Hub registry / LiveKit reachability
           <span v-if="!hubAvailable" class="warn">Hub 不可达, 状态可能过期</span>
         </div>
       </div>
@@ -628,7 +629,7 @@ async function onMoreCommand(command: string, d: DeviceView) {
     </el-table>
 
     <div v-if="!loading && filteredRows.length === 0" class="empty">
-      {{ lastDiscovery?.registered ? '等待设备请求配置' : '等待 Hub mDNS 广播恢复' }}
+      {{ lastDiscovery?.registered ? '等待物理设备请求配置' : '等待 Hub mDNS 广播恢复' }}
     </div>
 
     <el-drawer

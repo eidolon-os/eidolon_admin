@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// Single Device Center — consolidates the formerly scattered device surfaces
-// (Hub › Devices access/lifecycle/commands + ESP32 flashing) behind one entry.
+// Single Device Center — owner body inventory, Hub hardware lifecycle, and
+// ESP32 flashing behind one entry.
 // Tab is reflected in the route (:tab?) so it is shareable and back/forward-able.
 // Deeper owner→companion fleet grouping (server-side join) is a follow-up.
 import { computed } from 'vue'
@@ -23,7 +23,7 @@ const tab = computed<'fleet' | 'firmware'>({
 <template>
   <div class="device-center">
     <el-tabs v-model="tab" class="dc-tabs">
-      <el-tab-pane label="设备舰队" name="fleet">
+      <el-tab-pane label="设备与身体" name="fleet">
         <template v-if="tab === 'fleet'">
           <FleetGrouping :owner-id="ownersStore.currentId" />
           <Fleet />

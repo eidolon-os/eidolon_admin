@@ -6,7 +6,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
 import { currentStageKey, directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
-import { deviceShort, deviceType, fmtLatency, statusClass } from '../format'
+import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, statusClass } from '../format'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 
@@ -275,7 +275,7 @@ function deviceOnline(d: RuntimeDevice) {
         <template v-if="s.kind === 'body'">
           <p class="pop-role">伙伴的物理 / 虚拟入口。设备只是入口，身份仍归属主人。</p>
           <div v-if="s.c.devices.length" class="pop-rows">
-            <div v-for="d in s.c.devices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="d.online ? 'ok' : 'idle'">{{ deviceShort(d) }} · {{ d.online ? '在线' : '离线' }}</dd></div>
+            <div v-for="d in s.c.devices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="devicePresenceClass(d)">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}</dd></div>
           </div>
           <p v-else class="pop-role dim">这个伙伴还没有绑定任何身体。</p>
         </template>
@@ -311,7 +311,7 @@ function deviceOnline(d: RuntimeDevice) {
         <div class="pop-h"><b>待认领设备</b><em>UNCLAIMED</em></div>
         <p class="pop-role">这些身体还没有绑定到任何主人 / 伙伴，等待认领与授权。</p>
         <div class="pop-rows">
-          <div v-for="d in unboundDevices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="d.online ? 'ok' : 'idle'">{{ deviceShort(d) }} · {{ d.online ? '在线' : '离线' }}</dd></div>
+          <div v-for="d in unboundDevices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="devicePresenceClass(d)">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}</dd></div>
         </div>
       </div>
     </el-popover>

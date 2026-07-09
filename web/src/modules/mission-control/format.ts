@@ -42,6 +42,32 @@ export function deviceType(d: RuntimeDevice): string {
   return '设备'
 }
 
+export function isPreparedWebBody(d: RuntimeDevice): boolean {
+  const source = String(d.signals?.source || '').toLowerCase()
+  return (
+    !d.online
+    && String(d.kind || '').toLowerCase() === 'web'
+    && (d.status === 'active' || source === 'data' || source === 'hub+data')
+  )
+}
+
+export function devicePresenceLabel(d: RuntimeDevice): string {
+  if (d.online) return '在线'
+  if (isPreparedWebBody(d)) return '已准备'
+  if (d.status === 'degraded') return '不稳定'
+  if (d.status === 'active') return '已绑定'
+  if (d.status === 'unknown') return '未探测'
+  return '离线'
+}
+
+export function devicePresenceClass(d: RuntimeDevice): 'ok' | 'warn' | 'bad' | 'idle' {
+  if (d.online) return 'ok'
+  if (isPreparedWebBody(d)) return 'idle'
+  if (d.status === 'degraded') return 'warn'
+  if (d.status === 'offline') return 'bad'
+  return 'idle'
+}
+
 /** Compact device name for tight tiles. */
 export function deviceShort(d: RuntimeDevice): string {
   const n = d.name || d.device_id || ''
