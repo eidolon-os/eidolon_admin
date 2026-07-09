@@ -105,7 +105,14 @@ async def test_onboarding_creates_slave_without_changing_master(
         json={
             "owner_id": owner_id,
             "companion_display_name": "Study Buddy",
+            "companion_description": "A focused study companion.",
+            "relationship": "Study partner",
             "speaking_style": "Sharp and focused.",
+            "values": ["clarity", "momentum"],
+            "boundaries": ["never invent sources"],
+            "style_instructions": ["lead with the next action"],
+            "pinned_facts": ["Owner is building Eidolon"],
+            "safety_boundaries": ["ask before irreversible actions"],
         },
     )
     assert created.status_code == 200
@@ -113,6 +120,13 @@ async def test_onboarding_creates_slave_without_changing_master(
     assert body["companion"]["companion_type"] == "slave"
     assert body["companion"]["is_master"] is False
     assert body["launch_identity"] is None
+    genome = body["persona_genome"]["genome_json"]
+    assert genome["identity_core"]["values"] == ["clarity", "momentum"]
+    assert genome["identity_core"]["boundaries"] == ["never invent sources"]
+    assert genome["relationship"]["owner_preferences"] == {"relationship": "Study partner"}
+    assert genome["relationship"]["pinned_facts"] == ["Owner is building Eidolon"]
+    assert genome["relationship"]["safety_boundaries"] == ["ask before irreversible actions"]
+    assert genome["style_compiler"]["base_instructions"] == ["lead with the next action"]
 
     state = (await client.get(f"/api/onboarding/state?owner_id={owner_id}")).json()
     assert state["master_companion"]["companion_id"] == master_id

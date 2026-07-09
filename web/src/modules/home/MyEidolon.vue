@@ -27,6 +27,7 @@ const deleteDialogOpen = ref(false)
 const deleteConfirmText = ref('')
 const deleteResult = ref<OwnerDeleteResponse | null>(null)
 const deleteError = ref('')
+const companionAuthorTab = ref('identity')
 const wizardStep = ref(0)
 const state = ref<OnboardingState | null>(null)
 const loadError = ref('')
@@ -46,6 +47,11 @@ const companionForm = reactive({
   relationship: '',
   speaking_style: '',
   important_memories: '',
+  values: '',
+  boundaries: '',
+  style_instructions: '',
+  pinned_facts: '',
+  safety_boundaries: '',
   create_web_device: false,
 })
 
@@ -101,6 +107,52 @@ const deleteBackupPath = computed(() => deleteResult.value?.backup?.path || '')
 const deleteCanSubmit = computed(() =>
   Boolean(ownerId.value && deleteConfirmText.value === ownerId.value && !deletingOwner.value && !deleteResult.value),
 )
+const companionGenomeSeed = computed(() => {
+  const description = companionForm.companion_description.trim()
+  const values = lines(companionForm.values)
+  const boundaries = lines(companionForm.boundaries)
+  const styleInstructions = lines(companionForm.style_instructions || companionForm.speaking_style)
+  const pinnedFacts = lines(companionForm.pinned_facts || companionForm.important_memories)
+  const safetyBoundaries = lines(companionForm.safety_boundaries)
+  return {
+    schema_version: 'eidolon.persona_genome.v1',
+    identity_core: {
+      name: companionForm.companion_display_name.trim() || 'Companion',
+      archetype: 'companion',
+      description,
+      values: values.length ? values : description ? [description] : [],
+      boundaries,
+    },
+    relationship: {
+      stage: 'new',
+      owner_preferences: companionForm.relationship.trim()
+        ? { relationship: companionForm.relationship.trim() }
+        : {},
+      pinned_facts: pinnedFacts,
+      safety_boundaries: safetyBoundaries,
+    },
+    traits: {
+      'core.playfulness': { value: 0.5, confidence: 0.5, source: 'template' },
+      'core.structure': { value: 0.55, confidence: 0.5, source: 'template' },
+      'core.grounding': { value: 0.65, confidence: 0.5, source: 'template' },
+    },
+    style_compiler: {
+      base_instructions: styleInstructions,
+      trait_mappings: {},
+      spoken_phrases: [],
+    },
+  }
+})
+const companionGenomePreview = computed(() => JSON.stringify(companionGenomeSeed.value, null, 2))
+const companionSeedStats = computed(() => {
+  const seed = companionGenomeSeed.value
+  return [
+    { label: 'values', value: seed.identity_core.values.length },
+    { label: 'boundaries', value: seed.identity_core.boundaries.length },
+    { label: 'style', value: seed.style_compiler.base_instructions.length },
+    { label: 'memories', value: seed.relationship.pinned_facts.length },
+  ]
+})
 
 watch(
   () => state.value,
@@ -236,6 +288,11 @@ async function createCompanion() {
       relationship: companionForm.relationship,
       speaking_style: companionForm.speaking_style,
       important_memories: companionForm.important_memories,
+      values: lines(companionForm.values),
+      boundaries: lines(companionForm.boundaries),
+      style_instructions: lines(companionForm.style_instructions || companionForm.speaking_style),
+      pinned_facts: lines(companionForm.pinned_facts || companionForm.important_memories),
+      safety_boundaries: lines(companionForm.safety_boundaries),
       create_web_device: companionForm.create_web_device,
     })
     state.value = response.state
@@ -289,7 +346,25 @@ function resetCompanionForm() {
   companionForm.relationship = ''
   companionForm.speaking_style = ''
   companionForm.important_memories = ''
+  companionForm.values = ''
+  companionForm.boundaries = ''
+  companionForm.style_instructions = ''
+  companionForm.pinned_facts = ''
+  companionForm.safety_boundaries = ''
   companionForm.create_web_device = false
+  companionAuthorTab.value = 'identity'
+}
+
+function openCompanionDialog() {
+  resetCompanionForm()
+  companionDialogOpen.value = true
+}
+
+function lines(value: string): string[] {
+  return value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function goCompanions() {
@@ -493,7 +568,7 @@ function deleteStepDescription(item: Record<string, any>) {
               <el-icon><DataLine /></el-icon>
               运行时驾驶舱
             </el-button>
-            <el-button size="large" @click="companionDialogOpen = true">
+            <el-button size="large" @click="openCompanionDialog">
               <el-icon><Plus /></el-icon>
               创建伙伴
             </el-button>
@@ -571,31 +646,127 @@ function deleteStepDescription(item: Record<string, any>) {
     <el-dialog
       v-model="companionDialogOpen"
       title="创建伙伴"
-      width="680px"
+      width="1040px"
       append-to-body
       destroy-on-close
       class="companion-dialog"
     >
-      <el-form label-position="top">
-        <el-form-item label="名字">
-          <el-input v-model="companionForm.companion_display_name" placeholder="例如 Study Buddy" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="性格描述">
-          <el-input v-model="companionForm.companion_description" type="textarea" :rows="3" />
-        </el-form-item>
-        <div class="two-fields">
-          <el-form-item label="关系">
-            <el-input v-model="companionForm.relationship" />
+      <div class="companion-author">
+        <el-form label-position="top" class="author-form">
+          <div class="author-basics">
+            <el-form-item label="名字">
+              <el-input
+                v-model="companionForm.companion_display_name"
+                placeholder="例如 Study Buddy"
+                maxlength="64"
+                show-word-limit
+              />
+            </el-form-item>
+            <el-form-item label="关系">
+              <el-input v-model="companionForm.relationship" placeholder="可信赖的个人 AI 伙伴" />
+            </el-form-item>
+          </div>
+
+          <el-form-item label="性格底色">
+            <el-input
+              v-model="companionForm.companion_description"
+              type="textarea"
+              :rows="4"
+              maxlength="800"
+              show-word-limit
+              resize="vertical"
+              placeholder="沉稳、敏锐、会主动帮我拆解复杂问题"
+            />
           </el-form-item>
-          <el-form-item label="说话风格">
-            <el-input v-model="companionForm.speaking_style" />
-          </el-form-item>
-        </div>
-        <el-form-item label="重要记忆">
-          <el-input v-model="companionForm.important_memories" type="textarea" :rows="4" />
-        </el-form-item>
-        <el-checkbox v-model="companionForm.create_web_device">创建后直接准备网页端对话</el-checkbox>
-      </el-form>
+
+          <el-tabs v-model="companionAuthorTab" class="author-tabs">
+            <el-tab-pane label="身份" name="identity">
+              <div class="author-section-grid">
+                <el-form-item label="价值观">
+                  <el-input
+                    v-model="companionForm.values"
+                    type="textarea"
+                    :rows="6"
+                    resize="vertical"
+                    placeholder="尊重 owner 的主权&#10;表达清晰，不绕弯&#10;优先帮助行动"
+                  />
+                </el-form-item>
+                <el-form-item label="边界">
+                  <el-input
+                    v-model="companionForm.boundaries"
+                    type="textarea"
+                    :rows="6"
+                    resize="vertical"
+                    placeholder="不假装记得没有证据的事&#10;不替 owner 做不可逆决定"
+                  />
+                </el-form-item>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="关系" name="relationship">
+              <div class="author-section-grid">
+                <el-form-item label="重要记忆">
+                  <el-input
+                    v-model="companionForm.pinned_facts"
+                    type="textarea"
+                    :rows="6"
+                    resize="vertical"
+                    placeholder="owner 喜欢直接给结论&#10;owner 正在构建 Eidolon"
+                  />
+                </el-form-item>
+                <el-form-item label="安全边界">
+                  <el-input
+                    v-model="companionForm.safety_boundaries"
+                    type="textarea"
+                    :rows="6"
+                    resize="vertical"
+                    placeholder="高风险建议先提醒不确定性&#10;涉及现实承诺时先确认"
+                  />
+                </el-form-item>
+              </div>
+            </el-tab-pane>
+
+            <el-tab-pane label="表达" name="voice">
+              <div class="author-section-grid">
+                <el-form-item label="说话风格">
+                  <el-input
+                    v-model="companionForm.speaking_style"
+                    type="textarea"
+                    :rows="6"
+                    resize="vertical"
+                    placeholder="温和、直接、有一点幽默"
+                  />
+                </el-form-item>
+                <el-form-item label="表达指令">
+                  <el-input
+                    v-model="companionForm.style_instructions"
+                    type="textarea"
+                    :rows="6"
+                    resize="vertical"
+                    placeholder="先给结论，再补背景&#10;避免空泛安慰&#10;复杂事情拆成下一步"
+                  />
+                </el-form-item>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+
+          <el-checkbox v-model="companionForm.create_web_device">创建后准备网页端对话</el-checkbox>
+        </el-form>
+
+        <aside class="author-preview">
+          <div class="preview-head">
+            <strong>Genome Seed</strong>
+            <el-tag size="small" effect="dark">v1</el-tag>
+          </div>
+          <div class="seed-stat-grid">
+            <div v-for="item in companionSeedStats" :key="item.label" class="seed-stat">
+              <span>{{ item.label }}</span>
+              <b>{{ item.value }}</b>
+            </div>
+          </div>
+          <pre>{{ companionGenomePreview }}</pre>
+        </aside>
+      </div>
       <template #footer>
         <el-button @click="companionDialogOpen = false">取消</el-button>
         <el-button type="primary" :loading="creatingCompanion" @click="createCompanion">创建</el-button>
@@ -995,6 +1166,100 @@ function deleteStepDescription(item: Record<string, any>) {
   font-family: var(--eid-font-mono);
   font-size: 12px;
 }
+.companion-author {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 18px;
+  align-items: start;
+}
+.author-form {
+  min-width: 0;
+}
+.author-basics,
+.author-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.author-tabs {
+  margin-top: 4px;
+}
+.author-tabs :deep(.el-tabs__header) {
+  margin-bottom: 14px;
+}
+.author-preview {
+  position: sticky;
+  top: 0;
+  min-width: 0;
+  max-height: min(62vh, 620px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--eid-accent) 34%, var(--eid-border));
+  border-radius: 8px;
+  background: var(--eid-bg-inset);
+}
+.preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  color: var(--eid-text-primary);
+}
+.preview-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seed-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.seed-stat {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--eid-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--eid-bg-panel) 72%, transparent);
+}
+.seed-stat span,
+.seed-stat b {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seed-stat span {
+  color: var(--eid-text-muted);
+  font-family: var(--eid-font-mono);
+  font-size: 10px;
+}
+.seed-stat b {
+  margin-top: 4px;
+  color: var(--eid-text-primary);
+  font-size: 15px;
+}
+.author-preview pre {
+  min-width: 0;
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--eid-border);
+  border-radius: 6px;
+  color: var(--eid-text-secondary);
+  background: color-mix(in srgb, #020617 76%, var(--eid-bg-inset));
+  font-family: var(--eid-font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .delete-flow {
   display: flex;
   flex-direction: column;
@@ -1050,17 +1315,28 @@ function deleteStepDescription(item: Record<string, any>) {
 :global(.owner-delete-dialog .el-dialog__body) {
   overflow-wrap: anywhere;
 }
+:global(.companion-dialog) {
+  max-width: calc(100vw - 32px);
+}
+:global(.companion-dialog .el-dialog__body) {
+  overflow-wrap: anywhere;
+}
 :deep(.el-step__title) {
   white-space: nowrap;
 }
 
 @media (max-width: 980px) {
   .setup-layout,
-  .stat-grid {
+  .stat-grid,
+  .companion-author {
     grid-template-columns: 1fr;
   }
   .status-panel {
     position: static;
+  }
+  .author-preview {
+    position: static;
+    max-height: 420px;
   }
   .primary-panel {
     align-items: flex-start;
@@ -1086,6 +1362,11 @@ function deleteStepDescription(item: Record<string, any>) {
   .two-fields {
     grid-template-columns: 1fr;
   }
+  .author-basics,
+  .author-section-grid,
+  .seed-stat-grid {
+    grid-template-columns: 1fr;
+  }
   .companion-grid {
     grid-template-columns: 1fr;
   }
@@ -1102,6 +1383,10 @@ function deleteStepDescription(item: Record<string, any>) {
     width: 100%;
   }
   :global(.owner-delete-dialog) {
+    width: calc(100vw - 24px) !important;
+    max-width: calc(100vw - 24px);
+  }
+  :global(.companion-dialog) {
     width: calc(100vw - 24px) !important;
     max-width: calc(100vw - 24px);
   }

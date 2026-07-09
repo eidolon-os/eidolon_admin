@@ -75,6 +75,11 @@ class OnboardingInitializeRequest(BaseModel):
     relationship: str = ""
     speaking_style: str = ""
     important_memories: str = ""
+    values: list[str] = Field(default_factory=list)
+    boundaries: list[str] = Field(default_factory=list)
+    style_instructions: list[str] = Field(default_factory=list)
+    pinned_facts: list[str] = Field(default_factory=list)
+    safety_boundaries: list[str] = Field(default_factory=list)
     owner_profile_json: JsonDict = Field(default_factory=dict)
     owner_settings_json: JsonDict = Field(default_factory=dict)
 
@@ -87,6 +92,11 @@ class OnboardingCompanionCreateRequest(BaseModel):
     relationship: str = ""
     speaking_style: str = ""
     important_memories: str = ""
+    values: list[str] = Field(default_factory=list)
+    boundaries: list[str] = Field(default_factory=list)
+    style_instructions: list[str] = Field(default_factory=list)
+    pinned_facts: list[str] = Field(default_factory=list)
+    safety_boundaries: list[str] = Field(default_factory=list)
     create_web_device: bool = False
 
 
@@ -461,6 +471,11 @@ def _companion_profile(payload: Any) -> JsonDict:
         "relationship": (payload.relationship or "").strip(),
         "speaking_style": (payload.speaking_style or "").strip(),
         "important_memories": (payload.important_memories or "").strip(),
+        "values": _payload_lines(payload, "values"),
+        "boundaries": _payload_lines(payload, "boundaries"),
+        "style_instructions": _payload_lines(payload, "style_instructions"),
+        "pinned_facts": _payload_lines(payload, "pinned_facts"),
+        "safety_boundaries": _payload_lines(payload, "safety_boundaries"),
     }
 
 
@@ -469,19 +484,31 @@ def _genome_json(payload: Any, *, companion_type: str) -> JsonDict:
     description = (payload.companion_description or "").strip()
     relationship = (payload.relationship or "").strip()
     speaking_style = (payload.speaking_style or "").strip()
+    values = _payload_lines(payload, "values")
+    if not values and description:
+        values = [description]
+    boundaries = _payload_lines(payload, "boundaries")
+    pinned_facts = _payload_lines(payload, "pinned_facts") or _split_lines(
+        payload.important_memories or ""
+    )
+    style_instructions = _payload_lines(payload, "style_instructions") or _split_lines(
+        speaking_style
+    )
+    safety_boundaries = _payload_lines(payload, "safety_boundaries")
     genome = PersonaGenomeV1(
         identity_core=PersonaIdentityCore(
             name=name,
             archetype="companion",
-            values=[description] if description else [],
-            boundaries=[],
+            values=values,
+            boundaries=boundaries,
             companion_type=companion_type,
             description=description,
         ),
         relationship=PersonaRelationship(
             stage="new",
-            pinned_facts=_split_lines(payload.important_memories or ""),
+            pinned_facts=pinned_facts,
             owner_preferences={"relationship": relationship} if relationship else {},
+            safety_boundaries=safety_boundaries,
         ),
         traits={
             "core.playfulness": PersonaTraitState(value=0.5),
@@ -489,7 +516,7 @@ def _genome_json(payload: Any, *, companion_type: str) -> JsonDict:
             "core.grounding": PersonaTraitState(value=0.65),
         },
         style_compiler=PersonaStyleCompilerV1(
-            base_instructions=[speaking_style] if speaking_style else [],
+            base_instructions=style_instructions,
             trait_mappings={},
             spoken_phrases=[],
         ),
@@ -500,6 +527,15 @@ def _genome_json(payload: Any, *, companion_type: str) -> JsonDict:
 
 def _split_lines(value: str) -> list[str]:
     return [line.strip(" -\t") for line in value.splitlines() if line.strip(" -\t")]
+
+
+def _payload_lines(payload: Any, name: str) -> list[str]:
+    value = getattr(payload, name, None)
+    if isinstance(value, list):
+        return [str(item).strip(" -\t") for item in value if str(item).strip(" -\t")]
+    if isinstance(value, str):
+        return _split_lines(value)
+    return []
 
 
 def _launch_identity(owner_id: str, companion_id: str, device_id: str) -> LaunchIdentity:

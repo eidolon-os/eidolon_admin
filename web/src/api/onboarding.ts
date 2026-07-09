@@ -37,6 +37,11 @@ export interface OnboardingInitializeRequest {
   relationship?: string
   speaking_style?: string
   important_memories?: string
+  values?: string[]
+  boundaries?: string[]
+  style_instructions?: string[]
+  pinned_facts?: string[]
+  safety_boundaries?: string[]
   owner_profile_json?: JsonDict
   owner_settings_json?: JsonDict
 }
@@ -53,6 +58,11 @@ export interface OnboardingCompanionCreateRequest {
   relationship?: string
   speaking_style?: string
   important_memories?: string
+  values?: string[]
+  boundaries?: string[]
+  style_instructions?: string[]
+  pinned_facts?: string[]
+  safety_boundaries?: string[]
   create_web_device?: boolean
 }
 
