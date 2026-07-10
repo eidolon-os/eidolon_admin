@@ -295,6 +295,62 @@ async def test_check_emit_skip_list_is_empty_when_no_optional_busy(
     assert skip_file.read_text(encoding="utf-8") == ""
 
 
+@pytest.mark.asyncio
+async def test_check_service_filter_ignores_unselected_busy_port() -> None:
+    selected_port = _pick_free_port()
+    unselected_port = _pick_free_port()
+    cfg = GatewayConfig(
+        admin=AdminBindConfig(host="127.0.0.1", port=9000, cors_origins=[]),
+        services=[
+            ServiceConfig(
+                id="selected",
+                name="Selected",
+                integration="native",
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[selected_port]),
+            ),
+            ServiceConfig(
+                id="unselected",
+                name="Unselected",
+                integration="native",
+                auth=AuthConfig(type="none"),
+                ports=PortsDecl(declared=[unselected_port]),
+            ),
+        ],
+    )
+    proc = _spawn_listener(unselected_port)
+    try:
+        exit_code = await cli.check(
+            cleanup=False,
+            verbose=False,
+            cfg=cfg,
+            service_ids=("selected",),
+        )
+        assert exit_code == 0
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_check_service_filter_rejects_unknown_service_id() -> None:
+    cfg = _config_with_port(_pick_free_port(), service_id="known")
+    with pytest.raises(ValueError, match="unknown service id"):
+        await cli.check(
+            cleanup=False,
+            verbose=False,
+            cfg=cfg,
+            service_ids=("missing",),
+        )
+
+
+def test_main_service_filter_unknown_returns_two(capsys) -> None:
+    exit_code = cli.main(["check", "--services", "definitely-missing"])
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "unknown service id" in captured.err
+
+
 def test_main_unknown_subcommand_returns_two() -> None:
     """argparse error on missing subcommand exits 2 (the default).
 

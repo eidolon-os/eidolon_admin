@@ -25,6 +25,9 @@
 #   ./deploy/dev/run_all.sh restart        # stop then start (use when stack is already running)
 #   ./deploy/dev/run_all.sh status         # show vite + supervisorctl status (no port check)
 #   ./deploy/dev/run_all.sh foreground     # admin-api + web in foreground (no sub-projects)
+#   ./deploy/dev/run_all.sh core-contract start
+#                                        # supervised admin + agent + memory + nats only
+#   ./deploy/dev/run_all.sh core-contract stop|status|restart|sv [...]
 #
 #   ./deploy/dev/run_all.sh sv [...]       # passthrough to supervisorctl
 #                                        # e.g. sv status, sv restart channel:channel-worker
@@ -168,9 +171,66 @@ VENV="${ROOT}/.venv"
 WEB_DIR="${ROOT}/web"
 VITE_BIN_REL="node_modules/.bin/vite"
 
-SV_CONF="${ROOT}/deploy/dev/supervisord.conf"
+SV_DEFAULT_CONF="${ROOT}/deploy/dev/supervisord.conf"
+SV_PROFILE_CONF="${ROOT}/deploy/dev/supervisord.profile.conf"
+SV_CONF="$SV_DEFAULT_CONF"
 SV_PID="${VAR_DIR}/supervisord.pid"
 SV_SOCK="${VAR_DIR}/supervisor.sock"
+SV_PROFILE=""
+SUPERVISOR_PROFILE_ENABLED_DIR=""
+PREFLIGHT_SERVICE_IDS=""
+
+configure_supervisor_profile() {
+  local profile=$1
+  case "$profile" in
+    core-contract)
+      SV_PROFILE="$profile"
+      SV_CONF="$SV_PROFILE_CONF"
+      SV_PID="${VAR_DIR}/supervisord-${profile}.pid"
+      SV_SOCK="${VAR_DIR}/supervisor-${profile}.sock"
+      SUPERVISOR_PROFILE_ENABLED_DIR="${VAR_DIR}/supervisor-profiles/${profile}/enabled"
+      PREFLIGHT_SERVICE_IDS="admin,agent,memory,nats"
+      export EIDOLON_SUPERVISOR_PROFILE="$profile"
+      export EIDOLON_SUPERVISOR_PID="$SV_PID"
+      export EIDOLON_SUPERVISOR_SOCKET="$SV_SOCK"
+      export EIDOLON_SUPERVISOR_ENABLED_DIR="$SUPERVISOR_PROFILE_ENABLED_DIR"
+      export EIDOLON_SUPERVISOR_INCLUDE_GLOB="${SUPERVISOR_PROFILE_ENABLED_DIR}/*.conf"
+      export EIDOLON_ADMIN_SUPERVISOR_SOCKET="$SV_SOCK"
+      export EIDOLON_ADMIN_SUPERVISOR_ENABLED_DIR="$SUPERVISOR_PROFILE_ENABLED_DIR"
+      ;;
+    *)
+      error "unknown supervisor profile: $profile"
+      exit 1
+      ;;
+  esac
+}
+
+materialize_supervisor_profile() {
+  [[ -n "$SV_PROFILE" ]] || return 0
+  local configs=()
+  case "$SV_PROFILE" in
+    core-contract)
+      configs=(admin agent memory nats)
+      ;;
+    *)
+      error "unknown supervisor profile: $SV_PROFILE"
+      exit 1
+      ;;
+  esac
+
+  mkdir -p "$SUPERVISOR_PROFILE_ENABLED_DIR"
+  rm -f "${SUPERVISOR_PROFILE_ENABLED_DIR}"/*.conf
+  local name available link
+  for name in "${configs[@]}"; do
+    available="${ROOT}/deploy/supervisor/available/${name}.conf"
+    link="${SUPERVISOR_PROFILE_ENABLED_DIR}/${name}.conf"
+    if [[ ! -f "$available" ]]; then
+      error "profile ${SV_PROFILE}: missing supervisor config $available"
+      exit 1
+    fi
+    ln -s "$available" "$link"
+  done
+}
 
 # --- Deps -------------------------------------------------------------------
 
@@ -457,7 +517,7 @@ do_sv_stop_channel_first() {
   local raw state
   raw="$("${VENV}/bin/supervisorctl" -c "$SV_CONF" status channel:channel-worker 2>/dev/null || true)"
   state="$(echo "$raw" | awk '{print $2}')"
-  if [[ -z "$state" || "$state" == "STOPPED" ]]; then
+  if [[ -z "$state" || "$state" == "STOPPED" || "$state" == "ERROR" ]]; then
     return 0
   fi
   info "stopping channel-worker before stack shutdown (clean LiveKit disconnect)"
@@ -615,6 +675,9 @@ do_preflight() {
   SKIP_LIST_FILE="$(mktemp -t eidolon-skip-list.XXXXXX)"
   export SKIP_LIST_FILE
   local cli="${VENV}/bin/python -m eidolon_admin_server.app.system_health.cli check --emit-skip-list ${SKIP_LIST_FILE}"
+  if [[ -n "${PREFLIGHT_SERVICE_IDS:-}" ]]; then
+    cli="$cli --services ${PREFLIGHT_SERVICE_IDS}"
+  fi
   if [[ "${PREFLIGHT_CLEANUP:-0}" == "1" ]]; then
     cli="$cli --cleanup"
     info "pre-flight: will SIGTERM Eidolon-looking listeners on declared ports, then continue"
@@ -679,6 +742,41 @@ do_restart() {
   do_start
 }
 
+do_core_contract_start() {
+  configure_supervisor_profile core-contract
+  collect_ports_registry
+  load_ports_env
+  materialize_supervisor_profile
+  header "pre-flight core-contract port audit"
+  do_preflight
+  echo
+  header "supervisord core-contract"
+  do_sv_start
+  do_stop_busy_optionals
+}
+
+do_core_contract_stop() {
+  configure_supervisor_profile core-contract
+  header "supervisord core-contract"
+  do_sv_stop
+}
+
+do_core_contract_restart() {
+  do_core_contract_stop
+  sleep 1
+  do_core_contract_start
+}
+
+do_core_contract_status() {
+  configure_supervisor_profile core-contract
+  do_sv_status
+}
+
+do_core_contract_sv() {
+  configure_supervisor_profile core-contract
+  do_sv_passthrough "$@"
+}
+
 do_status() {
   do_web_status
   echo
@@ -737,6 +835,29 @@ case "${1:-}" in
   status)     do_status ;;
   foreground) do_foreground ;;
   "")         do_foreground ;;
+
+  core-contract)
+    shift
+    case "${1:-status}" in
+      start)   do_core_contract_start ;;
+      stop)    do_core_contract_stop ;;
+      restart) do_core_contract_restart ;;
+      status)  do_core_contract_status ;;
+      sv)
+        shift
+        do_core_contract_sv "$@"
+        ;;
+      *)
+        error "unknown core-contract command: ${1:-}"
+        error "usage: $0 core-contract start|stop|restart|status|sv [...]"
+        exit 1
+        ;;
+    esac
+    ;;
+  core-contract-start|start-core-contract)     do_core_contract_start ;;
+  core-contract-stop|stop-core-contract)       do_core_contract_stop ;;
+  core-contract-restart|restart-core-contract) do_core_contract_restart ;;
+  core-contract-status|status-core-contract)   do_core_contract_status ;;
 
   # Targeted admin-web control (api now goes through supervisorctl).
   start-web|web-start)   do_web_start ;;

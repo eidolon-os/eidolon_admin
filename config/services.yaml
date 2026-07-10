@@ -39,6 +39,22 @@ services:
         reload: restart_program
         reload_target: admin:admin-api
 
+  - id: nats
+    name: NATS
+    integration: infra
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    health: http://127.0.0.1:$EIDOLON_NATS_HTTP_PORT/varz
+    supervisor:
+      config_file: deploy/supervisor/available/nats.conf
+      group: nats
+      programs:
+        - nats-server
+    ports:
+      declared: [$EIDOLON_NATS_PORT, $EIDOLON_NATS_HTTP_PORT]
+    features: []
+
   - id: agent
     name: Eidolon Agent
     integration: proxy

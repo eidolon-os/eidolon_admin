@@ -24,6 +24,7 @@ import asyncio
 import signal
 import sys
 import time
+from collections.abc import Iterable
 
 from ..settings import GatewayConfig, load_gateway_config
 from . import probe
@@ -49,6 +50,7 @@ async def check(
     cfg: GatewayConfig | None = None,
     unmanaged: dict[str, frozenset[int] | set[int]] | None = None,
     emit_skip_list: str | None = None,
+    service_ids: Iterable[str] | None = None,
 ) -> int:
     """Return process exit code: 0 = clean, 1 = orphans found / unfixable.
 
@@ -66,6 +68,8 @@ async def check(
 
     if cfg is None:
         cfg = load_gateway_config()
+    if service_ids:
+        cfg = _filter_config_services(cfg, service_ids)
     if unmanaged is None:
         unmanaged = DEFAULT_UNMANAGED_BY_DESIGN  # type: ignore[assignment]
 
@@ -183,6 +187,20 @@ def _partition_listeners(
         else:
             foreign.append(o)
     return eidolon_like, foreign
+
+
+def _filter_config_services(
+    cfg: GatewayConfig,
+    service_ids: Iterable[str],
+) -> GatewayConfig:
+    wanted = [service_id.strip() for service_id in service_ids if service_id.strip()]
+    if not wanted:
+        return cfg
+    by_id = {service.id: service for service in cfg.services}
+    missing = sorted(service_id for service_id in wanted if service_id not in by_id)
+    if missing:
+        raise ValueError(f"unknown service id(s): {', '.join(missing)}")
+    return cfg.model_copy(update={"services": [by_id[service_id] for service_id in wanted]})
 
 
 def _partition_by_optional(
@@ -379,6 +397,13 @@ def _format_age(seconds: int) -> str:
     return f"{h}h{rem // 60}m"
 
 
+def _parse_service_ids(raw: str | None) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    values = tuple(part.strip() for part in raw.split(",") if part.strip())
+    return values or None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="port_audit",
@@ -406,14 +431,28 @@ def main(argv: list[str] | None = None) -> int:
             "services like mementos."
         ),
     )
+    check_p.add_argument(
+        "--services",
+        metavar="CSV",
+        default=None,
+        help=(
+            "limit the pre-flight audit to a comma-separated service id subset "
+            "(used by supervisor profiles such as core-contract)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.cmd == "check":
-        return asyncio.run(check(
-            cleanup=args.cleanup,
-            verbose=args.verbose,
-            emit_skip_list=args.emit_skip_list,
-        ))
+        try:
+            return asyncio.run(check(
+                cleanup=args.cleanup,
+                verbose=args.verbose,
+                emit_skip_list=args.emit_skip_list,
+                service_ids=_parse_service_ids(args.services),
+            ))
+        except ValueError as exc:
+            print(_color(f"✗ {exc}", _RED), file=sys.stderr)
+            return 2
     parser.print_help()
     return 2
 
