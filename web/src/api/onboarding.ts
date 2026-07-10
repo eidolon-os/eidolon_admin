@@ -33,13 +33,15 @@ export interface OnboardingInitializeRequest {
   owner_display_name?: string
   companion_id?: string | null
   companion_display_name?: string
-  companion_description?: string
-  relationship?: string
-  speaking_style?: string
-  important_memories?: string
+  self_concept?: string
+  character_portrait?: string
+  relationship_narrative?: string
+  voice_portrait?: string
   values?: string[]
   boundaries?: string[]
-  style_instructions?: string[]
+  commitments?: string[]
+  behavior_guidance?: string[]
+  dialogue_examples?: string[]
   pinned_facts?: string[]
   safety_boundaries?: string[]
   owner_profile_json?: JsonDict
@@ -54,13 +56,15 @@ export interface OnboardingCompanionCreateRequest {
   owner_id?: string | null
   companion_id?: string | null
   companion_display_name: string
-  companion_description?: string
-  relationship?: string
-  speaking_style?: string
-  important_memories?: string
+  self_concept?: string
+  character_portrait?: string
+  relationship_narrative?: string
+  voice_portrait?: string
   values?: string[]
   boundaries?: string[]
-  style_instructions?: string[]
+  commitments?: string[]
+  behavior_guidance?: string[]
+  dialogue_examples?: string[]
   pinned_facts?: string[]
   safety_boundaries?: string[]
   create_web_device?: boolean
@@ -72,6 +76,54 @@ export interface OnboardingCompanionCreateResponse {
   memory_realm: MemoryRealmView
   launch_identity: LaunchIdentity | null
   state: OnboardingState
+}
+
+export interface PersonaAuthoringDraft {
+  name: string
+  archetype: string
+  self_concept: string
+  character_portrait: string
+  relationship_narrative: string
+  voice_portrait: string
+  values: string[]
+  boundaries: string[]
+  commitments: string[]
+  pinned_facts: string[]
+  safety_boundaries: string[]
+  behavior_guidance: string[]
+  dialogue_examples: string[]
+  modality_notes: Record<string, string>
+  traits: Record<string, unknown>
+}
+
+export interface PersonaGenomePreview {
+  schema_version: string
+  constitution: {
+    name: string
+    archetype: string
+    self_concept: string
+    values: string[]
+    boundaries: string[]
+  }
+  character: {
+    portrait: string
+    traits: Record<string, unknown>
+    tensions: string[]
+    growth_edges: string[]
+  }
+  relationship: {
+    stage: string
+    narrative: string
+    commitments: string[]
+    pinned_facts: string[]
+    safety_boundaries: string[]
+  }
+  expression: {
+    voice_portrait: string
+    behavior_guidance: string[]
+    dialogue_examples: string[]
+    modality_notes: Record<string, string>
+  }
 }
 
 export interface OnboardingLaunchRequest {
@@ -105,6 +157,25 @@ export async function createOnboardingCompanion(
     timeout: 120_000,
   })
   return data
+}
+
+export async function getPersonaAuthoringDefaults(name = 'Companion'): Promise<PersonaAuthoringDraft> {
+  const { data } = await client.get<{ draft: PersonaAuthoringDraft }>(
+    '/onboarding/persona-authoring/defaults',
+    { params: { name }, suppressToast: true },
+  )
+  return data.draft
+}
+
+export async function previewPersonaAuthoring(
+  body: OnboardingCompanionCreateRequest,
+): Promise<PersonaGenomePreview> {
+  const { data } = await client.post<{ genome: PersonaGenomePreview }>(
+    '/onboarding/persona-authoring/preview',
+    body,
+    { suppressToast: true },
+  )
+  return data.genome
 }
 
 export async function launchOnboardingCompanion(

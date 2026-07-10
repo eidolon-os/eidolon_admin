@@ -52,7 +52,7 @@ def agent_debug_reports_dir() -> Path:
 def channel_runs_dir() -> Path:
     return env_path(
         "EIDOLON_CHANNEL_BENCHMARK_RUNS_DIR",
-        default_eidolon_root() / "eidolon_channel" / "benchmarks" / "runs",
+        default_eidolon_root() / "eidolon_channel" / "benchmark" / "runs",
     )
 
 
@@ -61,3 +61,33 @@ def memory_reports_dir() -> Path:
         "EIDOLON_MEMORY_BENCHMARK_REPORTS_DIR",
         default_eidolon_root() / "eidolon_memory" / "reports",
     )
+
+
+def standard_runs_dir(project: str) -> Path:
+    declarations = {
+        "agent": (
+            "EIDOLON_AGENT_BENCHMARK_RUNS_DIR",
+            default_eidolon_root() / "eidolon_agent" / "benchmarks" / "runs",
+        ),
+        "memory": (
+            "EIDOLON_MEMORY_BENCHMARK_RUNS_DIR",
+            default_eidolon_root() / "eidolon_memory" / "benchmarks" / "runs",
+        ),
+        "admin": (
+            "EIDOLON_ADMIN_BENCHMARK_RUNS_DIR",
+            default_eidolon_root() / "eidolon_admin" / "benchmarks" / "runs",
+        ),
+        "hub": (
+            "EIDOLON_HUB_BENCHMARK_RUNS_DIR",
+            default_eidolon_root() / "eidolon_hub" / "benchmarks" / "runs",
+        ),
+        "client-web": (
+            "EIDOLON_CLIENT_WEB_BENCHMARK_RUNS_DIR",
+            default_eidolon_root() / "eidolon_client_web" / "benchmarks" / "runs",
+        ),
+    }
+    try:
+        env_name, default = declarations[project]
+    except KeyError as exc:
+        raise ValueError(f"project has no standard benchmark root: {project}") from exc
+    return env_path(env_name, default)

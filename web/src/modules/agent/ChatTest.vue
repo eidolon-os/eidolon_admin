@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, ChatLineRound, Promotion } from '@element-plus/icons-vue'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
@@ -11,9 +12,12 @@ import { useOwnersStore } from '@/stores/owners'
 // EventSource (which only supports GET).
 
 const ownersStore = useOwnersStore()
+const route = useRoute()
+const queryOwnerId = typeof route.query.owner_id === 'string' ? route.query.owner_id : ''
+const queryCompanionId = typeof route.query.companion_id === 'string' ? route.query.companion_id : ''
 const form = ref({
-  owner_id: ownersStore.currentId,
-  companion_id: '',
+  owner_id: queryOwnerId || ownersStore.currentId,
+  companion_id: queryCompanionId,
   text: '',
   persist_memory: false,
 })

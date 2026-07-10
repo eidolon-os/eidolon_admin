@@ -8,6 +8,7 @@ from typing import AsyncIterator
 import httpx
 import pytest
 from eidolon_data import DataSettings, DataStore
+from eidolon_sdk.biz.persona import build_default_persona_genome, persona_genome_to_json
 from fastapi import FastAPI
 
 from eidolon_admin_server.app.data import router as data_router
@@ -112,17 +113,19 @@ async def test_owner_scoped_data_overview_and_lists(
         "/api/owners/owner-a/workspace/initialize",
         json={
             "companion_display_name": "Xiaoyi",
-            "genome_json": {"tone": "warm"},
+            "genome_json": persona_genome_to_json(
+                build_default_persona_genome(name="Xiaoyi")
+            ),
             "memory_policy_json": {"scope": "owner"},
         },
     )
     assert initialized.status_code == 200
     assert initialized.json()["companion"]["companion_id"] == "c_owner-a_default"
     assert initialized.json()["companion"]["companion_type"] == "master"
-    assert initialized.json()["persona_genome"]["genome_id"] == "g_owner-a_default_v1"
+    assert initialized.json()["persona_genome"]["genome_id"] == "g_owner-a_default"
     assert initialized.json()["persona_genome"]["status"] == "committed"
-    assert initialized.json()["persona_genome"]["schema_version"] == "eidolon.persona_genome.v1"
-    assert initialized.json()["persona_genome"]["genome_hash"].startswith("pgv1_")
+    assert initialized.json()["persona_genome"]["schema_version"] == "eidolon.persona_genome"
+    assert initialized.json()["persona_genome"]["genome_hash"].startswith("pg_")
     assert initialized.json()["memory_realm"]["realm_id"] == "r_owner-a_default"
 
     await data_store.devices.create_device(
@@ -176,8 +179,8 @@ async def test_owner_scoped_data_overview_and_lists(
 
     genomes = await client.get("/api/owners/owner-a/persona-genomes")
     assert genomes.status_code == 200
-    assert genomes.json()["persona_genomes"][0]["genome_id"] == "g_owner-a_default_v1"
-    assert genomes.json()["persona_genomes"][0]["genome_hash"].startswith("pgv1_")
+    assert genomes.json()["persona_genomes"][0]["genome_id"] == "g_owner-a_default"
+    assert genomes.json()["persona_genomes"][0]["genome_hash"].startswith("pg_")
 
     missing = await client.get("/api/owners/missing/workspace")
     assert missing.status_code == 404

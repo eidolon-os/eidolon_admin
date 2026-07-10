@@ -81,30 +81,40 @@ const initForm = ref({
   genome_id: '',
   genome_source_json: '{}',
   genome_json: JSON.stringify({
-    schema_version: 'eidolon.persona_genome.v1',
-    identity_core: {
+    schema_version: 'eidolon.persona_genome',
+    constitution: {
       name: 'Companion',
       archetype: 'companion',
+      self_concept: '',
       values: ['be warm', 'be honest', 'respect owner sovereignty'],
       boundaries: [],
     },
+    character: {
+      portrait: 'A grounded, attentive long-term companion.',
+      traits: {
+        'core.playfulness': { value: 0.5, confidence: 0.5, source: 'template' },
+        'core.grounding': { value: 0.65, confidence: 0.5, source: 'template' },
+        'core.structure': { value: 0.55, confidence: 0.5, source: 'template' },
+      },
+      tensions: [],
+      growth_edges: [],
+    },
     relationship: {
       stage: 'new',
+      narrative: '',
+      commitments: [],
       pinned_facts: [],
       owner_preferences: {},
       safety_boundaries: [],
     },
-    traits: {
-      'core.playfulness': { value: 0.5, confidence: 0.5, source: 'template' },
-      'core.grounding': { value: 0.65, confidence: 0.5, source: 'template' },
-      'core.structure': { value: 0.55, confidence: 0.5, source: 'template' },
+    expression: {
+      voice_portrait: 'Warm, clear, and grounded.',
+      behavior_guidance: [],
+      dialogue_examples: [],
+      modality_notes: {},
+      signature_phrases: {},
     },
-    style_compiler: {
-      base_instructions: ['Warm, clear, and grounded.'],
-      trait_mappings: {},
-      spoken_phrases: [],
-    },
-    memory_adapter: {
+    memory_policy: {
       recall_policy: {},
       relation_policies: {},
     },
@@ -391,11 +401,11 @@ function parseJson(value: string, label: string): Record<string, any> {
 
 function normalizedGenomeJson(companionName: string): Record<string, any> {
   const genome = parseJson(initForm.value.genome_json, 'Genome JSON')
-  const identity = { ...(genome.identity_core || {}) }
-  if (!String(identity.name || '').trim()) identity.name = companionName || 'Companion'
-  if (!String(identity.archetype || '').trim()) identity.archetype = 'companion'
-  genome.schema_version = genome.schema_version || 'eidolon.persona_genome.v1'
-  genome.identity_core = identity
+  const constitution = { ...(genome.constitution || {}) }
+  if (!String(constitution.name || '').trim()) constitution.name = companionName || 'Companion'
+  if (!String(constitution.archetype || '').trim()) constitution.archetype = 'companion'
+  genome.schema_version = 'eidolon.persona_genome'
+  genome.constitution = constitution
   return genome
 }
 </script>
@@ -504,7 +514,7 @@ function normalizedGenomeJson(companionName: string): Record<string, any> {
         <section class="init-block">
           <h3>Persona Genome</h3>
           <el-form-item label="genome_id">
-            <el-input v-model="initForm.genome_id" placeholder="g:owner-default:default:v1" />
+            <el-input v-model="initForm.genome_id" placeholder="g:owner-default:origin" />
           </el-form-item>
           <div class="json-grid">
             <el-form-item label="genome_json">

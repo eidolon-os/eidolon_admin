@@ -123,5 +123,5 @@ class ResolveOrchestrator:
             genome_id=genome_id,
             schema_version=genome.schema_version,
             genome_hash=genome.genome_hash,
-            compiler_version=genome.compiler_version,
+            realizer_version=genome.realizer_version,
         )

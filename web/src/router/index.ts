@@ -42,6 +42,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/benchmark/Overview.vue'),
       },
       {
+        path: 'companions/new',
+        name: 'companion-create',
+        component: () => import('@/modules/companions/CompanionCreate.vue'),
+      },
+      {
         path: 'companions/:section?',
         name: 'companions',
         component: () => import('@/modules/companions/Companions.vue'),

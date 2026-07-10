@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import {
-  createOnboardingCompanion,
   getOnboardingState,
   initializeOnboarding,
   launchOnboardingCompanion,
@@ -20,40 +19,13 @@ const router = useRouter()
 const loading = ref(true)
 const saving = ref(false)
 const launching = ref(false)
-const creatingCompanion = ref(false)
 const deletingOwner = ref(false)
-const companionDialogOpen = ref(false)
 const deleteDialogOpen = ref(false)
 const deleteConfirmText = ref('')
 const deleteResult = ref<OwnerDeleteResponse | null>(null)
 const deleteError = ref('')
-const companionAuthorTab = ref('identity')
-const wizardStep = ref(0)
 const state = ref<OnboardingState | null>(null)
 const loadError = ref('')
-
-const setupForm = reactive({
-  owner_display_name: '',
-  companion_display_name: '',
-  companion_description: '',
-  relationship: '',
-  speaking_style: '',
-  important_memories: '',
-})
-
-const companionForm = reactive({
-  companion_display_name: '',
-  companion_description: '',
-  relationship: '',
-  speaking_style: '',
-  important_memories: '',
-  values: '',
-  boundaries: '',
-  style_instructions: '',
-  pinned_facts: '',
-  safety_boundaries: '',
-  create_web_device: false,
-})
 
 const missingLabels: Record<string, string> = {
   owner: '身份',
@@ -72,13 +44,8 @@ const slaveCompanions = computed(() =>
   companions.value.filter((item) => item.companion_id !== master.value?.companion_id),
 )
 const missing = computed(() => state.value?.missing || [])
-const setupTitle = computed(() => {
-  if (!hasOwner.value) return '创建你的 Eidolon'
-  if (missing.value.includes('master_companion')) return '继续创建第一个伙伴'
-  return '修复初始化配置'
-})
-const primaryName = computed(() => master.value?.display_name || setupForm.companion_display_name || 'Eidolon')
-const ownerName = computed(() => state.value?.owner?.display_name || setupForm.owner_display_name || '我的身份')
+const primaryName = computed(() => master.value?.display_name || 'Eidolon')
+const ownerName = computed(() => state.value?.owner?.display_name || '我的身份')
 const readyStats = computed(() => [
   { label: 'Companions', value: companions.value.length || 0 },
   { label: 'Web Device', value: state.value?.web_device?.status || 'missing' },
@@ -107,61 +74,10 @@ const deleteBackupPath = computed(() => deleteResult.value?.backup?.path || '')
 const deleteCanSubmit = computed(() =>
   Boolean(ownerId.value && deleteConfirmText.value === ownerId.value && !deletingOwner.value && !deleteResult.value),
 )
-const companionGenomeSeed = computed(() => {
-  const description = companionForm.companion_description.trim()
-  const values = lines(companionForm.values)
-  const boundaries = lines(companionForm.boundaries)
-  const styleInstructions = lines(companionForm.style_instructions || companionForm.speaking_style)
-  const pinnedFacts = lines(companionForm.pinned_facts || companionForm.important_memories)
-  const safetyBoundaries = lines(companionForm.safety_boundaries)
-  return {
-    schema_version: 'eidolon.persona_genome.v1',
-    identity_core: {
-      name: companionForm.companion_display_name.trim() || 'Companion',
-      archetype: 'companion',
-      description,
-      values: values.length ? values : description ? [description] : [],
-      boundaries,
-    },
-    relationship: {
-      stage: 'new',
-      owner_preferences: companionForm.relationship.trim()
-        ? { relationship: companionForm.relationship.trim() }
-        : {},
-      pinned_facts: pinnedFacts,
-      safety_boundaries: safetyBoundaries,
-    },
-    traits: {
-      'core.playfulness': { value: 0.5, confidence: 0.5, source: 'template' },
-      'core.structure': { value: 0.55, confidence: 0.5, source: 'template' },
-      'core.grounding': { value: 0.65, confidence: 0.5, source: 'template' },
-    },
-    style_compiler: {
-      base_instructions: styleInstructions,
-      trait_mappings: {},
-      spoken_phrases: [],
-    },
-  }
-})
-const companionGenomePreview = computed(() => JSON.stringify(companionGenomeSeed.value, null, 2))
-const companionSeedStats = computed(() => {
-  const seed = companionGenomeSeed.value
-  return [
-    { label: 'values', value: seed.identity_core.values.length },
-    { label: 'boundaries', value: seed.identity_core.boundaries.length },
-    { label: 'style', value: seed.style_compiler.base_instructions.length },
-    { label: 'memories', value: seed.relationship.pinned_facts.length },
-  ]
-})
-
 watch(
   () => state.value,
   (next) => {
     if (!next) return
-    if (next.owner && !setupForm.owner_display_name) setupForm.owner_display_name = next.owner.display_name
-    if (next.master_companion && !setupForm.companion_display_name) {
-      setupForm.companion_display_name = next.master_companion.display_name
-    }
     if (next.owner?.owner_id) ownersStore.setCurrent(next.owner.owner_id)
   },
 )
@@ -191,54 +107,13 @@ async function load() {
   }
 }
 
-function validateWizardStep(): boolean {
-  if (wizardStep.value === 0) {
-    if (!hasOwner.value && !setupForm.owner_display_name.trim()) {
-      ElMessage.warning('先给你的身份起个名字')
-      return false
-    }
-    if (!master.value && !setupForm.companion_display_name.trim()) {
-      ElMessage.warning('给第一个伙伴起个名字')
-      return false
-    }
-  }
-  return true
-}
-
-function nextWizardStep() {
-  if (!validateWizardStep()) return
-  wizardStep.value = 1
-}
-
-async function submitSetup() {
-  if (!validateWizardStep()) return
-  saving.value = true
-  try {
-    const response = await initializeOnboarding({
-      owner_id: state.value?.owner?.owner_id || ownersStore.currentId || undefined,
-      owner_display_name: setupForm.owner_display_name,
-      companion_display_name: setupForm.companion_display_name,
-      companion_description: setupForm.companion_description,
-      relationship: setupForm.relationship,
-      speaking_style: setupForm.speaking_style,
-      important_memories: setupForm.important_memories,
-    })
-    state.value = response.state
-    await ownersStore.load(true)
-    if (response.state.owner?.owner_id) ownersStore.setCurrent(response.state.owner.owner_id)
-    ElMessage.success(response.state.master_ready ? '初始化完成' : '已保存')
-  } finally {
-    saving.value = false
-  }
-}
-
 async function repair() {
   saving.value = true
   try {
     const response = await initializeOnboarding({
       owner_id: state.value?.owner?.owner_id || ownersStore.currentId || undefined,
-      owner_display_name: state.value?.owner?.display_name || setupForm.owner_display_name,
-      companion_display_name: master.value?.display_name || setupForm.companion_display_name,
+      owner_display_name: state.value?.owner?.display_name || '',
+      companion_display_name: master.value?.display_name || '',
     })
     state.value = response.state
     ElMessage.success('配置已修复')
@@ -270,41 +145,6 @@ function openLaunch(identity: LaunchIdentity) {
   window.open(url, '_blank', 'noopener')
 }
 
-async function createCompanion() {
-  if (!ownerId.value) {
-    ElMessage.warning('先完成身份初始化')
-    return
-  }
-  if (!companionForm.companion_display_name.trim()) {
-    ElMessage.warning('给新伙伴起个名字')
-    return
-  }
-  creatingCompanion.value = true
-  try {
-    const response = await createOnboardingCompanion({
-      owner_id: ownerId.value,
-      companion_display_name: companionForm.companion_display_name,
-      companion_description: companionForm.companion_description,
-      relationship: companionForm.relationship,
-      speaking_style: companionForm.speaking_style,
-      important_memories: companionForm.important_memories,
-      values: lines(companionForm.values),
-      boundaries: lines(companionForm.boundaries),
-      style_instructions: lines(companionForm.style_instructions || companionForm.speaking_style),
-      pinned_facts: lines(companionForm.pinned_facts || companionForm.important_memories),
-      safety_boundaries: lines(companionForm.safety_boundaries),
-      create_web_device: companionForm.create_web_device,
-    })
-    state.value = response.state
-    companionDialogOpen.value = false
-    resetCompanionForm()
-    ElMessage.success('伙伴已创建')
-    if (response.launch_identity) openLaunch(response.launch_identity)
-  } finally {
-    creatingCompanion.value = false
-  }
-}
-
 function openDeleteDialog() {
   deleteConfirmText.value = ''
   deleteResult.value = null
@@ -323,10 +163,6 @@ async function executeOwnerDelete() {
   try {
     deleteResult.value = await ownersStore.deleteLocal(ownerId.value, deleteConfirmText.value)
     state.value = await getOnboardingState(ownersStore.currentId || undefined)
-    resetCompanionForm()
-    setupForm.owner_display_name = ''
-    setupForm.companion_display_name = ''
-    wizardStep.value = 0
     ElMessage.success('当前身份已备份并删除')
   } catch (error: any) {
     deleteError.value = error?.response?.data?.detail || error?.message || '删除失败'
@@ -340,31 +176,8 @@ function closeDeleteDialog() {
   deleteDialogOpen.value = false
 }
 
-function resetCompanionForm() {
-  companionForm.companion_display_name = ''
-  companionForm.companion_description = ''
-  companionForm.relationship = ''
-  companionForm.speaking_style = ''
-  companionForm.important_memories = ''
-  companionForm.values = ''
-  companionForm.boundaries = ''
-  companionForm.style_instructions = ''
-  companionForm.pinned_facts = ''
-  companionForm.safety_boundaries = ''
-  companionForm.create_web_device = false
-  companionAuthorTab.value = 'identity'
-}
-
-function openCompanionDialog() {
-  resetCompanionForm()
-  companionDialogOpen.value = true
-}
-
-function lines(value: string): string[] {
-  return value
-    .split('\n')
-    .map((item) => item.trim())
-    .filter(Boolean)
+function openCompanionCreator() {
+  router.push({ name: 'companion-create' })
 }
 
 function goCompanions() {
@@ -435,85 +248,33 @@ function deleteStepDescription(item: Record<string, any>) {
           <div class="panel-head">
             <div>
               <p class="eyebrow">SETUP</p>
-              <h2>{{ setupTitle }}</h2>
+              <h2>{{ missing.includes('master_companion') || !hasOwner ? '创建你的 Eidolon' : '修复初始化配置' }}</h2>
             </div>
             <el-tag v-if="missing.length" type="warning" effect="dark">
               {{ missing.map(statusText).join(' / ') }}
             </el-tag>
           </div>
 
-          <el-steps :active="wizardStep" finish-status="success" simple>
-            <el-step title="身份与伙伴" />
-            <el-step title="性格与记忆" />
-          </el-steps>
-
-          <div v-if="wizardStep === 0" class="wizard-body">
-            <el-form label-position="top">
-              <el-form-item v-if="!hasOwner" label="你的身份名">
-                <el-input
-                  v-model="setupForm.owner_display_name"
-                  size="large"
-                  placeholder="例如 Manson"
-                  maxlength="48"
-                  show-word-limit
-                />
-              </el-form-item>
-              <el-form-item v-else label="当前身份">
-                <div class="identity-row">
-                  <el-icon><UserFilled /></el-icon>
-                  <span>{{ ownerName }}</span>
-                </div>
-              </el-form-item>
-              <el-form-item label="第一个伙伴的名字">
-                <el-input
-                  v-model="setupForm.companion_display_name"
-                  size="large"
-                  placeholder="例如 小艺"
-                  maxlength="64"
-                  show-word-limit
-                />
-              </el-form-item>
-            </el-form>
-          </div>
-
-          <div v-else class="wizard-body">
-            <el-form label-position="top">
-              <el-form-item label="性格描述">
-                <el-input
-                  v-model="setupForm.companion_description"
-                  type="textarea"
-                  :rows="3"
-                  placeholder="TA 给你的感觉、擅长陪伴的方式"
-                />
-              </el-form-item>
-              <div class="two-fields">
-                <el-form-item label="关系">
-                  <el-input v-model="setupForm.relationship" placeholder="例如 可信赖的个人 AI 伙伴" />
-                </el-form-item>
-                <el-form-item label="说话风格">
-                  <el-input v-model="setupForm.speaking_style" placeholder="例如 温和、直接、有一点幽默" />
-                </el-form-item>
-              </div>
-              <el-form-item label="重要记忆">
-                <el-input
-                  v-model="setupForm.important_memories"
-                  type="textarea"
-                  :rows="4"
-                  placeholder="每行一条，例如你的偏好、习惯、重要背景"
-                />
-              </el-form-item>
-            </el-form>
+          <div class="setup-callout">
+            <el-icon><Avatar /></el-icon>
+            <div>
+              <strong>{{ hasOwner ? ownerName : '新身份' }}</strong>
+              <span>{{ missing.includes('master_companion') || !hasOwner ? '尚未创建长期伙伴' : '已有伙伴，但运行资源需要修复' }}</span>
+            </div>
           </div>
 
           <div class="wizard-actions">
-            <el-button v-if="wizardStep === 1" @click="wizardStep = 0">返回</el-button>
-            <el-button v-if="wizardStep === 0" type="primary" @click="nextWizardStep">
-              继续
+            <el-button
+              v-if="missing.includes('master_companion') || !hasOwner"
+              type="primary"
+              size="large"
+              @click="openCompanionCreator"
+            >
+              创建伙伴
               <el-icon><ArrowRight /></el-icon>
             </el-button>
-            <el-button v-else type="primary" :loading="saving" @click="submitSetup">
-              完成初始化
-              <el-icon><CircleCheck /></el-icon>
+            <el-button v-else type="warning" size="large" :loading="saving" @click="repair">
+              修复配置
             </el-button>
           </div>
         </div>
@@ -533,15 +294,6 @@ function deleteStepDescription(item: Record<string, any>) {
               <span>{{ statusText(key) }}</span>
             </li>
           </ul>
-          <el-button
-            v-if="hasOwner && !missing.includes('master_companion')"
-            class="repair-button"
-            type="warning"
-            :loading="saving"
-            @click="repair"
-          >
-            修复配置
-          </el-button>
         </aside>
       </section>
     </template>
@@ -568,7 +320,7 @@ function deleteStepDescription(item: Record<string, any>) {
               <el-icon><DataLine /></el-icon>
               运行时驾驶舱
             </el-button>
-            <el-button size="large" @click="openCompanionDialog">
+            <el-button size="large" @click="openCompanionCreator">
               <el-icon><Plus /></el-icon>
               创建伙伴
             </el-button>
@@ -642,136 +394,6 @@ function deleteStepDescription(item: Record<string, any>) {
         </section>
       </section>
     </template>
-
-    <el-dialog
-      v-model="companionDialogOpen"
-      title="创建伙伴"
-      width="1040px"
-      append-to-body
-      destroy-on-close
-      class="companion-dialog"
-    >
-      <div class="companion-author">
-        <el-form label-position="top" class="author-form">
-          <div class="author-basics">
-            <el-form-item label="名字">
-              <el-input
-                v-model="companionForm.companion_display_name"
-                placeholder="例如 Study Buddy"
-                maxlength="64"
-                show-word-limit
-              />
-            </el-form-item>
-            <el-form-item label="关系">
-              <el-input v-model="companionForm.relationship" placeholder="可信赖的个人 AI 伙伴" />
-            </el-form-item>
-          </div>
-
-          <el-form-item label="性格底色">
-            <el-input
-              v-model="companionForm.companion_description"
-              type="textarea"
-              :rows="4"
-              maxlength="800"
-              show-word-limit
-              resize="vertical"
-              placeholder="沉稳、敏锐、会主动帮我拆解复杂问题"
-            />
-          </el-form-item>
-
-          <el-tabs v-model="companionAuthorTab" class="author-tabs">
-            <el-tab-pane label="身份" name="identity">
-              <div class="author-section-grid">
-                <el-form-item label="价值观">
-                  <el-input
-                    v-model="companionForm.values"
-                    type="textarea"
-                    :rows="6"
-                    resize="vertical"
-                    placeholder="尊重 owner 的主权&#10;表达清晰，不绕弯&#10;优先帮助行动"
-                  />
-                </el-form-item>
-                <el-form-item label="边界">
-                  <el-input
-                    v-model="companionForm.boundaries"
-                    type="textarea"
-                    :rows="6"
-                    resize="vertical"
-                    placeholder="不假装记得没有证据的事&#10;不替 owner 做不可逆决定"
-                  />
-                </el-form-item>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane label="关系" name="relationship">
-              <div class="author-section-grid">
-                <el-form-item label="重要记忆">
-                  <el-input
-                    v-model="companionForm.pinned_facts"
-                    type="textarea"
-                    :rows="6"
-                    resize="vertical"
-                    placeholder="owner 喜欢直接给结论&#10;owner 正在构建 Eidolon"
-                  />
-                </el-form-item>
-                <el-form-item label="安全边界">
-                  <el-input
-                    v-model="companionForm.safety_boundaries"
-                    type="textarea"
-                    :rows="6"
-                    resize="vertical"
-                    placeholder="高风险建议先提醒不确定性&#10;涉及现实承诺时先确认"
-                  />
-                </el-form-item>
-              </div>
-            </el-tab-pane>
-
-            <el-tab-pane label="表达" name="voice">
-              <div class="author-section-grid">
-                <el-form-item label="说话风格">
-                  <el-input
-                    v-model="companionForm.speaking_style"
-                    type="textarea"
-                    :rows="6"
-                    resize="vertical"
-                    placeholder="温和、直接、有一点幽默"
-                  />
-                </el-form-item>
-                <el-form-item label="表达指令">
-                  <el-input
-                    v-model="companionForm.style_instructions"
-                    type="textarea"
-                    :rows="6"
-                    resize="vertical"
-                    placeholder="先给结论，再补背景&#10;避免空泛安慰&#10;复杂事情拆成下一步"
-                  />
-                </el-form-item>
-              </div>
-            </el-tab-pane>
-          </el-tabs>
-
-          <el-checkbox v-model="companionForm.create_web_device">创建后准备网页端对话</el-checkbox>
-        </el-form>
-
-        <aside class="author-preview">
-          <div class="preview-head">
-            <strong>Genome Seed</strong>
-            <el-tag size="small" effect="dark">v1</el-tag>
-          </div>
-          <div class="seed-stat-grid">
-            <div v-for="item in companionSeedStats" :key="item.label" class="seed-stat">
-              <span>{{ item.label }}</span>
-              <b>{{ item.value }}</b>
-            </div>
-          </div>
-          <pre>{{ companionGenomePreview }}</pre>
-        </aside>
-      </div>
-      <template #footer>
-        <el-button @click="companionDialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="creatingCompanion" @click="createCompanion">创建</el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog
       v-model="deleteDialogOpen"
@@ -942,26 +564,34 @@ function deleteStepDescription(item: Record<string, any>) {
 .setup-panel {
   min-width: 0;
 }
-.wizard-body {
-  min-height: 330px;
-  padding: 22px 0 4px;
-}
-.two-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.identity-row {
-  width: 100%;
-  min-height: 40px;
+.setup-callout {
+  min-height: 124px;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 12px;
+  gap: 14px;
+  margin-top: 20px;
+  padding: 18px;
   border: 1px solid var(--eid-border);
   border-radius: 8px;
   color: var(--eid-text-secondary);
   background: var(--eid-bg-inset);
+}
+.setup-callout > .el-icon {
+  color: var(--eid-accent);
+  font-size: 28px;
+}
+.setup-callout strong,
+.setup-callout span {
+  display: block;
+}
+.setup-callout strong {
+  color: var(--eid-text-primary);
+  font-size: 17px;
+}
+.setup-callout span {
+  margin-top: 6px;
+  color: var(--eid-text-muted);
+  font-size: 13px;
 }
 .wizard-actions {
   justify-content: flex-end;
@@ -998,9 +628,6 @@ function deleteStepDescription(item: Record<string, any>) {
 .missing-list span {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.repair-button {
-  width: 100%;
 }
 .ready-shell {
   display: flex;
@@ -1166,100 +793,6 @@ function deleteStepDescription(item: Record<string, any>) {
   font-family: var(--eid-font-mono);
   font-size: 12px;
 }
-.companion-author {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-  gap: 18px;
-  align-items: start;
-}
-.author-form {
-  min-width: 0;
-}
-.author-basics,
-.author-section-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-.author-tabs {
-  margin-top: 4px;
-}
-.author-tabs :deep(.el-tabs__header) {
-  margin-bottom: 14px;
-}
-.author-preview {
-  position: sticky;
-  top: 0;
-  min-width: 0;
-  max-height: min(62vh, 620px);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--eid-accent) 34%, var(--eid-border));
-  border-radius: 8px;
-  background: var(--eid-bg-inset);
-}
-.preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-  color: var(--eid-text-primary);
-}
-.preview-head strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.seed-stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-}
-.seed-stat {
-  min-width: 0;
-  padding: 8px;
-  border: 1px solid var(--eid-border);
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--eid-bg-panel) 72%, transparent);
-}
-.seed-stat span,
-.seed-stat b {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.seed-stat span {
-  color: var(--eid-text-muted);
-  font-family: var(--eid-font-mono);
-  font-size: 10px;
-}
-.seed-stat b {
-  margin-top: 4px;
-  color: var(--eid-text-primary);
-  font-size: 15px;
-}
-.author-preview pre {
-  min-width: 0;
-  flex: 1;
-  overflow: auto;
-  margin: 0;
-  padding: 12px;
-  border: 1px solid var(--eid-border);
-  border-radius: 6px;
-  color: var(--eid-text-secondary);
-  background: color-mix(in srgb, #020617 76%, var(--eid-bg-inset));
-  font-family: var(--eid-font-mono);
-  font-size: 11px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
 .delete-flow {
   display: flex;
   flex-direction: column;
@@ -1315,28 +848,17 @@ function deleteStepDescription(item: Record<string, any>) {
 :global(.owner-delete-dialog .el-dialog__body) {
   overflow-wrap: anywhere;
 }
-:global(.companion-dialog) {
-  max-width: calc(100vw - 32px);
-}
-:global(.companion-dialog .el-dialog__body) {
-  overflow-wrap: anywhere;
-}
 :deep(.el-step__title) {
   white-space: nowrap;
 }
 
 @media (max-width: 980px) {
   .setup-layout,
-  .stat-grid,
-  .companion-author {
+  .stat-grid {
     grid-template-columns: 1fr;
   }
   .status-panel {
     position: static;
-  }
-  .author-preview {
-    position: static;
-    max-height: 420px;
   }
   .primary-panel {
     align-items: flex-start;
@@ -1359,14 +881,6 @@ function deleteStepDescription(item: Record<string, any>) {
     align-items: flex-start;
     flex-direction: column;
   }
-  .two-fields {
-    grid-template-columns: 1fr;
-  }
-  .author-basics,
-  .author-section-grid,
-  .seed-stat-grid {
-    grid-template-columns: 1fr;
-  }
   .companion-grid {
     grid-template-columns: 1fr;
   }
@@ -1383,10 +897,6 @@ function deleteStepDescription(item: Record<string, any>) {
     width: 100%;
   }
   :global(.owner-delete-dialog) {
-    width: calc(100vw - 24px) !important;
-    max-width: calc(100vw - 24px);
-  }
-  :global(.companion-dialog) {
     width: calc(100vw - 24px) !important;
     max-width: calc(100vw - 24px);
   }

@@ -13,11 +13,21 @@ def _isolate_benchmark_roots(monkeypatch, tmp_path: Path) -> dict[str, Path]:
         "agent_runs": tmp_path / "agent" / "benchmarks" / "runs",
         "agent_reports": tmp_path / "agent-debug" / "reports",
         "channel_runs": tmp_path / "channel" / "benchmarks" / "runs",
+        "admin_runs": tmp_path / "admin" / "benchmarks" / "runs",
+        "hub_runs": tmp_path / "hub" / "benchmarks" / "runs",
+        "client_web_runs": tmp_path / "client-web" / "benchmarks" / "runs",
+        "memory_runs": tmp_path / "memory" / "benchmarks" / "runs",
         "memory_reports": tmp_path / "memory" / "reports",
     }
     monkeypatch.setenv("EIDOLON_AGENT_BENCHMARK_RUNS_DIR", str(roots["agent_runs"]))
     monkeypatch.setenv("EIDOLON_AGENT_REPORTS_DIR", str(roots["agent_reports"]))
     monkeypatch.setenv("EIDOLON_CHANNEL_BENCHMARK_RUNS_DIR", str(roots["channel_runs"]))
+    monkeypatch.setenv("EIDOLON_ADMIN_BENCHMARK_RUNS_DIR", str(roots["admin_runs"]))
+    monkeypatch.setenv("EIDOLON_HUB_BENCHMARK_RUNS_DIR", str(roots["hub_runs"]))
+    monkeypatch.setenv(
+        "EIDOLON_CLIENT_WEB_BENCHMARK_RUNS_DIR", str(roots["client_web_runs"])
+    )
+    monkeypatch.setenv("EIDOLON_MEMORY_BENCHMARK_RUNS_DIR", str(roots["memory_runs"]))
     monkeypatch.setenv("EIDOLON_MEMORY_BENCHMARK_REPORTS_DIR", str(roots["memory_reports"]))
     return roots
 
@@ -106,6 +116,25 @@ def _write_agent_project_file_run(root: Path) -> Path:
     return path
 
 
+def _write_standard_run(root: Path, *, suite: str, run_id: str) -> Path:
+    run_dir = root / suite / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-07-10T08:00:00+00:00",
+                "run_id": run_id,
+                "passed": True,
+                "summary": {"total": 1, "passed": 1, "failed": 0},
+                "metrics": {"elapsed_ms": {"p95": 12}},
+                "cases": [{"case_id": "smoke", "passed": True}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_dir
+
+
 def _write_memory_report(root: Path) -> Path:
     report_dir = root / "memory_perf_20260623_120000"
     report_dir.mkdir(parents=True)
@@ -162,6 +191,8 @@ def test_benchmark_projects_include_empty_projects(app, tmp_path, monkeypatch):
     assert projects["admin"]["run_count"] == 0
     assert projects["hub"]["suites"][0]["id"] == "smoke"
     memory_suites = {suite["id"]: suite for suite in projects["memory"]["suites"]}
+    agent_suites = {suite["id"]: suite for suite in projects["agent"]["suites"]}
+    assert agent_suites["persona_memory"]["description"]
     assert memory_suites["memory_perf"]["description"]
     assert memory_suites["memory_readable"]["description"]
 
@@ -173,6 +204,7 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     _write_agent_project_file_run(roots["agent_runs"])
     _write_memory_report(roots["memory_reports"])
     _write_memory_readable_report(roots["memory_reports"])
+    _write_standard_run(roots["admin_runs"], suite="smoke", run_id="admin-smoke")
 
     client = TestClient(app)
     runs_resp = client.get("/api/benchmarks/runs")
@@ -185,6 +217,7 @@ def test_benchmark_list_and_detail_standardize_existing_artifacts(app, tmp_path,
     assert ("agent", "live-memory-e2e", "manson.json") in by_key
     assert ("memory", "memory_perf", "memory_perf_20260623_120000") in by_key
     assert ("memory", "memory_readable", "memory_benchmark_readable_20260624.md") in by_key
+    assert ("admin", "smoke", "admin-smoke") in by_key
     assert by_key[("channel", "voice", "run-a")]["deletable"] is True
     assert by_key[("agent", "live-memory-e2e", "manson.json")]["deletable"] is True
     assert by_key[("agent", "realtime", "latest.json")]["deletable"] is True

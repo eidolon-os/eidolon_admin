@@ -24,6 +24,7 @@ KNOWN_EMPTY_SUITES: dict[str, tuple[tuple[str, str], ...]] = {
 SUITE_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("agent", "realtime"): "实时语音 Agent 端到端 benchmark，关注首包、转写、回复和工具调用链路。",
     ("agent", "replay"): "离线回放 benchmark，用固定样本复现 Agent 行为并检查回归。",
+    ("agent", "persona_memory"): "Companion、Persona Genome 与 Memory 证据链 benchmark，覆盖隔离、语义实现、演化治理和快照性能。",
     ("channel", "voice"): "语音通道 benchmark，关注房间、音频流、runner 和报告产物。",
     ("memory", "memory_perf"): "Memory 服务链路 benchmark：读召回、NATS 写入、memory-agent 落库和 MCP 可见性。",
     ("memory", "memory_quality"): "Memory 质量 benchmark：召回命中率、隔离、泄漏和语义质量。",
@@ -106,6 +107,7 @@ def known_suites() -> dict[str, dict[str, str]]:
         "agent": {
             "realtime": "Realtime",
             "replay": "Replay",
+            "persona_memory": "Persona Memory",
         },
         "channel": {
             "voice": "Voice",
@@ -125,7 +127,8 @@ def known_suites() -> dict[str, dict[str, str]]:
 
 def _list_records() -> list[RunRecord]:
     records: list[RunRecord] = []
-    records.extend(_agent_project_records())
+    for project in ("agent", "memory", "admin", "hub", "client-web"):
+        records.extend(_standard_project_records(project))
     records.extend(_agent_debug_records())
     records.extend(_channel_records())
     records.extend(_memory_records())
@@ -143,8 +146,8 @@ def _find_record(project: str, suite: str, run_id: str) -> RunRecord | None:
     return None
 
 
-def _agent_project_records() -> list[RunRecord]:
-    root = registry.agent_runs_dir()
+def _standard_project_records(project: str) -> list[RunRecord]:
+    root = registry.standard_runs_dir(project)
     if not root.exists():
         return []
     records: list[RunRecord] = []
@@ -156,8 +159,8 @@ def _agent_project_records() -> list[RunRecord]:
                 continue
             if item.is_dir():
                 record = _directory_record(
-                    project="agent",
-                    project_label=registry.PROJECT_LABELS["agent"],
+                    project=project,
+                    project_label=registry.PROJECT_LABELS[project],
                     suite=suite,
                     suite_label=label,
                     run_id=item.name,
@@ -169,8 +172,8 @@ def _agent_project_records() -> list[RunRecord]:
                     records.append(record)
             elif item.suffix == ".json":
                 record = _json_file_record(
-                    project="agent",
-                    project_label=registry.PROJECT_LABELS["agent"],
+                    project=project,
+                    project_label=registry.PROJECT_LABELS[project],
                     suite=suite,
                     suite_label=label,
                     path=item,

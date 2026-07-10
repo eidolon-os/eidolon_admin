@@ -30,9 +30,9 @@ def _sign_device_actor_token(*, secret: str, device_id: str, **kwargs):
         actor_kind="device",
         actor_id=device_id,
         device_id=device_id,
-        schema_version=kwargs.pop("schema_version", "eidolon.persona_genome.v1"),
-        genome_hash=kwargs.pop("genome_hash", "pgv1_contract"),
-        compiler_version=kwargs.pop("compiler_version", "eidolon.persona_compiler.v1"),
+        schema_version=kwargs.pop("schema_version", "eidolon.persona_genome"),
+        genome_hash=kwargs.pop("genome_hash", "pg_contract"),
+        realizer_version=kwargs.pop("realizer_version", "eidolon.persona_realizer"),
         **kwargs,
     )
 
@@ -57,9 +57,9 @@ async def test_sdk_signed_token_verifies_with_runtime_schema(shared_secret: str)
     assert verified.companion_id == "companion-a"
     assert verified.memory_realm_id == "realm-a"
     assert verified.genome_id == "genome-a"
-    assert verified.schema_version == "eidolon.persona_genome.v1"
-    assert verified.genome_hash == "pgv1_contract"
-    assert verified.compiler_version == "eidolon.persona_compiler.v1"
+    assert verified.schema_version == "eidolon.persona_genome"
+    assert verified.genome_hash == "pg_contract"
+    assert verified.realizer_version == "eidolon.persona_realizer"
     assert verified.scopes == ("device",)
     assert int(verified.exp.timestamp()) == int(exp_returned.timestamp())
 
@@ -120,7 +120,7 @@ def test_payload_field_names_are_locked(shared_secret: str) -> None:
         "genome_id",
         "schema_version",
         "genome_hash",
-        "compiler_version",
+        "realizer_version",
         "scopes",
         "exp",
         "iat",

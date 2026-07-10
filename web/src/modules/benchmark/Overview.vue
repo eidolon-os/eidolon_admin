@@ -260,6 +260,7 @@ function suiteFallbackDescription(project: string, suite: string) {
   const descriptions: Record<string, string> = {
     'agent/realtime': '实时语音 Agent 端到端 benchmark，关注首包、转写、回复和工具调用链路。',
     'agent/replay': '离线回放 benchmark，用固定样本复现 Agent 行为并检查回归。',
+    'agent/persona_memory': 'Companion、Persona Genome 与 Memory 证据链 benchmark，覆盖隔离、语义实现、演化治理和快照性能。',
     'channel/voice': '语音通道 benchmark，关注房间、音频流、runner 和报告产物。',
     'memory/memory_perf': 'Memory 服务链路 benchmark：读召回、NATS 写入、memory-agent 落库和 MCP 可见性。',
     'memory/memory_quality': 'Memory 质量 benchmark：召回命中率、隔离、泄漏和语义质量。',

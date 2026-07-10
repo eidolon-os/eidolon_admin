@@ -13,11 +13,8 @@ from uuid import uuid4
 from eidolon_data import DataStore
 from eidolon_data.services import OwnerWorkspaceError
 from eidolon_sdk.biz.persona import (
-    PersonaGenomeV1,
-    PersonaIdentityCore,
-    PersonaRelationship,
-    PersonaStyleCompilerV1,
-    PersonaTraitState,
+    PersonaAuthoringDraft,
+    build_persona_genome_from_draft,
     persona_genome_to_json,
 )
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -71,15 +68,17 @@ class OnboardingInitializeRequest(BaseModel):
     owner_display_name: str = ""
     companion_id: str | None = None
     companion_display_name: str = ""
-    companion_description: str = ""
-    relationship: str = ""
-    speaking_style: str = ""
-    important_memories: str = ""
-    values: list[str] = Field(default_factory=list)
-    boundaries: list[str] = Field(default_factory=list)
-    style_instructions: list[str] = Field(default_factory=list)
-    pinned_facts: list[str] = Field(default_factory=list)
-    safety_boundaries: list[str] = Field(default_factory=list)
+    self_concept: str | None = None
+    character_portrait: str | None = None
+    relationship_narrative: str | None = None
+    voice_portrait: str | None = None
+    values: list[str] | None = None
+    boundaries: list[str] | None = None
+    commitments: list[str] | None = None
+    behavior_guidance: list[str] | None = None
+    dialogue_examples: list[str] | None = None
+    pinned_facts: list[str] | None = None
+    safety_boundaries: list[str] | None = None
     owner_profile_json: JsonDict = Field(default_factory=dict)
     owner_settings_json: JsonDict = Field(default_factory=dict)
 
@@ -88,16 +87,41 @@ class OnboardingCompanionCreateRequest(BaseModel):
     owner_id: str | None = None
     companion_id: str | None = None
     companion_display_name: str
-    companion_description: str = ""
-    relationship: str = ""
-    speaking_style: str = ""
-    important_memories: str = ""
-    values: list[str] = Field(default_factory=list)
-    boundaries: list[str] = Field(default_factory=list)
-    style_instructions: list[str] = Field(default_factory=list)
-    pinned_facts: list[str] = Field(default_factory=list)
-    safety_boundaries: list[str] = Field(default_factory=list)
+    self_concept: str | None = None
+    character_portrait: str | None = None
+    relationship_narrative: str | None = None
+    voice_portrait: str | None = None
+    values: list[str] | None = None
+    boundaries: list[str] | None = None
+    commitments: list[str] | None = None
+    behavior_guidance: list[str] | None = None
+    dialogue_examples: list[str] | None = None
+    pinned_facts: list[str] | None = None
+    safety_boundaries: list[str] | None = None
     create_web_device: bool = False
+
+
+class PersonaAuthoringPreviewRequest(BaseModel):
+    companion_display_name: str
+    self_concept: str | None = None
+    character_portrait: str | None = None
+    relationship_narrative: str | None = None
+    voice_portrait: str | None = None
+    values: list[str] | None = None
+    boundaries: list[str] | None = None
+    commitments: list[str] | None = None
+    behavior_guidance: list[str] | None = None
+    dialogue_examples: list[str] | None = None
+    pinned_facts: list[str] | None = None
+    safety_boundaries: list[str] | None = None
+
+
+class PersonaAuthoringDraftResponse(BaseModel):
+    draft: JsonDict
+
+
+class PersonaAuthoringPreviewResponse(BaseModel):
+    genome: JsonDict
 
 
 class OnboardingInitializeResponse(BaseModel):
@@ -130,6 +154,25 @@ async def get_onboarding_state(
     owner_id: str | None = Query(default=None),
 ) -> OnboardingState:
     return await _build_state(_store(request), owner_id=owner_id)
+
+
+@router.get("/persona-authoring/defaults", response_model=PersonaAuthoringDraftResponse)
+async def get_persona_authoring_defaults(
+    name: str = Query(default="Companion"),
+) -> PersonaAuthoringDraftResponse:
+    draft = PersonaAuthoringDraft(name=name.strip() or "Companion")
+    return PersonaAuthoringDraftResponse(draft=draft.model_dump(mode="json"))
+
+
+@router.post("/persona-authoring/preview", response_model=PersonaAuthoringPreviewResponse)
+async def preview_persona_authoring(
+    payload: PersonaAuthoringPreviewRequest,
+) -> PersonaAuthoringPreviewResponse:
+    genome = build_persona_genome_from_draft(
+        _authoring_draft(payload),
+        origin="owner_onboarding_preview",
+    )
+    return PersonaAuthoringPreviewResponse(genome=persona_genome_to_json(genome))
 
 
 @router.post("/initialize", response_model=OnboardingInitializeResponse)
@@ -179,7 +222,7 @@ async def initialize_onboarding(
                 },
                 genome_id=ids["genome_id"],
                 genome_source_json={"source_type": "owner_onboarding", "owner_id": owner.owner_id},
-                genome_json=_genome_json(payload, companion_type=COMPANION_TYPE_MASTER),
+                genome_json=_genome_json(payload),
                 realm_id=ids["realm_id"],
                 actor_type="admin",
                 actor_id="onboarding",
@@ -233,7 +276,7 @@ async def create_onboarding_companion(
             },
             genome_id=ids["genome_id"],
             genome_source_json={"source_type": "owner_onboarding", "owner_id": owner.owner_id},
-            genome_json=_genome_json(payload, companion_type=COMPANION_TYPE_SLAVE),
+            genome_json=_genome_json(payload),
             realm_id=ids["realm_id"],
             actor_type="admin",
             actor_id="onboarding",
@@ -350,7 +393,7 @@ async def _ensure_master_ready(
                 genome_id=genome_id,
                 companion_id=master.companion_id,
                 source_json={"source_type": "owner_onboarding_repair", "owner_id": owner_id},
-                genome_json=_genome_json(payload, companion_type=COMPANION_TYPE_MASTER),
+                genome_json=_genome_json(payload),
                 change_summary="Onboarding repair genome",
             )
         await store.companions.set_current_genome(master.companion_id, latest.genome_id)
@@ -436,7 +479,7 @@ def _workspace_ids(
     )
     return {
         "companion_id": companion,
-        "genome_id": _generated_id("g", companion, "v1"),
+        "genome_id": _generated_id("g", companion, "origin"),
         "realm_id": _generated_id("r", companion),
     }
 
@@ -467,62 +510,44 @@ def _normalize_id(value: str, *, fallback: str, max_len: int) -> str:
 
 def _companion_profile(payload: Any) -> JsonDict:
     return {
-        "description": (payload.companion_description or "").strip(),
-        "relationship": (payload.relationship or "").strip(),
-        "speaking_style": (payload.speaking_style or "").strip(),
-        "important_memories": (payload.important_memories or "").strip(),
-        "values": _payload_lines(payload, "values"),
-        "boundaries": _payload_lines(payload, "boundaries"),
-        "style_instructions": _payload_lines(payload, "style_instructions"),
-        "pinned_facts": _payload_lines(payload, "pinned_facts"),
-        "safety_boundaries": _payload_lines(payload, "safety_boundaries"),
+        "summary": (payload.character_portrait or payload.self_concept or "").strip(),
     }
 
 
-def _genome_json(payload: Any, *, companion_type: str) -> JsonDict:
-    name = (payload.companion_display_name or "").strip() or "Eidolon"
-    description = (payload.companion_description or "").strip()
-    relationship = (payload.relationship or "").strip()
-    speaking_style = (payload.speaking_style or "").strip()
-    values = _payload_lines(payload, "values")
-    if not values and description:
-        values = [description]
-    boundaries = _payload_lines(payload, "boundaries")
-    pinned_facts = _payload_lines(payload, "pinned_facts") or _split_lines(
-        payload.important_memories or ""
-    )
-    style_instructions = _payload_lines(payload, "style_instructions") or _split_lines(
-        speaking_style
-    )
-    safety_boundaries = _payload_lines(payload, "safety_boundaries")
-    genome = PersonaGenomeV1(
-        identity_core=PersonaIdentityCore(
-            name=name,
-            archetype="companion",
-            values=values,
-            boundaries=boundaries,
-            companion_type=companion_type,
-            description=description,
-        ),
-        relationship=PersonaRelationship(
-            stage="new",
-            pinned_facts=pinned_facts,
-            owner_preferences={"relationship": relationship} if relationship else {},
-            safety_boundaries=safety_boundaries,
-        ),
-        traits={
-            "core.playfulness": PersonaTraitState(value=0.5),
-            "core.structure": PersonaTraitState(value=0.55),
-            "core.grounding": PersonaTraitState(value=0.65),
-        },
-        style_compiler=PersonaStyleCompilerV1(
-            base_instructions=style_instructions,
-            trait_mappings={},
-            spoken_phrases=[],
-        ),
-        provenance={"origin": "owner_onboarding"},
+def _genome_json(payload: Any) -> JsonDict:
+    genome = build_persona_genome_from_draft(
+        _authoring_draft(payload),
+        origin="owner_onboarding",
     )
     return persona_genome_to_json(genome)
+
+
+def _authoring_draft(payload: Any) -> PersonaAuthoringDraft:
+    values: dict[str, Any] = {
+        "name": (payload.companion_display_name or "").strip() or "Eidolon",
+    }
+    for field_name in (
+        "self_concept",
+        "character_portrait",
+        "relationship_narrative",
+        "voice_portrait",
+    ):
+        value = getattr(payload, field_name, None)
+        if value is not None:
+            values[field_name] = str(value).strip()
+    for field_name in (
+        "values",
+        "boundaries",
+        "commitments",
+        "behavior_guidance",
+        "dialogue_examples",
+        "pinned_facts",
+        "safety_boundaries",
+    ):
+        value = getattr(payload, field_name, None)
+        if value is not None:
+            values[field_name] = _payload_lines(payload, field_name)
+    return PersonaAuthoringDraft(**values)
 
 
 def _split_lines(value: str) -> list[str]:
@@ -651,8 +676,7 @@ def _persona_genome(row: Any) -> PersonaGenomeView:
         base_genome_id=row.base_genome_id,
         schema_version=row.schema_version,
         genome_hash=row.genome_hash,
-        compiler_version=row.compiler_version,
-        stable_prompt_hash=row.stable_prompt_hash,
+        realizer_version=row.realizer_version,
         applied_event_id=row.applied_event_id,
         source_json=row.source_json or {},
         genome_json=row.genome_json or {},

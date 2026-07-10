@@ -44,10 +44,10 @@ async def test_onboarding_initializes_master_and_launch_identity(
         json={
             "owner_display_name": "Manson",
             "companion_display_name": "Xiaoyi",
-            "companion_description": "A warm daily companion.",
-            "relationship": "Trusted personal AI companion",
-            "speaking_style": "Calm, concise, gently playful.",
-            "important_memories": "Likes morning planning\nPrefers direct summaries",
+            "character_portrait": "A warm daily companion.",
+            "relationship_narrative": "Trusted personal AI companion",
+            "voice_portrait": "Calm, concise, gently playful.",
+            "pinned_facts": ["Likes morning planning", "Prefers direct summaries"],
         },
     )
     assert initialized.status_code == 200
@@ -89,6 +89,41 @@ async def test_onboarding_initializes_master_and_launch_identity(
     assert len(await data_store.devices.list_devices_for_companion(companions[0].companion_id)) == 1
 
 
+async def test_persona_authoring_defaults_and_preview_share_sdk_builder(
+    client: httpx.AsyncClient,
+) -> None:
+    defaults = await client.get(
+        "/api/onboarding/persona-authoring/defaults",
+        params={"name": "Annie"},
+    )
+    assert defaults.status_code == 200
+    draft = defaults.json()["draft"]
+    assert draft["name"] == "Annie"
+    assert draft["values"]
+    assert draft["character_portrait"]
+    assert draft["behavior_guidance"]
+
+    preview = await client.post(
+        "/api/onboarding/persona-authoring/preview",
+        json={
+            "companion_display_name": "Annie",
+            "character_portrait": "A candid creative partner.",
+            "values": [],
+            "boundaries": ["Never fake certainty."],
+            "behavior_guidance": ["Name the central tension first."],
+        },
+    )
+    assert preview.status_code == 200
+    genome = preview.json()["genome"]
+    assert genome["schema_version"] == "eidolon.persona_genome"
+    assert genome["constitution"]["values"] == []
+    assert genome["constitution"]["boundaries"] == ["Never fake certainty."]
+    assert genome["character"]["portrait"] == "A candid creative partner."
+    assert genome["expression"]["behavior_guidance"] == [
+        "Name the central tension first."
+    ]
+
+
 async def test_onboarding_creates_slave_without_changing_master(
     client: httpx.AsyncClient,
     data_store: DataStore,
@@ -105,12 +140,12 @@ async def test_onboarding_creates_slave_without_changing_master(
         json={
             "owner_id": owner_id,
             "companion_display_name": "Study Buddy",
-            "companion_description": "A focused study companion.",
-            "relationship": "Study partner",
-            "speaking_style": "Sharp and focused.",
+            "character_portrait": "A focused study companion.",
+            "relationship_narrative": "Study partner",
+            "voice_portrait": "Sharp and focused.",
             "values": ["clarity", "momentum"],
             "boundaries": ["never invent sources"],
-            "style_instructions": ["lead with the next action"],
+            "behavior_guidance": ["lead with the next action"],
             "pinned_facts": ["Owner is building Eidolon"],
             "safety_boundaries": ["ask before irreversible actions"],
         },
@@ -121,12 +156,16 @@ async def test_onboarding_creates_slave_without_changing_master(
     assert body["companion"]["is_master"] is False
     assert body["launch_identity"] is None
     genome = body["persona_genome"]["genome_json"]
-    assert genome["identity_core"]["values"] == ["clarity", "momentum"]
-    assert genome["identity_core"]["boundaries"] == ["never invent sources"]
-    assert genome["relationship"]["owner_preferences"] == {"relationship": "Study partner"}
+    assert genome["schema_version"] == "eidolon.persona_genome"
+    assert genome["constitution"]["values"] == ["clarity", "momentum"]
+    assert genome["constitution"]["boundaries"] == ["never invent sources"]
+    assert genome["character"]["portrait"] == "A focused study companion."
+    assert genome["relationship"]["narrative"] == "Study partner"
     assert genome["relationship"]["pinned_facts"] == ["Owner is building Eidolon"]
     assert genome["relationship"]["safety_boundaries"] == ["ask before irreversible actions"]
-    assert genome["style_compiler"]["base_instructions"] == ["lead with the next action"]
+    assert genome["expression"]["voice_portrait"] == "Sharp and focused."
+    assert genome["expression"]["behavior_guidance"] == ["lead with the next action"]
+    assert len(genome["character"]["traits"]) == 9
 
     state = (await client.get(f"/api/onboarding/state?owner_id={owner_id}")).json()
     assert state["master_companion"]["companion_id"] == master_id

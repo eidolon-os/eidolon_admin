@@ -89,7 +89,7 @@ describe('api/eidolonData.ts', () => {
     postMock.mockResolvedValueOnce({
       data: {
         companion: { companion_id: 'c:owner-a:default' },
-        persona_genome: { genome_id: 'g:owner-a:default:v1' },
+        persona_genome: { genome_id: 'g:owner-a:default' },
         memory_realm: { realm_id: 'r:owner-a:default' },
       },
     })

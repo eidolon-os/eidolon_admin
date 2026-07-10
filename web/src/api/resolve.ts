@@ -8,7 +8,7 @@ export interface ResolvedContext {
   genome_id: string
   schema_version: string
   genome_hash: string
-  compiler_version: string
+  realizer_version: string
   interaction_mode: string | null
 }
 
