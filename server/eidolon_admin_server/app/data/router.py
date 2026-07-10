@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 from eidolon_data import DataStore
+from eidolon_data.repositories.persona import PersonaGenomeConflict
 from eidolon_data.services import CompanionDeletionError, OwnerWorkspaceError
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
@@ -45,8 +46,15 @@ from .schemas import (
     OwnerOverviewResponse,
     OwnerUpdateRequest,
     OwnerView,
+    PersonaApproveRequest,
+    PersonaEvidenceView,
     PersonaGenomeListResponse,
+    PersonaGenomeHistoryResponse,
     PersonaGenomeView,
+    PersonaProposalListResponse,
+    PersonaProposalView,
+    PersonaRejectRequest,
+    PersonaRollbackRequest,
     WorkspaceInitializeRequest,
     WorkspaceInitializeResponse,
 )
@@ -557,6 +565,175 @@ async def list_owner_persona_genomes(
     companions = await store.companions.list_for_owner(owner_id)
     rows = await store.persona_repo.list_for_companions([row.companion_id for row in companions])
     return PersonaGenomeListResponse(persona_genomes=[_persona_genome(row) for row in rows])
+
+
+@router.get(
+    "/owners/{owner_id}/companions/{companion_id}/genomes",
+    response_model=PersonaGenomeHistoryResponse,
+)
+async def list_companion_genomes(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> PersonaGenomeHistoryResponse:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    companion = await _require_owner_companion(store, owner_id, companion_id)
+    rows = await store.persona_repo.list_for_companion(companion_id)
+    current = next(
+        (row for row in rows if row.genome_id == companion.current_genome_id),
+        None,
+    )
+    return PersonaGenomeHistoryResponse(
+        current_genome=_persona_genome(current) if current is not None else None,
+        history=[_persona_genome(row) for row in rows],
+    )
+
+
+@router.get(
+    "/owners/{owner_id}/companions/{companion_id}/genome/proposals",
+    response_model=PersonaProposalListResponse,
+)
+async def list_companion_persona_proposals(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+    status_filter: str = Query(default="proposed", alias="status"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> PersonaProposalListResponse:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    rows = await store.persona_repo.list_for_companion(companion_id)
+    if status_filter != "all":
+        rows = [row for row in rows if row.status == status_filter]
+    proposals: list[PersonaProposalView] = []
+    for row in rows:
+        if row.status not in {"proposed", "rejected", "stale"} and status_filter == "all":
+            continue
+        events = await store.events.list_for_subject(
+            subject_type="persona_genome",
+            subject_id=row.genome_id,
+        )
+        proposals.append(_persona_proposal(row, events))
+    return PersonaProposalListResponse(
+        proposals=proposals,
+        timeline=await _companion_persona_timeline(
+            store,
+            owner_id=owner_id,
+            companion_id=companion_id,
+            limit=limit,
+        ),
+    )
+
+
+@router.get(
+    "/owners/{owner_id}/companions/{companion_id}/genome/timeline",
+    response_model=EventListResponse,
+)
+async def list_companion_persona_timeline(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> EventListResponse:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    return EventListResponse(
+        events=await _companion_persona_timeline(
+            store,
+            owner_id=owner_id,
+            companion_id=companion_id,
+            limit=limit,
+        )
+    )
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/genome/proposals/{genome_id}/approve",
+    response_model=PersonaGenomeView,
+)
+async def approve_companion_persona_proposal(
+    owner_id: str,
+    companion_id: str,
+    genome_id: str,
+    payload: PersonaApproveRequest,
+    request: Request,
+) -> PersonaGenomeView:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    try:
+        row = await store.persona.approve_evolution(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            proposed_genome_id=genome_id,
+            expected_base_genome_id=payload.expected_base_genome_id,
+        )
+    except PersonaGenomeConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return _persona_genome(row)
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/genome/proposals/{genome_id}/reject",
+    response_model=PersonaGenomeView,
+)
+async def reject_companion_persona_proposal(
+    owner_id: str,
+    companion_id: str,
+    genome_id: str,
+    payload: PersonaRejectRequest,
+    request: Request,
+) -> PersonaGenomeView:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    try:
+        row = await store.persona.reject_evolution(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            genome_id=genome_id,
+            reason=payload.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return _persona_genome(row)
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/genomes/{genome_id}/rollback",
+    response_model=PersonaGenomeView,
+)
+async def rollback_companion_genome(
+    owner_id: str,
+    companion_id: str,
+    genome_id: str,
+    request: Request,
+    payload: PersonaRollbackRequest | None = None,
+) -> PersonaGenomeView:
+    del payload
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    try:
+        row = await store.persona.rollback_to_genome(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            genome_id=genome_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return _persona_genome(row)
 
 
 @router.post(
@@ -1117,6 +1294,56 @@ def _persona_genome(row: Any) -> PersonaGenomeView:
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _persona_proposal(row: Any, events: list[Any]) -> PersonaProposalView:
+    source = row.source_json or {}
+    return PersonaProposalView(
+        genome=_persona_genome(row),
+        proposal_id=str(source.get("proposal_id") or ""),
+        base_genome_id=row.base_genome_id,
+        base_genome_hash=str(source.get("base_genome_hash") or ""),
+        rationale=row.change_summary or "",
+        evidence_refs=_persona_evidence_refs(source),
+        timeline=[_event(event) for event in events],
+    )
+
+
+def _persona_evidence_refs(source_json: dict[str, Any]) -> list[PersonaEvidenceView]:
+    refs = source_json.get("evidence_refs") or []
+    if not isinstance(refs, list):
+        return []
+    evidence: list[PersonaEvidenceView] = []
+    for item in refs:
+        if not isinstance(item, dict):
+            continue
+        confidence = item.get("confidence")
+        evidence.append(
+            PersonaEvidenceView(
+                kind=str(item.get("kind") or ""),
+                ref_id=str(item.get("ref_id") or ""),
+                summary=str(item.get("summary") or ""),
+                confidence=float(confidence) if isinstance(confidence, int | float) else None,
+            )
+        )
+    return evidence
+
+
+async def _companion_persona_timeline(
+    store: DataStore,
+    *,
+    owner_id: str,
+    companion_id: str,
+    limit: int,
+) -> list[EventView]:
+    rows = await store.events.list_for_owner(owner_id, limit=limit)
+    persona_rows = [
+        row
+        for row in rows
+        if getattr(row, "companion_id", None) == companion_id
+        and str(row.event_type).startswith("persona.")
+    ]
+    return [_event(row) for row in persona_rows]
 
 
 def _device(row: Any) -> DeviceView:

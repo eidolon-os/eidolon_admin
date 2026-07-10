@@ -72,6 +72,45 @@ export interface PersonaGenomeView {
   updated_at: string
 }
 
+export interface PersonaGenomeHistoryResponse {
+  current_genome: PersonaGenomeView | null
+  history: PersonaGenomeView[]
+}
+
+export interface PersonaEvidenceView {
+  kind: string
+  ref_id: string
+  summary: string
+  confidence: number | null
+}
+
+export interface PersonaProposalView {
+  genome: PersonaGenomeView
+  proposal_id: string
+  base_genome_id: string | null
+  base_genome_hash: string | null
+  rationale: string
+  evidence_refs: PersonaEvidenceView[]
+  timeline: EventView[]
+}
+
+export interface PersonaProposalListResponse {
+  proposals: PersonaProposalView[]
+  timeline: EventView[]
+}
+
+export interface PersonaApproveRequest {
+  expected_base_genome_id?: string | null
+}
+
+export interface PersonaRejectRequest {
+  reason?: string
+}
+
+export interface PersonaRollbackRequest {
+  reason?: string
+}
+
 export interface WorkspaceInitializeRequest {
   companion_id?: string | null
   companion_display_name?: string
@@ -192,12 +231,21 @@ export interface JobView {
 export interface EventView {
   event_id: string
   owner_id: string
+  companion_id: string | null
   subject_type: string
   subject_id: string
   event_type: string
+  event_class: string
+  source: string
+  severity: string
+  outcome: string
+  reason: string | null
   actor_type: string
   actor_id: string | null
+  trace_id: string | null
+  data_classification: string
   payload_json: JsonDict
+  occurred_at: string | null
   created_at: string
 }
 
@@ -312,6 +360,77 @@ export async function listOwnerPersonaGenomes(ownerId: string): Promise<PersonaG
     `/owners/${encodeURIComponent(ownerId)}/persona-genomes`,
   )
   return data.persona_genomes
+}
+
+export async function listCompanionGenomes(
+  ownerId: string,
+  companionId: string,
+): Promise<PersonaGenomeHistoryResponse> {
+  const { data } = await client.get<PersonaGenomeHistoryResponse>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genomes`,
+  )
+  return data
+}
+
+export async function listCompanionPersonaProposals(
+  ownerId: string,
+  companionId: string,
+  status = 'proposed',
+): Promise<PersonaProposalListResponse> {
+  const { data } = await client.get<PersonaProposalListResponse>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genome/proposals`,
+    { params: { status } },
+  )
+  return data
+}
+
+export async function listCompanionPersonaTimeline(
+  ownerId: string,
+  companionId: string,
+): Promise<EventView[]> {
+  const { data } = await client.get<{ events: EventView[] }>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genome/timeline`,
+  )
+  return data.events
+}
+
+export async function approveCompanionPersonaProposal(
+  ownerId: string,
+  companionId: string,
+  genomeId: string,
+  body: PersonaApproveRequest = {},
+): Promise<PersonaGenomeView> {
+  const { data } = await client.post<PersonaGenomeView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genome/proposals/${encodeURIComponent(genomeId)}/approve`,
+    body,
+  )
+  return data
+}
+
+export async function rejectCompanionPersonaProposal(
+  ownerId: string,
+  companionId: string,
+  genomeId: string,
+  body: PersonaRejectRequest = {},
+): Promise<PersonaGenomeView> {
+  const { data } = await client.post<PersonaGenomeView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genome/proposals/${encodeURIComponent(genomeId)}/reject`,
+    body,
+  )
+  return data
+}
+
+export async function rollbackCompanionGenome(
+  ownerId: string,
+  companionId: string,
+  genomeId: string,
+  body: PersonaRollbackRequest = {},
+): Promise<PersonaGenomeView> {
+  const { data } = await client.post<PersonaGenomeView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/genomes/${encodeURIComponent(genomeId)}/rollback`,
+    body,
+  )
+  return data
 }
 
 // Reset a companion to its authored origin (drops evolution drift). eidolon_data.

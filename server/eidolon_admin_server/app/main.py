@@ -30,9 +30,9 @@ from .benchmarks import router as benchmarks_router
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
-from .data import router as data_router
 from .data.hub_client import HubDeviceRuntimeClient
 from .data.owner_delete_finalizer import finalize_owner_delete_jobs
+from .data.router import router as data_router
 from .data.schema_guard import ensure_eidolon_data_schema
 from .devices import router as devices_router
 from .gateway.registry import ServiceRegistry

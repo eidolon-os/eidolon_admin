@@ -111,6 +111,45 @@ class PersonaGenomeListResponse(BaseModel):
     persona_genomes: list[PersonaGenomeView]
 
 
+class PersonaGenomeHistoryResponse(BaseModel):
+    current_genome: PersonaGenomeView | None = None
+    history: list[PersonaGenomeView] = Field(default_factory=list)
+
+
+class PersonaEvidenceView(BaseModel):
+    kind: str = ""
+    ref_id: str = ""
+    summary: str = ""
+    confidence: float | None = None
+
+
+class PersonaProposalView(BaseModel):
+    genome: PersonaGenomeView
+    proposal_id: str = ""
+    base_genome_id: str | None = None
+    base_genome_hash: str | None = None
+    rationale: str = ""
+    evidence_refs: list[PersonaEvidenceView] = Field(default_factory=list)
+    timeline: list["EventView"] = Field(default_factory=list)
+
+
+class PersonaProposalListResponse(BaseModel):
+    proposals: list[PersonaProposalView] = Field(default_factory=list)
+    timeline: list["EventView"] = Field(default_factory=list)
+
+
+class PersonaApproveRequest(BaseModel):
+    expected_base_genome_id: str | None = None
+
+
+class PersonaRejectRequest(BaseModel):
+    reason: str = ""
+
+
+class PersonaRollbackRequest(BaseModel):
+    reason: str = ""
+
+
 class DeviceView(BaseModel):
     device_id: str
     owner_id: str | None = None

@@ -101,4 +101,63 @@ describe('api/eidolonData.ts', () => {
       companion_display_name: 'Xiaoyi',
     })
   })
+
+  it('calls companion persona governance endpoints with encoded ids', async () => {
+    getMock
+      .mockResolvedValueOnce({ data: { current_genome: null, history: [] } })
+      .mockResolvedValueOnce({ data: { proposals: [], timeline: [] } })
+      .mockResolvedValueOnce({ data: { events: [] } })
+    postMock
+      .mockResolvedValueOnce({ data: { genome_id: 'g/1', status: 'committed' } })
+      .mockResolvedValueOnce({ data: { genome_id: 'g/2', status: 'rejected' } })
+      .mockResolvedValueOnce({ data: { genome_id: 'g/0', status: 'committed' } })
+
+    const {
+      approveCompanionPersonaProposal,
+      listCompanionGenomes,
+      listCompanionPersonaProposals,
+      listCompanionPersonaTimeline,
+      rejectCompanionPersonaProposal,
+      rollbackCompanionGenome,
+    } = await import('../src/api/eidolonData')
+
+    await listCompanionGenomes('owner/1', 'c with space')
+    await listCompanionPersonaProposals('owner/1', 'c with space', 'all')
+    await listCompanionPersonaTimeline('owner/1', 'c with space')
+    await approveCompanionPersonaProposal('owner/1', 'c with space', 'g/1', {
+      expected_base_genome_id: 'g/0',
+    })
+    await rejectCompanionPersonaProposal('owner/1', 'c with space', 'g/2', {
+      reason: 'not desired',
+    })
+    await rollbackCompanionGenome('owner/1', 'c with space', 'g/0')
+
+    const owner = 'owner%2F1'
+    const companion = 'c%20with%20space'
+    expect(getMock).toHaveBeenNthCalledWith(1, `/owners/${owner}/companions/${companion}/genomes`)
+    expect(getMock).toHaveBeenNthCalledWith(
+      2,
+      `/owners/${owner}/companions/${companion}/genome/proposals`,
+      { params: { status: 'all' } },
+    )
+    expect(getMock).toHaveBeenNthCalledWith(
+      3,
+      `/owners/${owner}/companions/${companion}/genome/timeline`,
+    )
+    expect(postMock).toHaveBeenNthCalledWith(
+      1,
+      `/owners/${owner}/companions/${companion}/genome/proposals/g%2F1/approve`,
+      { expected_base_genome_id: 'g/0' },
+    )
+    expect(postMock).toHaveBeenNthCalledWith(
+      2,
+      `/owners/${owner}/companions/${companion}/genome/proposals/g%2F2/reject`,
+      { reason: 'not desired' },
+    )
+    expect(postMock).toHaveBeenNthCalledWith(
+      3,
+      `/owners/${owner}/companions/${companion}/genomes/g%2F0/rollback`,
+      {},
+    )
+  })
 })

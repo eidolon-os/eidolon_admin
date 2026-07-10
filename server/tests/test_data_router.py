@@ -8,14 +8,19 @@ from typing import AsyncIterator
 import httpx
 import pytest
 from eidolon_data import DataSettings, DataStore
-from eidolon_sdk.biz.persona import build_default_persona_genome, persona_genome_to_json
+from eidolon_sdk.biz.persona import (
+    PersonaEvidenceRef,
+    PersonaEvolutionProposalEvent,
+    build_default_persona_genome,
+    persona_genome_to_json,
+)
 from fastapi import FastAPI
 
-from eidolon_admin_server.app.data import router as data_router
 from eidolon_admin_server.app.data.owner_delete_finalizer import (
     OwnerDeleteJournal,
     finalize_owner_delete_jobs,
 )
+from eidolon_admin_server.app.data.router import router as data_router
 from eidolon_admin_server.app.memory.runners import memory_palace_path
 
 
@@ -66,6 +71,37 @@ class FakeHubDeviceClient:
 
     async def refresh_device_config(self, device_id: str) -> None:
         return None
+
+
+def _persona_proposal(
+    *,
+    owner_id: str,
+    companion_id: str,
+    base,
+    genome_id: str,
+) -> PersonaEvolutionProposalEvent:
+    evidence = PersonaEvidenceRef(
+        kind="memory_fragment",
+        ref_id=f"memory-evidence-{owner_id}",
+        summary="Owner repeatedly asked for more concise responses.",
+        confidence=0.9,
+    )
+    candidate = build_default_persona_genome(
+        name="Governed",
+        origin="memory_reflection",
+        base_genome_id=base.genome_id,
+    )
+    return PersonaEvolutionProposalEvent(
+        proposal_id=f"proposal-{genome_id}",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        base_genome_id=base.genome_id,
+        base_genome_hash=base.genome_hash,
+        proposed_genome_id=genome_id,
+        rationale="Prefer concise responses based on repeated evidence.",
+        proposed_genome=candidate,
+        evidence_refs=[evidence],
+    )
 
 
 @pytest.fixture
@@ -184,6 +220,157 @@ async def test_owner_scoped_data_overview_and_lists(
 
     missing = await client.get("/api/owners/missing/workspace")
     assert missing.status_code == 404
+
+
+async def test_persona_governance_api_uses_typed_workflow(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await client.post(
+        "/api/owners",
+        json={"owner_id": "owner-govern", "display_name": "Owner"},
+    )
+    initialized = await client.post(
+        "/api/owners/owner-govern/workspace/initialize",
+        json={"companion_display_name": "Governed"},
+    )
+    companion_id = initialized.json()["companion"]["companion_id"]
+    base = await data_store.persona_repo.get_genome(
+        initialized.json()["persona_genome"]["genome_id"]
+    )
+    proposal = await data_store.persona.create_evolution_proposal(
+        _persona_proposal(
+            owner_id="owner-govern",
+            companion_id=companion_id,
+            base=base,
+            genome_id="g-owner-govern-proposed",
+        )
+    )
+
+    history = await client.get(
+        f"/api/owners/owner-govern/companions/{companion_id}/genomes"
+    )
+    assert history.status_code == 200
+    assert history.json()["current_genome"]["genome_id"] == base.genome_id
+    assert [row["status"] for row in history.json()["history"]] == ["committed", "proposed"]
+
+    proposals = await client.get(
+        f"/api/owners/owner-govern/companions/{companion_id}/genome/proposals"
+    )
+    assert proposals.status_code == 200
+    proposal_body = proposals.json()["proposals"][0]
+    assert proposal_body["genome"]["genome_id"] == proposal.genome_id
+    assert proposal_body["base_genome_hash"] == base.genome_hash
+    assert proposal_body["evidence_refs"][0]["ref_id"] == "memory-evidence-owner-govern"
+    assert {event["event_type"] for event in proposal_body["timeline"]} == {
+        "persona.evolution.proposed"
+    }
+
+    approved = await client.post(
+        f"/api/owners/owner-govern/companions/{companion_id}/genome/proposals/{proposal.genome_id}/approve",
+        json={"expected_base_genome_id": base.genome_id},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "committed"
+    assert approved.json()["applied_event_id"]
+    assert (await data_store.companions.get(companion_id)).current_genome_id == proposal.genome_id
+
+    duplicate = await client.post(
+        f"/api/owners/owner-govern/companions/{companion_id}/genome/proposals/{proposal.genome_id}/approve",
+        json={"expected_base_genome_id": base.genome_id},
+    )
+    assert duplicate.status_code == 409
+    assert "only proposed" in duplicate.json()["detail"]
+
+    rolled_back = await client.post(
+        f"/api/owners/owner-govern/companions/{companion_id}/genomes/{base.genome_id}/rollback",
+        json={},
+    )
+    assert rolled_back.status_code == 200
+    assert rolled_back.json()["genome_id"] == base.genome_id
+    assert (await data_store.companions.get(companion_id)).current_genome_id == base.genome_id
+
+    timeline = await client.get(
+        f"/api/owners/owner-govern/companions/{companion_id}/genome/timeline"
+    )
+    assert timeline.status_code == 200
+    assert {
+        "persona.evolution.proposed",
+        "persona.evolution.approved",
+        "persona.genome.committed",
+        "persona.genome.rolled_back",
+    }.issubset({event["event_type"] for event in timeline.json()["events"]})
+
+
+async def test_persona_governance_api_reject_and_conflict_errors(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await client.post(
+        "/api/owners",
+        json={"owner_id": "owner-govern-errors", "display_name": "Owner"},
+    )
+    first = await client.post(
+        "/api/owners/owner-govern-errors/workspace/initialize",
+        json={"companion_id": "c-govern-first", "genome_id": "g-govern-first", "realm_id": "r-govern-first"},
+    )
+    second = await client.post(
+        "/api/owners/owner-govern-errors/workspace/initialize",
+        json={"companion_id": "c-govern-second", "genome_id": "g-govern-second", "realm_id": "r-govern-second"},
+    )
+    first_base = await data_store.persona_repo.get_genome(first.json()["persona_genome"]["genome_id"])
+    second_companion_id = second.json()["companion"]["companion_id"]
+    proposal = await data_store.persona.create_evolution_proposal(
+        _persona_proposal(
+            owner_id="owner-govern-errors",
+            companion_id="c-govern-first",
+            base=first_base,
+            genome_id="g-govern-first-proposed",
+        )
+    )
+
+    wrong_companion = await client.post(
+        f"/api/owners/owner-govern-errors/companions/{second_companion_id}/genome/proposals/{proposal.genome_id}/reject",
+        json={"reason": "wrong companion"},
+    )
+    assert wrong_companion.status_code == 404
+
+    rejected = await client.post(
+        f"/api/owners/owner-govern-errors/companions/c-govern-first/genome/proposals/{proposal.genome_id}/reject",
+        json={"reason": "not desired"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+    repeated = await client.post(
+        f"/api/owners/owner-govern-errors/companions/c-govern-first/genome/proposals/{proposal.genome_id}/reject",
+        json={"reason": "second click"},
+    )
+    assert repeated.status_code == 409
+    assert "only proposed" in repeated.json()["detail"]
+
+    stale = await data_store.persona.create_evolution_proposal(
+        _persona_proposal(
+            owner_id="owner-govern-errors",
+            companion_id="c-govern-first",
+            base=first_base,
+            genome_id="g-govern-stale-proposed",
+        )
+    )
+    await data_store.persona.create_genome(
+        genome_id="g-govern-new-current",
+        owner_id="owner-govern-errors",
+        companion_id="c-govern-first",
+        event_id="evt-govern-new-current",
+        version=4,
+        genome_json=persona_genome_to_json(build_default_persona_genome(name="New")),
+    )
+    stale_resp = await client.post(
+        f"/api/owners/owner-govern-errors/companions/c-govern-first/genome/proposals/{stale.genome_id}/approve",
+        json={"expected_base_genome_id": first_base.genome_id},
+    )
+    assert stale_resp.status_code == 409
+    assert (await data_store.persona_repo.get_genome(stale.genome_id)).status == "stale"
 
 
 async def test_companion_web_body_and_multi_body_binding(
