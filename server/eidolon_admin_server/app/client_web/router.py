@@ -1,6 +1,6 @@
 """Eidolon client-web — process-only integration.
 
-Next.js dev server (port 3000) connecting browsers to hub's LiveKit room and
+Next.js dev server connecting browsers to hub's LiveKit room and
 hub's /api/config token endpoint. No admin HTTP surface on its own; we
 supervise the process and surface its dotenv config (NEXT_PUBLIC_* etc).
 """

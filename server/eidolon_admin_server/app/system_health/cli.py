@@ -1,10 +1,11 @@
-"""Pre-flight port audit CLI — invoked by run_all.sh before starting supervisord.
+"""System health CLI used by run_all.sh around supervisord startup.
 
 Why a separate entry point (not just curl /api/system/health):
     At pre-flight, supervisord isn't running yet — so admin-api isn't
     running, so there IS no HTTP endpoint to curl. We share the
     services.yaml + probe code with the runtime endpoint and skip the
-    HTTP layer entirely.
+    HTTP layer entirely. After startup, the same CLI waits for semantic
+    readiness using supervisord state plus service HTTP probes.
 
 Usage:
     python -m eidolon_admin_server.app.system_health.cli check
@@ -14,6 +15,9 @@ Usage:
         Same check, but SIGTERM any orphans found and re-audit. If
         the second pass still shows orphans (kills didn't take), exit 1.
 
+    python -m eidolon_admin_server.app.system_health.cli wait --services admin,agent
+        Poll until the selected started services are actually usable.
+
 The auditor's normal classification still applies: ports that should be
 unmanaged (vite at 9001) are not flagged as orphans.
 """
@@ -21,13 +25,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import signal
 import sys
 import time
 from collections.abc import Iterable
 
+import httpx
+
 from ..settings import GatewayConfig, load_gateway_config
+from ..supervisor.client import SupervisorClient
 from . import probe
+from .readiness import (
+    HttpProbeFunc,
+    StackReadiness,
+    parse_service_ids,
+    probe_http,
+    wait_for_readiness,
+)
 
 
 _GREEN = "\033[0;32m"
@@ -398,16 +413,138 @@ def _format_age(seconds: int) -> str:
 
 
 def _parse_service_ids(raw: str | None) -> tuple[str, ...] | None:
-    if raw is None:
-        return None
-    values = tuple(part.strip() for part in raw.split(",") if part.strip())
-    return values or None
+    return parse_service_ids(raw)
+
+
+async def wait(
+    *,
+    timeout_seconds: float,
+    interval_seconds: float,
+    service_ids: Iterable[str] | None = None,
+    include_supervisor_groups: bool = False,
+    include_admin_web: bool = False,
+    strict: bool = False,
+    json_output: bool = False,
+    cfg: GatewayConfig | None = None,
+    supervisor_client: SupervisorClient | None = None,
+    http_probe: HttpProbeFunc | None = None,
+) -> int:
+    """Wait for selected services to become semantically usable.
+
+    This is the post-start counterpart to ``check``: it expects
+    supervisord to be up and verifies both process state and service
+    readiness probes. It is read-only and safe to run repeatedly.
+    """
+    from ..settings import get_settings
+
+    cfg = cfg or load_gateway_config()
+    supervisor_client = supervisor_client or SupervisorClient(
+        get_settings().supervisor_socket
+    )
+    if http_probe is not None:
+        report, attempts = await wait_for_readiness(
+            cfg,
+            supervisor_client,
+            service_ids=service_ids,
+            include_supervisor_groups=include_supervisor_groups,
+            include_admin_web=include_admin_web,
+            strict=strict,
+            timeout_seconds=timeout_seconds,
+            interval_seconds=interval_seconds,
+            http_probe=http_probe,
+        )
+    else:
+        async with httpx.AsyncClient(trust_env=False) as client:
+            async def _http_probe(spec):
+                return await probe_http(client, spec)
+
+            report, attempts = await wait_for_readiness(
+                cfg,
+                supervisor_client,
+                service_ids=service_ids,
+                include_supervisor_groups=include_supervisor_groups,
+                include_admin_web=include_admin_web,
+                strict=strict,
+                timeout_seconds=timeout_seconds,
+                interval_seconds=interval_seconds,
+                http_probe=_http_probe,
+            )
+
+    if json_output:
+        body = report.to_dict()
+        body["attempts"] = attempts
+        print(json.dumps(body, sort_keys=True))
+    else:
+        _print_readiness_report(report, attempts, timeout_seconds=timeout_seconds)
+    return 0 if report.ok else 1
+
+
+def _print_readiness_report(
+    report: StackReadiness,
+    attempts: int,
+    *,
+    timeout_seconds: float,
+) -> None:
+    title = (
+        f"✓ readiness passed in {report.elapsed_ms:.1f}ms"
+        if report.ok
+        else f"✗ readiness not reached within {timeout_seconds:.1f}s"
+    )
+    print(_color(title, _GREEN if report.ok else _RED))
+    print(f"  attempts: {attempts}")
+    print(f"  supervisord: {'reachable' if report.supervisord_reachable else 'unreachable'}")
+    if report.error:
+        print(f"  supervisor error: {report.error}")
+
+    for svc in report.services:
+        if svc.ok:
+            marker = _color("✓", _GREEN)
+            state = "ready"
+        elif svc.blocking:
+            marker = _color("✗", _RED)
+            state = "failed"
+        else:
+            marker = _color("!", _YELLOW)
+            state = "degraded"
+        optional = " optional" if svc.optional else ""
+        print(f"  {marker} {svc.service_id:<12} {state}{optional}")
+        for program in svc.programs:
+            program_marker = "✓" if program.ok else "✗"
+            pid = f" pid={program.pid}" if program.pid else ""
+            print(
+                f"      {program_marker} program {program.full_name}: "
+                f"{program.statename}{pid}"
+            )
+            if program.spawnerr:
+                print(f"        spawnerr: {program.spawnerr}")
+        for http_probe_result in svc.http:
+            http_marker = "✓" if http_probe_result.ok else "✗"
+            status = (
+                f" HTTP {http_probe_result.status_code}"
+                if http_probe_result.status_code is not None
+                else ""
+            )
+            latency = (
+                f" {http_probe_result.latency_ms:.1f}ms"
+                if http_probe_result.latency_ms is not None
+                else ""
+            )
+            print(
+                f"      {http_marker} http {http_probe_result.name}:"
+                f"{status}{latency} {http_probe_result.url}"
+            )
+            if http_probe_result.error:
+                print(f"        error: {http_probe_result.error}")
+            if http_probe_result.detail:
+                print(f"        detail: {http_probe_result.detail}")
+        for note in svc.notes:
+            print(f"      note: {note}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="port_audit",
-        description="Pre-flight port audit for the Eidolon dev stack.",
+        prog="system_health",
+        description="Pre-flight and readiness checks for the Eidolon dev stack.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
     check_p = sub.add_parser("check", help="audit declared ports for orphans")
@@ -440,6 +577,48 @@ def main(argv: list[str] | None = None) -> int:
             "(used by supervisor profiles such as core-contract)"
         ),
     )
+    wait_p = sub.add_parser("wait", help="wait for started services to become ready")
+    wait_p.add_argument(
+        "--timeout",
+        type=float,
+        default=45.0,
+        help="maximum seconds to wait before returning failure",
+    )
+    wait_p.add_argument(
+        "--interval",
+        type=float,
+        default=0.5,
+        help="seconds between readiness attempts",
+    )
+    wait_p.add_argument(
+        "--services",
+        metavar="CSV",
+        default=None,
+        help="limit readiness to a comma-separated service id subset",
+    )
+    wait_p.add_argument(
+        "--include-supervisor-groups",
+        action="store_true",
+        help=(
+            "treat unknown service ids as supervisord groups and require "
+            "their programs to be RUNNING"
+        ),
+    )
+    wait_p.add_argument(
+        "--include-admin-web",
+        action="store_true",
+        help="also probe the run_all.sh-managed admin web dev server",
+    )
+    wait_p.add_argument(
+        "--strict",
+        action="store_true",
+        help="make optional services block readiness when degraded",
+    )
+    wait_p.add_argument(
+        "--json",
+        action="store_true",
+        help="emit a single machine-readable JSON object",
+    )
     args = parser.parse_args(argv)
 
     if args.cmd == "check":
@@ -449,6 +628,20 @@ def main(argv: list[str] | None = None) -> int:
                 verbose=args.verbose,
                 emit_skip_list=args.emit_skip_list,
                 service_ids=_parse_service_ids(args.services),
+            ))
+        except ValueError as exc:
+            print(_color(f"✗ {exc}", _RED), file=sys.stderr)
+            return 2
+    if args.cmd == "wait":
+        try:
+            return asyncio.run(wait(
+                timeout_seconds=args.timeout,
+                interval_seconds=args.interval,
+                service_ids=_parse_service_ids(args.services),
+                include_supervisor_groups=args.include_supervisor_groups,
+                include_admin_web=args.include_admin_web,
+                strict=args.strict,
+                json_output=args.json,
             ))
         except ValueError as exc:
             print(_color(f"✗ {exc}", _RED), file=sys.stderr)

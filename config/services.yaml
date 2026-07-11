@@ -5,7 +5,7 @@
 admin:
   host: $EIDOLON_ADMIN_API_HOST
   port: $EIDOLON_ADMIN_API_PORT
-  # Phase 32.C: client_web (port 3000) lists admin users via
+  # Phase 32.C: client_web lists admin users via
   # /api/users for the "select identity" picker, so its origin must
   # be CORS-allowed alongside admin web (9001).
   cors_origins:

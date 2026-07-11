@@ -583,7 +583,7 @@ def _client_web_base() -> str:
     return (
         os.environ.get("EIDOLON_CLIENT_WEB_URL")
         or os.environ.get("VITE_CLIENT_WEB_URL")
-        or "http://127.0.0.1:3000"
+        or "http://127.0.0.1:3001"
     ).rstrip("/")
 
 

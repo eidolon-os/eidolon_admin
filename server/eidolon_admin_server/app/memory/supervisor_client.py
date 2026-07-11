@@ -31,6 +31,21 @@ class MemorySupervisorClient(ServiceHTTPClient):
         )
         return r.json()
 
+    async def cleanup_orphaned_realm(
+        self,
+        memory_realm_id: str,
+        *,
+        purge_palace: bool = False,
+    ) -> dict[str, Any]:
+        realm = quote(memory_realm_id, safe="")
+        r = await self._request(
+            "DELETE",
+            f"/api/admin/realms/{realm}/orphan",
+            params={"purge_palace": "true" if purge_palace else "false"},
+            timeout=120.0,
+        )
+        return r.json()
+
     async def get_rebuild_index_job(self, job_id: str) -> dict[str, Any]:
         r = await self._request(
             "GET",

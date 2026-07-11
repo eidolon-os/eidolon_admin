@@ -151,7 +151,7 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
             "port": int(disc.get("port", _deep_get(ports, "memory", "discovery", "port", default=8020))),
         },
         "mcp": {
-            "port": int(mcp.get("port", _deep_get(ports, "memory", "mcp", "port", default=8030))),
+            "port": int(mcp.get("port", _deep_get(ports, "memory", "mcp", "port", default=10030))),
         },
         # Phase 29.B.2 — supervisor's embedded admin HTTP, used by admin
         # for user CRUD. Defaults align with memory's SupervisorConfig.
@@ -194,7 +194,7 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     }
 
     ports.setdefault("admin", _deep_get(ports, "admin", default={"api": {"host": "127.0.0.1", "port": 9000}, "web": {"port": 9001}}))
-    ports.setdefault("client_web", _deep_get(ports, "client_web", default={"port": 3000}))
+    ports.setdefault("client_web", _deep_get(ports, "client_web", default={"port": 3001}))
 
     return ports
 

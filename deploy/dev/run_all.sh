@@ -21,9 +21,15 @@
 #   ./deploy/dev/run_all.sh start          # cold start: ports must be free, then supervisord + vite
 #   ./deploy/dev/run_all.sh start --force-cleanup
 #                                        # SIGTERM Eidolon-looking port holders, then cold start
+#   ./deploy/dev/run_all.sh start --strict
+#                                        # fail if optional enabled services are degraded
+#   ./deploy/dev/run_all.sh start --no-wait-ready
+#                                        # skip post-start readiness wait
 #   ./deploy/dev/run_all.sh stop           # stop vite + supervisord (all supervised programs)
 #   ./deploy/dev/run_all.sh restart        # stop then start (use when stack is already running)
 #   ./deploy/dev/run_all.sh status         # show vite + supervisorctl status (no port check)
+#   ./deploy/dev/run_all.sh status --readiness
+#                                        # include one-shot service readiness diagnostics
 #   ./deploy/dev/run_all.sh foreground     # admin-api + web in foreground (no sub-projects)
 #   ./deploy/dev/run_all.sh core-contract start
 #                                        # supervised admin + agent + memory + nats only
@@ -710,6 +716,56 @@ do_stop_busy_optionals() {
   unset SKIP_LIST_FILE
 }
 
+enabled_service_ids_csv() {
+  local enabled_dir="${SUPERVISOR_PROFILE_ENABLED_DIR:-${ROOT}/deploy/supervisor/enabled}"
+  local names=()
+  local conf base
+  for conf in "${enabled_dir}"/*.conf; do
+    [[ -e "$conf" || -L "$conf" ]] || continue
+    base="$(basename "$conf" .conf)"
+    [[ -n "$base" ]] && names+=("$base")
+  done
+  local IFS=,
+  echo "${names[*]}"
+}
+
+do_readiness_wait() {
+  local include_admin_web="${1:-0}"
+  local timeout="${2:-${EIDOLON_READY_TIMEOUT:-60}}"
+  local services="${PREFLIGHT_SERVICE_IDS:-}"
+  if [[ "${EIDOLON_SKIP_READY_WAIT:-0}" == "1" ]]; then
+    warn "readiness wait skipped by --no-wait-ready / EIDOLON_SKIP_READY_WAIT=1"
+    return 0
+  fi
+  ensure_api_deps
+  if [[ -z "$services" ]]; then
+    services="$(enabled_service_ids_csv)"
+  fi
+  if [[ -z "$services" ]]; then
+    warn "readiness: no enabled services found; skipping"
+    return 0
+  fi
+
+  local cmd=(
+    "${VENV}/bin/python"
+    -m eidolon_admin_server.app.system_health.cli
+    wait
+    --timeout "$timeout"
+    --interval "${EIDOLON_READY_INTERVAL:-0.5}"
+    --services "$services"
+    --include-supervisor-groups
+  )
+  if [[ "$include_admin_web" == "1" ]]; then
+    cmd+=(--include-admin-web)
+  fi
+  if [[ "${EIDOLON_READINESS_STRICT:-0}" == "1" ]]; then
+    cmd+=(--strict)
+  fi
+
+  info "readiness: waiting for ${services} (timeout ${timeout}s)"
+  "${cmd[@]}"
+}
+
 do_start() {
   collect_ports_registry
   load_ports_env
@@ -726,6 +782,9 @@ do_start() {
   echo
   header "admin web"
   do_web_start
+  echo
+  header "service readiness"
+  do_readiness_wait 1
 }
 
 do_stop() {
@@ -753,6 +812,9 @@ do_core_contract_start() {
   header "supervisord core-contract"
   do_sv_start
   do_stop_busy_optionals
+  echo
+  header "service readiness core-contract"
+  do_readiness_wait 0
 }
 
 do_core_contract_stop() {
@@ -781,6 +843,12 @@ do_status() {
   do_web_status
   echo
   do_sv_status
+  if [[ "${EIDOLON_STATUS_READINESS:-0}" == "1" ]]; then
+    echo
+    load_ports_env
+    header "service readiness"
+    do_readiness_wait 1 "${EIDOLON_STATUS_READY_TIMEOUT:-2}" || true
+  fi
 }
 
 do_foreground() {
@@ -819,14 +887,28 @@ do_foreground() {
 
 # --- dispatch ---------------------------------------------------------------
 
-# ``--force-cleanup`` is a flag both ``start`` and ``restart`` accept;
-# parse and remove from $@ before the case match.
+# Start/status flags are parsed here and removed from $@ before the case match.
+ARGS=()
 for arg in "$@"; do
-  if [[ "$arg" == "--force-cleanup" ]]; then
-    export PREFLIGHT_CLEANUP=1
-  fi
+  case "$arg" in
+    --force-cleanup)
+      export PREFLIGHT_CLEANUP=1
+      ;;
+    --strict|--strict-readiness)
+      export EIDOLON_READINESS_STRICT=1
+      ;;
+    --no-wait-ready|--no-readiness)
+      export EIDOLON_SKIP_READY_WAIT=1
+      ;;
+    --readiness)
+      export EIDOLON_STATUS_READINESS=1
+      ;;
+    *)
+      ARGS+=("$arg")
+      ;;
+  esac
 done
-set -- "${@/--force-cleanup/}"
+set -- "${ARGS[@]}"
 
 case "${1:-}" in
   start)      do_start ;;

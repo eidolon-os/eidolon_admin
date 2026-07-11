@@ -186,10 +186,27 @@ def _realm_entry(
 class _FakeMemorySupervisorClient:
     def __init__(self):
         self.reconcile_calls = 0
+        self.cleanup_calls: list[tuple[str, bool]] = []
 
     async def reconcile(self):
         self.reconcile_calls += 1
         return {"ok": True}
+
+    async def cleanup_orphaned_realm(
+        self,
+        memory_realm_id: str,
+        *,
+        purge_palace: bool = False,
+    ):
+        self.cleanup_calls.append((memory_realm_id, purge_palace))
+        return {
+            "user_id": memory_realm_id,
+            "deleted": True,
+            "orphaned": True,
+            "palace_deleted": purge_palace,
+            "palace_trashed_to": None,
+            "logs_deleted": [],
+        }
 
     async def rebuild_index(self, memory_realm_id: str):
         return {
@@ -230,6 +247,20 @@ async def test_reconcile_route_proxies_to_memory_supervisor(app):
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
     assert client.reconcile_calls == 1
+
+
+async def test_cleanup_orphaned_realm_route_proxies_to_memory_supervisor(app):
+    client = _FakeMemorySupervisorClient()
+    app.state.memory_supervisor_client = client
+    async with await _http(app) as ac:
+        resp = await ac.delete(
+            "/api/memory/realms/r%3Aalice%3Adefault/orphan",
+            params={"purge_palace": "true"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["orphaned"] is True
+    assert client.cleanup_calls == [("r:alice:default", True)]
 
 
 async def test_rebuild_index_routes_proxy_to_memory_supervisor(app):

@@ -4,7 +4,7 @@
 // VITE_CLIENT_WEB_URL; the default matches the dev supervisord client-web port.
 export function clientWebBase(): string {
   const env = (import.meta as any).env?.VITE_CLIENT_WEB_URL
-  return (typeof env === 'string' && env) || 'http://127.0.0.1:3000'
+  return (typeof env === 'string' && env) || 'http://127.0.0.1:3001'
 }
 
 /**

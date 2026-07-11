@@ -19,6 +19,13 @@ router = APIRouter()
 class MemoryMaintenanceClient(Protocol):
     async def reconcile(self) -> dict[str, Any]: ...
 
+    async def cleanup_orphaned_realm(
+        self,
+        memory_realm_id: str,
+        *,
+        purge_palace: bool = False,
+    ) -> dict[str, Any]: ...
+
     async def rebuild_index(self, memory_realm_id: str) -> dict[str, Any]: ...
 
     async def get_rebuild_index_job(self, job_id: str) -> dict[str, Any]: ...
@@ -46,6 +53,23 @@ async def reconcile_memory_supervisor(request: Request) -> MemoryReconcileRespon
     try:
         return MemoryReconcileResponse.model_validate(
             await _memory_client(request).reconcile()
+        )
+    except ServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ServiceUpstreamError as exc:
+        raise _map_upstream(exc) from exc
+
+
+@router.delete("/realms/{memory_realm_id}/orphan")
+async def cleanup_orphaned_realm(
+    memory_realm_id: str,
+    request: Request,
+    purge_palace: bool = False,
+) -> dict[str, Any]:
+    try:
+        return await _memory_client(request).cleanup_orphaned_realm(
+            memory_realm_id,
+            purge_palace=purge_palace,
         )
     except ServiceUnavailable as exc:
         raise HTTPException(503, str(exc)) from exc

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import ServiceOverview from '@/modules/common/ServiceOverview.vue'
 import { getClientWebConfig } from '@/api/clientWeb'
+import { clientWebBase } from '@/utils/clientWeb'
+
+const clientWebUrl = clientWebBase()
 </script>
 
 <template>
@@ -15,7 +18,7 @@ import { getClientWebConfig } from '@/api/clientWeb'
     <template #extra>
       <el-card style="margin-top: 16px">
         <template #header>访问</template>
-        <p class="link">浏览器打开 <a href="http://127.0.0.1:3000" target="_blank">http://127.0.0.1:3000</a></p>
+        <p class="link">浏览器打开 <a :href="clientWebUrl" target="_blank">{{ clientWebUrl }}</a></p>
         <p class="hint">客户端依赖 hub (token 接口) 和 livekit (信令)，需要都在线。</p>
       </el-card>
     </template>

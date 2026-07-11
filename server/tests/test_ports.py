@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import yaml
+from eidolon_sdk.memory import MEMORY_MCP_PORT_SPAN
 
 from eidolon_admin_server.app.ports import (
     _MAX_LIST_INDEX,
@@ -47,6 +48,37 @@ def test_ports_registry_has_expected_sections() -> None:
     ports = load_ports()
     assert ports["hub"]["api"]["port"] == 8082
     assert ports["livekit"]["port"] == 7880
+    assert ports["client_web"]["port"] == 3001
+    assert ports["memory"]["mcp"]["port"] == 10030
+
+
+def test_memory_realm_dynamic_port_pool_does_not_overlap_fixed_services() -> None:
+    ports = load_ports()
+    memory_base = int(ports["memory"]["mcp"]["port"])
+    dynamic_pool = range(memory_base, memory_base + MEMORY_MCP_PORT_SPAN)
+
+    fixed_ports: list[tuple[str, int]] = []
+
+    def collect(path: str, value: object) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                collect(f"{path}.{key}" if path else str(key), child)
+            return
+        if isinstance(value, int):
+            fixed_ports.append((path, value))
+
+    collect("", ports)
+    fixed_ports = [
+        (path, port)
+        for path, port in fixed_ports
+        if path != "memory.mcp.port"
+    ]
+
+    assert [
+        (path, port)
+        for path, port in fixed_ports
+        if port in dynamic_pool
+    ] == []
 
 
 def test_collect_ports_from_agent_settings(tmp_path: Path, monkeypatch) -> None:

@@ -29,7 +29,7 @@ memory:
     host: 127.0.0.1
     port: 8020
   mcp:
-    port: 8030
+    port: 10030
   supervisor_http:
     host: 127.0.0.1
     port: 8019
@@ -37,7 +37,7 @@ channel:
   worker:
     port: 8766
 client_web:
-  port: 3000
+  port: 3001
 nats:
   port: 4222
   http_port: 8222
