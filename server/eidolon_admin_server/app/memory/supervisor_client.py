@@ -14,7 +14,7 @@ class MemorySupervisorClient(ServiceHTTPClient):
         """Force the supervisor to re-read the admin registry and start/stop
         workers to match. Used after a realm is removed from the registry so
         its orphaned worker is reaped before its palace is trashed."""
-        r = await self._request("POST", "/api/admin/reconcile", timeout=30.0)
+        r = await self._request("POST", "/api/admin/reconcile", timeout=120.0)
         return r.json()
 
     async def list_realms(self) -> dict[str, Any]:

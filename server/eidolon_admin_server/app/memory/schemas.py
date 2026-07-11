@@ -79,6 +79,10 @@ class RebuildIndexJobsResponse(BaseModel):
     jobs: list[RebuildIndexJob] = Field(default_factory=list)
 
 
+class MemoryReconcileResponse(BaseModel):
+    ok: bool = True
+
+
 # -- Memories -----------------------------------------------------------------
 
 

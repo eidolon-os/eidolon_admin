@@ -10,6 +10,7 @@ Mounts every sub-router under ``/memory`` so the URL space stays:
     /api/memory/kg/...
     /api/memory/recall
     /api/memory/mcp/tools
+    /api/memory/supervisor/reconcile
     /api/memory/realms/{memory_realm_id}/rebuild-index
 
 Each sub-router lives in ``memory/routers/<feature>.py`` and stays small

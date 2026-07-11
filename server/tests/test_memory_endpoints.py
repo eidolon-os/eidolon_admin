@@ -184,6 +184,13 @@ def _realm_entry(
 
 
 class _FakeMemorySupervisorClient:
+    def __init__(self):
+        self.reconcile_calls = 0
+
+    async def reconcile(self):
+        self.reconcile_calls += 1
+        return {"ok": True}
+
     async def rebuild_index(self, memory_realm_id: str):
         return {
             "job_id": f"job-{memory_realm_id}",
@@ -212,6 +219,17 @@ class _FakeMemorySupervisorClient:
 
     async def list_rebuild_index_jobs(self, memory_realm_id: str):
         return {"jobs": [await self.get_rebuild_index_job(f"job-{memory_realm_id}")]}
+
+
+async def test_reconcile_route_proxies_to_memory_supervisor(app):
+    client = _FakeMemorySupervisorClient()
+    app.state.memory_supervisor_client = client
+    async with await _http(app) as ac:
+        resp = await ac.post("/api/memory/supervisor/reconcile")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    assert client.reconcile_calls == 1
 
 
 async def test_rebuild_index_routes_proxy_to_memory_supervisor(app):
