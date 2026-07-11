@@ -96,7 +96,15 @@ const coveredServiceIds = computed(() => {
 const effectiveNav = computed<NavGroup[]>(() => {
   const generated: NavItem[] = servicesStore.services
     .filter((s) => !coveredServiceIds.value.has(s.id))
-    .map((s) => ({ id: `svc-${s.id}`, label: s.name, hint: '托管进程', icon: 'Cpu', section: 'Runtime', route: { name: 'supervisor' } }))
+    .map((s) => ({
+      id: `svc-${s.id}`,
+      label: s.name,
+      hint: '托管进程',
+      icon: 'Cpu',
+      section: 'Runtime',
+      route: { name: 'supervisor' },
+      activeMatch: false,
+    }))
   if (!generated.length) return navigation
   return navigation.map((group) =>
     group.id === 'system' ? { ...group, items: [...group.items, ...generated] } : group,
@@ -189,9 +197,11 @@ const railItems = computed(() =>
 
 function isActiveRoute(item: NavItem): boolean {
   if (item.route.name === 'owners' && route.name === 'owner-workspace') return true
-  if (route.name !== item.route.name) return false
-  if (!item.route.params) return true
-  return Object.entries(item.route.params).every(([key, value]) => String(route.params[key]) === String(value))
+  if (item.activeMatch === false) return false
+  const target = item.activeMatch || item.route
+  if (route.name !== target.name) return false
+  if (!target.params) return true
+  return Object.entries(target.params).every(([key, value]) => String(route.params[key]) === String(value))
 }
 
 function openCommand(scope: string | null = null) {

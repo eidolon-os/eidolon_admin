@@ -1,7 +1,16 @@
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
+
+export type EventStreamStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed'
+
+export interface EventStreamFrame {
+  event: string
+  data: string
+  receivedAt: number
+}
 
 export interface UseEventStreamOptions {
-  onMessage?: (data: string) => void
+  onMessage?: (data: string, eventName: string) => void
+  onFrame?: (frame: EventStreamFrame) => void
   onError?: (e: Event) => void
   /**
    * Cap the in-memory line buffer. When exceeded, the oldest lines are
@@ -16,44 +25,68 @@ export interface UseEventStreamOptions {
    * onmessage handler is not wired.
    */
   eventName?: string
+  /** Listen to several named SSE events. Takes precedence over `eventName`. */
+  eventNames?: string[]
 }
 
 export function useEventStream(opts: UseEventStreamOptions = {}) {
-  const connected = ref(false)
+  const status = ref<EventStreamStatus>('idle')
+  const connected = computed(() => status.value === 'open')
   const lines = ref<string[]>([])
+  const frames = ref<EventStreamFrame[]>([])
+  const lastEventAt = ref<number | null>(null)
+  const lastErrorAt = ref<number | null>(null)
   let source: EventSource | null = null
   const maxLines = opts.maxLines ?? 5000
 
   function open(url: string) {
     close()
-    // EventSource auto-resumes via Last-Event-ID on reconnect (browser
-    // built-in). The backend honors that header and skips re-seeding the
-    // tail, so reconnects don't duplicate lines — provided the server
-    // emits `id:` fields, which our supervisor/logs endpoint does.
-    source = new EventSource(url)
+    status.value = 'connecting'
+    // EventSource owns the retry loop. Some endpoints support id-based resume
+    // (logs), while live runtime streams are intentionally forward-only.
+    const nextSource = new EventSource(url)
+    source = nextSource
     source.onopen = () => {
-      connected.value = true
+      if (source !== nextSource) return
+      status.value = 'open'
     }
-    const handleFrame = (data: string) => {
-      lines.value.push(data)
-      // Trim from the head when the buffer exceeds the cap. Slicing
-      // creates a new array — fine for Vue reactivity, and infrequent
-      // (only fires once we cross the threshold).
-      if (maxLines > 0 && lines.value.length > maxLines) {
+    const trimBuffers = () => {
+      if (maxLines <= 0) return
+      if (lines.value.length > maxLines) {
         lines.value = lines.value.slice(lines.value.length - maxLines)
       }
-      opts.onMessage?.(data)
+      if (frames.value.length > maxLines) {
+        frames.value = frames.value.slice(frames.value.length - maxLines)
+      }
     }
-    if (opts.eventName) {
-      source.addEventListener(opts.eventName, (e) => handleFrame((e as MessageEvent).data))
+    const handleFrame = (data: string, eventName = 'message') => {
+      if (source !== nextSource) return
+      const frame = { event: eventName, data, receivedAt: Date.now() }
+      frames.value.push(frame)
+      lines.value.push(data)
+      lastEventAt.value = frame.receivedAt
+      status.value = 'open'
+      // Trim from the head when the buffer exceeds the cap. Slicing creates a
+      // new array — fine for Vue reactivity, and infrequent.
+      trimBuffers()
+      opts.onFrame?.(frame)
+      opts.onMessage?.(data, eventName)
+    }
+    const eventNames = opts.eventNames?.length ? opts.eventNames : opts.eventName ? [opts.eventName] : []
+    if (eventNames.length) {
+      for (const eventName of eventNames) {
+        source.addEventListener(eventName, (e) => handleFrame((e as MessageEvent).data, eventName))
+      }
     } else {
-      source.onmessage = (e) => handleFrame(e.data)
+      source.onmessage = (e) => handleFrame(e.data, 'message')
     }
     source.onerror = (e) => {
+      if (source !== nextSource) return
       // EventSource will auto-reconnect; we just flag "currently
       // disconnected" so the UI tag flips. Don't close() here — that
       // would prevent the browser's retry.
-      connected.value = false
+      lastErrorAt.value = Date.now()
+      status.value = 'reconnecting'
       opts.onError?.(e)
     }
   }
@@ -63,14 +96,19 @@ export function useEventStream(opts: UseEventStreamOptions = {}) {
       source.close()
       source = null
     }
-    connected.value = false
+    status.value = 'closed'
   }
 
   function clear() {
     lines.value = []
+    frames.value = []
+    lastEventAt.value = null
+    lastErrorAt.value = null
   }
 
-  onBeforeUnmount(close)
+  if (getCurrentScope()) {
+    onScopeDispose(close)
+  }
 
-  return { connected, lines, open, close, clear }
+  return { connected, status, lines, frames, lastEventAt, lastErrorAt, open, close, clear }
 }

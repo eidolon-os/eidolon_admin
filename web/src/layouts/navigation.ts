@@ -17,6 +17,8 @@ export type NavItem = {
   hint?: string
   icon: string
   route: RouteTarget
+  /** Use a different target for active state, or disable active state for aliases. */
+  activeMatch?: RouteTarget | false
   /** Optional lightweight grouping inside a nav group, used for Advanced. */
   section?: string
   /** Marks the entity a route represents, for active-owner/entity highlighting. */
@@ -109,8 +111,9 @@ export const navigation: NavGroup[] = [
       { id: 'configs', label: 'Service Configs', hint: '运行时配置', icon: 'Document', section: 'Runtime', route: { name: 'configs' } },
       { id: 'client-web-overview', label: 'Client Web', hint: '网页端 · 状态/配置', icon: 'ChromeFilled', section: 'Runtime', route: { name: 'feature', params: { serviceId: 'client-web', feature: 'overview' } } },
       { id: 'channel-overview', label: 'Channel', hint: '语音通道 · 状态/配置', icon: 'DataLine', section: 'Runtime', route: { name: 'feature', params: { serviceId: 'channel', feature: 'overview' } } },
-      { id: 'memory-items', label: 'Memory', hint: '记忆 / 召回 / 图谱', icon: 'Collection', section: 'Memory', route: { name: 'feature', params: { serviceId: 'memory', feature: 'memories' } } },
+      { id: 'memory-items', label: 'Memory', hint: '记忆条目', icon: 'Collection', section: 'Memory', route: { name: 'feature', params: { serviceId: 'memory', feature: 'memories' } } },
       { id: 'memory-search', label: 'Memory Search', hint: '召回检索', icon: 'Search', section: 'Memory', route: { name: 'feature', params: { serviceId: 'memory', feature: 'search' } } },
+      { id: 'memory-graph', label: 'Knowledge Graph', hint: '实体关系图谱', icon: 'Share', section: 'Memory', route: { name: 'feature', params: { serviceId: 'memory', feature: 'graph' } } },
       { id: 'memory-runners', label: 'Memory Runners', hint: '工作进程', icon: 'Operation', section: 'Memory', route: { name: 'feature', params: { serviceId: 'memory', feature: 'runners' } } },
       { id: 'agent-chat', label: 'Chat Test', hint: '实时请求链路', icon: 'ChatLineRound', section: 'Agent Lab', route: { name: 'feature', params: { serviceId: 'agent', feature: 'chat-test' } } },
       { id: 'agent-tasks', label: 'Long Tasks', hint: '协作任务队列', icon: 'Timer', section: 'Agent Lab', route: { name: 'feature', params: { serviceId: 'agent', feature: 'long-tasks' } } },
