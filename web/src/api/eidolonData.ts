@@ -154,6 +154,80 @@ export interface DeviceView {
   revoked_at: string | null
 }
 
+export interface GuardBindingView {
+  binding_id: string
+  owner_id: string
+  guard_companion_id: string
+  device_id: string
+  state: string
+  policy_id: string
+  config_revision: number
+  config_json: JsonDict
+  runtime_revision: number
+  runtime_config_json: JsonDict
+  desired_runtime_state: string
+  status_json: JsonDict
+  activated_at: string | null
+  disabled_at: string | null
+  revoked_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type OwnerFacePose = 'front' | 'left' | 'right' | 'down' | 'up'
+
+export interface OwnerFaceReferenceView {
+  reference_id: string
+  pose: OwnerFacePose
+  sha256: string
+  size_bytes: number
+  content_type: string
+}
+
+export interface OwnerFaceProfileView {
+  profile_revision_id: string
+  profile_id: string
+  owner_id: string
+  revision: number
+  state: string
+  desired_state: 'active' | 'cleared'
+  model_id: string | null
+  preprocessing_version: string | null
+  references: OwnerFaceReferenceView[]
+  activated_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface OwnerFaceDeliveryView {
+  delivery_id: string
+  binding_id: string
+  device_id: string
+  profile_id: string
+  profile_revision: number
+  desired_state: 'active' | 'cleared'
+  status: string
+  command_id: string | null
+  attempt_count: number
+  last_error: string
+  applied_at: string | null
+  updated_at: string
+}
+
+export interface OwnerFaceProfileStatusResponse {
+  desired: OwnerFaceProfileView | null
+  deliveries: OwnerFaceDeliveryView[]
+}
+
+export interface GuardClaimRequest {
+  device_id: string
+  companion_id?: string | null
+  display_name?: string
+  policy_id?: string
+  config_json?: JsonDict
+  replace?: boolean
+}
+
 export interface NearbyDeviceView {
   device_id: string
   name: string
@@ -449,6 +523,95 @@ export async function listOwnerDevices(ownerId: string): Promise<DeviceView[]> {
     `/owners/${encodeURIComponent(ownerId)}/devices`,
   )
   return data.devices
+}
+
+export async function listPendingGuardDevices(): Promise<DeviceView[]> {
+  const { data } = await client.get<{ devices: DeviceView[] }>('/guard/pending-devices')
+  return data.devices
+}
+
+export async function listOwnerGuardBindings(ownerId: string): Promise<GuardBindingView[]> {
+  const { data } = await client.get<{ bindings: GuardBindingView[] }>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/bindings`,
+  )
+  return data.bindings
+}
+
+export async function claimOwnerGuard(
+  ownerId: string,
+  body: GuardClaimRequest,
+): Promise<GuardBindingView> {
+  const { data } = await client.post<GuardBindingView>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/bindings`,
+    body,
+  )
+  return data
+}
+
+export async function disableOwnerGuard(
+  ownerId: string,
+  bindingId: string,
+  revoke = false,
+): Promise<GuardBindingView> {
+  const action = revoke ? 'revoke' : 'disable'
+  const { data } = await client.post<GuardBindingView>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/bindings/${encodeURIComponent(bindingId)}/${action}`,
+  )
+  return data
+}
+
+export async function getOwnerFaceProfileStatus(
+  ownerId: string,
+): Promise<OwnerFaceProfileStatusResponse> {
+  const { data } = await client.get<OwnerFaceProfileStatusResponse>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/owner-face-profile`,
+  )
+  return data
+}
+
+export async function createOwnerFaceProfileDraft(
+  ownerId: string,
+): Promise<OwnerFaceProfileView> {
+  const { data } = await client.post<OwnerFaceProfileView>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/owner-face-profiles/drafts`,
+    {},
+  )
+  return data
+}
+
+export async function uploadOwnerFaceReference(
+  ownerId: string,
+  profileRevisionId: string,
+  pose: OwnerFacePose,
+  image: File,
+): Promise<OwnerFaceReferenceView> {
+  const form = new FormData()
+  form.append('image', image, image.name)
+  const { data } = await client.post<OwnerFaceReferenceView>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/owner-face-profiles/`
+      + `${encodeURIComponent(profileRevisionId)}/references`,
+    form,
+    { params: { pose } },
+  )
+  return data
+}
+
+export async function activateOwnerFaceProfile(
+  ownerId: string,
+  profileRevisionId: string,
+): Promise<OwnerFaceProfileView> {
+  const { data } = await client.post<OwnerFaceProfileView>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/owner-face-profiles/`
+      + `${encodeURIComponent(profileRevisionId)}/activate`,
+  )
+  return data
+}
+
+export async function clearOwnerFaceProfile(ownerId: string): Promise<OwnerFaceProfileView> {
+  const { data } = await client.post<OwnerFaceProfileView>(
+    `/guard/owners/${encodeURIComponent(ownerId)}/owner-face-profile/clear`,
+  )
+  return data
 }
 
 export async function listNearbyOwnerDevices(ownerId: string): Promise<NearbyDeviceListResponse> {

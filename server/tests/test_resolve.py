@@ -69,3 +69,27 @@ async def test_resolve_owner_rejects_uninitialized_owner(tmp_path) -> None:
             await ResolveOrchestrator(data_store=store).resolve_owner("owner-a")
     finally:
         await store.close()
+
+
+async def test_guard_workspace_is_not_selected_for_normal_runtime_resolution(tmp_path) -> None:
+    store = await _store(tmp_path)
+    try:
+        await store.owner_service.create_owner(owner_id="owner-a", display_name="Owner A")
+        guard = await store.guard_bindings.ensure_guard_companion(
+            owner_id="owner-a", companion_id="guard-a"
+        )
+        workspace = await store.workspace_provisioning.provision_workspace(owner_id="owner-a")
+        await store.devices.create_device(
+            device_id="atk-guard",
+            owner_id="owner-a",
+            status="active",
+            bound_companion_id=guard.companion_id,
+        )
+        resolver = ResolveOrchestrator(data_store=store)
+
+        context = await resolver.resolve_owner("owner-a")
+        assert context.companion_id == workspace.companion.companion_id
+        with pytest.raises(ResolvePrecondition, match="control-only guard"):
+            await resolver.resolve_device("atk-guard")
+    finally:
+        await store.close()

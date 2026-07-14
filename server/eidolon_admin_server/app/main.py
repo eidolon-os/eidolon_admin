@@ -35,6 +35,7 @@ from .data.owner_delete_finalizer import finalize_owner_delete_jobs
 from .data.router import router as data_router
 from .data.schema_guard import ensure_eidolon_data_schema
 from .devices import router as devices_router
+from .guard.router import router as guard_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .memory.router import router as memory_router
@@ -179,6 +180,7 @@ def create_app(
     app.include_router(configs_router, prefix="/api")
     app.include_router(onboarding_router, prefix="/api")
     app.include_router(data_router, prefix="/api")
+    app.include_router(guard_router, prefix="/api")
     app.include_router(devices_router, prefix="/api")
     app.include_router(resolve_router, prefix="/api")
     app.include_router(memory_router, prefix="/api")

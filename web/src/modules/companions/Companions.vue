@@ -81,6 +81,10 @@ function isPrimary(companion: CompanionView) {
   return companion.companion_type === 'master' || companion.is_master
 }
 
+function isGuard(companion: CompanionView) {
+  return companion.kind === 'guard' || companion.companion_type === 'guard'
+}
+
 async function launchWebBody(companion: CompanionView) {
   if (!ownerId.value) return
   launching.value = companion.companion_id
@@ -136,11 +140,15 @@ async function reset(companion: CompanionView) {
           </div>
           <div class="tags">
             <el-tag v-if="isPrimary(card.companion)" size="small" type="warning" effect="dark">默认</el-tag>
+            <el-tag v-if="isGuard(card.companion)" size="small" type="info" effect="dark">Guard</el-tag>
             <el-tag size="small" type="success">v{{ card.current?.version || 1 }}</el-tag>
           </div>
         </header>
 
-        <div class="semantic-grid">
+        <p v-if="isGuard(card.companion)" class="guard-note">
+          Guard 控制面身份：独立绑定设备和兼容工作区，不提供普通聊天或 Web Body。
+        </p>
+        <div v-else class="semantic-grid">
           <section>
             <span>人格画像</span>
             <p>{{ card.character.portrait || '尚未填写' }}</p>
@@ -158,14 +166,15 @@ async function reset(companion: CompanionView) {
         <footer>
           <code class="hash">{{ card.current?.genome_hash }}</code>
           <div class="actions">
-            <el-button size="small" :icon="ChatDotRound" @click="openChatTest(card.companion)">试聊</el-button>
+            <el-button v-if="!isGuard(card.companion)" size="small" :icon="ChatDotRound" @click="openChatTest(card.companion)">试聊</el-button>
             <el-button
+              v-if="!isGuard(card.companion)"
               size="small"
               :icon="VideoPlay"
               :loading="launching === card.companion.companion_id"
               @click="launchWebBody(card.companion)"
             >启动</el-button>
-            <el-button v-if="(card.current?.version || 1) > 1" size="small" @click="reset(card.companion)">重置版本</el-button>
+            <el-button v-if="!isGuard(card.companion) && (card.current?.version || 1) > 1" size="small" @click="reset(card.companion)">重置版本</el-button>
           </div>
         </footer>
       </article>
@@ -225,6 +234,13 @@ async function reset(companion: CompanionView) {
   border-block: 1px solid var(--eid-border);
 }
 .semantic-grid section { min-width: 0; }
+.guard-note {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--eid-border);
+  border-radius: 6px;
+  color: var(--eid-text-muted);
+}
 .semantic-grid span {
   color: var(--eid-text-muted);
   font-size: 11px;

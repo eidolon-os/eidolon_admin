@@ -1,0 +1,1 @@
+"""ATK Guard administration domain."""

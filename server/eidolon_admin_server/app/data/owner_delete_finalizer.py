@@ -144,8 +144,13 @@ async def finalize_owner_delete_jobs(
                 [str(rid) for rid in job.get("realm_ids", [])],
             )
             job["memory"] = memory
+            objects = purge_storage_objects(
+                store,
+                [str(key) for key in job.get("storage_keys", [])],
+            )
+            job["objects"] = objects
             job["updated_at"] = _now()
-            if _memory_cleanup_complete(memory):
+            if _memory_cleanup_complete(memory) and bool(objects.get("purged")):
                 resolved_journal.complete(job)
                 finalized += 1
                 summaries.append(
@@ -154,10 +159,15 @@ async def finalize_owner_delete_jobs(
                         "owner_id": job["owner_id"],
                         "status": "finalized",
                         "memory": memory,
+                        "objects": objects,
                     }
                 )
             else:
-                job["last_error"] = _memory_error_summary(memory)
+                job["last_error"] = (
+                    _object_error_summary(objects)
+                    if not bool(objects.get("purged"))
+                    else _memory_error_summary(memory)
+                )
                 resolved_journal.save(job)
                 summaries.append(
                     {
@@ -166,6 +176,7 @@ async def finalize_owner_delete_jobs(
                         "status": "pending",
                         "error": job["last_error"],
                         "memory": memory,
+                        "objects": objects,
                     }
                 )
         except Exception as exc:  # noqa: BLE001 - leave journal for retry
@@ -212,6 +223,7 @@ class OwnerDeleteJournal:
         *,
         owner_id: str,
         realm_ids: list[str],
+        storage_keys: list[str] | None = None,
         backup: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         for job in self.pending():
@@ -223,6 +235,12 @@ class OwnerDeleteJournal:
                     }
                 )
                 job["realm_ids"] = merged
+                job["storage_keys"] = sorted(
+                    {
+                        *[str(key) for key in job.get("storage_keys", [])],
+                        *[str(key) for key in storage_keys or []],
+                    }
+                )
                 if backup:
                     job["backup"] = backup
                 job["updated_at"] = _now()
@@ -235,6 +253,7 @@ class OwnerDeleteJournal:
             "kind": "owner_delete",
             "owner_id": owner_id,
             "realm_ids": sorted({str(rid) for rid in realm_ids if rid}),
+            "storage_keys": sorted({str(key) for key in storage_keys or [] if key}),
             "db_deleted": False,
             "memory_purged": False,
             "attempts": 0,
@@ -317,6 +336,19 @@ def _default_trash_root() -> Path:
     ).expanduser()
 
 
+def purge_storage_objects(store: DataStore, storage_keys: list[str]) -> dict[str, Any]:
+    """Idempotently delete retained owner objects captured before SQL cascade."""
+    deleted: list[str] = []
+    errors: list[dict[str, str]] = []
+    for storage_key in sorted({key for key in storage_keys if key}):
+        try:
+            store.object_storage.delete(storage_key)
+            deleted.append(storage_key)
+        except Exception as exc:  # noqa: BLE001 - journal retries failures
+            errors.append({"storage_key": storage_key, "error": str(exc)})
+    return {"purged": not errors, "deleted": deleted, "errors": errors}
+
+
 def _memory_cleanup_complete(memory: dict[str, Any]) -> bool:
     if not bool(memory.get("purged")):
         return False
@@ -332,6 +364,15 @@ def _memory_error_summary(memory: dict[str, Any]) -> str:
         if realm.get("error")
     ]
     return "; ".join(errors) or "memory cleanup incomplete"
+
+
+def _object_error_summary(objects: dict[str, Any]) -> str:
+    errors = [
+        f"{item.get('storage_key')}: {item.get('error')}"
+        for item in objects.get("errors", [])
+        if item.get("error")
+    ]
+    return "; ".join(errors) or "object cleanup incomplete"
 
 
 def _now() -> str:

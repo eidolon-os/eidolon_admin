@@ -30,6 +30,7 @@ import {
 } from '@/api/eidolonData'
 import CatalogPage from '@/modules/common/CatalogPage.vue'
 import Breadcrumb from '@/modules/common/Breadcrumb.vue'
+import GuardPanel from '@/modules/owners/GuardPanel.vue'
 import { useOwnersStore } from '@/stores/owners'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -559,6 +560,7 @@ function normalizedGenomeJson(companionName: string): Record<string, any> {
       <el-table-column prop="companion_id" label="companion_id" min-width="180" />
       <el-table-column prop="display_name" label="显示名" min-width="140" />
       <el-table-column prop="kind" label="kind" width="110" />
+      <el-table-column prop="companion_type" label="type" width="110" />
       <el-table-column prop="status" label="status" width="110" />
       <el-table-column prop="current_genome_id" label="genome" min-width="180" />
       <el-table-column prop="default_memory_realm_id" label="memory realm" min-width="180" />
@@ -580,6 +582,7 @@ function normalizedGenomeJson(companionName: string): Record<string, any> {
     </el-table>
 
     <section v-else-if="activeSection === 'devices'" v-loading="loading" class="workspace-section">
+      <GuardPanel :owner-id="ownerId" />
       <section class="device-block">
         <div class="section-head">
           <div>

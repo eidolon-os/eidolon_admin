@@ -38,7 +38,7 @@ class ResolveOrchestrator:
         companions = [
             row
             for row in await self._data_store.companions.list_for_owner(owner_id)
-            if row.status == "active"
+            if row.status == "active" and not _is_guard_companion(row)
         ]
         if not companions:
             raise ResolvePrecondition(f"owner {owner_id!r} has no active companion")
@@ -73,6 +73,10 @@ class ResolveOrchestrator:
         if companion.owner_id != device.owner_id:
             raise ResolvePrecondition(
                 f"device {device_id!r} is bound outside owner {device.owner_id!r}"
+            )
+        if _is_guard_companion(companion):
+            raise ResolvePrecondition(
+                f"device {device_id!r} is bound to a control-only guard companion"
             )
         context = await self._context_for_companion(companion)
         return context.model_copy(
@@ -125,3 +129,11 @@ class ResolveOrchestrator:
             genome_hash=genome.genome_hash,
             realizer_version=genome.realizer_version,
         )
+
+
+def _is_guard_companion(companion) -> bool:
+    """Guard workspace artifacts are compatibility data, not a voice persona."""
+    return (
+        str(getattr(companion, "kind", "") or "") == "guard"
+        or str(getattr(companion, "companion_type", "") or "") == "guard"
+    )

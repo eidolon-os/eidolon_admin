@@ -261,6 +261,7 @@ async def delete_owner(
     realm_ids = [
         row.realm_id for row in await store.memory_repo.list_realms_for_owner(owner_id)
     ]
+    storage_keys = await store.owner_face_profiles.list_storage_keys_for_owner(owner_id)
     try:
         backup = await create_owner_backup(store, owner_id)
     except Exception as exc:  # noqa: BLE001 - abort before writing delete journal
@@ -278,7 +279,12 @@ async def delete_owner(
         )
     )
     journal = OwnerDeleteJournal()
-    job = journal.create_or_load(owner_id=owner_id, realm_ids=realm_ids, backup=backup)
+    job = journal.create_or_load(
+        owner_id=owner_id,
+        realm_ids=realm_ids,
+        storage_keys=storage_keys,
+        backup=backup,
+    )
     progress.append(
         _delete_progress(
             "journal",

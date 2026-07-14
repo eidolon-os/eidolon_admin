@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import AsyncIterator
@@ -15,12 +17,14 @@ from eidolon_sdk.biz.persona import (
     persona_genome_to_json,
 )
 from fastapi import FastAPI
+from PIL import Image
 
 from eidolon_admin_server.app.data.owner_delete_finalizer import (
     OwnerDeleteJournal,
     finalize_owner_delete_jobs,
 )
 from eidolon_admin_server.app.data.router import router as data_router
+from eidolon_admin_server.app.guard.router import router as guard_router
 from eidolon_admin_server.app.memory.runners import memory_palace_path
 
 
@@ -106,7 +110,12 @@ def _persona_proposal(
 
 @pytest.fixture
 async def data_store(tmp_path) -> AsyncIterator[DataStore]:
-    store = DataStore.open(DataSettings(sqlite_path=str(tmp_path / "eidolon.sqlite3")))
+    store = DataStore.open(
+        DataSettings(
+            sqlite_path=str(tmp_path / "eidolon.sqlite3"),
+            object_store_path=str(tmp_path / "objects"),
+        )
+    )
     await store.init_schema()
     yield store
     await store.close()
@@ -117,6 +126,7 @@ async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
     app.state.data_store = data_store
     app.include_router(data_router, prefix="/api")
+    app.include_router(guard_router, prefix="/api")
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
@@ -218,8 +228,257 @@ async def test_owner_scoped_data_overview_and_lists(
     assert genomes.json()["persona_genomes"][0]["genome_id"] == "g_owner-a_default"
     assert genomes.json()["persona_genomes"][0]["genome_hash"].startswith("pg_")
 
+
+async def test_guard_claim_replace_and_disable_are_explicit_admin_actions(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await data_store.owners.create(owner_id="owner-guard", display_name="Guard Owner")
+    for device_id in ("atk-pending", "atk-second", "atk-replacement"):
+        await data_store.devices.create_device(
+            device_id=device_id,
+            owner_id=None,
+            name=device_id,
+            kind="esp32",
+            capabilities_json={"guard": {"enabled": True, "protocol_versions": [1]}},
+            metadata_json={"hub_registry": {"approved": True}},
+        )
+
+    pending = await client.get("/api/guard/pending-devices")
+    assert pending.status_code == 200
+    assert {row["device_id"] for row in pending.json()["devices"]} == {
+        "atk-pending",
+        "atk-second",
+        "atk-replacement",
+    }
+
+    claimed = await client.post(
+        "/api/guard/owners/owner-guard/bindings",
+        json={"device_id": "atk-pending"},
+    )
+    assert claimed.status_code == 200
+    first = claimed.json()
+    assert first["state"] == "active"
+    guard = await data_store.companions.get(first["guard_companion_id"])
+    assert guard is not None and guard.kind == "guard" and guard.is_master is False
+    assert guard.companion_type == "guard"
+    assert guard.current_genome_id is not None
+    assert guard.default_memory_realm_id is not None
+
+    second = await client.post(
+        "/api/guard/owners/owner-guard/bindings",
+        json={"device_id": "atk-second"},
+    )
+    assert second.status_code == 200
+    assert second.json()["guard_companion_id"] != first["guard_companion_id"]
+
+    replaced = await client.post(
+        "/api/guard/owners/owner-guard/bindings",
+        json={
+            "device_id": "atk-replacement",
+            "companion_id": first["guard_companion_id"],
+            "replace": True,
+        },
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["config_revision"] == 2
+
+    disabled = await client.post(
+        f"/api/guard/owners/owner-guard/bindings/{replaced.json()['binding_id']}/disable"
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["state"] == "disabled"
+    assert disabled.json()["desired_runtime_state"] == "stopped"
+    assert disabled.json()["runtime_revision"] == 2
+
     missing = await client.get("/api/owners/missing/workspace")
     assert missing.status_code == 404
+
+
+async def test_guard_policy_configuration_is_revision_checked_and_audited(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await data_store.owners.create(owner_id="owner-guard-config", display_name="Guard Owner")
+    await data_store.devices.create_device(
+        device_id="atk-config",
+        owner_id=None,
+        name="atk-config",
+        kind="esp32",
+        capabilities_json={"guard": {"enabled": True, "protocol_versions": [1]}},
+        metadata_json={"hub_registry": {"approved": True}},
+    )
+    claimed = await client.post(
+        "/api/guard/owners/owner-guard-config/bindings",
+        json={"device_id": "atk-config"},
+    )
+    assert claimed.status_code == 200
+    binding = claimed.json()
+    assert binding["config_json"]["schema_v"] == 1
+    assert binding["runtime_config_json"]["schema_v"] == 1
+    assert binding["desired_runtime_state"] == "running"
+
+    updated = await client.put(
+        f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/config",
+        json={"expected_revision": 1, "config_json": {"candidate_enabled": False}},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["config_revision"] == 2
+    assert updated.json()["config_json"]["candidate_enabled"] is False
+
+    runtime_updated = await client.put(
+        f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/runtime-config",
+        json={
+            "expected_revision": 1,
+            "runtime_config_json": {
+                "sample_interval_ms": 600,
+                "preview_interval_ms": 600,
+                "motion_threshold": 20,
+                "motion_clear_threshold": 10,
+                "candidate_debounce_ms": 600,
+                "absence_timeout_ms": 1200,
+                "consecutive_capture_failures": 3,
+            },
+        },
+    )
+    assert runtime_updated.status_code == 200
+    assert runtime_updated.json()["runtime_revision"] == 2
+    assert runtime_updated.json()["config_revision"] == 2
+
+    runtime_stale = await client.put(
+        f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/runtime-config",
+        json={"expected_revision": 1, "runtime_config_json": {}},
+    )
+    assert runtime_stale.status_code == 409
+
+    stale = await client.put(
+        f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/config",
+        json={"expected_revision": 1, "config_json": {}},
+    )
+    assert stale.status_code == 409
+
+    sensitive = await client.put(
+        f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/config",
+        json={"expected_revision": 2, "config_json": {"raw_audio": "forbidden"}},
+    )
+    assert sensitive.status_code == 422
+    events = await data_store.events.list_for_owner("owner-guard-config")
+    configured = [event for event in events if event.event_type == "guard.binding.configured"]
+    assert configured[-1].payload_json == {"config_revision": 2, "policy_id": "silent_presence"}
+    runtime_configured = [event for event in events if event.event_type == "guard.runtime.configured"]
+    assert runtime_configured[-1].payload_json == {"runtime_revision": 2}
+
+
+def _face_upload_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (640, 480), color=(180, 140, 110)).save(
+        output,
+        format="PNG",
+        pnginfo=None,
+    )
+    return output.getvalue()
+
+
+async def test_owner_face_profile_normalizes_versions_delivers_and_clears(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    owner_id = "owner-face"
+    await data_store.owners.create(owner_id=owner_id, display_name="Face Owner")
+    await data_store.devices.create_device(
+        device_id="atk-face",
+        owner_id=None,
+        name="ATK Face",
+        kind="esp32",
+        capabilities_json={"guard": {"enabled": True, "protocol_versions": [1]}},
+        metadata_json={"hub_registry": {"approved": True}},
+    )
+    claimed = await client.post(
+        f"/api/guard/owners/{owner_id}/bindings",
+        json={"device_id": "atk-face"},
+    )
+    assert claimed.status_code == 200
+
+    unsupported = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profiles/drafts",
+        json={
+            "model_id": "esp-who-mobilefacenet-v1",
+            "preprocessing_version": "rgb565-be-qvga-v1",
+        },
+    )
+    assert unsupported.status_code == 422
+    created = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profiles/drafts",
+        json={},
+    )
+    assert created.status_code == 201
+    profile = created.json()
+    assert profile["model_id"] == "esp-who-human-face-recognition-v1"
+    upload = _face_upload_bytes()
+    for pose in ("front", "left"):
+        response = await client.post(
+            f"/api/guard/owners/{owner_id}/owner-face-profiles/"
+            f"{profile['profile_revision_id']}/references",
+            params={"pose": pose},
+            files={"image": (f"{pose}.png", upload, "image/png")},
+        )
+        assert response.status_code == 201
+        assert response.json()["content_type"] == "image/jpeg"
+
+    premature = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profiles/"
+        f"{profile['profile_revision_id']}/activate"
+    )
+    assert premature.status_code == 409
+
+    right = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profiles/"
+        f"{profile['profile_revision_id']}/references",
+        params={"pose": "right"},
+        files={"image": ("right.png", upload, "image/png")},
+    )
+    assert right.status_code == 201
+    activated = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profiles/"
+        f"{profile['profile_revision_id']}/activate"
+    )
+    assert activated.status_code == 200
+    assert activated.json()["state"] == "desired"
+    assert [ref["pose"] for ref in activated.json()["references"]] == [
+        "front",
+        "left",
+        "right",
+    ]
+
+    status_response = await client.get(
+        f"/api/guard/owners/{owner_id}/owner-face-profile"
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["deliveries"][0]["status"] == "pending"
+    stored_files = list(data_store.object_storage.root.rglob("*.jpg"))
+    assert len(stored_files) == 3
+    with Image.open(stored_files[0]) as normalized:
+        assert normalized.format == "JPEG"
+        assert normalized.mode == "RGB"
+        assert normalized.getexif() == {}
+        assert max(normalized.size) <= 640
+
+    cleared = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profile/clear"
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["desired_state"] == "cleared"
+    assert list(data_store.object_storage.root.rglob("*.jpg")) == []
+    assert (
+        await data_store.owner_face_profiles.list_references(
+            profile["profile_revision_id"]
+        )
+        == []
+    )
+    cleared_again = await client.post(
+        f"/api/guard/owners/{owner_id}/owner-face-profile/clear"
+    )
+    assert cleared_again.json()["revision"] == cleared.json()["revision"]
 
 
 async def test_persona_governance_api_uses_typed_workflow(
@@ -512,9 +771,30 @@ async def test_owner_delete_finalizer_resumes_after_interruption(
         owner_id="owner-resume",
         companion_id=result.companion.companion_id,
     )
+    storage_key = "owner-resume/owner-face/ref.jpg"
+    content = b"normalized-owner-face"
+    digest = hashlib.sha256(content).hexdigest()
+    data_store.object_storage.put(storage_key, content, expected_sha256=digest)
+    profile = await data_store.owner_face_profiles.create_draft(
+        owner_id="owner-resume",
+        model_id="esp-who-human-face-recognition-v1",
+        preprocessing_version="rgb565-be-qvga-v1",
+    )
+    await data_store.owner_face_profiles.add_reference(
+        profile_revision_id=profile.profile_revision_id,
+        pose="front",
+        content_type="image/jpeg",
+        size_bytes=len(content),
+        sha256=digest,
+        storage_key=storage_key,
+    )
 
     journal = OwnerDeleteJournal(tmp_path / "owner-delete-journal")
-    journal.create_or_load(owner_id="owner-resume", realm_ids=["r_resume"])
+    journal.create_or_load(
+        owner_id="owner-resume",
+        realm_ids=["r_resume"],
+        storage_keys=[storage_key],
+    )
 
     cleanup = await finalize_owner_delete_jobs(
         data_store,
@@ -528,6 +808,7 @@ async def test_owner_delete_finalizer_resumes_after_interruption(
     assert await data_store.owners.get("owner-resume") is None
     assert await data_store.companions.get("c_resume") is None
     assert await data_store.devices.get_device(device.device_id) is None
+    assert data_store.object_storage.exists(storage_key) is False
     assert journal.pending() == []
     assert list((tmp_path / "owner-delete-journal" / "completed").glob("*.json"))
 
