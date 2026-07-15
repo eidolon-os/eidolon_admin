@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import router from '../src/router'
+import { navigation } from '../src/layouts/navigation'
 
 describe('router ownership boundaries', () => {
   // History: an earlier ownership-boundary pass removed the flat `/devices`
@@ -20,5 +21,28 @@ describe('router ownership boundaries', () => {
   it('the legacy tools/esp32 deep link redirects into the Device Center', () => {
     const esp32 = router.getRoutes().find((r) => r.path === '/tools/esp32')
     expect(esp32?.redirect).toBeTruthy()
+  })
+
+  it('uses My Eidolon as the only primary owner surface', () => {
+    const navItems = navigation.flatMap((group) => group.items)
+    expect(navItems.some((item) => item.id === 'owners')).toBe(false)
+    expect(navItems.some((item) => item.id === 'my-eidolon')).toBe(true)
+    expect(navItems.some((item) => item.id === 'data-inspector')).toBe(true)
+    expect(navItems.some((item) => item.id === 'workspace-initialize')).toBe(true)
+  })
+
+  it('keeps legacy owner links as redirects and exposes unified destinations', () => {
+    const spaces = router.getRoutes().find((route) => route.name === 'spaces')
+    const inspector = router.getRoutes().find((route) => route.name === 'data-inspector')
+    const initializer = router.getRoutes().find((route) => route.name === 'workspace-initialize')
+    const legacyList = router.getRoutes().find((route) => route.path === '/owners')
+    const legacyWorkspace = router.getRoutes().find((route) => route.name === 'owner-workspace')
+
+    expect(spaces?.path).toBe('/spaces')
+    expect(inspector?.path).toBe('/advanced/data/:section?')
+    expect(initializer?.path).toBe('/advanced/workspace-initialize')
+    expect(legacyList?.redirect).toBeTruthy()
+    expect(legacyWorkspace?.redirect).toBeTruthy()
+    expect(legacyWorkspace?.components?.default).toBeFalsy()
   })
 })

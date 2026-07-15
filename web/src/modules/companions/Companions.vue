@@ -66,7 +66,7 @@ async function load() {
 }
 
 function createCompanion() {
-  router.push({ name: 'companion-create' })
+  router.push({ name: 'companion-create', query: { owner_id: ownerId.value || undefined } })
 }
 
 function openChatTest(companion: CompanionView) {

@@ -1,76 +1,51 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Setting } from '@element-plus/icons-vue'
 import { useOwnersStore } from '@/stores/owners'
-import { extractErrorMessage } from '@/utils/format'
 
 const store = useOwnersStore()
 const route = useRoute()
 const router = useRouter()
 
-const dialogOpen = ref(false)
-const submitting = ref(false)
-const form = reactive({
-  owner_id: '',
-  display_name: '',
-  kind: 'person',
-})
-
 onMounted(async () => {
   await store.load()
-  syncFromRoute()
+  await syncFromRoute()
 })
 
-watch(() => route.params.ownerId, syncFromRoute)
+watch(() => route.query.owner_id, syncFromRoute)
 
-function syncFromRoute() {
-  const ownerId = typeof route.params.ownerId === 'string' ? route.params.ownerId : ''
-  if (ownerId && ownerId !== store.currentId) store.setCurrent(ownerId)
+async function syncFromRoute() {
+  const ownerId = typeof route.query.owner_id === 'string' ? route.query.owner_id : ''
+  if (ownerId && store.owners.some((owner) => owner.owner_id === ownerId)) {
+    if (ownerId !== store.currentId) store.setCurrent(ownerId)
+    return
+  }
+  if (store.currentId) {
+    await router.replace({
+      name: route.name || 'home',
+      params: route.params,
+      query: { ...route.query, owner_id: store.currentId },
+    })
+  }
 }
 
 async function handleSelect(value: string | number) {
   const ownerId = String(value)
   store.setCurrent(ownerId)
-  if (ownerId && route.name !== 'home') {
-    await router.push({ name: 'owner-workspace', params: { ownerId, section: 'overview' } })
-  }
+  await router.replace({
+    name: route.name || 'home',
+    params: route.params,
+    query: { ...route.query, owner_id: ownerId },
+  })
 }
 
-function openCreate() {
-  form.owner_id = ''
-  form.display_name = ''
-  form.kind = 'person'
-  dialogOpen.value = true
+async function openCreate() {
+  await router.push({ name: 'spaces', query: { owner_id: store.currentId || undefined, create: '1' } })
 }
 
-async function submit() {
-  const ownerId = form.owner_id.trim()
-  if (!ownerId) {
-    ElMessage.warning('请输入身份 ID')
-    return
-  }
-  submitting.value = true
-  try {
-    const owner = await store.createAndSelect({
-      owner_id: ownerId,
-      display_name: form.display_name.trim() || ownerId,
-      kind: form.kind,
-    })
-    dialogOpen.value = false
-    ElMessage.success('身份已创建')
-    if (route.name !== 'home') {
-      await router.push({
-        name: 'owner-workspace',
-        params: { ownerId: owner.owner_id, section: 'overview' },
-      })
-    }
-  } catch (e) {
-    ElMessage.error(`创建身份失败: ${extractErrorMessage(e)}`)
-  } finally {
-    submitting.value = false
-  }
+async function openManage() {
+  await router.push({ name: 'spaces', query: { owner_id: store.currentId || undefined } })
 }
 </script>
 
@@ -80,7 +55,7 @@ async function submit() {
       :model-value="store.currentId"
       size="small"
       filterable
-      placeholder="当前身份"
+      placeholder="当前 Eidolon 空间"
       :loading="store.loading"
       class="owner-select"
       @change="handleSelect"
@@ -95,29 +70,8 @@ async function submit() {
         <small>{{ owner.kind }} · {{ owner.owner_id }}</small>
       </el-option>
     </el-select>
-    <el-button size="small" :icon="Plus" @click="openCreate" />
-
-    <el-dialog v-model="dialogOpen" title="创建身份" width="420px" append-to-body>
-      <el-form label-width="92px" @submit.prevent="submit">
-        <el-form-item label="身份 ID">
-          <el-input v-model="form.owner_id" placeholder="owner-default" />
-        </el-form-item>
-        <el-form-item label="显示名">
-          <el-input v-model="form.display_name" placeholder="Manson" />
-        </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="form.kind">
-            <el-option label="person" value="person" />
-            <el-option label="family" value="family" />
-            <el-option label="team" value="team" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submit">创建</el-button>
-      </template>
-    </el-dialog>
+    <el-button size="small" :icon="Plus" title="新建 Eidolon 空间" @click="openCreate" />
+    <el-button size="small" :icon="Setting" title="管理 Eidolon 空间" @click="openManage" />
   </div>
 </template>
 
@@ -128,7 +82,7 @@ async function submit() {
   gap: 8px;
 }
 .owner-select {
-  width: 220px;
+  width: 210px;
 }
 :deep(.el-select-dropdown__item) {
   display: flex;

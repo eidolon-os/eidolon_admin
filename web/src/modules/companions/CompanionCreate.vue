@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, ChatDotRound, Close, UserFilled } from '@element-plus/icons-vue'
 import {
@@ -19,6 +19,7 @@ import SemanticListEditor from './components/SemanticListEditor.vue'
 
 const ownersStore = useOwnersStore()
 const router = useRouter()
+const route = useRoute()
 const loading = ref(true)
 const submitting = ref(false)
 const previewing = ref(false)
@@ -94,6 +95,10 @@ const reviewSections = computed(() => {
 onMounted(async () => {
   try {
     await ownersStore.load(true)
+    const requestedOwnerId = typeof route.query.owner_id === 'string' ? route.query.owner_id : ''
+    if (requestedOwnerId && ownersStore.owners.some((owner) => owner.owner_id === requestedOwnerId)) {
+      ownersStore.setCurrent(requestedOwnerId)
+    }
     state.value = await getOnboardingState(ownersStore.currentId || undefined)
     const defaults = await getPersonaAuthoringDefaults()
     applyDefaults(defaults)
@@ -210,7 +215,7 @@ async function createAndChat() {
 }
 
 function close() {
-  router.push({ name: 'home' })
+  router.push({ name: 'home', query: { owner_id: ownerId.value || undefined } })
 }
 </script>
 

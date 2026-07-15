@@ -31,6 +31,12 @@ const assistantText = ref('')
 const paneRef = ref<HTMLElement | null>(null)
 let abortCtrl: AbortController | null = null
 
+watch(() => ownersStore.currentId, (next) => {
+  if (!next || next === form.value.owner_id) return
+  form.value.owner_id = next
+  form.value.companion_id = ''
+})
+
 async function send() {
   if (!form.value.text.trim()) {
     ElMessage.warning('请输入要测试的话')

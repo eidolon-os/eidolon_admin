@@ -99,6 +99,10 @@ watch([ownerId, companionId, filterStatus], () => {
   void refresh()
 })
 
+watch(() => ownersStore.currentId, (next) => {
+  if (next && next !== ownerId.value) ownerId.value = next
+})
+
 onMounted(() => {
   void refresh()
   pollTimer = setInterval(() => {

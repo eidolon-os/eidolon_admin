@@ -131,6 +131,10 @@ watch([ownerId, companionId], () => {
   void refresh()
 })
 
+watch(() => ownersStore.currentId, (next) => {
+  if (next && next !== ownerId.value) ownerId.value = next
+})
+
 onMounted(() => {
   void refresh()
   // Poll only when nothing is selected — looking at a detail is a

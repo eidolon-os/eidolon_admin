@@ -22,14 +22,39 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/supervisor/Overview.vue'),
       },
       {
-        path: 'owners',
-        name: 'owners',
+        path: 'spaces',
+        name: 'spaces',
         component: () => import('@/modules/owners/Overview.vue'),
+      },
+      {
+        path: 'owners',
+        redirect: { name: 'spaces' },
       },
       {
         path: 'owners/:ownerId/:section?',
         name: 'owner-workspace',
-        component: () => import('@/modules/owners/Workspace.vue'),
+        redirect: (to) => {
+          const ownerId = String(to.params.ownerId || '')
+          const section = String(to.params.section || 'overview')
+          const query = { ...to.query, owner_id: ownerId }
+          if (section === 'initialize') return { name: 'workspace-initialize', query }
+          if (section === 'companions' || section === 'persona') return { name: 'companions', query }
+          if (section === 'devices') return { name: 'devices', params: { tab: 'fleet' }, query }
+          if (['conversations', 'memory', 'jobs', 'events'].includes(section)) {
+            return { name: 'data-inspector', params: { section }, query }
+          }
+          return { name: 'home', query }
+        },
+      },
+      {
+        path: 'advanced/data/:section?',
+        name: 'data-inspector',
+        component: () => import('@/modules/owners/DataInspector.vue'),
+      },
+      {
+        path: 'advanced/workspace-initialize',
+        name: 'workspace-initialize',
+        component: () => import('@/modules/owners/WorkspaceInitialization.vue'),
       },
       {
         path: 'configs',

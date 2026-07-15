@@ -7,6 +7,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Fleet from '@/modules/hub/Devices.vue'
 import Firmware from '@/modules/tools/Esp32.vue'
+import GuardPanel from '@/modules/owners/GuardPanel.vue'
 import FleetGrouping from './FleetGrouping.vue'
 import { useOwnersStore } from '@/stores/owners'
 
@@ -14,9 +15,13 @@ const route = useRoute()
 const router = useRouter()
 const ownersStore = useOwnersStore()
 
-const tab = computed<'fleet' | 'firmware'>({
-  get: () => (route.params.tab === 'firmware' ? 'firmware' : 'fleet'),
-  set: (v) => router.replace({ name: 'devices', params: { tab: v } }),
+const tab = computed<'fleet' | 'guard' | 'firmware'>({
+  get: () => {
+    if (route.params.tab === 'guard') return 'guard'
+    if (route.params.tab === 'firmware') return 'firmware'
+    return 'fleet'
+  },
+  set: (v) => router.replace({ name: 'devices', params: { tab: v }, query: route.query }),
 })
 </script>
 
@@ -28,6 +33,10 @@ const tab = computed<'fleet' | 'firmware'>({
           <FleetGrouping :owner-id="ownersStore.currentId" />
           <Fleet />
         </template>
+      </el-tab-pane>
+      <el-tab-pane label="Guard 与身份识别" name="guard">
+        <GuardPanel v-if="tab === 'guard' && ownersStore.currentId" :owner-id="ownersStore.currentId" />
+        <el-empty v-else-if="tab === 'guard'" description="请先选择一个 Eidolon 空间" />
       </el-tab-pane>
       <el-tab-pane label="固件烧录" name="firmware">
         <Firmware v-if="tab === 'firmware'" />

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   getOnboardingState,
   initializeOnboarding,
@@ -9,21 +9,17 @@ import {
   type LaunchIdentity,
   type OnboardingState,
 } from '@/api/onboarding'
-import type { CompanionView, OwnerDeleteResponse } from '@/api/eidolonData'
+import type { CompanionView } from '@/api/eidolonData'
 import { useOwnersStore } from '@/stores/owners'
 import { webBodyLaunchUrl } from '@/utils/clientWeb'
 
 const ownersStore = useOwnersStore()
 const router = useRouter()
+const route = useRoute()
 
 const loading = ref(true)
 const saving = ref(false)
 const launching = ref(false)
-const deletingOwner = ref(false)
-const deleteDialogOpen = ref(false)
-const deleteConfirmText = ref('')
-const deleteResult = ref<OwnerDeleteResponse | null>(null)
-const deleteError = ref('')
 const state = ref<OnboardingState | null>(null)
 const loadError = ref('')
 
@@ -36,6 +32,7 @@ const missingLabels: Record<string, string> = {
 }
 
 const ownerId = computed(() => state.value?.owner?.owner_id || ownersStore.currentId || '')
+const requestedOwnerId = computed(() => typeof route.query.owner_id === 'string' ? route.query.owner_id : '')
 const hasOwner = computed(() => Boolean(state.value?.owner))
 const ready = computed(() => Boolean(state.value?.master_ready))
 const master = computed(() => state.value?.master_companion || null)
@@ -52,28 +49,6 @@ const readyStats = computed(() => [
   { label: 'Memory', value: master.value?.default_memory_realm_id ? 'ready' : 'missing' },
   { label: 'Genome', value: master.value?.current_genome_id ? 'ready' : 'missing' },
 ])
-const deleteStages = computed(() => {
-  if (deleteResult.value?.progress?.length) return deleteResult.value.progress
-  return [
-    { key: 'confirmed', label: '二次确认', status: deleteConfirmText.value === ownerId.value ? 'completed' : 'pending', progress: 10 },
-    { key: 'backup', label: '备份 companion / memory', status: deletingOwner.value ? 'pending' : 'waiting', progress: deletingOwner.value ? 35 : 0 },
-    { key: 'journal', label: '写入可恢复删除任务', status: 'waiting', progress: 0 },
-    { key: 'database', label: '删除数据库关系树', status: 'waiting', progress: 0 },
-    { key: 'memory', label: '清理 memory runtime 和 palace', status: 'waiting', progress: 0 },
-  ]
-})
-const deleteProgress = computed(() => {
-  const values = deleteStages.value.map((item) => Number(item.progress || 0))
-  return Math.max(0, ...values)
-})
-const deleteStepActive = computed(() => {
-  const index = deleteStages.value.findIndex((item) => item.status !== 'completed')
-  return index === -1 ? deleteStages.value.length : index
-})
-const deleteBackupPath = computed(() => deleteResult.value?.backup?.path || '')
-const deleteCanSubmit = computed(() =>
-  Boolean(ownerId.value && deleteConfirmText.value === ownerId.value && !deletingOwner.value && !deleteResult.value),
-)
 watch(
   () => state.value,
   (next) => {
@@ -90,6 +65,11 @@ watch(
   },
 )
 
+watch(requestedOwnerId, async (next) => {
+  if (!next || next === state.value?.owner?.owner_id) return
+  await load()
+})
+
 onMounted(async () => {
   await load()
 })
@@ -99,6 +79,9 @@ async function load() {
   loadError.value = ''
   try {
     await ownersStore.load(true)
+    if (requestedOwnerId.value && ownersStore.owners.some((owner) => owner.owner_id === requestedOwnerId.value)) {
+      ownersStore.setCurrent(requestedOwnerId.value)
+    }
     state.value = await getOnboardingState(ownersStore.currentId || undefined)
   } catch (error: any) {
     loadError.value = error?.response?.data?.detail || error?.message || '无法读取初始化状态'
@@ -145,47 +128,16 @@ function openLaunch(identity: LaunchIdentity) {
   window.open(url, '_blank', 'noopener')
 }
 
-function openDeleteDialog() {
-  deleteConfirmText.value = ''
-  deleteResult.value = null
-  deleteError.value = ''
-  deleteDialogOpen.value = true
-}
-
-async function executeOwnerDelete() {
-  if (!ownerId.value) return
-  if (deleteConfirmText.value !== ownerId.value) {
-    ElMessage.warning(`请输入 ${ownerId.value}`)
-    return
-  }
-  deletingOwner.value = true
-  deleteError.value = ''
-  try {
-    deleteResult.value = await ownersStore.deleteLocal(ownerId.value, deleteConfirmText.value)
-    state.value = await getOnboardingState(ownersStore.currentId || undefined)
-    ElMessage.success('当前身份已备份并删除')
-  } catch (error: any) {
-    deleteError.value = error?.response?.data?.detail || error?.message || '删除失败'
-  } finally {
-    deletingOwner.value = false
-  }
-}
-
-function closeDeleteDialog() {
-  if (deletingOwner.value) return
-  deleteDialogOpen.value = false
-}
-
 function openCompanionCreator() {
-  router.push({ name: 'companion-create' })
+  router.push({ name: 'companion-create', query: { owner_id: ownerId.value || undefined } })
 }
 
 function goCompanions() {
-  router.push({ name: 'companions' })
+  router.push({ name: 'companions', query: { owner_id: ownerId.value || undefined } })
 }
 
 function goDevices() {
-  router.push({ name: 'devices', params: { tab: 'fleet' } })
+  router.push({ name: 'devices', params: { tab: 'fleet' }, query: { owner_id: ownerId.value || undefined } })
 }
 
 function goCockpit() {
@@ -193,24 +145,14 @@ function goCockpit() {
   router.push({ name: 'mission-control', query: { owner_id: ownerId.value } })
 }
 
+function goSpaces() {
+  router.push({ name: 'spaces', query: { owner_id: ownerId.value || undefined } })
+}
+
 function statusText(value: string) {
   return missingLabels[value] || value
 }
 
-function deleteStepStatus(status: string) {
-  if (status === 'completed') return 'success'
-  if (status === 'failed' || status === 'error') return 'error'
-  if (status === 'pending') return 'process'
-  return 'wait'
-}
-
-function deleteStepDescription(item: Record<string, any>) {
-  const detail = item.detail || {}
-  if (item.key === 'backup' && detail.path) return detail.path
-  if (item.key === 'journal' && detail.job_id) return detail.job_id
-  if (item.key === 'memory' && detail.pending) return '收尾任务已保留，admin 启动后会继续重试'
-  return `${Number(item.progress || 0)}%`
-}
 </script>
 
 <template>
@@ -387,93 +329,14 @@ function deleteStepDescription(item: Record<string, any>) {
                 <span>{{ state.owner.owner_id }}</span>
               </div>
             </div>
-            <el-button type="danger" plain :loading="deletingOwner" @click="openDeleteDialog">
-              备份并删除
+            <el-button plain @click="goSpaces">
+              管理空间
             </el-button>
           </div>
         </section>
       </section>
     </template>
 
-    <el-dialog
-      v-model="deleteDialogOpen"
-      title="备份并删除当前身份"
-      width="720px"
-      append-to-body
-      destroy-on-close
-      class="owner-delete-dialog"
-      :close-on-click-modal="!deletingOwner"
-      :close-on-press-escape="!deletingOwner"
-    >
-      <div class="delete-flow">
-        <el-alert
-          type="warning"
-          :closable="false"
-          show-icon
-          title="删除会移除当前 owner 的 companions、devices、memory、conversations、jobs 和事件数据；服务端会先写入备份。"
-        />
-        <el-form label-position="top">
-          <el-form-item :label="`输入 owner_id 确认：${ownerId}`">
-            <el-input
-              v-model="deleteConfirmText"
-              :disabled="deletingOwner || Boolean(deleteResult)"
-              :placeholder="ownerId"
-              autocomplete="off"
-            />
-          </el-form-item>
-        </el-form>
-
-        <div class="delete-progress">
-          <div class="delete-progress-head">
-            <strong>{{ deleteResult ? '流程结果' : deletingOwner ? '正在执行' : '准备删除' }}</strong>
-            <span>{{ deleteProgress }}%</span>
-          </div>
-          <el-progress :percentage="deleteProgress" :stroke-width="10" />
-        </div>
-
-        <el-steps
-          class="delete-steps"
-          direction="vertical"
-          :active="deleteStepActive"
-          finish-status="success"
-        >
-          <el-step
-            v-for="item in deleteStages"
-            :key="item.key"
-            :title="String(item.label)"
-            :description="deleteStepDescription(item)"
-            :status="deleteStepStatus(String(item.status || 'waiting'))"
-          />
-        </el-steps>
-
-        <el-alert
-          v-if="deleteError"
-          type="error"
-          :closable="false"
-          show-icon
-          :title="deleteError"
-        />
-
-        <div v-if="deleteBackupPath" class="backup-result">
-          <span>备份目录</span>
-          <code>{{ deleteBackupPath }}</code>
-        </div>
-      </div>
-      <template #footer>
-        <el-button :disabled="deletingOwner" @click="closeDeleteDialog">
-          {{ deleteResult ? '关闭' : '取消' }}
-        </el-button>
-        <el-button
-          v-if="!deleteResult"
-          type="danger"
-          :disabled="!deleteCanSubmit"
-          :loading="deletingOwner"
-          @click="executeOwnerDelete"
-        >
-          备份并删除
-        </el-button>
-      </template>
-    </el-dialog>
   </section>
 </template>
 
@@ -793,65 +656,6 @@ function deleteStepDescription(item: Record<string, any>) {
   font-family: var(--eid-font-mono);
   font-size: 12px;
 }
-.delete-flow {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.delete-progress {
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--eid-border);
-  border-radius: 8px;
-  background: var(--eid-bg-inset);
-}
-.delete-progress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-  color: var(--eid-text-primary);
-}
-.delete-progress-head span {
-  flex: 0 0 auto;
-  color: var(--eid-text-muted);
-  font-family: var(--eid-font-mono);
-  font-size: 12px;
-}
-.delete-steps {
-  min-width: 0;
-}
-.backup-result {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--eid-success) 30%, var(--eid-border));
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--eid-success) 9%, var(--eid-bg-inset));
-}
-.backup-result span {
-  color: var(--eid-text-muted);
-  font-size: 12px;
-}
-.backup-result code {
-  min-width: 0;
-  color: var(--eid-text-primary);
-  font-family: var(--eid-font-mono);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-:global(.owner-delete-dialog .el-dialog__body) {
-  overflow-wrap: anywhere;
-}
-:deep(.el-step__title) {
-  white-space: nowrap;
-}
-
 @media (max-width: 980px) {
   .setup-layout,
   .stat-grid {
@@ -895,10 +699,6 @@ function deleteStepDescription(item: Record<string, any>) {
   }
   .primary-actions .el-button {
     width: 100%;
-  }
-  :global(.owner-delete-dialog) {
-    width: calc(100vw - 24px) !important;
-    max-width: calc(100vw - 24px);
   }
   .page-head h1 {
     font-size: 26px;

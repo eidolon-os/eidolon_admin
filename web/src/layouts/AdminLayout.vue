@@ -150,7 +150,7 @@ const commandItems = computed<CommandItem[]>(() =>
 )
 
 const currentTitle = computed(() => {
-  if (route.name === 'owner-workspace') return `Owner / ${route.params.ownerId || ''}`
+  if (route.name === 'spaces') return 'My Eidolon / 空间管理'
   if (activeMenuItem.value) {
     const { group, item } = activeMenuItem.value
     return item.section ? `${group.label} / ${item.section} / ${item.label}` : `${group.label} / ${item.label}`
@@ -196,7 +196,8 @@ const railItems = computed(() =>
 )
 
 function isActiveRoute(item: NavItem): boolean {
-  if (item.route.name === 'owners' && route.name === 'owner-workspace') return true
+  if (item.route.name === 'home' && route.name === 'spaces') return true
+  if (item.id === 'device-center' && route.name === 'devices' && route.params.tab === 'guard') return true
   if (item.activeMatch === false) return false
   const target = item.activeMatch || item.route
   if (route.name !== target.name) return false
@@ -212,11 +213,11 @@ function openCommand(scope: string | null = null) {
 
 function runCommand(item: CommandItem) {
   commandOpen.value = false
-  router.push(item.route)
+  router.push({ ...item.route, query: { owner_id: ownersStore.currentId || undefined } })
 }
 
 function runMenuItem(item: MenuItem) {
-  router.push(item.route)
+  router.push({ ...item.route, query: { owner_id: ownersStore.currentId || undefined } })
 }
 
 function menuSections(group: MenuGroup): MenuSection[] {
@@ -244,7 +245,9 @@ function updateCompactLayout() {
 
 function handleRailClick(id: string) {
   const group = effectiveNav.value.find((entry) => entry.id === id)
-  if (group?.items[0]) router.push(group.items[0].route)
+  if (group?.items[0]) {
+    router.push({ ...group.items[0].route, query: { owner_id: ownersStore.currentId || undefined } })
+  }
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
