@@ -622,6 +622,8 @@ _CHANNEL_STAGE_META: dict[str, tuple[str, str]] = {
     "brain_error": ("response", "大脑响应失败"),
     "llm_error": ("response", "生成失败"),
     "tts_provider_first_audio": ("tts", "TTS 首个音频"),
+    "tts_error": ("tts", "TTS 生成失败"),
+    "session_error": ("response", "会话运行失败"),
     "first_audio": ("playback", "开始播放"),
     "playback_done": ("playback", "播放完成"),
 }
@@ -634,8 +636,16 @@ def _project_runtime_turns(
     """Merge Channel facts and Agent rows into one turn view keyed by trace."""
 
     grouped: dict[str, list[RuntimeEvent]] = {}
+    session_boundaries: dict[str, list[RuntimeEvent]] = {}
     for event in events:
-        if event.source != "channel" or not event.type.startswith("channel.turn."):
+        if event.source != "channel":
+            continue
+        if event.type in {"channel.session.ended", "channel.session.failed"}:
+            room_name = str(event.payload.get("room_name") or "")
+            if room_name:
+                session_boundaries.setdefault(room_name, []).append(event)
+            continue
+        if not event.type.startswith("channel.turn."):
             continue
         channel_turn_id = str(event.payload.get("channel_turn_id") or event.turn_id or "")
         if channel_turn_id:
@@ -651,18 +661,49 @@ def _project_runtime_turns(
         if agent_turn is not None:
             used_agent_ids.add(agent_turn.turn_id)
         terminal = next((event for event in reversed(ordered) if event.type in _CHANNEL_TERMINAL_TYPES), None)
+        room_name = next(
+            (str(event.payload.get("room_name") or "") for event in ordered if event.payload.get("room_name")),
+            "",
+        )
+        last_event_at = _as_utc(ordered[-1].ts) if ordered else None
+        session_boundary = None
+        if terminal is None and room_name and last_event_at is not None:
+            session_boundary = next(
+                (
+                    event
+                    for event in sorted(
+                        session_boundaries.get(room_name, []),
+                        key=lambda item: _as_utc(item.ts) or datetime.min.replace(tzinfo=UTC),
+                    )
+                    if (_as_utc(event.ts) or datetime.min.replace(tzinfo=UTC)) >= last_event_at
+                ),
+                None,
+            )
         phase_events = [event for event in ordered if event.type == "channel.turn.phase_changed"]
         latest_phase = str(phase_events[-1].payload.get("phase") or "") if phase_events else ""
-        status = str(terminal.payload.get("status") or "completed") if terminal else "running"
-        outcome = terminal.outcome if terminal else "deferred"
+        if terminal is not None:
+            status = str(terminal.payload.get("status") or "completed")
+            outcome = terminal.outcome
+        elif session_boundary is not None:
+            status = "failed" if session_boundary.type == "channel.session.failed" else "orphaned"
+            outcome = "failure"
+        else:
+            status = "running"
+            outcome = "deferred"
         started_at = _as_utc(ordered[0].ts) if ordered else None
-        finished_at = _as_utc(terminal.ts) if terminal else None
+        finished_at = _as_utc(terminal.ts) if terminal else (
+            _as_utc(session_boundary.ts) if session_boundary is not None else None
+        )
         elapsed_ms = (
             int((finished_at - started_at).total_seconds() * 1000)
             if started_at is not None and finished_at is not None
             else None
         )
-        stages = _channel_turn_stages(ordered, terminal=terminal)
+        stages = _channel_turn_stages(
+            ordered,
+            terminal=terminal,
+            orphaned=session_boundary is not None,
+        )
         if agent_turn is not None:
             stages = _merge_agent_stages(stages, agent_turn.stages)
         projected.append(
@@ -697,12 +738,26 @@ def _project_runtime_turns(
                 privacy_mode=agent_turn.privacy_mode if agent_turn else "safe",
                 phase=latest_phase,
                 outcome=outcome,
-                terminal_reason=str(terminal.payload.get("terminal_reason") or "") if terminal else "",
-                event_ids=[event.event_id for event in ordered],
+                terminal_reason=(
+                    str(terminal.payload.get("terminal_reason") or "")
+                    if terminal
+                    else (
+                        "session_failed_without_turn_terminal"
+                        if session_boundary is not None
+                        and session_boundary.type == "channel.session.failed"
+                        else "session_ended_without_turn_terminal"
+                        if session_boundary is not None
+                        else ""
+                    )
+                ),
+                event_ids=[
+                    *[event.event_id for event in ordered],
+                    *([session_boundary.event_id] if session_boundary is not None else []),
+                ],
                 missing_milestones=(
                     [str(item) for item in terminal.payload.get("missing_milestones") or []]
                     if terminal
-                    else []
+                    else ["terminal_event"] if session_boundary is not None else []
                 ),
                 stages=stages,
             )
@@ -720,6 +775,7 @@ def _channel_turn_stages(
     events: list[RuntimeEvent],
     *,
     terminal: RuntimeEvent | None,
+    orphaned: bool = False,
 ) -> list[dict[str, Any]]:
     ordered_keys: list[str] = []
     stage_rows: dict[str, dict[str, Any]] = {}
@@ -746,7 +802,9 @@ def _channel_turn_stages(
     stages = [stage_rows[key] for key in ordered_keys]
     if not stages:
         return stages
-    if terminal is None:
+    if orphaned:
+        stages[-1]["status"] = "degraded"
+    elif terminal is None:
         stages[-1]["status"] = "running"
     elif terminal.outcome in {"failure", "denied"}:
         stages[-1]["status"] = "failed" if terminal.outcome == "failure" else "degraded"

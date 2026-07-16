@@ -29,8 +29,8 @@ export function fmtClock(ms: number): string {
 export function statusClass(status: string | null | undefined): 'ok' | 'warn' | 'bad' | 'idle' {
   const v = (status || '').toLowerCase()
   if (['ok', 'done', 'succeeded', 'completed', 'active', 'success'].includes(v)) return 'ok'
-  if (['running', 'pending', 'queued', 'degraded', 'warn'].includes(v)) return 'warn'
-  if (['failed', 'error', 'errored', 'offline'].includes(v)) return 'bad'
+  if (['running', 'pending', 'queued', 'degraded', 'warn', 'interrupted'].includes(v)) return 'warn'
+  if (['failed', 'error', 'errored', 'offline', 'orphaned'].includes(v)) return 'bad'
   return 'idle'
 }
 

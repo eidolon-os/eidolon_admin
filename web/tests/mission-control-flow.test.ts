@@ -35,6 +35,7 @@ import {
   type Pt,
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
+import { statusClass } from '../src/modules/mission-control/format'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
 import type { RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
 
@@ -64,6 +65,11 @@ function companion(over: Partial<CompanionUnit> = {}): CompanionUnit {
     devices: [], activeTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
   }
 }
+
+it('renders a session-reconciled orphan turn as a failure', () => {
+  expect(statusClass('orphaned')).toBe('bad')
+  expect(statusClass('interrupted')).toBe('warn')
+})
 
 // ── shouldFlow: which companions circulate ────────────────────────────────
 describe('shouldFlow', () => {

@@ -517,3 +517,86 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
     assert {span["turn_id"] for span in body["trace_spans"]} == {channel_turn_id}
     agent_event = next(event for event in body["recent_events"] if event["type"] == "agent.turn.observed")
     assert agent_event["trace_id"] == channel_turn_id
+
+
+async def test_snapshot_reconciles_unclosed_turn_at_authoritative_session_end(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    owner_id = "owner-orphan-turn"
+    companion_id = "c_owner-orphan-turn_default"
+    turn_id = "channel-turn-orphan"
+    room_name = "room-orphan-turn"
+    await data_store.owner_service.create_owner(
+        owner_id=owner_id,
+        display_name="Orphan Owner",
+        actor_type="test",
+    )
+    await data_store.workspace_provisioning.provision_workspace(
+        owner_id=owner_id,
+        companion_display_name="Xiaoyi",
+        actor_type="test",
+    )
+    await data_store.events.record_event(
+        event_id="evt-orphan-committed",
+        event_type="channel.turn.phase_changed",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        subject_type="turn",
+        subject_id=turn_id,
+        trace_id=turn_id,
+        payload_json={
+            "channel_turn_id": turn_id,
+            "room_name": room_name,
+            "device_id": "box-orphan",
+            "phase": "user_turn_committed",
+            "previous_phase": "user_turn_pending",
+            "transition_seq": 1,
+            "transition_event": "framework_completed_turn",
+            "side_effect": "irreversible",
+            "elapsed_ms": 100,
+        },
+    )
+    await data_store.events.record_event(
+        event_id="evt-orphan-first-audio",
+        event_type="channel.turn.milestone",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        subject_type="turn",
+        subject_id=turn_id,
+        trace_id=turn_id,
+        payload_json={
+            "channel_turn_id": turn_id,
+            "room_name": room_name,
+            "device_id": "box-orphan",
+            "milestone": "first_audio",
+            "milestone_seq": 1,
+            "elapsed_ms": 200,
+        },
+    )
+    await data_store.events.record_event(
+        event_id="evt-orphan-session-end",
+        event_type="channel.session.ended",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        subject_type="device",
+        subject_id="box-orphan",
+        reason="idle_normal_end",
+        payload_json={
+            "room_name": room_name,
+            "device_id": "box-orphan",
+        },
+    )
+
+    resp = await client.get(f"/api/mission-control/snapshot?owner_id={owner_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    turn = next(item for item in body["recent_turns"] if item["turn_id"] == turn_id)
+    assert turn["status"] == "orphaned"
+    assert turn["outcome"] == "failure"
+    assert turn["terminal_reason"] == "session_ended_without_turn_terminal"
+    assert turn["missing_milestones"] == ["terminal_event"]
+    assert turn["event_ids"][-1] == "evt-orphan-session-end"
+    assert turn["stages"][-1]["status"] == "degraded"
+    assert body["active_turn"] is None
