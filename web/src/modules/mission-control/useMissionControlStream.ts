@@ -29,7 +29,7 @@ import {
   type PulseTone,
 } from './flow'
 import { INFRA, SVC_GLYPH } from './constants'
-import { activityServiceId, activitySortTime, isActiveActivity } from './activity'
+import { activityServiceId, activitySortTime, isActiveActivity, traceSpansForTurn } from './activity'
 import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
 
@@ -42,14 +42,14 @@ export interface MissionControlMode {
   /** Initial owner selected by the caller, usually from My Eidolon. */
   ownerId?: string
   /**
-   * DEV-only visual hook: id of a companion to overlay a synthetic active turn
-   * onto (or '' for the first companion) so the Tier-1 circulation effect can be
+   * DEV-only visual hook: id of a companion to overlay a synthetic voice activity
+   * onto (or '' for the first companion) so internal circulation can be
    * seen without staging a real agent turn. Ignored outside `import.meta.env.DEV`.
    */
   demoFlow?: string
   /**
-   * Tier-2 directed pulses: overlay one-shot darts from the live event stream on
-   * top of the Tier-1 loop. On by default; pass false (via `?flow2=off`) to disable.
+   * Directed event pulses overlay one-shot darts from the live event stream on
+   * top of activity circulation. On by default; pass false to disable.
    */
   flowEvents?: boolean
   /**
@@ -59,7 +59,7 @@ export interface MissionControlMode {
   flowEventsScope?: PulseScope
 }
 
-/** A transient Tier-2 pulse: a companion leg lit briefly by one event. */
+/** A transient pulse: a companion leg lit briefly by one observed event. */
 export interface FlowPulse {
   id: string
   companionId: string
@@ -87,9 +87,9 @@ function demoActivity(turn: RuntimeTurn): RuntimeActivity {
 
 export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Gate the demo hook to dev builds so a stray `?demoFlow` can never fabricate
-  // an active turn in production.
+  // runtime activity in production.
   const demoFlow = import.meta.env.DEV ? opts.demoFlow : undefined
-  // Tier-2 directed pulses: on by default for every companion; `?flow2=off`
+  // Directed pulses are on by default for every companion; `?flow2=off`
   // opts it out. No longer dev-gated — it only reacts to real events.
   const flowEventsEnabled = opts.flowEvents ?? true
   const pulseScope: PulseScope = opts.flowEventsScope ?? 'all'
@@ -103,7 +103,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const hoveredEventId = ref('')
   const snapshot = ref<RuntimeSnapshot | null>(null)
   const liveEvents = ref<RuntimeEvent[]>([])
-  // Tier-2: transient directed pulses currently in flight (auto-expire).
+  // Transient directed pulses currently in flight (auto-expire).
   const activePulses = ref<FlowPulse[]>([])
   const loading = ref(false)
   const error = ref('')
@@ -149,14 +149,14 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       ? runtimeTurns.value.find((turn) => turn.turn_id === selectedTurnId.value) || null
       : null,
   )
-  const activeTurn = computed<RuntimeTurn | null>(() => {
+  const primaryActiveVoiceTurn = computed<RuntimeTurn | null>(() => {
     const voice = activeActivities.value.find((activity) => activity.kind === 'voice_turn' && activity.turn_id)
     return voice ? runtimeTurns.value.find((turn) => turn.turn_id === voice.turn_id) || null : null
   })
   const pipelineActive = computed(() => activeActivities.value.length > 0)
   const primaryCompanionId = computed(() => snapshot.value?.companion?.companion_id || '')
   const privacyMode = computed(() =>
-    privacyModeLabel(memory.value?.privacy_mode || activeTurn.value?.privacy_mode || 'safe'),
+    privacyModeLabel(memory.value?.privacy_mode || primaryActiveVoiceTurn.value?.privacy_mode || 'safe'),
   )
   const deviceRatio = computed(() =>
     devices.value.length ? Math.round((onlineDevices.value / devices.value.length) * 100) : 0,
@@ -174,11 +174,6 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const traceId = computed(() =>
     (selectedTurn.value?.trace_id || activeActivities.value[0]?.trace_id || activeActivities.value[0]?.activity_id || snapshot.value?.owner?.owner_id || 'STANDBY').slice(0, 14).toUpperCase(),
   )
-  const traceSpans = computed(() => {
-    const spans = snapshot.value?.trace_spans || []
-    if (!selectedTurn.value) return spans
-    return spans.filter((span) => span.turn_id === selectedTurn.value!.turn_id)
-  })
   const evidenceChains = computed(() => snapshot.value?.evidence_chains || [])
   const permissionLedger = computed(() => snapshot.value?.permission_ledger || [])
   const demoMode = computed(() => snapshot.value?.demo_mode || 'live')
@@ -229,7 +224,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         devices: devs,
         activities: cActivities,
         activeActivity,
-        activeTurn: active,
+        activeVoiceTurn: active,
         turn,
         turns: cTurns,
         jobs: cJobs,
@@ -244,9 +239,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     devices.value.filter((d) => !d.companion_id || !boundIds.value.has(d.companion_id)),
   )
 
-  // Tier-2: translate the newest live event into a one-shot directed pulse.
-  // Scope defaults to the focused companion (Tier-1 restraint, no screen-wide
-  // traffic); `?flow2=all` broadens it. Dedup by event_id so the same head event
+  // Translate the newest live event into a one-shot directed pulse. The default
+  // owner view includes every companion; callers may request focused scope.
+  // Dedup by event_id so the same head event
   // never fires twice;
   // per-leg throttle (§9 flood control) — except 'bad' tones, which always show
   // so failures are never swallowed; self-expire after the dart crosses.
@@ -307,13 +302,15 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const focusedDeviceIds = computed(
     () => new Set((focusedCompanion.value?.devices || []).map((d) => d.device_id)),
   )
-  // Live trace: the focused companion's turn, else the owner's active turn.
+  // Voice detail follows the selected/focused voice turn only. It is not a
+  // snapshot-wide playhead for Guard, device, or background activities.
   const scopedTurn = computed<RuntimeTurn | null>(() => {
     const f = focusedCompanion.value
     if (selectedTurn.value && (!f || selectedTurn.value.companion_id === f.id)) return selectedTurn.value
-    if (!f) return activeTurn.value
-    return f.activeTurn || f.turns[0] || null
+    if (!f) return primaryActiveVoiceTurn.value
+    return f.activeVoiceTurn || f.turns[0] || null
   })
+  const traceSpans = computed(() => traceSpansForTurn(snapshot.value?.trace_spans || [], scopedTurn.value))
   const scopedActivities = computed(() => {
     const scoped = focusedCompanion.value
       ? activities.value.filter((activity) => activity.companion_id === focusedCompanion.value!.id)
@@ -452,8 +449,10 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     }
   }
 
+  let ownerWatchReady = false
   onMounted(async () => {
     await loadOwners()
+    ownerWatchReady = true
     await refresh()
     openStream()
     pollTimer = window.setInterval(refresh, POLL_MS)
@@ -468,6 +467,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     es.close()
   })
   watch(ownerId, async () => {
+    if (!ownerWatchReady) return
     focusedCompanionId.value = ''
     selectedTurnId.value = ''
     selectedEventId.value = ''
@@ -477,7 +477,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     lastLegEmit.clear()
     await refresh()
     openStream()
-  })
+  }, { flush: 'sync' })
 
   return {
     // state
@@ -486,14 +486,14 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     experience, memory, devices, services, jobs, activities, activeActivities, companions,
     companionNames, deviceNames,
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
-    activeTurn, runtimeTurns, selectedTurn, selectedTurnId, selectedEventId,
+    primaryActiveVoiceTurn, runtimeTurns, selectedTurn, selectedTurnId, selectedEventId,
     highlightedEvent, hoveredEventId,
     pipelineActive, primaryCompanionId, privacyMode, deviceRatio,
     recentEvents, traceId, traceSpans, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,
     focusedCompanionId, focusedCompanion, scopedTurn, scopedActivities, scopedJobs, scopedPermissions, companionEvents,
-    // Tier-2 event pulses (P4 preview)
+    // event-driven pulses
     activePulses, flowEventsEnabled,
     // infra rail
     infraNodes, hotServices, serviceActivityOwners,

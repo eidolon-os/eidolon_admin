@@ -1,11 +1,9 @@
 /**
- * Pure-unit tests for the companion internal-circulation logic
- * (``src/modules/mission-control/flow.ts``) — the Tier-1 state-driven "flow"
- * effect (§11 of docs/跨系统/事件审计追踪补全方案.md).
+ * Pure-unit tests for activity-driven companion circulation and event pulses.
  *
  * These are deterministic functions over their arguments — no admin gateway,
  * no DOM, no SMIL. They pin the three decisions the design calls out:
- *   1. which companions circulate (focused + active turn),
+ *   1. which companions circulate (focused + current activity),
  *   2. which legs light up (memory_hits / devices.online),
  *   3. how the loop path + timing are generated (reusing DURATION tokens).
  */
@@ -36,7 +34,7 @@ import {
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
 import { statusClass } from '../src/modules/mission-control/format'
-import { activityBadgeLabel, activityServiceId, isActiveActivity, summarizeActivityBadges } from '../src/modules/mission-control/activity'
+import { activityBadgeLabel, activityServiceId, isActiveActivity, summarizeActivityBadges, traceSpansForTurn } from '../src/modules/mission-control/activity'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
 import type { RuntimeActivity, RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
 
@@ -64,7 +62,7 @@ function companion(over: Partial<CompanionUnit> = {}): CompanionUnit {
     id: 'c1', name: 'Aria', kind: 'companion', status: 'active', genome: '',
     realm: '', isActiveRealm: false, recall: null, runners: '', write: '',
     devices: [], activities: [], activeActivity: null,
-    activeTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
+    activeVoiceTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
   }
 }
 function activity(over: Partial<RuntimeActivity> = {}): RuntimeActivity {
@@ -101,7 +99,7 @@ describe('runtime activity projection helpers', () => {
     expect(activityServiceId(guard)).toBe('hub')
   })
 
-  it('uses meaningful state/time labels instead of per-companion T1..T6 indexes', () => {
+  it('uses meaningful state/time labels for independent activities', () => {
     expect(activityBadgeLabel(activity())).toBe('当前')
     expect(activityBadgeLabel(activity({
       status: 'completed', outcome: 'success',
@@ -109,6 +107,15 @@ describe('runtime activity projection helpers', () => {
     }), Date.parse('2026-07-16T12:00:00Z'))).toBe('1分')
     expect(activityBadgeLabel(activity({ kind: 'guard_event', status: 'completed', outcome: 'success' }))).toBe('守护')
     expect(activityBadgeLabel(activity({ status: 'failed', outcome: 'failure' }))).toBe('失败')
+  })
+
+  it('keeps Agent spans scoped to exactly one selected/focused voice turn', () => {
+    const spans = [
+      { span_id: 's1', turn_id: 't1', name: 'one', kind: 'model', status: 'done', latency_ms: 10, detail: '' },
+      { span_id: 's2', turn_id: 't2', name: 'two', kind: 'model', status: 'done', latency_ms: 20, detail: '' },
+    ]
+    expect(traceSpansForTurn(spans, turn({ turn_id: 't2' })).map((span) => span.span_id)).toEqual(['s2'])
+    expect(traceSpansForTurn(spans, null)).toEqual([])
   })
 
   it('groups repeated Guard/device facts without hiding distinct voice turns', () => {
@@ -125,10 +132,10 @@ describe('runtime activity projection helpers', () => {
 
 // ── shouldFlow: which companions circulate ────────────────────────────────
 describe('shouldFlow', () => {
-  it('flows the focused companion with an active turn, at any active count', () => {
+  it('flows the focused companion with a current activity, at any active count', () => {
     expect(shouldFlow('c1', 'c1', true, 9)).toBe(true)
   })
-  it('never flows without an active turn', () => {
+  it('never flows without a current activity', () => {
     expect(shouldFlow('c1', 'c1', false, 1)).toBe(false)
     expect(shouldFlow('c1', '', false, 1)).toBe(false)
   })
@@ -161,7 +168,7 @@ describe('flowLegs', () => {
     expect(flowLegs(companion({ turn: turn({ memory_hits: 0 }) })).mem).toBe(false)
     expect(flowLegs(companion({ turn: turn({ memory_hits: 3 }) })).mem).toBe(true)
   })
-  it('leaves the memory leg dark with no active turn', () => {
+  it('leaves the memory leg dark with no scoped voice turn', () => {
     const legs = flowLegs(companion({ turn: null }))
     expect(legs.mem).toBe(false)
     expect(legs.memBright).toBe(0)
@@ -260,7 +267,7 @@ describe('demo flow hook', () => {
   })
 })
 
-// ── Tier 2: event-driven directed pulses ──────────────────────────────────
+// ── event-driven directed pulses ──────────────────────────────────────────
 describe('eventToPulse', () => {
   const event = (source: RuntimeEvent['source'], type = 'runtime.event', payload: Record<string, any> = {}) => ({ source, type, payload })
   it('maps device sources to an inbound body pulse', () => {
@@ -383,7 +390,7 @@ describe('pulseThrottled', () => {
   })
 })
 
-// ── currentStageKey: the one shared playhead ───────────────────────────────
+// ── currentStageKey: legacy voice-detail fallback ─────────────────────────
 describe('currentStageKey', () => {
   const stage = (key: string, status: string): RuntimeTurnStage => ({ key, label: key, status, latency_ms: null })
   it('is empty for a null/undefined turn or one with no stages', () => {

@@ -23,10 +23,10 @@ const router = useRouter()
 const mode = route.query.mode === 'replay' ? 'replay' : 'live'
 const initialOwnerId = typeof route.query.owner_id === 'string' ? route.query.owner_id : ''
 // DEV-only visual hook: `?demoFlow=<companionId>` (or bare `?demoFlow`) overlays
-// a synthetic active turn so the companion circulation effect is visible without
+// a synthetic voice activity so the companion circulation effect is visible without
 // a live conversation. The composable ignores it outside dev builds.
 const demoFlow = 'demoFlow' in route.query ? String(route.query.demoFlow ?? '') : undefined
-// Tier-2 directed pulses: on by default for every companion. `?flow2=off`
+// Directed event pulses are on by default for every companion. `?flow2=off`
 // disables them; undefined uses the composable default.
 const flowEvents = route.query.flow2 === 'off' ? false : undefined
 const flowEventsScope = route.query.flow2 === 'all' ? 'all' : undefined

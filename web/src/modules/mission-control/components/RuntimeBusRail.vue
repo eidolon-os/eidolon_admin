@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // The runtime SUBSTRATE as an architecture graph (not a linear bus): infra
 // services placed by role and connected by their real relationships. The
-// request spine (hub→livekit→channel→agent→memory) flows when a turn is live;
-// the stage's service pulses. client-web is intentionally absent — it's a body.
+// request spine (hub→livekit→channel→agent→memory) highlights the independently
+// observed activity routes. client-web is intentionally absent — it's a body.
 import { computed } from 'vue'
 import { EDGE_LABEL, INFRA_EDGES, INFRA_LAYOUT, INFRA_VB, MODE_CN, MODE_EXP, TIER_BANDS } from '../constants'
 import { spineReached } from '../flow'

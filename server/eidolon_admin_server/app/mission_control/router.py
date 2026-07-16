@@ -124,7 +124,7 @@ async def _events_tail(
             if row_ts is not None and row_ts > cursor:
                 cursor = row_ts
             for event in _events_from_data([row]):
-                yield await enrich_runtime_event(request, event, owner_id=owner_id)
+                yield await enrich_runtime_event(request, event)
         if len(seen) > 2048:
             seen.clear()  # cursor advanced past all yielded rows; a re-send is client-deduped
         await asyncio.sleep(interval)
@@ -165,7 +165,9 @@ async def _hub_stream(request: Request, owner_id: str | None = None) -> AsyncIte
                         logger.debug("Mission Control ignored malformed Hub SSE frame")
                         continue
                     event = hub_event_to_runtime(raw if isinstance(raw, dict) else {"payload": raw})
-                    event = await enrich_runtime_event(request, event, owner_id=owner_id)
+                    event = await enrich_runtime_event(request, event)
+                    if not _event_in_owner_scope(event, owner_id):
+                        continue
                     yield encode_sse_event("runtime_event", event.model_dump(mode="json"))
         except Exception as exc:  # noqa: BLE001 - SSE should reconnect forever
             event = RuntimeEvent(
@@ -180,6 +182,18 @@ async def _hub_stream(request: Request, owner_id: str | None = None) -> AsyncIte
             )
             yield encode_sse_event("runtime_event", event.model_dump(mode="json"))
             await asyncio.sleep(3)
+
+
+def _event_in_owner_scope(event: RuntimeEvent, owner_id: str | None) -> bool:
+    """Keep a selected-owner stream isolated from Hub's global event feed.
+
+    Device-backed frames are enriched from the authoritative binding before
+    this check. Unattributed global frames remain available only on an
+    unscoped stream; assigning them to whichever owner happens to be selected
+    would fabricate ownership.
+    """
+
+    return owner_id is None or event.owner_id == owner_id
 
 
 def _startup_event(origin: str = "live") -> RuntimeEvent:

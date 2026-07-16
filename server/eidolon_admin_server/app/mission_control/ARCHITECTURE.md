@@ -13,6 +13,10 @@ Mission Control only reads those facts and projects them into
 changes a command, or schedules a job. Projection or SSE failure therefore
 degrades the page only; it cannot change the normal runtime flow.
 
+The Mission Control UI follows the same boundary: it may select, filter, and
+open observed facts, but it does not create/bind/start a body. Those operations
+belong to the normal Devices and Companion administration surfaces.
+
 ## Projection model
 
 `RuntimeTurn` and `RuntimeJob` remain the authoritative domain-shaped read
@@ -24,7 +28,7 @@ models. `RuntimeActivity` is the UI-neutral correlation layer above them:
 - `background_job`: Agent or external-provider work.
 
 Each activity contains ordered `RuntimeRouteHop` facts and its own
-`current_hop_id`. There is intentionally no snapshot-wide `active_turn` or
+`current_hop_id`. There is intentionally no snapshot-wide active-voice field or
 global playhead: several companions and several activity kinds may be active at
 the same time.
 
@@ -39,3 +43,25 @@ originating event remains unchanged.
 The frontend consumes only the projected activities for concurrency, route
 highlighting, activity labels, and service hot spots. Voice-specific turn data
 is retained solely for the detailed voice trace drawer.
+
+## Connections and isolation
+
+- Snapshot reads are owner-scoped and fan out only to existing read surfaces.
+- The live stream merges the shared event-ledger tail with Hub's global SSE.
+  Device-only Hub frames are attributed through the current persisted binding,
+  then filtered back to the requested owner. Unattributed global Hub frames are
+  not assigned to the selected owner.
+- Opening or losing Mission Control does not join a LiveKit room and does not
+  start, interrupt, or reconcile a Channel session. Channel facts arrive through
+  the shared ledger; Channel remains the sole owner of voice lifecycle.
+
+## Concurrency guarantees
+
+- Every activity has its own route and `current_hop_id`; the substrate may show
+  several hot services and companion labels simultaneously.
+- A companion may own multiple devices. Device ports remain distinct and a
+  Guard/device fact inherits the companion bound to its originating device.
+- Several companions may be active at once. Focusing one companion only scopes
+  drawers and event lists; it does not replace the owner-level activity set.
+- Voice spans are filtered to the selected/focused voice turn. They are a detail
+  view and never act as the playhead for Guard, device, or background activities.

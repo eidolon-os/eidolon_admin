@@ -45,7 +45,7 @@ function runtime(c: CompanionUnit): { text: string; cls: string } {
     const hop = currentActivityHop(c.activeActivity)
     return {
       text: c.activeActivity.kind === 'voice_turn'
-        ? c.activeTurn?.latency_ms != null ? `对话中 · ${fmtLatency(c.activeTurn.latency_ms)}` : '对话中'
+        ? c.activeVoiceTurn?.latency_ms != null ? `对话中 · ${fmtLatency(c.activeVoiceTurn.latency_ms)}` : '对话中'
         : `${activityKindLabel(c.activeActivity.kind)} · ${hop?.label || c.activeActivity.status}`,
       cls: 'live',
     }
@@ -128,9 +128,9 @@ const galaxy = computed(() => {
   }
 })
 
-// Per-companion internal circulation (§11 Tier 1). Only the focused companion
-// with an active turn circulates; its body / memory legs light per device
-// presence + recall hits. Reuses the same `.pulse` + <animateMotion> mechanism
+// Per-companion internal circulation. Focused or low-density active companions
+// circulate independently; body / memory legs light per device presence and
+// scoped voice evidence. Reuses the same `.pulse` + <animateMotion> mechanism
 // as the sun→planet line — no new animation machinery, no new deps.
 const flows = computed(() => {
   const nodes = galaxy.value.nodes
@@ -175,9 +175,9 @@ function flowStyle(s: Sat): Record<string, string> | undefined {
   }
 }
 
-// Tier-2: resolve each in-flight event pulse to a directed dart on the right
-// companion's leg. `activePulses` fills for the focused companion (on by default;
-// `?flow2=off` disables). Colour comes from tone (leg hue, or alarm palette).
+// Resolve each in-flight event pulse to a directed dart on the right
+// companion's leg. Owner-wide pulses are on by default; `?flow2=off` disables
+// them. Colour comes from tone (leg hue, or alarm palette).
 const EVENT_DUR = flowEventDur()
 // Normal darts take the leg's own hue; warn/bad override to the alarm palette
 // (matches the cockpit tone tokens) so failures read at a glance regardless of leg.
@@ -333,7 +333,7 @@ function deviceOnline(d: RuntimeDevice) {
         <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" repeatCount="indefinite" :path="f.path" /></circle>
         <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" :begin="f.stagger" repeatCount="indefinite" :path="f.path" /></circle>
       </template>
-      <!-- Tier-2: one-shot directed pulses fired by live events (?flow2). -->
+      <!-- One-shot directed pulses fired by observed live events (?flow2). -->
       <path v-if="highlightedPath" :d="highlightedPath.path" class="event-highlight" :style="highlightedPath.style" />
       <circle v-for="p in eventPulses" :key="p.id" r="4.4" class="pulse event-dot" :style="p.style">
         <animateMotion :dur="EVENT_DUR" fill="freeze" :path="p.path" />

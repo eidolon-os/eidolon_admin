@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Region 3 · Agent Span Inspector: the active turn's internal structure —
+// Agent Span Inspector: one selected/focused voice turn's internal structure —
 // input / memory / model / tool / routing spans. Redacted (counts + latency
 // only), proving it's a debuggable runtime, not a chat wrapper.
 import type { RuntimeTraceSpan } from '@/api/missionControl'
@@ -20,7 +20,7 @@ const KIND_GLYPH: Record<string, string> = {
       <em v-if="s.latency_ms != null" class="num">{{ fmtLatency(s.latency_ms) }}</em>
       <span v-if="s.detail" class="span-detail">{{ s.detail }}</span>
     </div>
-    <p v-if="!spans.length" class="span-empty">当前无进行中的轮次</p>
+    <p v-if="!spans.length" class="span-empty">所选对话没有可展示的 Agent spans</p>
   </div>
 </template>
 

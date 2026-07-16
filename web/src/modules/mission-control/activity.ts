@@ -1,4 +1,4 @@
-import type { RuntimeActivity, RuntimeRouteHop } from '@/api/missionControl'
+import type { RuntimeActivity, RuntimeRouteHop, RuntimeTraceSpan, RuntimeTurn } from '@/api/missionControl'
 
 export const ACTIVE_ACTIVITY_STATES = new Set([
   'running', 'active', 'pending', 'queued', 'accepted', 'processing',
@@ -57,6 +57,14 @@ export function activitySortTime(activity: RuntimeActivity): number {
   const raw = activity.updated_at || activity.finished_at || activity.started_at
   const parsed = raw ? Date.parse(raw) : Number.NaN
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** Voice spans belong to one selected/focused turn, never to owner scope. */
+export function traceSpansForTurn(
+  spans: RuntimeTraceSpan[],
+  turn: RuntimeTurn | null | undefined,
+): RuntimeTraceSpan[] {
+  return turn ? spans.filter((span) => span.turn_id === turn.turn_id) : []
 }
 
 export interface ActivityBadgeGroup {

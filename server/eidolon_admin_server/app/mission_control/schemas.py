@@ -243,7 +243,7 @@ class RuntimeExperience(BaseModel):
 
 
 class RuntimeTraceSpan(BaseModel):
-    """A structured span of the active turn (region 3 · Agent Span Inspector).
+    """A structured span of one observed voice turn (Agent Span Inspector).
     Carries only counts/latency/labels — never prompt/transcript text."""
 
     span_id: str

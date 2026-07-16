@@ -116,7 +116,7 @@ async def build_snapshot(
 
     agent_runtime_turns = [_turn(row) for row in turns]
     runtime_turns = _project_runtime_turns(data_runtime_events, agent_runtime_turns)
-    active_turn = _active_turn(runtime_turns)
+    primary_voice_turn = _primary_active_voice_turn(runtime_turns)
     activities = _project_runtime_activities(runtime_turns, runtime_jobs, recent_events)
 
     source_status = _coalesce_statuses(statuses)
@@ -125,7 +125,8 @@ async def build_snapshot(
         companion=companion,
         devices=runtime_devices,
         services=services,
-        active_turn=active_turn,
+        activities=activities,
+        primary_voice_turn=primary_voice_turn,
         memory=memory,
         jobs=runtime_jobs,
         recent_events=recent_events,
@@ -259,14 +260,10 @@ def _enrich_event_scope(
 async def enrich_runtime_event(
     request: Request,
     event: RuntimeEvent,
-    *,
-    owner_id: str | None = None,
 ) -> RuntimeEvent:
     """Resolve a live event's scope without changing the originating system."""
 
     update: dict[str, Any] = {}
-    if owner_id and not event.owner_id:
-        update["owner_id"] = owner_id
     if event.device_id and not event.companion_id:
         store = _store(request)
         if store is not None:
@@ -275,7 +272,7 @@ async def enrich_runtime_event(
             except Exception:  # noqa: BLE001 - observability enrichment is best effort
                 row = None
             if row is not None:
-                update["owner_id"] = event.owner_id or getattr(row, "owner_id", None) or owner_id
+                update["owner_id"] = event.owner_id or getattr(row, "owner_id", None)
                 update["companion_id"] = getattr(row, "bound_companion_id", None)
     return event.model_copy(update=update) if update else event
 
@@ -976,7 +973,13 @@ _ACTIVE_ACTIVITY_STATES = {
 }
 
 
-def _active_turn(turns: list[RuntimeTurn]) -> RuntimeTurn | None:
+def _primary_active_voice_turn(turns: list[RuntimeTurn]) -> RuntimeTurn | None:
+    """Choose one voice turn only for legacy voice-specific summary cards.
+
+    Concurrent runtime state is represented by ``RuntimeActivity[]``. This
+    helper must never be used as a snapshot-wide playhead.
+    """
+
     for turn in turns:
         if _activity_is_active(turn.status):
             return turn
@@ -1462,8 +1465,11 @@ def _evidence_chains(
 
 
 def _trace_spans(turn: RuntimeTurn | None) -> list[RuntimeTraceSpan]:
-    """Structured spans for the active turn, derived from its already-safe
-    stages + tool names. No extra agent fetch (no N+1); no text payloads."""
+    """Structured spans for one observed voice turn.
+
+    They are derived from already-safe stages and tool names. There is no extra
+    Agent fetch (no N+1) and no text payload.
+    """
     if turn is None:
         return []
     spans: list[RuntimeTraceSpan] = []
@@ -1500,7 +1506,8 @@ def _experience(
     companion: Any | None,
     devices: list[RuntimeDevice],
     services: list[RuntimeService],
-    active_turn: RuntimeTurn | None,
+    activities: list[RuntimeActivity],
+    primary_voice_turn: RuntimeTurn | None,
     memory: RuntimeMemory,
     jobs: list[RuntimeJob],
     recent_events: list[RuntimeEvent],
@@ -1513,12 +1520,16 @@ def _experience(
     turn_event = _latest_event(recent_events, "turn")
     running_jobs = [job for job in jobs if job.status not in {"ok", "done", "succeeded", "completed", "failed", "errored"}]
     degraded = [status for status in source_status if not status.ok]
-    completion = _experience_completion(devices, services, active_turn, memory, jobs, recent_events)
-    system_state = "active" if active_turn else ("working" if running_jobs else ("watching" if latest_event else "standby"))
+    active_activities = [activity for activity in activities if _activity_is_active(activity.status)]
+    completion = _experience_completion(devices, services, activities, memory, jobs, recent_events)
+    system_state = "active" if active_activities else ("working" if running_jobs else ("watching" if latest_event else "standby"))
 
-    if active_turn:
+    if primary_voice_turn:
         headline = f"{companion_name} 正在处理一次来自身体的交互"
         subheadline = "身份、记忆、工具和设备状态正在被串成一条可见链路。"
+    elif active_activities:
+        headline = f"{owner_name} 有 {len(active_activities)} 条运行活动"
+        subheadline = "Guard、设备事件、指令和后台任务各自保留独立路径，不依赖语音轮次。"
     elif running_jobs:
         headline = f"{companion_name} 有后台任务正在推进"
         subheadline = "前台可以继续交流，后台任务会独立执行并在完成后回到同一个 companion。"
@@ -1540,7 +1551,7 @@ def _experience(
         next_best_action = f"有 {len(degraded)} 个信息源暂时不可用；当前链路仍会持续显示已接入的实时状态。"
     elif not devices:
         next_best_action = "先绑定或启动一个硬件身体，大屏会立刻出现身体拓扑。"
-    elif not active_turn:
+    elif not active_activities:
         next_best_action = "对 2.06、BOX-3 或 Web body 说一句话，观察身份、记忆和任务链路如何亮起。"
     else:
         next_best_action = "继续观察这次交互：回应完成后，记忆写入和任务状态会回到这里。"
@@ -1551,16 +1562,16 @@ def _experience(
         plain_summary=plain_summary,
         system_state=system_state,
         completion=completion,
-        storyline=_storyline(devices, active_turn, memory, jobs, recent_events),
-        lanes=_experience_lanes(devices, services, active_turn, memory, jobs, recent_events, degraded),
-        capability_cards=_capability_cards(devices, services, active_turn, memory, jobs, recent_events),
+        storyline=_storyline(devices, primary_voice_turn, memory, jobs, recent_events),
+        lanes=_experience_lanes(devices, services, primary_voice_turn, memory, jobs, recent_events, degraded),
+        capability_cards=_capability_cards(devices, services, primary_voice_turn, memory, jobs, recent_events),
         next_best_action=next_best_action,
     )
 
 
 def _storyline(
     devices: list[RuntimeDevice],
-    active_turn: RuntimeTurn | None,
+    primary_voice_turn: RuntimeTurn | None,
     memory: RuntimeMemory,
     jobs: list[RuntimeJob],
     events: list[RuntimeEvent],
@@ -1596,17 +1607,17 @@ def _storyline(
             key="turn",
             title="智能体处理",
             detail=(
-                f"最近一次交互状态：{_friendly_status(active_turn.status)}"
-                if active_turn
+                f"最近一次交互状态：{_friendly_status(primary_voice_turn.status)}"
+                if primary_voice_turn
                 else (
                     f"最近一次交互事件：{turn_event.summary}"
                     if turn_event
                     else "等待一次真实对话或 PTT 输入"
                 )
             ),
-            status=_stage_status(active_turn.status) if active_turn else ("done" if turn_event else "pending"),
+            status=_stage_status(primary_voice_turn.status) if primary_voice_turn else ("done" if turn_event else "pending"),
             source="agent",
-            ts=active_turn.started_at if active_turn else (turn_event.ts if turn_event else None),
+            ts=primary_voice_turn.started_at if primary_voice_turn else (turn_event.ts if turn_event else None),
         ),
         RuntimeStoryStep(
             key="memory",
@@ -1647,7 +1658,7 @@ def _storyline(
 def _experience_lanes(
     devices: list[RuntimeDevice],
     services: list[RuntimeService],
-    active_turn: RuntimeTurn | None,
+    primary_voice_turn: RuntimeTurn | None,
     memory: RuntimeMemory,
     jobs: list[RuntimeJob],
     events: list[RuntimeEvent],
@@ -1677,12 +1688,12 @@ def _experience_lanes(
             key="turn",
             title="一次交互",
             headline=(
-                f"最近一次交互：{_friendly_status(active_turn.status)}"
-                if active_turn
+                f"最近一次交互：{_friendly_status(primary_voice_turn.status)}"
+                if primary_voice_turn
                 else "等待用户开口"
             ),
             detail="这里展示从身体输入到智能体回应的关键步骤，不展示私密原文。",
-            status=_stage_status(active_turn.status) if active_turn else "pending",
+            status=_stage_status(primary_voice_turn.status) if primary_voice_turn else "pending",
             items=[
                 RuntimeLaneItem(
                     label=str(stage.get("label") or ""),
@@ -1690,7 +1701,7 @@ def _experience_lanes(
                     status=str(stage.get("status") or "pending"),
                     detail=(f"{stage.get('latency_ms')} ms" if stage.get("latency_ms") is not None else ""),
                 )
-                for stage in (active_turn.stages if active_turn else [])
+                for stage in (primary_voice_turn.stages if primary_voice_turn else [])
             ],
         ),
         RuntimeLane(
@@ -1759,7 +1770,7 @@ def _experience_lanes(
 def _capability_cards(
     devices: list[RuntimeDevice],
     services: list[RuntimeService],
-    active_turn: RuntimeTurn | None,
+    primary_voice_turn: RuntimeTurn | None,
     memory: RuntimeMemory,
     jobs: list[RuntimeJob],
     events: list[RuntimeEvent],
@@ -1783,8 +1794,8 @@ def _capability_cards(
         RuntimeCapabilityCard(
             key="voice",
             title="语音链路",
-            metric="已接入" if active_turn else "待触发",
-            status="done" if active_turn else "pending",
+            metric="已接入" if primary_voice_turn else "待触发",
+            status="done" if primary_voice_turn else "pending",
             detail="语音输入会进入身份解析、Agent 和记忆链路。",
         ),
         RuntimeCapabilityCard(
@@ -1978,7 +1989,7 @@ def _latest_event(events: list[RuntimeEvent], token: str) -> RuntimeEvent | None
 def _experience_completion(
     devices: list[RuntimeDevice],
     services: list[RuntimeService],
-    active_turn: RuntimeTurn | None,
+    activities: list[RuntimeActivity],
     memory: RuntimeMemory,
     jobs: list[RuntimeJob],
     events: list[RuntimeEvent],
@@ -1987,7 +1998,7 @@ def _experience_completion(
         bool(devices),
         any(device.online for device in devices),
         bool(services) and any(service.online for service in services),
-        active_turn is not None,
+        any(_activity_is_active(activity.status) for activity in activities),
         memory.realms_total > 0,
         memory.last_recall_hits > 0 or memory.last_write_disposition is not None,
         bool(jobs),

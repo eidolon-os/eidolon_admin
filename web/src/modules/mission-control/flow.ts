@@ -1,6 +1,5 @@
-// Companion internal circulation — the Tier-1 state-driven "flow" effect
-// (§11 of docs/跨系统/事件审计追踪补全方案.md). A single *focused* companion
-// with an active turn shows a light point looping
+// Companion internal circulation driven by its own current runtime activity.
+// A focused or low-density active companion shows a light point looping
 //
 //   body → brain → memory → brain → body
 //
@@ -24,7 +23,7 @@ export interface Pt {
 export interface FlowLegs {
   /** Body↔brain leg — lit when the companion has an online device. */
   body: boolean
-  /** Memory↔brain leg — lit when the active turn recalled anything. */
+  /** Memory↔brain leg — lit when the scoped voice detail recalled anything. */
   mem: boolean
   /** 0..1 memory-leg intensity, saturating with recall hit count. */
   memBright: number
@@ -32,11 +31,10 @@ export interface FlowLegs {
   act: boolean
 }
 
-// ── shared "current stage" (one playhead) ─────────────────────────────────
-// Single source of truth for "which stage is a turn at right now", so the bus
-// rail (which service is hot) and the live-trace playhead point at the same
-// moment instead of each re-deriving it. A running/pending stage wins; else the
-// last completed one.
+// ── voice-detail stage fallback ────────────────────────────────────────────
+// RuntimeActivity.current_hop_id is authoritative for concurrent projection.
+// This helper keeps the selected voice detail internally consistent when only
+// legacy RuntimeTurn stages are available.
 const STAGE_RUNNING = ['running', 'pending', 'active']
 const STAGE_DONE = ['done', 'ok', 'succeeded']
 
@@ -85,15 +83,15 @@ export const AUTO_FLOW_MAX = 2
  * always circulates; otherwise an active companion circulates while few are
  * active at once (<= AUTO_FLOW_MAX), so the default god's-eye view looks alive
  * without a click and denser scenes fall back to the lighter node pulse (density
- * restraint, A3.3). Never circulates without an active turn.
+ * restraint, A3.3). Never circulates without a current runtime activity.
  */
 export function shouldFlow(
   companionId: string,
   focusedId: string | undefined,
-  hasTurn: boolean,
+  hasActivity: boolean,
   activeCount: number,
 ): boolean {
-  if (!hasTurn) return false
+  if (!hasActivity) return false
   if (focusedId && companionId === focusedId) return true
   return activeCount <= AUTO_FLOW_MAX
 }
@@ -105,9 +103,9 @@ const MEM_FLOOR = 0.45
 
 /**
  * Resolve which legs light up for a companion's flow. Body follows live device
- * presence; memory follows recall hits on the active turn (brightness scales
- * from a legibility floor up to full at MEM_SATURATION). A turn with zero hits
- * leaves the memory leg dark.
+ * presence; memory follows recall hits on the scoped voice detail (brightness
+ * scales from a legibility floor up to full at MEM_SATURATION). A voice turn
+ * with zero hits leaves the memory leg dark.
  */
 export function flowLegs(c: CompanionUnit): FlowLegs {
   const body = c.devices.some((d) => d.online)
@@ -168,7 +166,7 @@ export function flowStagger(path: string): string {
 // `?demoFlow=<companionId>` (or bare `?demoFlow` → first companion) overlays a
 // synthetic in-conversation turn + online body onto one companion so the
 // circulation effect can be *seen* without staging a real agent turn (replay
-// mode doesn't help — its companions/active_turn still come from the real DB).
+// mode doesn't help because companions and recent turns still come from real DB).
 // Wired in useMissionControlStream, gated to import.meta.env.DEV — inert in prod.
 
 /** Synthetic "running" turn with recall hits, so both flow legs light. */
@@ -213,10 +211,10 @@ export function isDemoFlowTarget(companionId: string, index: number, demoFlow: s
   return demoFlow ? companionId === demoFlow : index === 0
 }
 
-// ── Tier 2: event-driven directed pulses (§11) ─────────────────────────────
-// Where Tier 1 is a state-driven ambient loop, Tier 2 overlays discrete,
-// one-shot darts fired by real activity events off the SSE stream: each event
-// maps by `source` to a leg + direction. Baseline loop = 底色; these = 定向脉冲.
+// ── event-driven directed pulses ───────────────────────────────────────────
+// Discrete one-shot darts are fired by observed activity events off the SSE
+// stream; each event maps by `source` to a leg + direction. The ambient loop is
+// the baseline and these are directional pulses.
 // Pure geometry/mapping here; the transient queue + render live in the
 // composable/component. On by default for every companion (`?flow2=off`
 // disables; callers may explicitly narrow the scope to one companion).
@@ -322,9 +320,9 @@ export function pulseThrottled(lastMs: number, nowMs: number, minGapMs: number =
 export type PulseScope = 'focused' | 'all'
 
 /**
- * Whether an event pulse for `companionId` is in scope. Default 'focused' keeps
- * Tier-2 restrained to the focused companion (matches Tier-1, no screen-wide
- * traffic); 'all' (`?flow2=all`) broadens to every companion.
+ * Whether an event pulse for `companionId` is in scope. Mission Control uses
+ * owner-wide `all` by default so concurrent companions remain visible; callers
+ * may explicitly choose `focused` for a quieter detail view.
  */
 export function pulseInScope(companionId: string, focusedId: string | undefined, scope: PulseScope): boolean {
   if (scope === 'all') return true

@@ -11,7 +11,11 @@ from fastapi import FastAPI
 
 from eidolon_admin_server.app.mission_control import service as mission_control_service
 from eidolon_admin_server.app.mission_control import router as mission_control_router
-from eidolon_admin_server.app.mission_control.router import _events_tail, _runtime_event_stream
+from eidolon_admin_server.app.mission_control.router import (
+    _event_in_owner_scope,
+    _events_tail,
+    _runtime_event_stream,
+)
 
 
 @pytest.fixture
@@ -144,8 +148,8 @@ async def test_snapshot_sorts_mixed_timezone_events(
     assert body["recent_events"][0]["source"] == "agent"
     data_event = next(item for item in body["recent_events"] if item["event_id"] == "event-naive-time")
     assert "[redacted:" in data_event["payload"]["content"]
-    # active turn yields structured spans, and they never carry text fields
-    assert body["trace_spans"], "active turn should yield spans"
+    # Every observed voice turn yields safe spans; history is not tied to one playhead.
+    assert body["trace_spans"], "observed voice turn should yield spans"
     for span in body["trace_spans"]:
         assert {"span_id", "turn_id", "name", "kind"} <= set(span)
         assert not any(k in span for k in ("content", "text", "transcript", "prompt"))
@@ -165,6 +169,49 @@ async def test_events_stream_emits_startup_frame() -> None:
     assert first.startswith("event: runtime_event\n")
     assert "mission_control.connected" in first
     assert '"event_origin"' in first and '"live"' in first
+
+
+def test_mission_control_http_surface_is_read_only() -> None:
+    assert mission_control_router.routes
+    assert all(route.methods <= {"GET", "HEAD"} for route in mission_control_router.routes)
+
+
+def test_owner_scoped_stream_rejects_cross_owner_and_unattributed_hub_events() -> None:
+    own = mission_control_service.RuntimeEvent(
+        event_id="own",
+        ts=datetime.now(UTC),
+        source="hub",
+        type="device.observed",
+        owner_id="owner-a",
+        summary="own device",
+    )
+    other = own.model_copy(update={"event_id": "other", "owner_id": "owner-b"})
+    global_event = own.model_copy(update={"event_id": "global", "owner_id": None})
+
+    assert _event_in_owner_scope(own, "owner-a")
+    assert not _event_in_owner_scope(other, "owner-a")
+    assert not _event_in_owner_scope(global_event, "owner-a")
+    assert _event_in_owner_scope(global_event, None)
+
+
+async def test_live_enrichment_never_invents_owner_for_global_hub_frame(
+    data_store: DataStore,
+) -> None:
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(data_store=data_store)),
+    )
+    global_event = mission_control_service.RuntimeEvent(
+        event_id="hub-probe",
+        ts=datetime.now(UTC),
+        source="hub",
+        type="device.presence.probe_cycle",
+        summary="global probe",
+    )
+
+    enriched = await mission_control_service.enrich_runtime_event(request, global_event)
+
+    assert enriched.owner_id is None
+    assert not _event_in_owner_scope(enriched, "owner-selected")
 
 
 async def test_events_tail_streams_new_db_events(data_store: DataStore) -> None:
@@ -663,3 +710,32 @@ def test_device_binding_enriches_guard_event_and_route() -> None:
         "hub",
         "guard-companion",
     ]
+
+
+def test_guard_activity_drives_observer_state_without_voice_turn() -> None:
+    guard = mission_control_service.RuntimeActivity(
+        activity_id="guard:running",
+        kind="guard_event",
+        owner_id="owner-guard",
+        companion_id="guard-companion",
+        status="running",
+        outcome="deferred",
+        summary="Guard observing",
+    )
+
+    experience = mission_control_service._experience(
+        owner=SimpleNamespace(owner_id="owner-guard", display_name="Guard Owner"),
+        companion=None,
+        devices=[],
+        services=[],
+        activities=[guard],
+        primary_voice_turn=None,
+        memory=mission_control_service.RuntimeMemory(),
+        jobs=[],
+        recent_events=[],
+        source_status=[],
+    )
+
+    assert experience.system_state == "active"
+    assert experience.headline == "Guard Owner 有 1 条运行活动"
+    assert "不依赖语音轮次" in experience.subheadline

@@ -76,7 +76,7 @@ export const MODE_EXP: Record<string, string> = {
   infra: '共享基础设施，由 supervisord 托管',
 }
 
-/** Which bus node the active turn's current stage lights up (signal flow). */
+/** Map legacy voice-stage keys to substrate nodes for voice-detail fallback. */
 export const STAGE_SVC: Record<string, string> = {
   input: 'channel', speech: 'channel', duck: 'channel', eot: 'channel',
   commit: 'agent', agent_turn: 'agent', brain: 'agent', response: 'agent',

@@ -42,7 +42,7 @@ export interface InfraNode extends InfraDef {
 
 /**
  * A companion projected into the sovereign-domain view: its bodies,
- * memory realm state and current activity, resolved against the snapshot.
+ * memory realm state and independent activities, resolved against the snapshot.
  */
 export interface CompanionUnit {
   id: string
@@ -58,7 +58,7 @@ export interface CompanionUnit {
   devices: RuntimeDevice[]
   activities: RuntimeActivity[]
   activeActivity: RuntimeActivity | null
-  activeTurn: RuntimeTurn | null
+  activeVoiceTurn: RuntimeTurn | null
   turn: RuntimeTurn | null
   turns: RuntimeTurn[]
   jobs: RuntimeJob[]
