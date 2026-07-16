@@ -95,6 +95,9 @@ class RuntimeDevice(BaseModel):
 
 class RuntimeTurn(BaseModel):
     turn_id: str
+    trace_id: str | None = None
+    channel_turn_id: str | None = None
+    agent_turn_id: str | None = None
     conversation_id: str
     owner_id: str
     companion_id: str
@@ -107,6 +110,11 @@ class RuntimeTurn(BaseModel):
     memory_hits: int = 0
     tool_names: list[str] = Field(default_factory=list)
     privacy_mode: str | None = None
+    phase: str = ""
+    outcome: RuntimeOutcome = "success"
+    terminal_reason: str = ""
+    event_ids: list[str] = Field(default_factory=list)
+    missing_milestones: list[str] = Field(default_factory=list)
     stages: list[JsonDict] = Field(default_factory=list)
 
 

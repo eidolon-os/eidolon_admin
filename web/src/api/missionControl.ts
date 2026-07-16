@@ -88,6 +88,9 @@ export interface RuntimeTurnStage {
 
 export interface RuntimeTurn {
   turn_id: string
+  trace_id: string | null
+  channel_turn_id: string | null
+  agent_turn_id: string | null
   conversation_id: string
   owner_id: string
   companion_id: string
@@ -100,6 +103,11 @@ export interface RuntimeTurn {
   memory_hits: number
   tool_names: string[]
   privacy_mode: string | null
+  phase: string
+  outcome: RuntimeOutcome
+  terminal_reason: string
+  event_ids: string[]
+  missing_milestones: string[]
   stages: RuntimeTurnStage[]
 }
 

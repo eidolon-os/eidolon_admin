@@ -84,7 +84,7 @@ async def build_snapshot(
         _safe(statuses, "data.conversations", store.conversations.list_for_owner(owner_id, limit=20), []),
         _safe(statuses, "data.memory", store.memory_repo.list_realms_for_owner(owner_id), []),
         _safe(statuses, "data.jobs", store.jobs.list_for_owner(owner_id, limit=20), []),
-        _safe(statuses, "data.events", store.events.list_for_owner(owner_id, limit=40), []),
+        _safe(statuses, "data.events", store.events.list_for_owner(owner_id, limit=240), []),
     )
     statuses.append(_status("data", True, started))
 
@@ -102,16 +102,18 @@ async def build_snapshot(
     runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
     runtime_jobs = _dedupe_jobs(runtime_jobs)[:12]
 
-    recent_events = _events_from_data(data_events)
+    data_runtime_events = _events_from_data(data_events)
+    recent_events = list(data_runtime_events)
     recent_events.extend(_events_from_turns(turns[:5]))
     recent_events.extend(_events_from_jobs(runtime_jobs[:5]))
     recent_events = sorted(
         recent_events,
         key=lambda ev: _as_utc(ev.ts) or datetime.min.replace(tzinfo=UTC),
         reverse=True,
-    )[:60]
+    )[:120]
 
-    runtime_turns = [_turn(row) for row in turns]
+    agent_runtime_turns = [_turn(row) for row in turns]
+    runtime_turns = _project_runtime_turns(data_runtime_events, agent_runtime_turns)
     active_turn = _active_turn(runtime_turns)
 
     source_status = _coalesce_statuses(statuses)
@@ -126,7 +128,11 @@ async def build_snapshot(
         recent_events=recent_events,
         source_status=source_status,
     )
-    trace_spans = _trace_spans(active_turn)
+    trace_spans = [
+        span
+        for turn in runtime_turns[:12]
+        for span in _trace_spans(turn)
+    ]
     permission_ledger = _permission_ledger(recent_events)
     evidence_chains = _evidence_chains(
         companion=companion,
@@ -593,14 +599,188 @@ def _device_lane_detail(device: RuntimeDevice) -> str:
     return "等待连接"
 
 
+_CHANNEL_TERMINAL_TYPES = {
+    "channel.turn.completed",
+    "channel.turn.rejected",
+    "channel.turn.failed",
+}
+
+_CHANNEL_STAGE_META: dict[str, tuple[str, str]] = {
+    "user_speech_open": ("speech", "用户说话"),
+    "provisional_duck": ("duck", "暂时压低播放"),
+    "evidence_arbitration": ("eot", "判断打断与轮次结束"),
+    "accepted_interruption": ("interrupt", "接受打断"),
+    "rejected_interruption": ("interrupt", "恢复原播放"),
+    "user_turn_pending": ("eot", "等待完整轮次"),
+    "user_turn_committed": ("commit", "轮次已提交"),
+    "user_turn_rejected": ("commit", "轮次未进入大脑"),
+    "generating": ("brain", "大脑开始生成"),
+    "brain_request_sent": ("brain", "请求已送达大脑"),
+    "brain_first_delta": ("response", "大脑首个响应"),
+    "brain_done": ("response", "大脑响应完成"),
+    "brain_cancelled": ("response", "大脑响应被取消"),
+    "brain_error": ("response", "大脑响应失败"),
+    "llm_error": ("response", "生成失败"),
+    "tts_provider_first_audio": ("tts", "TTS 首个音频"),
+    "first_audio": ("playback", "开始播放"),
+    "playback_done": ("playback", "播放完成"),
+}
+
+
+def _project_runtime_turns(
+    events: list[RuntimeEvent],
+    agent_turns: list[RuntimeTurn],
+) -> list[RuntimeTurn]:
+    """Merge Channel facts and Agent rows into one turn view keyed by trace."""
+
+    grouped: dict[str, list[RuntimeEvent]] = {}
+    for event in events:
+        if event.source != "channel" or not event.type.startswith("channel.turn."):
+            continue
+        channel_turn_id = str(event.payload.get("channel_turn_id") or event.turn_id or "")
+        if channel_turn_id:
+            grouped.setdefault(channel_turn_id, []).append(event)
+
+    agent_by_trace = {turn.trace_id: turn for turn in agent_turns if turn.trace_id}
+    used_agent_ids: set[str] = set()
+    projected: list[RuntimeTurn] = []
+    for channel_turn_id, turn_events in grouped.items():
+        ordered = sorted(turn_events, key=lambda event: _as_utc(event.ts) or datetime.min.replace(tzinfo=UTC))
+        trace_id = next((event.trace_id for event in ordered if event.trace_id), channel_turn_id)
+        agent_turn = agent_by_trace.get(trace_id)
+        if agent_turn is not None:
+            used_agent_ids.add(agent_turn.turn_id)
+        terminal = next((event for event in reversed(ordered) if event.type in _CHANNEL_TERMINAL_TYPES), None)
+        phase_events = [event for event in ordered if event.type == "channel.turn.phase_changed"]
+        latest_phase = str(phase_events[-1].payload.get("phase") or "") if phase_events else ""
+        status = str(terminal.payload.get("status") or "completed") if terminal else "running"
+        outcome = terminal.outcome if terminal else "deferred"
+        started_at = _as_utc(ordered[0].ts) if ordered else None
+        finished_at = _as_utc(terminal.ts) if terminal else None
+        elapsed_ms = (
+            int((finished_at - started_at).total_seconds() * 1000)
+            if started_at is not None and finished_at is not None
+            else None
+        )
+        stages = _channel_turn_stages(ordered, terminal=terminal)
+        if agent_turn is not None:
+            stages = _merge_agent_stages(stages, agent_turn.stages)
+        projected.append(
+            RuntimeTurn(
+                turn_id=channel_turn_id,
+                trace_id=trace_id,
+                channel_turn_id=channel_turn_id,
+                agent_turn_id=agent_turn.agent_turn_id if agent_turn else None,
+                conversation_id=(
+                    agent_turn.conversation_id
+                    if agent_turn
+                    else next(
+                        (
+                            str(event.payload.get("conversation_id"))
+                            for event in reversed(ordered)
+                            if event.payload.get("conversation_id")
+                        ),
+                        "",
+                    )
+                ),
+                owner_id=ordered[-1].owner_id or (agent_turn.owner_id if agent_turn else ""),
+                companion_id=ordered[-1].companion_id or (agent_turn.companion_id if agent_turn else ""),
+                device_id=next((event.device_id for event in ordered if event.device_id), None)
+                or (agent_turn.device_id if agent_turn else None),
+                status=status,
+                trigger="voice.full_duplex",
+                started_at=started_at,
+                finished_at=finished_at,
+                latency_ms=elapsed_ms or (agent_turn.latency_ms if agent_turn else None),
+                memory_hits=agent_turn.memory_hits if agent_turn else 0,
+                tool_names=agent_turn.tool_names if agent_turn else [],
+                privacy_mode=agent_turn.privacy_mode if agent_turn else "safe",
+                phase=latest_phase,
+                outcome=outcome,
+                terminal_reason=str(terminal.payload.get("terminal_reason") or "") if terminal else "",
+                event_ids=[event.event_id for event in ordered],
+                missing_milestones=(
+                    [str(item) for item in terminal.payload.get("missing_milestones") or []]
+                    if terminal
+                    else []
+                ),
+                stages=stages,
+            )
+        )
+
+    projected.extend(turn for turn in agent_turns if turn.turn_id not in used_agent_ids)
+    return sorted(
+        projected,
+        key=lambda turn: _as_utc(turn.started_at) or datetime.min.replace(tzinfo=UTC),
+        reverse=True,
+    )
+
+
+def _channel_turn_stages(
+    events: list[RuntimeEvent],
+    *,
+    terminal: RuntimeEvent | None,
+) -> list[dict[str, Any]]:
+    ordered_keys: list[str] = []
+    stage_rows: dict[str, dict[str, Any]] = {}
+    previous_elapsed = 0.0
+    for event in events:
+        semantic = ""
+        if event.type == "channel.turn.phase_changed":
+            semantic = str(event.payload.get("phase") or "")
+        elif event.type == "channel.turn.milestone":
+            semantic = str(event.payload.get("milestone") or "")
+        meta = _CHANNEL_STAGE_META.get(semantic)
+        if meta is None:
+            continue
+        key, label = meta
+        elapsed = float(event.payload.get("elapsed_ms") or previous_elapsed)
+        latency = max(0, round(elapsed - previous_elapsed))
+        previous_elapsed = max(previous_elapsed, elapsed)
+        if key not in stage_rows:
+            ordered_keys.append(key)
+            stage_rows[key] = {"key": key, "label": label, "status": "done", "latency_ms": latency}
+        else:
+            stage_rows[key]["label"] = label
+            stage_rows[key]["latency_ms"] = int(stage_rows[key].get("latency_ms") or 0) + latency
+    stages = [stage_rows[key] for key in ordered_keys]
+    if not stages:
+        return stages
+    if terminal is None:
+        stages[-1]["status"] = "running"
+    elif terminal.outcome in {"failure", "denied"}:
+        stages[-1]["status"] = "failed" if terminal.outcome == "failure" else "degraded"
+    return stages
+
+
+def _merge_agent_stages(
+    channel_stages: list[dict[str, Any]],
+    agent_stages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not channel_stages:
+        return list(agent_stages)
+    seen = {str(stage.get("key") or "") for stage in channel_stages}
+    extras = [
+        dict(stage)
+        for stage in agent_stages
+        if str(stage.get("key") or "") in {"memory_recall", "tools", "memory_write"}
+        and str(stage.get("key") or "") not in seen
+    ]
+    return [*channel_stages, *extras]
+
+
 def _turn(row: dict[str, Any]) -> RuntimeTurn:
     obs = row.get("observability_summary") or {}
     memory = obs.get("memory") or {}
     tools = obs.get("tools") or {}
     latency = obs.get("latency") or {}
     stages = _turn_stages(row, obs)
+    agent_turn_id = str(row.get("turn_id") or "")
+    trace_id = _str_or_none(row.get("trace_id"))
     return RuntimeTurn(
-        turn_id=str(row.get("turn_id") or ""),
+        turn_id=agent_turn_id,
+        trace_id=trace_id,
+        agent_turn_id=agent_turn_id,
         conversation_id=str(row.get("conversation_id") or ""),
         owner_id=str(row.get("owner_id") or ""),
         companion_id=str(row.get("companion_id") or ""),
@@ -613,6 +793,8 @@ def _turn(row: dict[str, Any]) -> RuntimeTurn:
         memory_hits=int(memory.get("hit_count") or 0),
         tool_names=[str(item) for item in tools.get("names") or []],
         privacy_mode=_str_or_none(obs.get("privacy_mode")),
+        phase="agent_turn",
+        outcome="failure" if str(row.get("status") or "").lower() in {"failed", "errored", "error"} else "success",
         stages=stages,
     )
 
@@ -668,10 +850,19 @@ def _stage_status(status: Any) -> str:
 
 
 def _active_turn(turns: list[RuntimeTurn]) -> RuntimeTurn | None:
+    active_states = {
+        "running",
+        "pending",
+        "queued",
+        "processing",
+        "generating",
+        "speaking",
+        "deferred",
+    }
     for turn in turns:
-        if turn.status not in {"ok", "done", "succeeded", "completed"}:
+        if turn.status.lower() in active_states:
             return turn
-    return turns[0] if turns else None
+    return None
 
 
 def _job(row: Any) -> RuntimeJob:
@@ -736,6 +927,13 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
             "warn" if "revoked" in row.event_type or "cancel" in row.event_type else "info"
         )
         outcome = getattr(row, "outcome", None) or "success"
+        raw_payload = row.payload_json or {}
+        payload = _safe_payload(raw_payload)
+        device_id = (
+            row.subject_id
+            if row.subject_type == "device"
+            else _str_or_none(raw_payload.get("device_id"))
+        )
         events.append(
             RuntimeEvent(
                 event_id=row.event_id,
@@ -744,13 +942,20 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
                 type=row.event_type,
                 severity=severity,
                 outcome=outcome,
+                trace_id=getattr(row, "trace_id", None),
                 owner_id=row.owner_id,
                 companion_id=getattr(row, "companion_id", None),
-                device_id=row.subject_id if row.subject_type == "device" else None,
+                device_id=device_id,
+                conversation_id=_str_or_none(raw_payload.get("conversation_id")),
                 job_id=row.subject_id if row.subject_type == "job" else None,
                 turn_id=row.subject_id if row.subject_type == "turn" else None,
-                summary=_event_summary(row.event_type, row.subject_type, row.subject_id),
-                payload=_safe_payload(row.payload_json or {}),
+                summary=_runtime_event_summary(
+                    row.event_type,
+                    row.subject_type,
+                    row.subject_id,
+                    raw_payload,
+                ),
+                payload=payload,
             )
         )
     return events
@@ -766,6 +971,7 @@ def _events_from_turns(turns: list[dict[str, Any]]) -> list[RuntimeEvent]:
                 ts=turn.started_at or datetime.now(UTC),
                 source="agent",
                 type="agent.turn.observed",
+                trace_id=turn.trace_id,
                 owner_id=turn.owner_id,
                 companion_id=turn.companion_id,
                 device_id=turn.device_id,
@@ -944,7 +1150,6 @@ def _experience(
     turn_event = _latest_event(recent_events, "turn")
     running_jobs = [job for job in jobs if job.status not in {"ok", "done", "succeeded", "completed", "failed", "errored"}]
     degraded = [status for status in source_status if not status.ok]
-    online_services = [service for service in services if service.online]
     completion = _experience_completion(devices, services, active_turn, memory, jobs, recent_events)
     system_state = "active" if active_turn else ("working" if running_jobs else ("watching" if latest_event else "standby"))
 
@@ -1273,6 +1478,26 @@ def _runtime_companion(row: Any) -> RuntimeCompanion:
 def _event_summary(event_type: str, subject_type: str, subject_id: str) -> str:
     readable = event_type.replace(".", " ")
     return f"{readable} · {subject_type}:{subject_id}"
+
+
+def _runtime_event_summary(
+    event_type: str,
+    subject_type: str,
+    subject_id: str,
+    payload: dict[str, Any],
+) -> str:
+    if event_type == "channel.turn.phase_changed":
+        phase = str(payload.get("phase") or "unknown")
+        reason = str(payload.get("transition_event") or "")
+        return f"Turn phase · {phase}{f' · {reason}' if reason else ''}"
+    if event_type == "channel.turn.milestone":
+        milestone = str(payload.get("milestone") or "unknown")
+        return f"Turn milestone · {milestone}"
+    if event_type in _CHANNEL_TERMINAL_TYPES:
+        status = str(payload.get("status") or event_type.rsplit(".", 1)[-1])
+        reason = str(payload.get("terminal_reason") or "")
+        return f"Turn {status}{f' · {reason}' if reason else ''}"
+    return _event_summary(event_type, subject_type, subject_id)
 
 
 def _event_source(event_type: str) -> str:

@@ -119,9 +119,9 @@ const drawerTurns = computed(() => {
           </div>
           <span class="dw-sect">最近对话</span>
           <div class="dw-list">
-            <div v-for="t in drawerTurns" :key="t.turn_id" class="dw-row">
+            <button v-for="t in drawerTurns" :key="t.turn_id" class="dw-row link" :class="{ selected: mc.selectedTurnId.value === t.turn_id }" @click="mc.selectTurn(t.turn_id, drawerComp.id)">
               <i class="led" :class="statusClass(t.status)" /><b>{{ (t.status || '').toUpperCase() }}</b><em>{{ fmtLatency(t.latency_ms) }} · 召回 {{ t.memory_hits }} · 工具 ×{{ t.tool_names?.length ?? 0 }}</em>
-            </div>
+            </button>
             <p v-if="!drawerTurns.length" class="dw-empty">暂无对话记录</p>
           </div>
           <template v-if="drawerComp.turn">
@@ -157,6 +157,14 @@ const drawerTurns = computed(() => {
           <span class="dw-kick">LIVE TRACE · 实时链路</span>
           <h3>{{ focusedCompanion?.name || '全局链路' }}</h3>
           <p class="dw-role">一次对话从身体到大脑再回到身体的完整链路：阶段耗时、Agent 跨度、以及经过的事件流转。</p>
+          <div v-if="scopedTurn" class="dw-grid">
+            <div><span>状态</span><b :class="statusClass(scopedTurn.status)">{{ scopedTurn.status }}</b></div>
+            <div><span>阶段</span><b class="mono sm">{{ scopedTurn.phase || '—' }}</b></div>
+            <div><span>Channel Turn</span><b class="mono sm">{{ scopedTurn.channel_turn_id || '未观测' }}</b></div>
+            <div><span>Agent Turn</span><b class="mono sm">{{ scopedTurn.agent_turn_id || '未进入' }}</b></div>
+          </div>
+          <p v-if="scopedTurn?.terminal_reason" class="dw-role">终态：{{ scopedTurn.terminal_reason }}</p>
+          <p v-if="scopedTurn?.missing_milestones?.length" class="dw-role warn">缺失印记：{{ scopedTurn.missing_milestones.join(' · ') }}</p>
           <span class="dw-sect">阶段 · STAGES</span>
           <ol v-if="scopedTurn && scopedTurn.stages.length" class="dw-stages">
             <li v-for="s in scopedTurn.stages" :key="s.key" class="dw-stage" :class="statusClass(s.status)">
@@ -169,11 +177,11 @@ const drawerTurns = computed(() => {
           <AgentSpanInspector :spans="traceSpans" />
           <span class="dw-sect">事件流转 · FLOW</span>
           <div class="dw-list">
-            <div v-for="e in companionEvents.slice(0, 20)" :key="e.event_id" class="dw-row">
+            <button v-for="e in companionEvents.slice(0, 20)" :key="e.event_id" class="dw-row link" :class="{ selected: mc.selectedEventId.value === e.event_id }" @click="mc.selectEvent(e)">
               <em class="mono">{{ fmtTime(e.ts) }}</em>
               <b class="dw-src">{{ SVC_GLYPH[e.source] || '·' }} {{ e.source.toUpperCase() }}</b>
               <span class="dw-ev">{{ e.summary || e.type }}</span>
-            </div>
+            </button>
             <p v-if="!companionEvents.length" class="dw-empty">暂无事件流转（设备↔智能体的流转将在这里呈现）</p>
           </div>
         </template>
@@ -207,6 +215,8 @@ const drawerTurns = computed(() => {
 .dw-row b { font: 700 12px/1 var(--cy-sans); color: var(--cy-txt); flex: 0 0 auto; }
 .dw-row em { font: 600 10px/1.3 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; margin-left: auto; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dw-row.link { cursor: pointer; } .dw-row.link:hover { border-color: rgba(0, 234, 255, 0.4); background: rgba(0, 234, 255, 0.06); }
+.dw-row.selected { border-color: rgba(0, 234, 255, .65); background: rgba(0, 234, 255, .1); }
+.dw-role.warn { color: var(--cy-yellow); }
 .dw-row .mono { font-family: var(--cy-mono); color: var(--cy-txt-dim); }
 .dw-ev { font-size: 11.5px; color: #aab6d8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dw-empty { padding: 10px; font-size: 11.5px; color: var(--cy-txt-dim); }

@@ -78,7 +78,10 @@ export const MODE_EXP: Record<string, string> = {
 
 /** Which bus node the active turn's current stage lights up (signal flow). */
 export const STAGE_SVC: Record<string, string> = {
-  input: 'channel', memory_recall: 'memory', agent_turn: 'agent', tools: 'agent', memory_write: 'memory',
+  input: 'channel', speech: 'channel', duck: 'channel', eot: 'channel',
+  commit: 'agent', agent_turn: 'agent', brain: 'agent', response: 'agent',
+  tts: 'channel', playback: 'channel',
+  memory_recall: 'memory', tools: 'agent', memory_write: 'memory',
 }
 
 /** Request-spine order (hub→…→memory). The wavefront flows only the edges whose

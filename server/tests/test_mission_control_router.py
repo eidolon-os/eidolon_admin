@@ -297,3 +297,223 @@ async def test_snapshot_exposes_contract_layer(
     assert cam["raw_retention"] == "not_stored"
     cam_event = next(ev for ev in body["recent_events"] if ev["event_id"] == "ev-cam")
     assert "[redacted:" in cam_event["payload"]["image"]
+
+
+async def test_snapshot_projects_channel_only_rejected_turn(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    """A turn that never reached Agent must still exist in Mission Control."""
+
+    await data_store.owner_service.create_owner(
+        owner_id="owner-channel-turn", display_name="Voice Owner", actor_type="test"
+    )
+    await data_store.workspace_provisioning.provision_workspace(
+        owner_id="owner-channel-turn",
+        companion_display_name="Xiaoyi",
+        actor_type="test",
+    )
+    await data_store.devices.create_device(
+        device_id="box-channel-turn",
+        owner_id="owner-channel-turn",
+        name="ESP BOX 3",
+        kind="esp_box_3",
+        bound_companion_id="c_owner-channel-turn_default",
+    )
+    base_payload = {
+        "channel_turn_id": "channel-turn-1",
+        "room_name": "room-channel-turn",
+        "device_id": "box-channel-turn",
+    }
+    await data_store.events.record_event(
+        event_id="evt-channel-phase-1",
+        event_type="channel.turn.phase_changed",
+        owner_id="owner-channel-turn",
+        companion_id="c_owner-channel-turn_default",
+        subject_type="turn",
+        subject_id="channel-turn-1",
+        trace_id="channel-turn-1",
+        payload_json={
+            **base_payload,
+            "phase": "user_speech_open",
+            "previous_phase": "idle",
+            "transition_seq": 1,
+            "transition_event": "speech_started",
+            "side_effect": "none",
+            "elapsed_ms": 0,
+        },
+    )
+    await data_store.events.record_event(
+        event_id="evt-channel-phase-2",
+        event_type="channel.turn.phase_changed",
+        owner_id="owner-channel-turn",
+        companion_id="c_owner-channel-turn_default",
+        subject_type="turn",
+        subject_id="channel-turn-1",
+        trace_id="channel-turn-1",
+        payload_json={
+            **base_payload,
+            "phase": "user_turn_rejected",
+            "previous_phase": "user_speech_open",
+            "transition_seq": 2,
+            "transition_event": "voiceprint_gate_rejected",
+            "side_effect": "none",
+            "elapsed_ms": 210,
+        },
+    )
+    await data_store.events.record_event(
+        event_id="evt-channel-terminal",
+        event_type="channel.turn.rejected",
+        owner_id="owner-channel-turn",
+        companion_id="c_owner-channel-turn_default",
+        subject_type="turn",
+        subject_id="channel-turn-1",
+        trace_id="channel-turn-1",
+        reason="voiceprint_commit_blocked",
+        payload_json={
+            **base_payload,
+            "status": "rejected",
+            "terminal_reason": "voiceprint_commit_blocked",
+            "durations_ms": {"speech_stop_to_commit": None},
+            "missing_milestones": ["turn_committed", "brain_first_delta", "first_audio"],
+        },
+    )
+
+    resp = await client.get("/api/mission-control/snapshot?owner_id=owner-channel-turn")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    turn = next(item for item in body["recent_turns"] if item["turn_id"] == "channel-turn-1")
+    assert turn["trace_id"] == "channel-turn-1"
+    assert turn["channel_turn_id"] == "channel-turn-1"
+    assert turn["agent_turn_id"] is None
+    assert turn["status"] == "rejected"
+    assert turn["phase"] == "user_turn_rejected"
+    assert turn["outcome"] == "denied"
+    assert turn["terminal_reason"] == "voiceprint_commit_blocked"
+    assert turn["event_ids"] == [
+        "evt-channel-phase-1",
+        "evt-channel-phase-2",
+        "evt-channel-terminal",
+    ]
+    assert [stage["key"] for stage in turn["stages"]] == ["speech", "commit"]
+
+
+async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One logical turn keeps Channel timing and Agent evidence without duplicates."""
+
+    owner_id = "owner-trace-merge"
+    companion_id = "c_owner-trace-merge_default"
+    channel_turn_id = "channel-turn-merged"
+    await data_store.owner_service.create_owner(
+        owner_id=owner_id, display_name="Voice Owner", actor_type="test"
+    )
+    await data_store.workspace_provisioning.provision_workspace(
+        owner_id=owner_id,
+        companion_display_name="Xiaoyi",
+        actor_type="test",
+    )
+    base_payload = {
+        "channel_turn_id": channel_turn_id,
+        "room_name": "room-trace-merge",
+        "device_id": "box-trace-merge",
+    }
+    await data_store.events.record_event(
+        event_id="evt-trace-speech",
+        event_type="channel.turn.phase_changed",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        subject_type="turn",
+        subject_id=channel_turn_id,
+        trace_id=channel_turn_id,
+        payload_json={
+            **base_payload,
+            "phase": "user_speech_open",
+            "previous_phase": "idle",
+            "transition_seq": 1,
+            "side_effect": "none",
+            "elapsed_ms": 0,
+        },
+    )
+    await data_store.events.record_event(
+        event_id="evt-trace-brain",
+        event_type="channel.turn.milestone",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        subject_type="turn",
+        subject_id=channel_turn_id,
+        trace_id=channel_turn_id,
+        payload_json={
+            **base_payload,
+            "milestone": "brain_first_delta",
+            "milestone_seq": 1,
+            "elapsed_ms": 180,
+            "brain_turn_id": "agent-turn-merged",
+            "conversation_id": "conversation-merged",
+        },
+    )
+    await data_store.events.record_event(
+        event_id="evt-trace-complete",
+        event_type="channel.turn.completed",
+        owner_id=owner_id,
+        companion_id=companion_id,
+        subject_type="turn",
+        subject_id=channel_turn_id,
+        trace_id=channel_turn_id,
+        payload_json={
+            **base_payload,
+            "status": "completed",
+            "terminal_reason": "agent_playback_done",
+            "durations_ms": {},
+            "missing_milestones": [],
+        },
+    )
+
+    async def fake_agent_turns(*_args, **_kwargs):
+        return [
+            {
+                "turn_id": "agent-turn-merged",
+                "trace_id": channel_turn_id,
+                "conversation_id": "conversation-merged",
+                "owner_id": owner_id,
+                "companion_id": companion_id,
+                "device_id": "box-trace-merge",
+                "status": "completed",
+                "started_at": datetime.now(UTC).isoformat(),
+                "observability_summary": {
+                    "memory": {"attempted": True, "hit_count": 3},
+                    "tools": {"count": 1, "names": ["weather"]},
+                    "memory_write": {"fanout_allowed": True, "disposition": "write"},
+                },
+            }
+        ]
+
+    monkeypatch.setattr(mission_control_service, "_agent_turns", fake_agent_turns)
+
+    resp = await client.get(f"/api/mission-control/snapshot?owner_id={owner_id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["recent_turns"]) == 1
+    turn = body["recent_turns"][0]
+    assert turn["turn_id"] == channel_turn_id
+    assert turn["channel_turn_id"] == channel_turn_id
+    assert turn["agent_turn_id"] == "agent-turn-merged"
+    assert turn["conversation_id"] == "conversation-merged"
+    assert turn["memory_hits"] == 3
+    assert turn["tool_names"] == ["weather"]
+    assert [stage["key"] for stage in turn["stages"]] == [
+        "speech",
+        "response",
+        "memory_recall",
+        "tools",
+        "memory_write",
+    ]
+    assert body["active_turn"] is None
+    assert {span["turn_id"] for span in body["trace_spans"]} == {channel_turn_id}
+    agent_event = next(event for event in body["recent_events"] if event["type"] == "agent.turn.observed")
+    assert agent_event["trace_id"] == channel_turn_id

@@ -17,6 +17,7 @@ import {
   currentStageKey,
   demoFlowDevice,
   demoFlowTurn,
+  eventBelongsToTurn,
   eventToPulse,
   eventTone,
   EVENT_PULSE_MS,
@@ -32,7 +33,7 @@ import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel }
 import type { CompanionUnit, InfraNode, StreamState } from './types'
 
 const POLL_MS = 8000
-const ACTIVE_STATES = ['running', 'active', 'pending', 'queued']
+const ACTIVE_STATES = ['running', 'active', 'pending', 'queued', 'processing', 'generating', 'speaking', 'deferred']
 
 export interface MissionControlMode {
   /** 'replay' streams recorded fixtures (M4); 'live' is the default. */
@@ -51,8 +52,8 @@ export interface MissionControlMode {
    */
   flowEvents?: boolean
   /**
-   * Which companions' events emit darts: 'focused' (default, restrained) or
-   * 'all' (`?flow2=all`, every companion).
+   * Which companions' events emit darts: 'all' by default, or 'focused' for a
+   * deliberately quiet single-companion view.
    */
   flowEventsScope?: PulseScope
 }
@@ -70,15 +71,18 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Gate the demo hook to dev builds so a stray `?demoFlow` can never fabricate
   // an active turn in production.
   const demoFlow = import.meta.env.DEV ? opts.demoFlow : undefined
-  // Tier-2 directed pulses: on by default (focused companion only); `?flow2=off`
+  // Tier-2 directed pulses: on by default for every companion; `?flow2=off`
   // opts it out. No longer dev-gated — it only reacts to real events.
   const flowEventsEnabled = opts.flowEvents ?? true
-  const pulseScope: PulseScope = opts.flowEventsScope ?? 'focused'
+  const pulseScope: PulseScope = opts.flowEventsScope ?? 'all'
   const owners = ref<OwnerView[]>([])
   const ownerId = ref(opts.ownerId || '')
   // A secondary selection layered on the owner scope: when set, companion-scoped
   // modules (live trace, evidence lanes, event flow) re-scope to this companion.
   const focusedCompanionId = ref('')
+  const selectedTurnId = ref('')
+  const selectedEventId = ref('')
+  const hoveredEventId = ref('')
   const snapshot = ref<RuntimeSnapshot | null>(null)
   const liveEvents = ref<RuntimeEvent[]>([])
   // Tier-2: transient directed pulses currently in flight (auto-expire).
@@ -91,6 +95,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
 
   let pollTimer: number | undefined
   let clockTimer: number | undefined
+  let channelRefreshTimer: number | undefined
 
   // ── primitives off the snapshot ──────────────────────────────────────
   const experience = computed(() => snapshot.value?.experience)
@@ -115,6 +120,12 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const activeTurn = computed<RuntimeTurn | null>(
     () => snapshot.value?.active_turn || snapshot.value?.recent_turns?.[0] || null,
   )
+  const runtimeTurns = computed(() => snapshot.value?.recent_turns || [])
+  const selectedTurn = computed<RuntimeTurn | null>(() =>
+    selectedTurnId.value
+      ? runtimeTurns.value.find((turn) => turn.turn_id === selectedTurnId.value) || null
+      : null,
+  )
   const pipelineActive = computed(() => {
     const t = snapshot.value?.active_turn
     return t ? ACTIVE_STATES.includes((t.status || '').toLowerCase()) : false
@@ -130,12 +141,20 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const recentEvents = computed(() => {
     const merged = [...liveEvents.value, ...(snapshot.value?.recent_events || [])]
     const seen = new Set<string>()
-    return merged.filter((e) => (seen.has(e.event_id) ? false : (seen.add(e.event_id), true))).slice(0, 16)
+    return merged.filter((e) => (seen.has(e.event_id) ? false : (seen.add(e.event_id), true))).slice(0, 120)
+  })
+  const highlightedEvent = computed<RuntimeEvent | null>(() => {
+    const eventId = hoveredEventId.value || selectedEventId.value
+    return eventId ? recentEvents.value.find((event) => event.event_id === eventId) || null : null
   })
   const traceId = computed(() =>
-    (activeTurn.value?.turn_id || snapshot.value?.owner?.owner_id || 'STANDBY').slice(0, 14).toUpperCase(),
+    (selectedTurn.value?.trace_id || activeTurn.value?.trace_id || activeTurn.value?.turn_id || snapshot.value?.owner?.owner_id || 'STANDBY').slice(0, 14).toUpperCase(),
   )
-  const traceSpans = computed(() => snapshot.value?.trace_spans || [])
+  const traceSpans = computed(() => {
+    const spans = snapshot.value?.trace_spans || []
+    if (!selectedTurn.value) return spans
+    return spans.filter((span) => span.turn_id === selectedTurn.value!.turn_id)
+  })
   const evidenceChains = computed(() => snapshot.value?.evidence_chains || [])
   const permissionLedger = computed(() => snapshot.value?.permission_ledger || [])
   const demoMode = computed(() => snapshot.value?.demo_mode || 'live')
@@ -152,11 +171,14 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     return companions.value.map((c, i) => {
       let devs = devices.value.filter((d) => d.companion_id === c.companion_id)
       const cJobs = jobs.value.filter((j) => j.companion_id === c.companion_id)
-      let turn = t && t.companion_id === c.companion_id ? t : null
+      const cTurns = runtimeTurns.value.filter((turn) => turn.companion_id === c.companion_id)
+      let active = t && t.companion_id === c.companion_id && ACTIVE_STATES.includes((t.status || '').toLowerCase()) ? t : null
+      let turn = selectedTurn.value?.companion_id === c.companion_id ? selectedTurn.value : active
       // DEV-only: overlay a synthetic turn + online body on the demo target so
       // both flow legs light. Purely presentational — never touches the wire.
       if (isDemoFlowTarget(c.companion_id, i, demoFlow)) {
         if (!turn) turn = demoFlowTurn(c.companion_id || 'demo')
+        if (!active) active = turn
         if (!devs.some((d) => d.online))
           devs = devs.length
             ? devs.map((d, di) => (di === 0 ? { ...d, online: true } : d))
@@ -175,7 +197,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         runners: isActiveRealm ? `${m?.runners_online ?? 0}/${m?.runners_total ?? 0}` : '',
         write: isActiveRealm ? (m?.fanout_allowed ? m?.last_write_disposition || 'ALLOW' : 'HOLD') : '',
         devices: devs,
+        activeTurn: active,
         turn,
+        turns: cTurns,
         jobs: cJobs,
         // The master companion is authoritative when the snapshot carries the
         // flag; fall back to the "default companion" heuristic otherwise.
@@ -205,7 +229,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       lastPulseEventId = e.event_id
       const cid = e.companion_id
       if (!cid || !pulseInScope(cid, focusedCompanionId.value, pulseScope)) return
-      const p = eventToPulse(e.source)
+      const p = eventToPulse(e)
       if (!p) return
       const tone = eventTone(e.severity, e.outcome)
       const key = `${cid}:${p.leg}`
@@ -251,8 +275,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Live trace: the focused companion's turn, else the owner's active turn.
   const scopedTurn = computed<RuntimeTurn | null>(() => {
     const f = focusedCompanion.value
+    if (selectedTurn.value && (!f || selectedTurn.value.companion_id === f.id)) return selectedTurn.value
     if (!f) return activeTurn.value
-    return f.turn || (snapshot.value?.recent_turns || []).find((t) => t.companion_id === f.id) || null
+    return f.activeTurn || f.turns[0] || null
   })
   const scopedJobs = computed(() => (focusedCompanion.value ? focusedCompanion.value.jobs : jobs.value))
   // permission_ledger carries device_id (no companion_id) — scope via device→companion.
@@ -264,11 +289,38 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   })
   // Per-companion event stream. Events already carry companion_id + device_id +
   // turn_id, so this doubles as the hook for the future device→agent→return flow.
-  const companionEvents = computed(() =>
-    focusedCompanion.value
-      ? recentEvents.value.filter((e) => e.companion_id === focusedCompanion.value!.id)
-      : recentEvents.value,
-  )
+  const companionEvents = computed(() => {
+    if (selectedTurn.value) {
+      return recentEvents.value.filter((event) => eventBelongsToTurn(event, selectedTurn.value!))
+    }
+    return focusedCompanion.value
+      ? recentEvents.value.filter((event) => event.companion_id === focusedCompanion.value!.id)
+      : recentEvents.value
+  })
+
+  function selectTurn(turnId: string, companionId?: string) {
+    selectedTurnId.value = turnId
+    selectedEventId.value = ''
+    if (companionId) focusedCompanionId.value = companionId
+  }
+
+  function followLive() {
+    selectedTurnId.value = ''
+    selectedEventId.value = ''
+  }
+
+  function selectEvent(event: RuntimeEvent) {
+    selectedEventId.value = event.event_id
+    const linkedTurn = runtimeTurns.value.find((turn) => eventBelongsToTurn(event, turn))
+    const turnId = String(event.payload?.channel_turn_id || linkedTurn?.turn_id || event.turn_id || '')
+    if (turnId) selectTurn(turnId, event.companion_id || undefined)
+    else if (event.companion_id) focusedCompanionId.value = event.companion_id
+    selectedEventId.value = event.event_id
+  }
+
+  function hoverEvent(event: RuntimeEvent | null) {
+    hoveredEventId.value = event?.event_id || ''
+  }
 
   // ── infra rail (runtime substrate, demoted) ──────────────────────────
   const infraNodes = computed<InfraNode[]>(() =>
@@ -311,6 +363,10 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         liveEvents.value = [event, ...liveEvents.value].slice(0, 80)
         streamState.value = event.severity === 'warn' && event.type.includes('degraded') ? 'degraded' : 'live'
         if (event.source === 'hub' || event.source === 'mission_control') void refresh()
+        if (event.source === 'channel') {
+          if (channelRefreshTimer) window.clearTimeout(channelRefreshTimer)
+          channelRefreshTimer = window.setTimeout(() => void refresh(), 180)
+        }
       } catch {
         streamState.value = 'degraded'
       }
@@ -355,12 +411,16 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   onBeforeUnmount(() => {
     if (pollTimer) window.clearInterval(pollTimer)
     if (clockTimer) window.clearInterval(clockTimer)
+    if (channelRefreshTimer) window.clearTimeout(channelRefreshTimer)
     pulseTimers.forEach((t) => window.clearTimeout(t))
     pulseTimers.clear()
     es.close()
   })
   watch(ownerId, async () => {
     focusedCompanionId.value = ''
+    selectedTurnId.value = ''
+    selectedEventId.value = ''
+    hoveredEventId.value = ''
     liveEvents.value = []
     activePulses.value = []
     lastLegEmit.clear()
@@ -374,7 +434,9 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // primitives
     experience, memory, devices, services, jobs, companions,
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
-    activeTurn, pipelineActive, primaryCompanionId, privacyMode, deviceRatio,
+    activeTurn, runtimeTurns, selectedTurn, selectedTurnId, selectedEventId,
+    highlightedEvent, hoveredEventId,
+    pipelineActive, primaryCompanionId, privacyMode, deviceRatio,
     recentEvents, traceId, traceSpans, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,
@@ -386,7 +448,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // header chrome
     clock, streamLabelText, systemStateText,
     // actions
-    refresh,
+    refresh, selectTurn, selectEvent, hoverEvent, followLive,
   }
 }
 

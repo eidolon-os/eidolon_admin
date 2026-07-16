@@ -15,6 +15,7 @@ import {
   demoFlowDevice,
   demoFlowTurn,
   directedLegPath,
+  eventBelongsToTurn,
   eventToPulse,
   eventTone,
   flowDur,
@@ -35,7 +36,7 @@ import {
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
-import type { RuntimeDevice, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
+import type { RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
 
 // ── fixtures ────────────────────────────────────────────────────────────
 function device(over: Partial<RuntimeDevice> = {}): RuntimeDevice {
@@ -49,16 +50,18 @@ function device(over: Partial<RuntimeDevice> = {}): RuntimeDevice {
 function turn(over: Partial<RuntimeTurn> = {}): RuntimeTurn {
   return {
     turn_id: 't1', conversation_id: 'cv1', owner_id: 'o1', companion_id: 'c1',
+    trace_id: 't1', channel_turn_id: 't1', agent_turn_id: null,
     device_id: 'd1', status: 'running', trigger: 'voice', started_at: null,
     finished_at: null, latency_ms: 120, memory_hits: 0, tool_names: [],
-    privacy_mode: null, stages: [], ...over,
+    privacy_mode: null, phase: 'user_speech_open', outcome: 'deferred',
+    terminal_reason: '', event_ids: [], missing_milestones: [], stages: [], ...over,
   }
 }
 function companion(over: Partial<CompanionUnit> = {}): CompanionUnit {
   return {
     id: 'c1', name: 'Aria', kind: 'companion', status: 'active', genome: '',
     realm: '', isActiveRealm: false, recall: null, runners: '', write: '',
-    devices: [], turn: null, jobs: [], isPrimary: false, ...over,
+    devices: [], activeTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
   }
 }
 
@@ -121,10 +124,11 @@ describe('flowPath', () => {
   const brain: Pt = { x: 100, y: 100 }
   const body: Pt = { x: 40, y: 160 }
   const mem: Pt = { x: 160, y: 160 }
-  const legs = (over: Partial<FlowLegs>): FlowLegs => ({ body: false, mem: false, memBright: 0, ...over })
+  const act: Pt = { x: 100, y: 20 }
+  const legs = (over: Partial<FlowLegs>): FlowLegs => ({ body: false, mem: false, memBright: 0, act: false, ...over })
 
   it('threads a closed body→brain→memory→brain→body loop when both legs lit', () => {
-    const d = flowPath(brain, body, mem, legs({ body: true, mem: true }))
+    const d = flowPath(brain, body, mem, act, legs({ body: true, mem: true }))
     expect(d).toBe('M40.0 160.0 L100.0 100.0 L160.0 160.0 L100.0 100.0 L40.0 160.0')
     // closed: starts and ends on the same point (seamless repeat, no teleport)
     expect(d.startsWith('M40.0 160.0')).toBe(true)
@@ -132,17 +136,21 @@ describe('flowPath', () => {
     expect(loopSegments(d)).toBe(4)
   })
   it('bounces body↔brain when only the body leg is lit', () => {
-    const d = flowPath(brain, body, mem, legs({ body: true }))
+    const d = flowPath(brain, body, mem, act, legs({ body: true }))
     expect(d).toBe('M40.0 160.0 L100.0 100.0 L40.0 160.0')
     expect(loopSegments(d)).toBe(2)
   })
   it('bounces brain↔memory when only the memory leg is lit', () => {
-    const d = flowPath(brain, body, mem, legs({ mem: true }))
-    expect(d).toBe('M100.0 100.0 L160.0 160.0 L100.0 100.0')
+    const d = flowPath(brain, body, mem, act, legs({ mem: true }))
+    expect(d).toBe('M160.0 160.0 L100.0 100.0 L160.0 160.0')
     expect(loopSegments(d)).toBe(2)
   })
   it('returns empty when no leg is lit (node pulse alone signals the brain)', () => {
-    expect(flowPath(brain, body, mem, legs({}))).toBe('')
+    expect(flowPath(brain, body, mem, act, legs({}))).toBe('')
+  })
+  it('includes the activity moon while a turn is live', () => {
+    const d = flowPath(brain, body, mem, act, legs({ body: true, act: true }))
+    expect(d).toBe('M40.0 160.0 L100.0 100.0 L100.0 20.0 L100.0 100.0 L40.0 160.0')
   })
 })
 
@@ -196,21 +204,58 @@ describe('demo flow hook', () => {
 
 // ── Tier 2: event-driven directed pulses ──────────────────────────────────
 describe('eventToPulse', () => {
+  const event = (source: RuntimeEvent['source'], type = 'runtime.event', payload: Record<string, any> = {}) => ({ source, type, payload })
   it('maps device sources to an inbound body pulse', () => {
-    expect(eventToPulse('channel')).toEqual({ leg: 'body', dir: 'in' })
-    expect(eventToPulse('hub')).toEqual({ leg: 'body', dir: 'in' })
+    expect(eventToPulse(event('channel', 'channel.turn.phase_changed', { phase: 'user_speech_open' }))).toEqual({ leg: 'body', dir: 'in' })
+    expect(eventToPulse(event('hub'))).toEqual({ leg: 'body', dir: 'in' })
   })
   it('maps memory to an outbound memory pulse (brain→mem)', () => {
-    expect(eventToPulse('memory')).toEqual({ leg: 'mem', dir: 'out' })
+    expect(eventToPulse(event('memory'))).toEqual({ leg: 'mem', dir: 'out' })
   })
-  it('maps agent to an outbound body pulse (response returning)', () => {
-    expect(eventToPulse('agent')).toEqual({ leg: 'body', dir: 'out' })
+  it('maps agent activity to the activity moon', () => {
+    expect(eventToPulse(event('agent'))).toEqual({ leg: 'act', dir: 'in' })
+  })
+  it('uses Channel milestone semantics for brain and playback direction', () => {
+    expect(eventToPulse(event('channel', 'channel.turn.milestone', { milestone: 'generating' }))).toEqual({ leg: 'act', dir: 'out' })
+    expect(eventToPulse(event('channel', 'channel.turn.milestone', { milestone: 'brain_first_delta' }))).toEqual({ leg: 'act', dir: 'in' })
+    expect(eventToPulse(event('channel', 'channel.turn.milestone', { milestone: 'first_audio' }))).toEqual({ leg: 'body', dir: 'out' })
   })
   it('returns null for sources that touch no leg', () => {
-    expect(eventToPulse('data')).toBeNull()
-    expect(eventToPulse('admin')).toBeNull()
-    expect(eventToPulse('mission_control')).toBeNull()
-    expect(eventToPulse('nonsense')).toBeNull()
+    expect(eventToPulse(event('data'))).toBeNull()
+    expect(eventToPulse(event('admin'))).toBeNull()
+    expect(eventToPulse(event('mission_control'))).toBeNull()
+  })
+})
+
+describe('eventBelongsToTurn', () => {
+  it('never treats two missing trace ids as a correlation match', () => {
+    const legacy = turn({
+      turn_id: 'agent-1', trace_id: null, channel_turn_id: null,
+      agent_turn_id: 'agent-1', event_ids: [],
+    })
+    expect(eventBelongsToTurn({
+      event_id: 'hub-1', trace_id: null, turn_id: null, payload: {},
+    }, legacy)).toBe(false)
+  })
+
+  it('matches the explicit event list, non-empty trace, and either hop id', () => {
+    const unified = turn({
+      turn_id: 'channel-1', trace_id: 'channel-1', channel_turn_id: 'channel-1',
+      agent_turn_id: 'agent-1', event_ids: ['phase-1'],
+    })
+    expect(eventBelongsToTurn({
+      event_id: 'phase-1', trace_id: null, turn_id: null, payload: {},
+    }, unified)).toBe(true)
+    expect(eventBelongsToTurn({
+      event_id: 'memory-1', trace_id: 'channel-1', turn_id: null, payload: {},
+    }, unified)).toBe(true)
+    expect(eventBelongsToTurn({
+      event_id: 'agent-event', trace_id: null, turn_id: 'agent-1', payload: {},
+    }, unified)).toBe(true)
+    expect(eventBelongsToTurn({
+      event_id: 'channel-event', trace_id: null, turn_id: null,
+      payload: { channel_turn_id: 'channel-1' },
+    }, unified)).toBe(true)
   })
 })
 

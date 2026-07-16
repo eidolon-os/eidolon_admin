@@ -25,15 +25,15 @@ const initialOwnerId = typeof route.query.owner_id === 'string' ? route.query.ow
 // a synthetic active turn so the companion circulation effect is visible without
 // a live conversation. The composable ignores it outside dev builds.
 const demoFlow = 'demoFlow' in route.query ? String(route.query.demoFlow ?? '') : undefined
-// Tier-2 directed pulses: on by default (focused companion). `?flow2=off` disables;
-// `?flow2=all` broadens to every companion. undefined = composable default.
+// Tier-2 directed pulses: on by default for every companion. `?flow2=off`
+// disables them; undefined uses the composable default.
 const flowEvents = route.query.flow2 === 'off' ? false : undefined
 const flowEventsScope = route.query.flow2 === 'all' ? 'all' : undefined
 const mc = useMissionControlStream({ mode, ownerId: initialOwnerId, demoFlow, flowEvents, flowEventsScope })
 
 const {
   pipelineActive, error,
-  infraNodes, hotService,
+  infraNodes, hotService, selectedEventId,
   scopedTurn, companionEvents, focusedCompanion, focusedCompanionId,
 } = mc
 
@@ -42,11 +42,13 @@ const drawer = ref<DrawerTarget | null>(null)
 // trace + event stream — and opens the deep-dive drawer, which carries that
 // companion's evidence (memory / tasks / permissions). Focus persists after the
 // drawer closes; the owner sun clears it back to owner scope.
-function openOwner() { focusedCompanionId.value = ''; drawer.value = { type: 'owner' } }
-function openComp(c: CompanionUnit) { focusedCompanionId.value = c.id; drawer.value = { type: 'companion', c } }
+function openOwner() { mc.followLive(); focusedCompanionId.value = ''; drawer.value = { type: 'owner' } }
+function openComp(c: CompanionUnit) { mc.followLive(); focusedCompanionId.value = c.id; drawer.value = { type: 'companion', c } }
 function openMoon(s: Sat) { focusedCompanionId.value = s.c.id; drawer.value = { type: 'moon', s } }
 function openSvc(n: InfraNode) { drawer.value = { type: 'service', n } }
 function openTrace() { drawer.value = { type: 'trace' } }
+function selectTurn(turnId: string, companionId: string) { mc.selectTurn(turnId, companionId); openTrace() }
+function selectEvent(event: Parameters<typeof mc.selectEvent>[0]) { mc.selectEvent(event) }
 function closeDrawer() { drawer.value = null }
 
 // Pointer parallax (A3.2): depth via subtle background offset. rAF-throttled,
@@ -87,12 +89,12 @@ function returnToConsole() { router.push({ name: 'home' }) }
     <CockpitHeader :mc="mc" @return-console="returnToConsole" />
     <p v-if="error" class="cy-error">// {{ error }}</p>
 
-    <SovereignConstellation :mc="mc" :focused-id="focusedCompanionId" @open-owner="openOwner" @open-companion="openComp" @open-moon="openMoon" />
+    <SovereignConstellation :mc="mc" :focused-id="focusedCompanionId" @open-owner="openOwner" @open-companion="openComp" @open-moon="openMoon" @select-turn="selectTurn" />
 
     <LiveTraceTimeline :turn="scopedTurn" :scope="focusedCompanion?.name || ''" @open="openTrace" />
 
     <RuntimeBusRail :nodes="infraNodes" :hot-service="hotService" :pipeline-active="pipelineActive" @open-service="openSvc" />
-    <RecentEventsPanel :events="companionEvents" :scope="focusedCompanion?.name || ''" />
+    <RecentEventsPanel :events="companionEvents" :scope="focusedCompanion?.name || ''" :selected-event-id="selectedEventId" @select="selectEvent" @hover="mc.hoverEvent" />
 
     <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openComp" @close="closeDrawer" />
   </main>

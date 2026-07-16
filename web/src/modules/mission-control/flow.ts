@@ -9,7 +9,7 @@
 // predicates (no Vue, no side-effects) so the component stays thin and the
 // behaviour is unit-testable. Motion timing comes from the shared `motion.ts`
 // tokens — never hardcoded.
-import type { RuntimeDevice, RuntimeTurn } from '@/api/missionControl'
+import type { RuntimeDevice, RuntimeEvent, RuntimeTurn } from '@/api/missionControl'
 import { SPINE_ORDER } from './constants'
 import { DURATION } from './motion'
 import type { CompanionUnit } from './types'
@@ -28,6 +28,8 @@ export interface FlowLegs {
   mem: boolean
   /** 0..1 memory-leg intensity, saturating with recall hit count. */
   memBright: number
+  /** Companion↔activity leg — lit while a turn is active. */
+  act: boolean
 }
 
 // ── shared "current stage" (one playhead) ─────────────────────────────────
@@ -67,7 +69,9 @@ export function spineReached(hot: string, edgeTo: string): boolean {
  * STAGE_SVC, so constellation moon, bus wavefront and trace playhead agree. */
 export type StageMoon = 'body' | 'mem' | 'act'
 const STAGE_MOON: Record<string, StageMoon> = {
-  input: 'body', memory_recall: 'mem', agent_turn: 'act', tools: 'act', memory_write: 'mem',
+  input: 'body', speech: 'body', duck: 'body', eot: 'body', commit: 'act',
+  memory_recall: 'mem', agent_turn: 'act', brain: 'act', response: 'act',
+  tools: 'act', tts: 'body', playback: 'body', memory_write: 'mem',
 }
 export function stageMoon(stageKey: string): StageMoon | '' {
   return STAGE_MOON[stageKey] || ''
@@ -110,7 +114,7 @@ export function flowLegs(c: CompanionUnit): FlowLegs {
   const hits = c.turn?.memory_hits ?? 0
   const mem = hits > 0
   const memBright = mem ? MEM_FLOOR + (1 - MEM_FLOOR) * Math.min(1, hits / MEM_SATURATION) : 0
-  return { body, mem, memBright }
+  return { body, mem, memBright, act: !!c.activeTurn }
 }
 
 const f1 = (n: number) => n.toFixed(1)
@@ -123,12 +127,15 @@ const f1 = (n: number) => n.toFixed(1)
  * loop always closes back on where it began. Returns '' when nothing is lit
  * (the node pulse alone then signals "brain active").
  */
-export function flowPath(brain: Pt, body: Pt, mem: Pt, legs: FlowLegs): string {
+export function flowPath(brain: Pt, body: Pt, mem: Pt, act: Pt, legs: FlowLegs): string {
   const P = (p: Pt) => `${f1(p.x)} ${f1(p.y)}`
-  if (legs.body && legs.mem) return `M${P(body)} L${P(brain)} L${P(mem)} L${P(brain)} L${P(body)}`
-  if (legs.body) return `M${P(body)} L${P(brain)} L${P(body)}`
-  if (legs.mem) return `M${P(brain)} L${P(mem)} L${P(brain)}`
-  return ''
+  const moons = [legs.body ? body : null, legs.act ? act : null, legs.mem ? mem : null]
+    .filter((point): point is Pt => point !== null)
+  if (!moons.length) return ''
+  const path = [`M${P(moons[0])}`]
+  for (let i = 1; i < moons.length; i += 1) path.push(`L${P(brain)}`, `L${P(moons[i])}`)
+  path.push(`L${P(brain)}`, `L${P(moons[0])}`)
+  return path.join(' ')
 }
 
 /** Straight legs in a loop path (one per `L` command). */
@@ -180,6 +187,9 @@ export function demoFlowTurn(companionId: string): RuntimeTurn {
       { key: 'agent_turn', label: '推理', status: 'running', latency_ms: null },
       { key: 'memory_write', label: '写回', status: 'pending', latency_ms: null },
     ],
+    trace_id: `demo-flow-${companionId}`, channel_turn_id: `demo-flow-${companionId}`,
+    agent_turn_id: null, phase: 'agent_turn', outcome: 'deferred', terminal_reason: '',
+    event_ids: [], missing_milestones: [],
   }
 }
 
@@ -208,11 +218,11 @@ export function isDemoFlowTarget(companionId: string, index: number, demoFlow: s
 // one-shot darts fired by real activity events off the SSE stream: each event
 // maps by `source` to a leg + direction. Baseline loop = 底色; these = 定向脉冲.
 // Pure geometry/mapping here; the transient queue + render live in the
-// composable/component. On by default for the focused companion (`?flow2=off`
-// disables, `?flow2=all` broadens to every companion).
+// composable/component. On by default for every companion (`?flow2=off`
+// disables; callers may explicitly narrow the scope to one companion).
 
-/** A leg the circuit can light. (`agent` has no leg — it rides the body return.) */
-export type FlowLeg = 'body' | 'mem'
+/** A leg the circuit can light. */
+export type FlowLeg = 'body' | 'mem' | 'act'
 
 /** A directed pulse: which leg, and whether it travels toward or away from the brain. */
 export interface DirectedPulse {
@@ -222,25 +232,50 @@ export interface DirectedPulse {
 }
 
 /**
- * Map a runtime event's `source` to a directed pulse on the circuit:
- *   channel / hub → device input arriving   (body → brain, 'in')
- *   memory        → recall / write          (brain → mem,  'out')
- *   agent         → response to the body     (brain → body, 'out')
+ * Map an event's semantic phase/milestone to a directed pulse. Source is only
+ * the fallback: Channel may touch body, activity, or playback depending on the
+ * exact turn fact; memory and Agent events use their respective moons.
  * Sources that don't touch a leg (data / admin / mission_control) return null.
- * Mapping kept in one place so P4 can refine it (e.g. per event type/outcome).
+ * Mapping is kept in one place so the cloud and event list cannot disagree.
  */
-export function eventToPulse(source: string): DirectedPulse | null {
-  switch (source) {
-    case 'channel':
-    case 'hub':
-      return { leg: 'body', dir: 'in' }
-    case 'memory':
-      return { leg: 'mem', dir: 'out' }
-    case 'agent':
+export function eventToPulse(event: Pick<RuntimeEvent, 'source' | 'type' | 'payload'>): DirectedPulse | null {
+  const semantic = String(event.payload?.milestone || event.payload?.phase || '')
+  if (event.source === 'channel') {
+    if (['generating', 'brain_request_sent'].includes(semantic)) return { leg: 'act', dir: 'out' }
+    if (['brain_first_delta', 'brain_done', 'brain_cancelled', 'brain_error', 'llm_error'].includes(semantic))
+      return { leg: 'act', dir: 'in' }
+    if (['tts_provider_first_audio', 'first_audio', 'playback_done'].includes(semantic))
       return { leg: 'body', dir: 'out' }
-    default:
-      return null
+    if (event.type === 'channel.turn.completed') return { leg: 'body', dir: 'out' }
+    return { leg: 'body', dir: 'in' }
   }
+  if (event.source === 'hub') return { leg: 'body', dir: 'in' }
+  if (event.source === 'memory')
+    return { leg: 'mem', dir: event.type.includes('recalled') || event.type.includes('result') ? 'in' : 'out' }
+  if (event.source === 'agent') return { leg: 'act', dir: 'in' }
+  return null
+}
+
+/**
+ * Decide whether an event belongs to one logical turn. Empty correlation ids
+ * never match each other; legacy Agent-only turns fall back to their Agent id,
+ * while unified voice turns can match Channel id, Agent id, or trace id.
+ */
+export function eventBelongsToTurn(
+  event: Pick<RuntimeEvent, 'event_id' | 'trace_id' | 'turn_id' | 'payload'>,
+  turn: Pick<RuntimeTurn, 'turn_id' | 'trace_id' | 'channel_turn_id' | 'agent_turn_id' | 'event_ids'>,
+): boolean {
+  if (turn.event_ids?.includes(event.event_id)) return true
+  if (turn.trace_id && event.trace_id === turn.trace_id) return true
+  const eventTurnIds = [
+    event.turn_id,
+    String(event.payload?.channel_turn_id || '') || null,
+    String(event.payload?.brain_turn_id || '') || null,
+  ].filter((value): value is string => !!value)
+  const turnIds = [turn.turn_id, turn.channel_turn_id, turn.agent_turn_id].filter(
+    (value): value is string => !!value,
+  )
+  return eventTurnIds.some((eventTurnId) => turnIds.includes(eventTurnId))
 }
 
 /** Single-leg path: 'in' travels moon→brain, 'out' travels brain→moon. */

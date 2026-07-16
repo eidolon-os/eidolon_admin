@@ -5,9 +5,9 @@
 // data comes from the composable's `companionUnits`.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { RuntimeDevice } from '@/api/missionControl'
-import { currentStageKey, directedLegPath, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
+import { currentStageKey, directedLegPath, eventToPulse, eventTone, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
 import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, statusClass } from '../format'
-import type { CompanionUnit, GalaxyNode, Sat, SatKind } from '../types'
+import type { CompanionUnit, GalaxyNode, Sat, SatKind, SatTone } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 
 const props = defineProps<{ mc: MissionControlStream; focusedId?: string }>()
@@ -15,9 +15,10 @@ defineEmits<{
   (e: 'open-owner'): void
   (e: 'open-companion', c: CompanionUnit): void
   (e: 'open-moon', s: Sat): void
+  (e: 'select-turn', turnId: string, companionId: string): void
 }>()
 
-const { companionUnits, unboundDevices, ownerName, activePulses, pipelineActive } = props.mc
+const { companionUnits, unboundDevices, ownerName, activePulses, pipelineActive, selectedTurnId, highlightedEvent } = props.mc
 
 // D5 ignite/settle: when a turn takes the pipeline idle→live, the sovereign core
 // flares once ("点火"). Wire hot/cold + node glows ease via CSS transition
@@ -39,11 +40,12 @@ const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, 
 // Runtime state shown on every planet, always visible (no hover). This is the
 // extension point for the future device→agent→return event flow.
 function runtime(c: CompanionUnit): { text: string; cls: string } {
-  if (c.turn)
+  if (c.activeTurn)
     return {
-      text: c.turn.latency_ms != null ? `对话中 · ${fmtLatency(c.turn.latency_ms)}` : '对话中',
+      text: c.activeTurn.latency_ms != null ? `对话中 · ${fmtLatency(c.activeTurn.latency_ms)}` : '对话中',
       cls: 'live',
     }
+  if (c.turn) return { text: `已选 · ${(c.turn.status || '').toUpperCase()}`, cls: statusClass(c.turn.status) }
   if (c.jobs.length) return { text: `${c.jobs.length} 个任务`, cls: 'warn' }
   return { text: '空闲', cls: 'idle' }
 }
@@ -70,8 +72,8 @@ function satOf(c: CompanionUnit, kind: SatKind): Omit<Sat, 'c' | 'x' | 'y' | 'li
   }
   return {
     kind, label: '活动', glyph: '⚡',
-    value: c.turn ? '对话中' : c.jobs.length ? `${c.jobs.length} 任务` : '空闲',
-    tone: c.turn ? 'live' : c.jobs.length ? 'warn' : 'off',
+    value: c.activeTurn ? '对话中' : c.turn ? `已选 · ${c.turn.status}` : c.jobs.length ? `${c.jobs.length} 任务` : '空闲',
+    tone: c.activeTurn ? 'live' : c.turn ? turnTone(c.turn.status, c.turn.outcome) : c.jobs.length ? 'warn' : 'off',
     empty: !c.turn && !c.jobs.length, accent: 'mag',
   }
 }
@@ -93,7 +95,7 @@ const galaxy = computed(() => {
       const sx = x + RSAT * Math.cos(sa), sy = y + RSAT * Math.sin(sa)
       return { ...satOf(c, kind), c, x: sx, y: sy, link: `M${x.toFixed(1)} ${y.toFixed(1)} L${sx.toFixed(1)} ${sy.toFixed(1)}` }
     })
-    return { c, x, y, link: `M${CX} ${CY} L${x.toFixed(1)} ${y.toFixed(1)}`, active: !!c.turn, sats }
+    return { c, x, y, link: `M${CX} ${CY} L${x.toFixed(1)} ${y.toFixed(1)}`, active: !!c.activeTurn, sats }
   })
   return { nodes, sats: nodes.flatMap((n) => n.sats), links: nodes.map((n) => ({ id: n.c.id, d: n.link, active: n.active })) }
 })
@@ -104,14 +106,15 @@ const galaxy = computed(() => {
 // as the sun→planet line — no new animation machinery, no new deps.
 const flows = computed(() => {
   const nodes = galaxy.value.nodes
-  const activeCount = nodes.filter((n) => !!n.c.turn).length
+  const activeCount = nodes.filter((n) => !!n.c.activeTurn).length
   return nodes
-    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.turn, activeCount))
+    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.activeTurn, activeCount))
     .map((n) => {
       const body = n.sats.find((s) => s.kind === 'body')
       const mem = n.sats.find((s) => s.kind === 'mem')
+      const act = n.sats.find((s) => s.kind === 'act')
       const legs = flowLegs(n.c)
-      const path = body && mem ? flowPath({ x: n.x, y: n.y }, body, mem, legs) : ''
+      const path = body && mem && act ? flowPath({ x: n.x, y: n.y }, body, mem, act, legs) : ''
       return { id: n.c.id, path, legs, dur: flowDur(path), stagger: flowStagger(path) }
     })
     .filter((f) => f.path)
@@ -123,6 +126,7 @@ const flowLegBright = computed(() => {
   for (const f of flows.value) {
     if (f.legs.body) m.set(`${f.id}:body`, 1)
     if (f.legs.mem) m.set(`${f.id}:mem`, f.legs.memBright)
+    if (f.legs.act) m.set(`${f.id}:act`, 1)
   }
   return m
 })
@@ -135,9 +139,11 @@ function legBright(s: Sat): number | undefined {
 function flowStyle(s: Sat): Record<string, string> | undefined {
   const b = legBright(s)
   if (b === undefined) return undefined
+  const color = s.kind === 'mem' ? '251, 255, 159' : s.kind === 'act' ? '255, 138, 200' : '0, 234, 255'
   return {
+    stroke: `rgba(${color}, ${(0.55 + 0.35 * b).toFixed(2)})`,
     strokeOpacity: (0.4 + 0.5 * b).toFixed(3),
-    filter: `drop-shadow(0 0 ${(2 + 2 * b).toFixed(1)}px rgba(0, 234, 255, ${(0.5 * b).toFixed(2)}))`,
+    filter: `drop-shadow(0 0 ${(2 + 2 * b).toFixed(1)}px rgba(${color}, ${(0.5 * b).toFixed(2)}))`,
   }
 }
 
@@ -147,7 +153,7 @@ function flowStyle(s: Sat): Record<string, string> | undefined {
 const EVENT_DUR = flowEventDur()
 // Normal darts take the leg's own hue; warn/bad override to the alarm palette
 // (matches the cockpit tone tokens) so failures read at a glance regardless of leg.
-const LEG_COLOR: Record<FlowLeg, string> = { body: '#9ff0ff', mem: '#fbff9f' }
+const LEG_COLOR: Record<FlowLeg, string> = { body: '#9ff0ff', mem: '#fbff9f', act: '#ff8ac8' }
 const TONE_COLOR: Record<Exclude<PulseTone, 'normal'>, string> = { warn: '#f7ff4a', bad: '#ff2e88' }
 function pulseColor(leg: FlowLeg, tone: PulseTone): string {
   return tone === 'normal' ? LEG_COLOR[leg] : TONE_COLOR[tone]
@@ -173,6 +179,22 @@ const eventPulses = computed<EventPulseVM[]>(() =>
     .filter((p): p is EventPulseVM => p !== null),
 )
 
+const highlightedPath = computed<EventPulseVM | null>(() => {
+  const event = highlightedEvent.value
+  if (!event?.companion_id) return null
+  const pulse = eventToPulse(event)
+  if (!pulse) return null
+  const node = galaxy.value.nodes.find((item) => item.c.id === event.companion_id)
+  const moon = node?.sats.find((sat) => sat.kind === pulse.leg)
+  if (!node || !moon) return null
+  const color = pulseColor(pulse.leg, eventTone(event.severity, event.outcome))
+  return {
+    id: event.event_id,
+    path: directedLegPath({ x: node.x, y: node.y }, moon, pulse.dir),
+    style: { stroke: color, filter: `drop-shadow(0 0 9px ${color})` },
+  }
+})
+
 // §one signal: light the moon matching each active companion's current stage, so
 // the constellation points at the same moment as the bus wavefront (hot service)
 // and the trace playhead. Keyed `id:kind`.
@@ -187,6 +209,30 @@ const stageHere = computed(() => {
 })
 function isStageHere(s: Sat): boolean {
   return stageHere.value.has(`${s.c.id}:${s.kind}`)
+}
+
+const turnBeads = computed(() => galaxy.value.nodes.flatMap((node) => {
+  const activity = node.sats.find((sat) => sat.kind === 'act')
+  if (!activity) return []
+  return node.c.turns.slice(0, 6).map((turn, index) => {
+    const angle = (-90 + index * 42) * (PI / 180)
+    const radius = 38 + Math.floor(index / 4) * 11
+    return {
+      turn,
+      label: `T${index + 1}`,
+      companionId: node.c.id,
+      x: activity.x + radius * Math.cos(angle),
+      y: activity.y + radius * Math.sin(angle),
+      live: !!node.c.activeTurn && node.c.activeTurn.turn_id === turn.turn_id,
+    }
+  })
+}))
+
+function turnTone(status: string, outcome: string): SatTone {
+  if (outcome === 'failure' || ['failed', 'error', 'errored'].includes(status)) return 'bad'
+  if (outcome === 'denied' || ['rejected', 'deferred'].includes(status)) return 'warn'
+  if (['running', 'pending', 'generating', 'speaking'].includes(status)) return 'live'
+  return 'ok'
 }
 
 function deviceOnline(d: RuntimeDevice) {
@@ -216,20 +262,17 @@ function deviceOnline(d: RuntimeDevice) {
         :key="'sl' + s.c.id + s.kind"
         :d="s.link"
         class="wire sat"
-        :class="{ dim: s.empty, flow: legBright(s) !== undefined }"
+        :class="[`link-${s.kind}`, { dim: s.empty, flow: legBright(s) !== undefined, selected: s.c.id === focusedId }]"
         :style="flowStyle(s)"
       />
-      <path v-for="l in galaxy.links" :key="'cl' + l.id" :d="l.d" class="wire comp" :class="{ hot: l.active }" />
-      <template v-for="l in galaxy.links.filter((x) => x.active)" :key="'p' + l.id">
-        <circle r="4" class="pulse"><animateMotion dur="1.4s" repeatCount="indefinite" :path="l.d" /></circle>
-        <circle r="4" class="pulse"><animateMotion dur="1.4s" begin="0.7s" repeatCount="indefinite" :path="l.d" /></circle>
-      </template>
+      <path v-for="l in galaxy.links" :key="'cl' + l.id" :d="l.d" class="wire comp ownership" :class="{ hot: l.active, selected: l.id === focusedId }" />
       <!-- Companion internal circulation: body↔brain↔memory loop (focused + active only). -->
       <template v-for="f in flows" :key="'fp' + f.id">
         <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" repeatCount="indefinite" :path="f.path" /></circle>
         <circle r="3.4" class="pulse flow-dot"><animateMotion :dur="f.dur" :begin="f.stagger" repeatCount="indefinite" :path="f.path" /></circle>
       </template>
       <!-- Tier-2: one-shot directed pulses fired by live events (?flow2). -->
+      <path v-if="highlightedPath" :d="highlightedPath.path" class="event-highlight" :style="highlightedPath.style" />
       <circle v-for="p in eventPulses" :key="p.id" r="4.4" class="pulse event-dot" :style="p.style">
         <animateMotion :dur="EVENT_DUR" fill="freeze" :path="p.path" />
       </circle>
@@ -241,6 +284,19 @@ function deviceOnline(d: RuntimeDevice) {
       <strong>{{ ownerName }}</strong>
       <em class="o-sub">{{ companionUnits.length }} 位伙伴</em>
     </div>
+
+    <button
+      v-for="bead in turnBeads"
+      :key="'turn-' + bead.turn.turn_id"
+      class="gx-turn"
+      :class="[
+        't-' + turnTone(bead.turn.status, bead.turn.outcome),
+        { selected: selectedTurnId === bead.turn.turn_id, live: bead.live },
+      ]"
+      :style="ptStyle(bead.x, bead.y)"
+      :title="`${bead.turn.status} · ${bead.turn.terminal_reason || bead.turn.phase || bead.turn.turn_id}`"
+      @click.stop="$emit('select-turn', bead.turn.turn_id, bead.companionId)"
+    ><span>{{ bead.label }}</span></button>
 
     <el-popover v-for="n in galaxy.nodes" :key="'c' + n.c.id" placement="top" :width="300" trigger="hover" popper-class="cy-pop" :show-after="60">
       <template #reference>
@@ -322,10 +378,16 @@ function deviceOnline(d: RuntimeDevice) {
 .galaxy { position: relative; flex: 1 1 auto; width: 100%; max-width: 1480px; aspect-ratio: 1000 / 700; max-height: 72vh; margin: 0 auto; }
 .gx-wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .wire { fill: none; }
-.wire.comp { stroke: rgba(0, 234, 255, 0.4); stroke-width: 1.4; transition: stroke var(--dur-base) var(--ease-out), stroke-width var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
-.wire.comp.hot { stroke: var(--cy-cyan); stroke-width: 2.2; filter: drop-shadow(0 0 5px var(--cy-cyan)); }
-.wire.sat { stroke: rgba(0, 234, 255, 0.24); stroke-width: 1; stroke-dasharray: 3 4; }
+.wire.comp { stroke: rgba(164, 75, 255, 0.4); stroke-width: 1.15; stroke-dasharray: 2 8; transition: stroke var(--dur-base) var(--ease-out), stroke-width var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
+.wire.comp.hot { stroke: rgba(164, 75, 255, 0.76); stroke-width: 1.6; filter: drop-shadow(0 0 4px rgba(164, 75, 255, 0.72)); }
+.wire.comp.selected { stroke: rgba(0, 234, 255, 0.72); stroke-width: 1.6; }
+.wire.sat { stroke-width: 1.15; stroke-dasharray: 3 4; transition: stroke var(--dur-base) var(--ease-out), stroke-width var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out), filter var(--dur-base) var(--ease-out); }
+.wire.sat.link-body { stroke: rgba(0, 234, 255, .38); }
+.wire.sat.link-mem { stroke: rgba(247, 255, 74, .34); }
+.wire.sat.link-act { stroke: rgba(255, 46, 136, .38); }
+.wire.sat.selected { stroke-width: 1.55; opacity: .92; filter: drop-shadow(0 0 3px currentColor); }
 .wire.sat.dim { stroke: rgba(109, 106, 153, 0.3); }
+.event-highlight { fill: none; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 8 5; opacity: .9; animation: dashflow .7s linear infinite; }
 /* A lit flow leg reads as an energized conduit: solid, brighter than the idle
    dashed leg. stroke-opacity + glow are bound inline (JS-resolved, scaled by
    the memory-leg brightness); here we set the conduit look and let brightness
@@ -374,9 +436,17 @@ function deviceOnline(d: RuntimeDevice) {
 .gx-sat.a-cyan { color: var(--cy-cyan); }
 .gx-sat.t-off { border-style: dashed; border-color: var(--cy-txt-dim); color: var(--cy-txt-dim); opacity: 0.62; }
 .gx-sat.t-live { animation: nodepulse var(--dur-breath) ease-in-out infinite; }
+.gx-sat.t-bad { border-color: var(--cy-mag); color: var(--cy-mag); box-shadow: 0 0 22px rgba(255, 46, 136, .5); }
 /* §one signal: the moon matching the current stage pulses + rings, tracking the
    signal to the body / memory / activity in step with the bus wavefront + trace. */
 .gx-sat.stage-here { animation: nodepulse var(--dur-breath) ease-in-out infinite; box-shadow: 0 0 22px currentColor; border-width: 1.5px; }
+.gx-turn { position: absolute; z-index: 7; width: 23px; height: 23px; margin: -11.5px 0 0 -11.5px; padding: 0; border: 1px solid rgba(109, 106, 153, .7); border-radius: 50%; background: rgba(8, 5, 20, .92); color: var(--cy-txt-dim); font: 700 7px/1 var(--cy-mono); cursor: pointer; box-shadow: 0 0 8px rgba(109, 106, 153, .25); transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast); }
+.gx-turn:hover, .gx-turn.selected { transform: scale(1.25); z-index: 9; }
+.gx-turn.t-ok { border-color: var(--cy-green); color: var(--cy-green); box-shadow: 0 0 9px rgba(100, 255, 180, .45); }
+.gx-turn.t-warn { border-color: var(--cy-yellow); color: var(--cy-yellow); box-shadow: 0 0 9px rgba(247, 255, 74, .45); }
+.gx-turn.t-bad { border-color: var(--cy-mag); color: var(--cy-mag); box-shadow: 0 0 11px rgba(255, 46, 136, .55); }
+.gx-turn.t-live, .gx-turn.live { border-color: var(--cy-cyan); color: var(--cy-cyan); animation: nodepulse var(--dur-breath) ease-in-out infinite; }
+.gx-turn.selected { outline: 1px solid #fff; outline-offset: 3px; }
 .s-glyph { font-size: 15px; font-style: normal; line-height: 1; color: currentColor; text-shadow: 0 0 8px currentColor; }
 .s-label { display: block; margin: 3px 0 2px; font: 700 8.5px/1 var(--cy-mono); color: var(--cy-txt-dim); letter-spacing: 0.04em; }
 .s-val { display: block; max-width: 68px; margin: 0 auto; font: 800 10px/1.05 var(--cy-sans); color: #eaf6ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -400,8 +470,9 @@ function deviceOnline(d: RuntimeDevice) {
   50% { box-shadow: 0 0 18px rgba(255, 255, 255, 0.55), 0 0 56px rgba(255, 46, 136, 0.6), 0 0 110px rgba(255, 46, 136, 0.34), 0 0 152px rgba(164, 75, 255, 0.3), inset 0 0 48px rgba(164, 75, 255, 0.28); }
 }
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 16px currentColor; } 50% { box-shadow: 0 0 30px currentColor; } }
+@keyframes dashflow { to { stroke-dashoffset: -26; } }
 @media (prefers-reduced-motion: reduce) {
-  .gx-owner, .gx-comp.active, .gx-sat.t-live, .gx-sat.stage-here, .orbit-ring { animation: none !important; }
+  .gx-owner, .gx-comp.active, .gx-sat.t-live, .gx-sat.stage-here, .gx-turn, .orbit-ring, .event-highlight { animation: none !important; }
   /* Hide the travelling dots entirely (not just their motion) so they don't
      clump at the origin. Lit flow legs stay brightened — a static, motion-free
      signal of which conduits are active. */

@@ -8,7 +8,11 @@ import { SVC_GLYPH } from '../constants'
 import { fmtTime } from '../format'
 import OriginBadge from '../primitives/OriginBadge.vue'
 
-defineProps<{ events: RuntimeEvent[]; scope?: string }>()
+defineProps<{ events: RuntimeEvent[]; scope?: string; selectedEventId?: string }>()
+defineEmits<{
+  (e: 'select', event: RuntimeEvent): void
+  (e: 'hover', event: RuntimeEvent | null): void
+}>()
 
 // Tie each event row to its source's colour (same legend as the bus / crawl), so a
 // new row sliding in reads as "this came from there" — the events list becomes a
@@ -31,7 +35,18 @@ function srcColor(s: string): string {
       <span v-if="scope" class="ev-scope">聚焦：{{ scope }}</span>
     </div>
     <transition-group v-if="events.length" tag="ul" name="ev" class="ev-list">
-      <li v-for="e in events.slice(0, 14)" :key="e.event_id" class="ev-row" :class="'sev-' + e.severity" :style="{ '--row-src': srcColor(e.source) }">
+      <li
+        v-for="e in events.slice(0, 14)"
+        :key="e.event_id"
+        class="ev-row"
+        :class="['sev-' + e.severity, { selected: selectedEventId === e.event_id, linked: !!(e.turn_id || e.trace_id) }]"
+        :style="{ '--row-src': srcColor(e.source) }"
+        tabindex="0"
+        @click="$emit('select', e)"
+        @keydown.enter="$emit('select', e)"
+        @mouseenter="$emit('hover', e)"
+        @mouseleave="$emit('hover', null)"
+      >
         <em class="ev-ts num">{{ fmtTime(e.ts) }}</em>
         <OriginBadge :origin="e.event_origin" />
         <b class="ev-src">{{ SVC_GLYPH[e.source] || '·' }} {{ e.source.toUpperCase() }}</b>
@@ -51,6 +66,8 @@ function srcColor(s: string): string {
 .ev-scope { font: 700 9px/1 var(--cy-mono); color: var(--cy-cyan); }
 .ev-list { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; max-height: 168px; overflow-y: auto; }
 .ev-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px; font-size: 11.5px; color: var(--cy-txt); border-bottom: 1px solid rgba(255, 255, 255, 0.03); border-left: 2px solid var(--row-src, var(--cy-hair)); }
+.ev-row.linked { cursor: pointer; }
+.ev-row.linked:hover, .ev-row.selected { background: rgba(0, 234, 255, .08); outline: 1px solid rgba(0, 234, 255, .18); }
 /* New events slide in from the top and push older rows down — a felt "arrival". */
 .ev-enter-from { opacity: 0; transform: translateX(-10px); }
 .ev-enter-active { transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }

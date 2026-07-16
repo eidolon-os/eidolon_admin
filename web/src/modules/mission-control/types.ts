@@ -55,14 +55,16 @@ export interface CompanionUnit {
   runners: string
   write: string
   devices: RuntimeDevice[]
+  activeTurn: RuntimeTurn | null
   turn: RuntimeTurn | null
+  turns: RuntimeTurn[]
   jobs: RuntimeJob[]
   isPrimary: boolean
 }
 
 export type SatKind = 'body' | 'mem' | 'act'
 export type SatAccent = 'cyan' | 'yellow' | 'mag'
-export type SatTone = 'ok' | 'live' | 'warn' | 'idle' | 'off'
+export type SatTone = 'ok' | 'live' | 'warn' | 'bad' | 'idle' | 'off'
 
 /** One asset moon (body / memory / activity) of a companion planet. */
 export interface Sat {
