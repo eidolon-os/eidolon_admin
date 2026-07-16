@@ -110,8 +110,9 @@ async function openCamera(pose: OwnerFacePose) {
       audio: false,
       video: {
         facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+        aspectRatio: { ideal: 4 / 3 },
       },
     })
     if (!cameraOpen.value || cameraPose.value !== pose) {
@@ -140,14 +141,37 @@ async function captureFace() {
     return
   }
   const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
+  canvas.width = 320
+  canvas.height = 240
   const context = canvas.getContext('2d')
   if (!context) {
     cameraError.value = '浏览器无法生成照片。'
     return
   }
-  context.drawImage(video, 0, 0, canvas.width, canvas.height)
+  const sourceRatio = video.videoWidth / video.videoHeight
+  const targetRatio = canvas.width / canvas.height
+  let sourceX = 0
+  let sourceY = 0
+  let sourceWidth = video.videoWidth
+  let sourceHeight = video.videoHeight
+  if (sourceRatio > targetRatio) {
+    sourceWidth = video.videoHeight * targetRatio
+    sourceX = (video.videoWidth - sourceWidth) / 2
+  } else if (sourceRatio < targetRatio) {
+    sourceHeight = video.videoWidth / targetRatio
+    sourceY = (video.videoHeight - sourceHeight) / 2
+  }
+  context.drawImage(
+    video,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  )
   const blob = await new Promise<Blob | null>((resolve) => {
     canvas.toBlob(resolve, 'image/jpeg', 0.92)
   })
@@ -222,6 +246,18 @@ function deliveryTag(status: string) {
   return 'info'
 }
 
+function ownerPresence(binding: GuardBindingView) {
+  const value = binding.status_json?.owner_presence
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { label: '等待信号', type: 'info' as const }
+  }
+  const expiresAt = typeof value.expires_at === 'string' ? Date.parse(value.expires_at) : 0
+  if (value.state === 'present' && expiresAt > Date.now()) {
+    return { label: 'Owner 在场', type: 'success' as const }
+  }
+  return { label: 'Owner 不在场', type: 'info' as const }
+}
+
 async function claim(device: DeviceView, replace = false) {
   if (!replace && bindings.value.some((binding) => binding.state === 'active')) {
     ElMessage.warning('当前 Owner 已有启用中的 Guard；请使用替换操作。')
@@ -283,6 +319,13 @@ watch(() => props.ownerId, load)
       <el-table-column prop="guard_companion_id" label="guard companion" min-width="170" />
       <el-table-column prop="policy_id" label="policy" min-width="150" />
       <el-table-column prop="state" label="state" width="110" />
+      <el-table-column label="owner presence" width="130">
+        <template #default="{ row }">
+          <el-tag size="small" :type="ownerPresence(row).type">
+            {{ ownerPresence(row).label }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="activated" width="180">
         <template #default="{ row }">{{ formatTimestamp(row.activated_at) }}</template>
       </el-table-column>
@@ -373,7 +416,7 @@ watch(() => props.ownerId, load)
         <div class="face-guide" aria-hidden="true" />
       </div>
       <el-alert v-if="cameraError" :title="cameraError" type="error" :closable="false" show-icon />
-      <p class="camera-hint">保持单人入镜、脸部清晰、光线均匀；侧脸只需轻转约 15–25°。</p>
+      <p class="camera-hint">保持头肩完整，脸部高度约占画面 35–50%，避免顶灯或窗户在身后；左右侧仅轻转 15–25°，双眼仍应可见。</p>
       <template #footer>
         <el-button @click="cameraOpen = false">取消</el-button>
         <el-button type="primary" :disabled="cameraBusy || !!cameraError" @click="captureFace">拍下这张</el-button>
@@ -430,7 +473,7 @@ watch(() => props.ownerId, load)
 .privacy-note, .empty-hint { margin: 10px 0; color: var(--eid-text-secondary); font-size: 12px; }
 .camera-stage { position: relative; overflow: hidden; width: 100%; aspect-ratio: 4 / 3; border-radius: 8px; background: #05090b; }
 .camera-stage video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-.face-guide { position: absolute; inset: 12% 30%; border: 2px solid rgb(87 225 255 / 80%); border-radius: 50%; box-shadow: 0 0 0 999px rgb(0 0 0 / 22%); pointer-events: none; }
+.face-guide { position: absolute; inset: 24% 34%; border: 2px solid rgb(87 225 255 / 80%); border-radius: 50%; box-shadow: 0 0 0 999px rgb(0 0 0 / 22%); pointer-events: none; }
 .camera-hint { margin: 10px 0 0; color: var(--eid-text-secondary); font-size: 12px; }
 .delivery-list { display: flex; margin-top: 10px; flex-direction: column; gap: 6px; }
 .delivery-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }

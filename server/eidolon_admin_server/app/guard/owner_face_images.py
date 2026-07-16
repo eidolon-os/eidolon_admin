@@ -9,7 +9,8 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 MAX_RAW_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_NORMALIZED_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_IMAGE_PIXELS = 20_000_000
-MAX_EDGE_PIXELS = 640
+NORMALIZED_WIDTH = 320
+NORMALIZED_HEIGHT = 240
 
 
 class OwnerFaceImageError(ValueError):
@@ -17,7 +18,7 @@ class OwnerFaceImageError(ValueError):
 
 
 def normalize_owner_face_image(raw: bytes) -> bytes:
-    """Decode once, orient pixels, resize, and emit metadata-free RGB JPEG."""
+    """Decode, orient, center-crop to 4:3 QVGA, and emit metadata-free RGB JPEG."""
     if not raw:
         raise OwnerFaceImageError("owner face image is empty")
     if len(raw) > MAX_RAW_IMAGE_BYTES:
@@ -31,8 +32,12 @@ def normalize_owner_face_image(raw: bytes) -> bytes:
             image = ImageOps.exif_transpose(source)
             if image.width < 160 or image.height < 160:
                 raise OwnerFaceImageError("owner face image must be at least 160x160")
-            image.thumbnail((MAX_EDGE_PIXELS, MAX_EDGE_PIXELS), Image.Resampling.LANCZOS)
-            rgb = image.convert("RGB")
+            rgb = ImageOps.fit(
+                image.convert("RGB"),
+                (NORMALIZED_WIDTH, NORMALIZED_HEIGHT),
+                method=Image.Resampling.LANCZOS,
+                centering=(0.5, 0.5),
+            )
             output = BytesIO()
             rgb.save(
                 output,
