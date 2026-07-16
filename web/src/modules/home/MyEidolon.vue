@@ -38,8 +38,13 @@ const ready = computed(() => Boolean(state.value?.master_ready))
 const master = computed(() => state.value?.master_companion || null)
 const companions = computed(() => state.value?.companions || [])
 const slaveCompanions = computed(() =>
-  companions.value.filter((item) => item.companion_id !== master.value?.companion_id),
+  companions.value.filter((item) => (
+    item.companion_id !== master.value?.companion_id
+    && item.kind !== 'guard'
+    && item.companion_type !== 'guard'
+  )),
 )
+const guardCompanions = computed(() => companions.value.filter((item) => item.kind === 'guard' || item.companion_type === 'guard'))
 const missing = computed(() => state.value?.missing || [])
 const primaryName = computed(() => master.value?.display_name || 'Eidolon')
 const ownerName = computed(() => state.value?.owner?.display_name || '我的身份')
@@ -137,7 +142,11 @@ function goCompanions() {
 }
 
 function goDevices() {
-  router.push({ name: 'devices', params: { tab: 'fleet' }, query: { owner_id: ownerId.value || undefined } })
+  router.push({ name: 'devices', params: { section: 'overview' }, query: { owner_id: ownerId.value || undefined } })
+}
+
+function goSecurity() {
+  router.push({ name: 'identity-security', query: { owner_id: ownerId.value || undefined } })
 }
 
 function goCockpit() {
@@ -269,6 +278,10 @@ function statusText(value: string) {
             <el-button size="large" @click="goDevices">
               <el-icon><Monitor /></el-icon>
               绑定设备
+            </el-button>
+            <el-button v-if="guardCompanions.length" size="large" @click="goSecurity">
+              <el-icon><Lock /></el-icon>
+              身份与安全
             </el-button>
           </div>
         </div>

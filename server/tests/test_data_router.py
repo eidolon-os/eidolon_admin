@@ -840,8 +840,11 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         nearby = await client.get("/api/owners/owner-devices/nearby-devices")
         assert nearby.status_code == 200
         assert nearby.json()["hub_available"] is True
-        assert [row["device_id"] for row in nearby.json()["devices"]] == ["esp-near"]
+        # Approval is an ownership gate, not a presence gate. Approved devices
+        # remain claimable while offline so the UI never loses the next step.
+        assert [row["device_id"] for row in nearby.json()["devices"]] == ["esp-near", "esp-ghost"]
         assert nearby.json()["devices"][0]["approved"] is True
+        assert nearby.json()["devices"][1]["status"] == "offline"
 
         identify = await client.post("/api/owners/owner-devices/nearby-devices/esp-near/identify")
         assert identify.status_code == 200
@@ -899,7 +902,18 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert second_body.status_code == 200
         assert second_body.json()["bound_companion_id"] == "c_owner-devices_default"
 
-        # Both nearby devices are now claimed, so nothing remains unclaimed.
+        offline_body = await client.post(
+            "/api/owners/owner-devices/nearby-devices/esp-ghost/claim",
+            json={
+                "name": "Offline ESP",
+                "companion_id": "c_owner-devices_default",
+                "interaction_mode": "voice",
+            },
+        )
+        assert offline_body.status_code == 200
+        assert offline_body.json()["bound_companion_id"] == "c_owner-devices_default"
+
+        # All approved nearby devices are now claimed, so nothing remains unclaimed.
         empty_nearby = await client.get("/api/owners/owner-devices/nearby-devices")
         assert empty_nearby.status_code == 200
         assert empty_nearby.json()["devices"] == []

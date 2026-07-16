@@ -102,6 +102,31 @@ describe('api/eidolonData.ts', () => {
     })
   })
 
+  it('claims and binds an approved device through owner-scoped endpoints', async () => {
+    getMock.mockResolvedValueOnce({ data: { devices: [], hub_available: true } })
+    postMock
+      .mockResolvedValueOnce({ data: { device_id: 'esp/1', owner_id: 'owner/1' } })
+      .mockResolvedValueOnce({ data: { device_id: 'esp/1', bound_companion_id: 'c/1' } })
+
+    const { addNearbyDeviceToOwner, bindOwnerDevice, listNearbyOwnerDevices } = await import('../src/api/eidolonData')
+    await listNearbyOwnerDevices('owner/1')
+    await addNearbyDeviceToOwner('owner/1', 'esp/1', { companion_id: 'c/1' })
+    await bindOwnerDevice('owner/1', 'esp/1', 'c/1')
+
+    expect(getMock).toHaveBeenCalledWith('/owners/owner%2F1/nearby-devices')
+    expect(postMock).toHaveBeenNthCalledWith(
+      1,
+      '/owners/owner%2F1/nearby-devices/esp%2F1/claim',
+      { companion_id: 'c/1' },
+    )
+    expect(postMock).toHaveBeenNthCalledWith(
+      2,
+      '/owners/owner%2F1/devices/esp%2F1/bind-companion',
+      null,
+      { params: { companion_id: 'c/1' } },
+    )
+  })
+
   it('calls companion persona governance endpoints with encoded ids', async () => {
     getMock
       .mockResolvedValueOnce({ data: { current_genome: null, history: [] } })

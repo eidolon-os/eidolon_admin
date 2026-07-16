@@ -132,6 +132,7 @@ const activeMenuItem = computed(() => {
 })
 
 const isMemoryRoute = computed(() => activeMenuItem.value?.item.section === 'Memory')
+const showOwnerSelector = computed(() => !['system-firmware', 'hub-devices'].includes(String(route.name || '')))
 
 const commandItems = computed<CommandItem[]>(() =>
   menuGroups.value.flatMap((group) =>
@@ -197,7 +198,9 @@ const railItems = computed(() =>
 
 function isActiveRoute(item: NavItem): boolean {
   if (item.route.name === 'home' && route.name === 'spaces') return true
-  if (item.id === 'device-center' && route.name === 'devices' && route.params.tab === 'guard') return true
+  if (item.id === 'my-eidolon' && route.name === 'identity-security') return false
+  if (item.id === 'companions' && route.name === 'companion-detail') return true
+  if (item.id === 'device-center' && route.name === 'device-detail') return true
   if (item.activeMatch === false) return false
   const target = item.activeMatch || item.route
   if (route.name !== target.name) return false
@@ -331,7 +334,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <kbd>⌘K</kbd>
         </button>
         <div class="header-actions">
-          <OwnerSelector />
+          <OwnerSelector v-if="showOwnerSelector" />
           <MemoryRealmSelector v-if="isMemoryRoute" />
         </div>
       </el-header>
@@ -596,15 +599,23 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 }
 .menu-item.launcher {
   min-height: 46px;
-  border-color: color-mix(in srgb, var(--eid-accent) 30%, var(--eid-border));
-  background: linear-gradient(90deg, rgba(34, 211, 238, 0.10), transparent);
+  border-color: transparent;
+  background: transparent;
 }
 .menu-item.launcher .menu-copy strong {
   font-size: 13px;
   font-weight: 760;
 }
 .menu-item.launcher:hover {
+  border-color: color-mix(in srgb, var(--eid-accent) 22%, var(--eid-border));
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.055), transparent);
   box-shadow: 0 0 22px rgba(34, 211, 238, 0.12);
+}
+.menu-item.launcher.active {
+  border-color: color-mix(in srgb, var(--eid-accent) 34%, var(--eid-border));
+  background:
+    linear-gradient(90deg, rgba(34, 211, 238, 0.10), rgba(251, 191, 36, 0.025), transparent),
+    rgba(13, 17, 20, 0.72);
 }
 .menu-item {
   width: 100%;

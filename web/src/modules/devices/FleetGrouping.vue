@@ -1,18 +1,84 @@
 <script setup lang="ts">
-// Owner → companion body overview for the Device Center. This is the user-facing
-// inventory: host-local web bodies from eidolon_data plus physical devices from
-// Hub, merged server-side by /api/devices/fleet.
-import { onMounted, ref, watch } from 'vue'
-import { VideoPlay } from '@element-plus/icons-vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { Connection, VideoPlay } from '@element-plus/icons-vue'
 import { getFleet, type FleetResponse } from '@/api/devices'
 import type { RuntimeDevice } from '@/api/missionControl'
-import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, isPreparedWebBody } from '@/modules/mission-control/format'
+import {
+  devicePresenceClass,
+  devicePresenceLabel,
+  deviceShort,
+  deviceType,
+  isPreparedWebBody,
+} from '@/modules/mission-control/format'
 import { webBodyLaunchUrl } from '@/utils/clientWeb'
 
-const props = defineProps<{ ownerId: string }>()
+type StatusFilter = 'all' | 'ready' | 'attention' | 'offline'
+type KindFilter = 'all' | 'web' | 'physical' | 'security'
+type GroupMode = 'companion' | 'kind'
 
+interface BodyItem {
+  device: RuntimeDevice
+  companionId: string
+  companionName: string
+}
+
+interface BodyGroup {
+  key: string
+  label: string
+  hint: string
+  items: BodyItem[]
+}
+
+const props = defineProps<{ ownerId: string }>()
+const router = useRouter()
 const fleet = ref<FleetResponse | null>(null)
 const loading = ref(false)
+const statusFilter = ref<StatusFilter>('all')
+const kindFilter = ref<KindFilter>('all')
+const groupMode = ref<GroupMode>('companion')
+
+const allItems = computed<BodyItem[]>(() => {
+  const grouped = (fleet.value?.groups || []).flatMap((group) => group.devices.map((device) => ({
+    device,
+    companionId: group.companion_id,
+    companionName: group.companion_name,
+  })))
+  const unbound = (fleet.value?.unbound || []).map((device) => ({
+    device,
+    companionId: '',
+    companionName: '未绑定 Companion',
+  }))
+  return [...grouped, ...unbound]
+})
+
+const stats = computed(() => ({
+  total: allItems.value.length,
+  ready: allItems.value.filter((item) => productState(item) === 'ready').length,
+  attention: allItems.value.filter((item) => productState(item) === 'attention').length,
+  offline: allItems.value.filter((item) => productState(item) === 'offline').length,
+}))
+
+const visibleItems = computed(() => allItems.value.filter((item) => {
+  if (statusFilter.value !== 'all' && productState(item) !== statusFilter.value) return false
+  return kindFilter.value === 'all' || productKind(item.device) === kindFilter.value
+}))
+
+const visibleGroups = computed<BodyGroup[]>(() => {
+  const groups = new Map<string, BodyGroup>()
+  for (const item of visibleItems.value) {
+    const kind = productKind(item.device)
+    const key = groupMode.value === 'companion' ? (item.companionId || 'unbound') : kind
+    const label = groupMode.value === 'companion' ? item.companionName : kindLabel(kind)
+    const hint = groupMode.value === 'companion'
+      ? (item.companionId ? 'Companion bodies' : '需要选择一个 Companion')
+      : kindHint(kind)
+    const group = groups.get(key) || { key, label, hint, items: [] }
+    group.items.push(item)
+    groups.set(key, group)
+  }
+  return [...groups.values()]
+})
 
 async function load() {
   if (!props.ownerId) {
@@ -28,119 +94,164 @@ async function load() {
     loading.value = false
   }
 }
+
 onMounted(load)
 watch(() => props.ownerId, load)
 
-function isWebBody(d: RuntimeDevice): boolean {
-  return String(d.kind || '').toLowerCase() === 'web'
+function isWebBody(device: RuntimeDevice): boolean {
+  return String(device.kind || '').toLowerCase() === 'web'
 }
 
-function sourceLabel(d: RuntimeDevice): string {
-  const source = String(d.signals?.source || '')
-  if (source === 'data') return 'owner 数据'
-  if (source === 'hub+data') return 'owner + Hub'
+function productKind(device: RuntimeDevice): Exclude<KindFilter, 'all'> {
+  const capabilities = (device.capabilities || []).map((value) => String(value).toLowerCase())
+  const raw = `${device.kind || ''} ${device.role || ''}`.toLowerCase()
+  if (raw.includes('guard') || capabilities.some((value) => value.includes('guard'))) return 'security'
+  if (isWebBody(device) || raw.includes('virtual')) return 'web'
+  return 'physical'
+}
+
+function productState(item: BodyItem): Exclude<StatusFilter, 'all'> {
+  const device = item.device
+  if (!item.companionId || device.status === 'degraded' || device.status === 'unknown') return 'attention'
+  if (device.online || isPreparedWebBody(device)) return 'ready'
+  if (device.status === 'offline') return 'offline'
+  return 'attention'
+}
+
+function kindLabel(kind: Exclude<KindFilter, 'all'>): string {
+  return ({ web: 'Web Body', physical: '物理设备', security: '安全设备' })[kind]
+}
+
+function kindHint(kind: Exclude<KindFilter, 'all'>): string {
+  return ({
+    web: '本机网页端入口，不需要 Hub 批准',
+    physical: '通过 Hub 接入的物理身体',
+    security: '具有 Guard 能力的身份安全设备',
+  })[kind]
+}
+
+function sourceLabel(device: RuntimeDevice): string {
+  const source = String(device.signals?.source || '')
+  if (source === 'data') return 'Owner 数据'
+  if (source === 'hub+data') return 'Owner + Hub'
   if (source === 'hub') return 'Hub'
   return source || '未知来源'
 }
 
-function bodyHint(d: RuntimeDevice): string {
-  if (isPreparedWebBody(d)) return '网页端入口已准备，可直接启动'
-  if (d.online) return d.room_name ? `已进入 ${d.room_name}` : '运行时在线'
-  if (d.status === 'active') return '已绑定，等待会话连接'
-  if (d.status === 'degraded') return '连接不稳定'
-  return '等待连接'
+function bodyHint(item: BodyItem): string {
+  const device = item.device
+  if (!item.companionId) return '已认领，等待绑定 Companion'
+  if (isPreparedWebBody(device)) return '网页端入口已准备，可直接启动'
+  if (device.online) return device.room_name ? `已进入 ${device.room_name}` : '运行时在线'
+  if (device.status === 'degraded') return '连接不稳定，需要检查'
+  if (device.status === 'offline') return '当前离线'
+  return '等待运行时连接'
 }
 
-function launchBody(companionId: string, d: RuntimeDevice) {
-  if (!props.ownerId || !isWebBody(d)) return
-  window.open(
-    webBodyLaunchUrl({ ownerId: props.ownerId, companionId, deviceId: d.device_id }),
-    '_blank',
-    'noopener',
-  )
+function launchBody(item: BodyItem) {
+  if (!props.ownerId || !item.companionId || !isWebBody(item.device)) return
+  window.open(webBodyLaunchUrl({
+    ownerId: props.ownerId,
+    companionId: item.companionId,
+    deviceId: item.device.device_id,
+  }), '_blank', 'noopener')
+}
+
+function goConnect() {
+  router.push({
+    name: 'devices',
+    params: { section: 'connect' },
+    query: { owner_id: props.ownerId },
+  })
+}
+
+function goDetail(item: BodyItem) {
+  router.push({
+    name: 'device-detail',
+    params: { deviceId: item.device.device_id },
+    query: { owner_id: props.ownerId },
+  })
 }
 </script>
 
 <template>
-  <div v-if="ownerId" class="fleet-grouping" v-loading="loading">
-    <div class="fg-head">
-      <div>
-        <div class="fg-cap">我的身体 / 网页端入口</div>
-        <p>这里列出当前 owner 已拥有的全部入口，包括本机 Web 身体和 Hub 物理设备。</p>
-      </div>
-      <el-tag size="small" type="info" effect="plain">Owner scoped</el-tag>
+  <div class="fleet-overview" v-loading="loading">
+    <div class="summary-grid">
+      <button :class="{ active: statusFilter === 'all' }" @click="statusFilter = 'all'"><span>全部设备</span><strong>{{ stats.total }}</strong></button>
+      <button :class="{ active: statusFilter === 'ready' }" @click="statusFilter = 'ready'"><span>已就绪</span><strong>{{ stats.ready }}</strong></button>
+      <button :class="{ active: statusFilter === 'attention' }" @click="statusFilter = 'attention'"><span>待处理</span><strong>{{ stats.attention }}</strong></button>
+      <button :class="{ active: statusFilter === 'offline' }" @click="statusFilter = 'offline'"><span>离线</span><strong>{{ stats.offline }}</strong></button>
     </div>
-    <div class="fg-grid">
-      <div v-for="g in fleet?.groups || []" :key="g.companion_id" class="fg-card">
-        <div class="fg-h"><b>{{ g.companion_name }}</b><em>{{ g.devices.length }} 身体</em></div>
-        <ul>
-          <li v-for="d in g.devices" :key="d.device_id" class="fg-device">
-            <i class="dot" :class="'st-' + devicePresenceClass(d)" />
-            <div class="fg-device-main">
-              <strong>{{ d.name || deviceShort(d) }}</strong>
-              <span>{{ deviceType(d) }} · {{ devicePresenceLabel(d) }} · {{ sourceLabel(d) }}</span>
-              <em>{{ bodyHint(d) }}</em>
-            </div>
-            <el-button
-              v-if="isWebBody(d)"
-              size="small"
-              type="primary"
-              plain
-              :icon="VideoPlay"
-              @click="launchBody(g.companion_id, d)"
-            >
-              启动
-            </el-button>
-          </li>
-          <li v-if="!g.devices.length" class="empty">未绑定身体</li>
-        </ul>
+
+    <div class="toolbar">
+      <div class="filters">
+        <el-select v-model="kindFilter" size="small" style="width: 150px" aria-label="设备类型">
+          <el-option label="全部类型" value="all" />
+          <el-option label="Web Body" value="web" />
+          <el-option label="物理设备" value="physical" />
+          <el-option label="安全设备" value="security" />
+        </el-select>
+        <el-radio-group v-model="groupMode" size="small">
+          <el-radio-button value="companion">按 Companion</el-radio-button>
+          <el-radio-button value="kind">按类型</el-radio-button>
+        </el-radio-group>
       </div>
-      <div v-if="fleet?.unbound?.length" class="fg-card unbound">
-        <div class="fg-h"><b>未认领</b><em>{{ fleet.unbound.length }}</em></div>
-        <ul>
-          <li v-for="d in fleet.unbound" :key="d.device_id" class="fg-device">
-            <i class="dot" :class="'st-' + devicePresenceClass(d)" />
-            <div class="fg-device-main">
-              <strong>{{ d.name || deviceShort(d) }}</strong>
-              <span>{{ deviceType(d) }} · {{ devicePresenceLabel(d) }} · {{ sourceLabel(d) }}</span>
-              <em>{{ bodyHint(d) }}</em>
-            </div>
-          </li>
-        </ul>
-      </div>
-      <div v-if="!(fleet?.groups?.length) && !(fleet?.unbound?.length)" class="fg-empty">当前 owner 暂无设备</div>
+      <el-button type="primary" :icon="Connection" @click="goConnect">接入设备</el-button>
     </div>
-    <p class="fg-note">下方 Hub 硬件设备表只管理物理设备的发现、批准和 LiveKit 可达性；本机 Web 身体不需要 Hub 审批。</p>
+
+    <div class="group-grid">
+      <article v-for="group in visibleGroups" :key="group.key" class="body-group">
+        <header>
+          <div><strong>{{ group.label }}</strong><span>{{ group.hint }}</span></div>
+          <em>{{ group.items.length }} 个身体</em>
+        </header>
+        <ul>
+          <li v-for="item in group.items" :key="item.device.device_id">
+            <i class="dot" :class="'st-' + devicePresenceClass(item.device)" />
+            <div class="body-main">
+              <strong>{{ item.device.name || deviceShort(item.device) }}</strong>
+              <span>{{ deviceType(item.device) }} · {{ devicePresenceLabel(item.device) }} · {{ sourceLabel(item.device) }}</span>
+              <em>{{ groupMode === 'kind' ? `${item.companionName} · ` : '' }}{{ bodyHint(item) }}</em>
+            </div>
+            <div class="row-actions">
+              <el-button size="small" text @click="goDetail(item)">详情</el-button>
+              <el-button v-if="isWebBody(item.device) && item.companionId" size="small" type="primary" plain :icon="VideoPlay" @click="launchBody(item)">启动</el-button>
+              <el-button v-else-if="!item.companionId" size="small" type="warning" plain @click="goConnect">去绑定</el-button>
+            </div>
+          </li>
+        </ul>
+      </article>
+      <el-empty v-if="!visibleGroups.length" description="当前筛选下没有设备" />
+    </div>
   </div>
 </template>
 
 <style scoped>
-.fleet-grouping { margin-bottom: 14px; padding: 14px; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); }
-.fg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.fg-head p { margin: 4px 0 0; color: var(--eid-text-secondary); font-size: 12px; line-height: 1.5; }
-.fg-cap { font-family: var(--eid-font-mono); font-size: 10px; letter-spacing: 0.1em; color: var(--eid-text-muted); }
-.fg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
-.fg-card { border: 1px solid var(--eid-border); border-radius: 6px; padding: 10px; background: var(--eid-bg-elev); }
-.fg-card.unbound { border-style: dashed; }
-.fg-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
-.fg-h b { font-size: 13px; font-weight: 700; color: var(--eid-text-primary); }
-.fg-h em { font-family: var(--eid-font-mono); font-size: 10px; font-style: normal; color: var(--eid-text-muted); }
-.fg-card ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
-.fg-device { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; }
-.fg-device-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.fg-device-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--eid-text-primary); font-size: 12px; }
-.fg-device-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--eid-text-secondary); font-size: 11px; }
-.fg-device-main em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--eid-text-muted); font-style: normal; font-size: 11px; }
-.fg-card li.empty { color: var(--eid-text-muted); font-style: italic; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eid-text-muted); flex: 0 0 auto; }
+.fleet-overview { display: flex; flex-direction: column; gap: 14px; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.summary-grid button { display: flex; min-height: 76px; padding: 14px; align-items: flex-end; justify-content: space-between; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); color: var(--eid-text-secondary); cursor: pointer; text-align: left; }
+.summary-grid button.active { border-color: var(--el-color-primary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--el-color-primary) 40%, transparent); }
+.summary-grid span { font-size: 12px; }
+.summary-grid strong { color: var(--eid-text-primary); font-family: var(--eid-font-mono); font-size: 24px; }
+.toolbar, .filters { display: flex; align-items: center; gap: 10px; }
+.toolbar { justify-content: space-between; padding: 12px; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); }
+.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.body-group { padding: 14px; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); }
+.body-group > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.body-group > header div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.body-group > header strong { color: var(--eid-text-primary); font-size: 14px; }
+.body-group > header span, .body-group > header em { color: var(--eid-text-muted); font-size: 10px; font-style: normal; }
+.body-group ul { display: grid; margin: 0; padding: 0; gap: 10px; list-style: none; }
+.body-group li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding-top: 10px; border-top: 1px solid var(--eid-border); }
+.body-main { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.body-main strong, .body-main span, .body-main em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.body-main strong { color: var(--eid-text-primary); font-size: 12px; }
+.body-main span { color: var(--eid-text-secondary); font-size: 11px; }
+.body-main em { color: var(--eid-text-muted); font-size: 10px; font-style: normal; }
+.row-actions { display: flex; align-items: center; gap: 4px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eid-text-muted); }
 .dot.st-ok { background: var(--eid-success); box-shadow: 0 0 6px var(--eid-success); }
 .dot.st-warn { background: var(--eid-warning); box-shadow: 0 0 6px var(--eid-warning); }
 .dot.st-bad { background: var(--eid-danger); box-shadow: 0 0 6px var(--eid-danger); }
-.dot.st-idle { background: var(--eid-text-muted); }
-.fg-empty { color: var(--eid-text-muted); font-size: 12px; padding: 8px; }
-.fg-note { margin: 12px 0 0; color: var(--eid-text-muted); font-size: 11px; line-height: 1.5; }
-@media (max-width: 720px) {
-  .fg-head { flex-direction: column; }
-  .fg-grid { grid-template-columns: 1fr; }
-}
+@media (max-width: 760px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } .toolbar { align-items: stretch; flex-direction: column; } .filters { align-items: stretch; flex-direction: column; } .group-grid { grid-template-columns: 1fr; } }
 </style>

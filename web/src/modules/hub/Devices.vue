@@ -21,6 +21,8 @@ import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import StatusBadge from '@/modules/common/StatusBadge.vue'
 import JsonViewer from '@/modules/common/JsonViewer.vue'
 
+const emit = defineEmits<{ approved: [deviceId: string] }>()
+
 type ReadinessFilter = 'all' | 'attention' | 'ready' | 'sessions' | 'offline'
 type DeviceReadiness =
   | 'pending_approval'
@@ -384,6 +386,7 @@ async function onApprove(d: DeviceView) {
       await approveDevice(d.device_id)
       ElMessage.success(`已批准 ${d.device_id}`)
       await refresh()
+      emit('approved', d.device_id)
     } catch (e: any) {
       ElMessage.error(`批准失败: ${extractErrorMessage(e)}`)
     }

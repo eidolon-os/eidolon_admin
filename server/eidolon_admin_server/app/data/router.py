@@ -789,8 +789,6 @@ async def list_nearby_owner_devices(owner_id: str, request: Request) -> NearbyDe
     for device in runtime_devices:
         if not device.approved:
             continue
-        if (device.status or "").lower() == "offline":
-            continue
         stored = await store.devices.get_device(device.device_id)
         if stored is not None and stored.owner_id is not None:
             continue

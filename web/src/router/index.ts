@@ -39,7 +39,7 @@ const routes: RouteRecordRaw[] = [
           const query = { ...to.query, owner_id: ownerId }
           if (section === 'initialize') return { name: 'workspace-initialize', query }
           if (section === 'companions' || section === 'persona') return { name: 'companions', query }
-          if (section === 'devices') return { name: 'devices', params: { tab: 'fleet' }, query }
+          if (section === 'devices') return { name: 'devices', params: { section: 'overview' }, query }
           if (['conversations', 'memory', 'jobs', 'events'].includes(section)) {
             return { name: 'data-inspector', params: { section }, query }
           }
@@ -72,19 +72,52 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/companions/CompanionCreate.vue'),
       },
       {
+        path: 'companions/:companionId/detail/:section?',
+        name: 'companion-detail',
+        component: () => import('@/modules/companions/CompanionDetail.vue'),
+      },
+      {
         path: 'companions/:section?',
         name: 'companions',
         component: () => import('@/modules/companions/Companions.vue'),
       },
       {
-        path: 'devices/:tab?',
+        path: 'identity-security',
+        name: 'identity-security',
+        component: () => import('@/modules/owners/IdentitySecurity.vue'),
+      },
+      {
+        path: 'devices/firmware',
+        redirect: { name: 'system-firmware' },
+      },
+      {
+        path: 'devices/guard',
+        redirect: { name: 'identity-security' },
+      },
+      {
+        path: 'devices/:deviceId/detail',
+        name: 'device-detail',
+        component: () => import('@/modules/devices/DeviceDetail.vue'),
+      },
+      {
+        path: 'devices/:section?',
         name: 'devices',
         component: () => import('@/modules/devices/DeviceCenter.vue'),
       },
-      // Legacy deep link — the ESP32 flasher is now the Device Center's firmware tab.
+      {
+        path: 'advanced/device-infrastructure/hub',
+        name: 'hub-devices',
+        component: () => import('@/modules/hub/Devices.vue'),
+      },
+      {
+        path: 'advanced/system/firmware',
+        name: 'system-firmware',
+        component: () => import('@/modules/tools/Esp32.vue'),
+      },
+      // Legacy deep link — firmware is a system tool, independent of Owner devices.
       {
         path: 'tools/esp32',
-        redirect: { name: 'devices', params: { tab: 'firmware' } },
+        redirect: { name: 'system-firmware' },
       },
       {
         path: 'services/:serviceId/:feature',
