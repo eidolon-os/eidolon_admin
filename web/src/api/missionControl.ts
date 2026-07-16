@@ -111,6 +111,39 @@ export interface RuntimeTurn {
   stages: RuntimeTurnStage[]
 }
 
+export interface RuntimeRouteHop {
+  hop_id: string
+  node_type: 'device' | 'companion' | 'service' | 'memory' | 'tool' | 'provider' | string
+  node_id: string
+  label: string
+  stage: string
+  status: string
+  direction: 'in' | 'out' | 'internal' | string
+  ts: string | null
+  latency_ms: number | null
+}
+
+export interface RuntimeActivity {
+  activity_id: string
+  kind: 'voice_turn' | 'guard_event' | 'device_command' | 'device_event' | 'background_job' | string
+  owner_id: string
+  companion_id: string | null
+  trace_id: string | null
+  turn_id: string | null
+  job_id: string | null
+  origin_device_id: string | null
+  target_device_ids: string[]
+  status: string
+  outcome: RuntimeOutcome
+  summary: string
+  current_hop_id: string | null
+  started_at: string | null
+  updated_at: string | null
+  finished_at: string | null
+  event_ids: string[]
+  route: RuntimeRouteHop[]
+}
+
 export interface RuntimeJob {
   job_id: string
   owner_id: string
@@ -237,7 +270,7 @@ export interface RuntimeSnapshot {
   companions: RuntimeCompanion[]
   devices: RuntimeDevice[]
   services: RuntimeService[]
-  active_turn: RuntimeTurn | null
+  activities: RuntimeActivity[]
   recent_turns: RuntimeTurn[]
   memory: RuntimeMemory
   jobs: RuntimeJob[]

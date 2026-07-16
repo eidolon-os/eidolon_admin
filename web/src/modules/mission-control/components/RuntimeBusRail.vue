@@ -11,12 +11,17 @@ import type { InfraNode } from '../types'
 
 const props = defineProps<{
   nodes: InfraNode[]
-  hotService: string
+  hotServices: string[]
+  activityOwners: Record<string, string[]>
   pipelineActive: boolean
 }>()
 defineEmits<{ (e: 'open-service', n: InfraNode): void }>()
 
 const layoutById = new Map(INFRA_LAYOUT.map((l) => [l.id, l]))
+const hotSet = computed(() => new Set(props.hotServices))
+function edgeReached(target: string): boolean {
+  return props.hotServices.some((service) => spineReached(service, target))
+}
 
 // Tier bands (业务组件 / 中间件 / 外挂) as background zones + captions.
 const bandsView = TIER_BANDS.map((b) => ({
@@ -66,7 +71,7 @@ const edgesView = computed(() =>
           :key="i"
           :d="e.d"
           class="edge"
-          :class="[`k-${e.kind}`, { spine: e.spine, flow: pipelineActive && e.spine && spineReached(hotService, e.to), front: pipelineActive && e.spine && e.to === hotService }]"
+          :class="[`k-${e.kind}`, { spine: e.spine, flow: pipelineActive && e.spine && edgeReached(e.to), front: pipelineActive && e.spine && hotSet.has(e.to) }]"
           vector-effect="non-scaling-stroke"
         />
       </svg>
@@ -76,7 +81,7 @@ const edgesView = computed(() =>
         <template #reference>
           <div
             class="topo-node"
-            :class="[`st-${v.node.state}`, `t-${v.node.tier}`, { hot: v.node.id === hotService }]"
+            :class="[`st-${v.node.state}`, `t-${v.node.tier}`, { hot: hotSet.has(v.node.id) }]"
             :style="{ left: v.px + '%', top: v.py + '%' }"
             @click="$emit('open-service', v.node)"
           >
@@ -84,6 +89,7 @@ const edgesView = computed(() =>
             <div class="tn-body">
               <b>{{ v.node.cn }}</b>
               <em><i class="led" />{{ v.node.stateCn }}{{ v.node.online ? ' · ' + v.node.latency : '' }}</em>
+              <small v-if="activityOwners[v.node.id]?.length" class="tn-active">{{ activityOwners[v.node.id].slice(0, 2).join(' · ') }}<i v-if="activityOwners[v.node.id].length > 2"> +{{ activityOwners[v.node.id].length - 2 }}</i></small>
             </div>
           </div>
         </template>
@@ -141,6 +147,8 @@ const edgesView = computed(() =>
 .tn-body b { font: 700 12px/1 var(--cy-sans); color: #fff; white-space: nowrap; }
 .tn-body em { display: inline-flex; align-items: center; gap: 4px; font: 600 8.5px/1 var(--cy-mono); color: var(--cy-txt-dim); font-style: normal; white-space: nowrap; }
 .tn-body em .led { width: 6px; height: 6px; color: var(--cy-green); }
+.tn-active { display: block; max-width: 132px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 7.5px/1.2 var(--cy-mono); color: var(--cy-cyan); }
+.tn-active i { font-style: normal; color: var(--cy-yellow); }
 /* Tier identity on the glyph (health stays on the led). State rules below win. */
 .topo-node.t-service .tn-glyph { color: var(--cy-cyan); }
 .topo-node.t-middleware .tn-glyph { color: var(--cy-yellow); }

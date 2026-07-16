@@ -16,7 +16,13 @@ from fastapi.responses import StreamingResponse
 
 from .replay import replay_events
 from .schemas import RuntimeEvent, RuntimeSnapshot
-from .service import _as_utc, _events_from_data, build_snapshot, hub_event_to_runtime
+from .service import (
+    _as_utc,
+    _events_from_data,
+    build_snapshot,
+    enrich_runtime_event,
+    hub_event_to_runtime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +67,7 @@ async def _runtime_event_stream(
     queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     async def _pump_hub() -> None:
-        async for item in _hub_stream(request):
+        async for item in _hub_stream(request, owner_id):
             await queue.put(item)
 
     async def _pump_events() -> None:
@@ -118,13 +124,13 @@ async def _events_tail(
             if row_ts is not None and row_ts > cursor:
                 cursor = row_ts
             for event in _events_from_data([row]):
-                yield event
+                yield await enrich_runtime_event(request, event, owner_id=owner_id)
         if len(seen) > 2048:
             seen.clear()  # cursor advanced past all yielded rows; a re-send is client-deduped
         await asyncio.sleep(interval)
 
 
-async def _hub_stream(request: Request) -> AsyncIterator[bytes]:
+async def _hub_stream(request: Request, owner_id: str | None = None) -> AsyncIterator[bytes]:
     registry = getattr(request.app.state, "registry", None)
     http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
     service = registry.get("hub") if registry is not None else None
@@ -159,6 +165,7 @@ async def _hub_stream(request: Request) -> AsyncIterator[bytes]:
                         logger.debug("Mission Control ignored malformed Hub SSE frame")
                         continue
                     event = hub_event_to_runtime(raw if isinstance(raw, dict) else {"payload": raw})
+                    event = await enrich_runtime_event(request, event, owner_id=owner_id)
                     yield encode_sse_event("runtime_event", event.model_dump(mode="json"))
         except Exception as exc:  # noqa: BLE001 - SSE should reconnect forever
             event = RuntimeEvent(

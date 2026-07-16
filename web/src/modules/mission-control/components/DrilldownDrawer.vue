@@ -15,6 +15,7 @@ import type { RuntimeDevice } from '@/api/missionControl'
 import { createCompanionWebBody } from '@/api/eidolonData'
 import { webBodyLaunchUrl } from '@/utils/clientWeb'
 import { extractErrorMessage } from '@/utils/format'
+import { activityKindLabel, currentActivityHop } from '../activity'
 
 const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | null }>()
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
@@ -134,6 +135,27 @@ const drawerTurns = computed(() => {
             <TaskWorkflowTimeline :jobs="scopedJobs" />
             <PermissionLedger :items="scopedPermissions" />
           </div>
+        </template>
+
+        <template v-else-if="target.type === 'activity'">
+          <span class="dw-kick">RUNTIME ACTIVITY · 运行活动</span>
+          <h3>{{ activityKindLabel(target.activity.kind) }}</h3>
+          <p class="dw-role">{{ target.activity.summary }}。这是只读事件投影，不参与轮次、设备命令或任务调度。</p>
+          <div class="dw-grid">
+            <div><span>Companion</span><b class="mono sm">{{ target.activity.companion_id || '未归属' }}</b></div>
+            <div><span>状态</span><b :class="statusClass(target.activity.status)">{{ target.activity.status }}</b></div>
+            <div><span>当前节点</span><b class="mono sm">{{ currentActivityHop(target.activity)?.label || '已结束' }}</b></div>
+            <div><span>关联 ID</span><b class="mono sm">{{ target.activity.turn_id || target.activity.job_id || target.activity.activity_id }}</b></div>
+          </div>
+          <span class="dw-sect">路径 · ROUTE</span>
+          <ol v-if="target.activity.route.length" class="dw-stages">
+            <li v-for="hop in target.activity.route" :key="hop.hop_id" class="dw-stage" :class="statusClass(hop.status)">
+              <i class="led" :class="statusClass(hop.status)" />
+              <b>{{ hop.label }}</b>
+              <em>{{ hop.node_type }} · {{ hop.node_id }}<template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
+            </li>
+          </ol>
+          <p v-else class="dw-empty">该事件没有足够的事实节点可形成路径</p>
         </template>
 
         <template v-else-if="target.type === 'service'">

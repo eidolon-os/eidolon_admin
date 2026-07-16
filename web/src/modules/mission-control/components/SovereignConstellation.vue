@@ -4,21 +4,22 @@
 // activity). Geometry + orbital motion are presentational and live here; the
 // data comes from the composable's `companionUnits`.
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import type { RuntimeDevice } from '@/api/missionControl'
+import type { RuntimeActivity, RuntimeDevice } from '@/api/missionControl'
 import { currentStageKey, directedLegPath, eventToPulse, eventTone, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
 import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, statusClass } from '../format'
+import { activityKindLabel, currentActivityHop, isActiveActivity, summarizeActivityBadges } from '../activity'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind, SatTone } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 
 const props = defineProps<{ mc: MissionControlStream; focusedId?: string }>()
-defineEmits<{
+const emit = defineEmits<{
   (e: 'open-owner'): void
   (e: 'open-companion', c: CompanionUnit): void
   (e: 'open-moon', s: Sat): void
   (e: 'select-turn', turnId: string, companionId: string): void
 }>()
 
-const { companionUnits, unboundDevices, ownerName, activePulses, pipelineActive, selectedTurnId, highlightedEvent } = props.mc
+const { companionUnits, unboundDevices, ownerName, activePulses, pipelineActive, selectedTurnId, highlightedEvent, now } = props.mc
 
 // D5 ignite/settle: when a turn takes the pipeline idle→live, the sovereign core
 // flares once ("点火"). Wire hot/cold + node glows ease via CSS transition
@@ -40,11 +41,15 @@ const VBW = 1000, VBH = 700, CX = 500, CY = 350, RX = 306, RY = 220, RSAT = 92, 
 // Runtime state shown on every planet, always visible (no hover). This is the
 // extension point for the future device→agent→return event flow.
 function runtime(c: CompanionUnit): { text: string; cls: string } {
-  if (c.activeTurn)
+  if (c.activeActivity) {
+    const hop = currentActivityHop(c.activeActivity)
     return {
-      text: c.activeTurn.latency_ms != null ? `对话中 · ${fmtLatency(c.activeTurn.latency_ms)}` : '对话中',
+      text: c.activeActivity.kind === 'voice_turn'
+        ? c.activeTurn?.latency_ms != null ? `对话中 · ${fmtLatency(c.activeTurn.latency_ms)}` : '对话中'
+        : `${activityKindLabel(c.activeActivity.kind)} · ${hop?.label || c.activeActivity.status}`,
       cls: 'live',
     }
+  }
   if (c.turn) return { text: `已选 · ${(c.turn.status || '').toUpperCase()}`, cls: statusClass(c.turn.status) }
   if (c.jobs.length) return { text: `${c.jobs.length} 个任务`, cls: 'warn' }
   return { text: '空闲', cls: 'idle' }
@@ -58,7 +63,7 @@ function satOf(c: CompanionUnit, kind: SatKind): Omit<Sat, 'c' | 'x' | 'y' | 'li
     const n = c.devices.length
     return {
       kind, label: '身体', glyph: '⬡',
-      value: n ? deviceType(c.devices[0]) : '未绑定',
+      value: n ? n === 1 ? deviceType(c.devices[0]!) : `${n} 个身体` : '未绑定',
       tone: c.devices.some((d) => d.online) ? 'ok' : n ? 'idle' : 'off',
       empty: !n, accent: 'cyan',
     }
@@ -72,9 +77,9 @@ function satOf(c: CompanionUnit, kind: SatKind): Omit<Sat, 'c' | 'x' | 'y' | 'li
   }
   return {
     kind, label: '活动', glyph: '⚡',
-    value: c.activeTurn ? '对话中' : c.turn ? `已选 · ${c.turn.status}` : c.jobs.length ? `${c.jobs.length} 任务` : '空闲',
-    tone: c.activeTurn ? 'live' : c.turn ? turnTone(c.turn.status, c.turn.outcome) : c.jobs.length ? 'warn' : 'off',
-    empty: !c.turn && !c.jobs.length, accent: 'mag',
+    value: c.activeActivity ? activityKindLabel(c.activeActivity.kind) : c.activities.length ? `${c.activities.length} 条` : '空闲',
+    tone: c.activeActivity ? 'live' : c.activities.some((a) => a.outcome === 'failure') ? 'bad' : c.activities.length ? 'ok' : 'off',
+    empty: !c.activities.length && !c.activeActivity, accent: 'mag',
   }
 }
 
@@ -95,9 +100,32 @@ const galaxy = computed(() => {
       const sx = x + RSAT * Math.cos(sa), sy = y + RSAT * Math.sin(sa)
       return { ...satOf(c, kind), c, x: sx, y: sy, link: `M${x.toFixed(1)} ${y.toFixed(1)} L${sx.toFixed(1)} ${sy.toFixed(1)}` }
     })
-    return { c, x, y, link: `M${CX} ${CY} L${x.toFixed(1)} ${y.toFixed(1)}`, active: !!c.activeTurn, sats }
+    return { c, x, y, link: `M${CX} ${CY} L${x.toFixed(1)} ${y.toFixed(1)}`, active: !!c.activeActivity, sats }
   })
-  return { nodes, sats: nodes.flatMap((n) => n.sats), links: nodes.map((n) => ({ id: n.c.id, d: n.link, active: n.active })) }
+  const devicePorts = nodes.flatMap((node) => {
+    const body = node.sats.find((sat) => sat.kind === 'body')
+    if (!body) return []
+    const activeDeviceIds = new Set(
+      node.c.activities
+        .filter(isActiveActivity)
+        .flatMap((activity) => [activity.origin_device_id, ...activity.target_device_ids])
+        .filter((id): id is string => !!id),
+    )
+    return node.c.devices.slice(0, 5).map((device, index) => {
+      const angle = (-110 + index * (220 / Math.max(1, Math.min(4, node.c.devices.length - 1)))) * (PI / 180)
+      const x = body.x + 54 * Math.cos(angle)
+      const y = body.y + 54 * Math.sin(angle)
+      return {
+        device, companionId: node.c.id, body, x, y,
+        active: activeDeviceIds.has(device.device_id),
+        link: `M${body.x.toFixed(1)} ${body.y.toFixed(1)} L${x.toFixed(1)} ${y.toFixed(1)}`,
+      }
+    })
+  })
+  return {
+    nodes, sats: nodes.flatMap((n) => n.sats), devicePorts,
+    links: nodes.map((n) => ({ id: n.c.id, d: n.link, active: n.active })),
+  }
 })
 
 // Per-companion internal circulation (§11 Tier 1). Only the focused companion
@@ -106,9 +134,9 @@ const galaxy = computed(() => {
 // as the sun→planet line — no new animation machinery, no new deps.
 const flows = computed(() => {
   const nodes = galaxy.value.nodes
-  const activeCount = nodes.filter((n) => !!n.c.activeTurn).length
+  const activeCount = nodes.filter((n) => !!n.c.activeActivity).length
   return nodes
-    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.activeTurn, activeCount))
+    .filter((n) => shouldFlow(n.c.id, props.focusedId, !!n.c.activeActivity, activeCount))
     .map((n) => {
       const body = n.sats.find((s) => s.kind === 'body')
       const mem = n.sats.find((s) => s.kind === 'mem')
@@ -169,10 +197,13 @@ const eventPulses = computed<EventPulseVM[]>(() =>
       const node = galaxy.value.nodes.find((n) => n.c.id === p.companionId)
       const moon = node?.sats.find((s) => s.kind === p.leg)
       if (!node || !moon) return null
+      const port = p.leg === 'body' && p.deviceId
+        ? galaxy.value.devicePorts.find((item) => item.companionId === p.companionId && item.device.device_id === p.deviceId)
+        : null
       const color = pulseColor(p.leg, p.tone)
       return {
         id: p.id,
-        path: directedLegPath({ x: node.x, y: node.y }, moon, p.dir),
+        path: port ? directedDevicePath({ x: node.x, y: node.y }, moon, port, p.dir) : directedLegPath({ x: node.x, y: node.y }, moon, p.dir),
         style: { fill: color, filter: `drop-shadow(0 0 7px ${color})` },
       }
     })
@@ -187,10 +218,13 @@ const highlightedPath = computed<EventPulseVM | null>(() => {
   const node = galaxy.value.nodes.find((item) => item.c.id === event.companion_id)
   const moon = node?.sats.find((sat) => sat.kind === pulse.leg)
   if (!node || !moon) return null
+  const port = pulse.leg === 'body' && event.device_id
+    ? galaxy.value.devicePorts.find((item) => item.companionId === event.companion_id && item.device.device_id === event.device_id)
+    : null
   const color = pulseColor(pulse.leg, eventTone(event.severity, event.outcome))
   return {
     id: event.event_id,
-    path: directedLegPath({ x: node.x, y: node.y }, moon, pulse.dir),
+    path: port ? directedDevicePath({ x: node.x, y: node.y }, moon, port, pulse.dir) : directedLegPath({ x: node.x, y: node.y }, moon, pulse.dir),
     style: { stroke: color, filter: `drop-shadow(0 0 9px ${color})` },
   }
 })
@@ -201,8 +235,10 @@ const highlightedPath = computed<EventPulseVM | null>(() => {
 const stageHere = computed(() => {
   const m = new Set<string>()
   for (const n of galaxy.value.nodes) {
-    if (!n.c.turn) continue
-    const moon = stageMoon(currentStageKey(n.c.turn))
+    const stage = n.c.activeActivity
+      ? currentActivityHop(n.c.activeActivity)?.stage || ''
+      : currentStageKey(n.c.turn)
+    const moon = stageMoon(stage)
     if (moon) m.add(`${n.c.id}:${moon}`)
   }
   return m
@@ -211,22 +247,41 @@ function isStageHere(s: Sat): boolean {
   return stageHere.value.has(`${s.c.id}:${s.kind}`)
 }
 
-const turnBeads = computed(() => galaxy.value.nodes.flatMap((node) => {
+const activityBadges = computed(() => galaxy.value.nodes.flatMap((node) => {
   const activity = node.sats.find((sat) => sat.kind === 'act')
   if (!activity) return []
-  return node.c.turns.slice(0, 6).map((turn, index) => {
+  return summarizeActivityBadges(node.c.activities, now.value).map((group, index) => {
+    const item = group.activity
     const angle = (-90 + index * 42) * (PI / 180)
-    const radius = 38 + Math.floor(index / 4) * 11
+    const radius = 43
     return {
-      turn,
-      label: `T${index + 1}`,
+      activity: item,
+      activityMoon: activity,
+      label: group.label,
       companionId: node.c.id,
       x: activity.x + radius * Math.cos(angle),
       y: activity.y + radius * Math.sin(angle),
-      live: !!node.c.activeTurn && node.c.activeTurn.turn_id === turn.turn_id,
+      live: isActiveActivity(item),
     }
   })
 }))
+
+function directedDevicePath(
+  brain: { x: number; y: number },
+  body: { x: number; y: number },
+  port: { x: number; y: number },
+  direction: 'in' | 'out',
+): string {
+  const inbound = `M${port.x.toFixed(1)} ${port.y.toFixed(1)} L${body.x.toFixed(1)} ${body.y.toFixed(1)} L${brain.x.toFixed(1)} ${brain.y.toFixed(1)}`
+  return direction === 'in'
+    ? inbound
+    : `M${brain.x.toFixed(1)} ${brain.y.toFixed(1)} L${body.x.toFixed(1)} ${body.y.toFixed(1)} L${port.x.toFixed(1)} ${port.y.toFixed(1)}`
+}
+
+function openActivityBadge(activity: RuntimeActivity, companionId: string, moon: Sat) {
+  if (activity.turn_id) emit('select-turn', activity.turn_id, companionId)
+  else emit('open-moon', moon)
+}
 
 function turnTone(status: string, outcome: string): SatTone {
   if (outcome === 'failure' || ['failed', 'error', 'errored'].includes(status)) return 'bad'
@@ -265,6 +320,13 @@ function deviceOnline(d: RuntimeDevice) {
         :class="[`link-${s.kind}`, { dim: s.empty, flow: legBright(s) !== undefined, selected: s.c.id === focusedId }]"
         :style="flowStyle(s)"
       />
+      <path
+        v-for="port in galaxy.devicePorts"
+        :key="'dl-' + port.device.device_id"
+        :d="port.link"
+        class="wire device-link"
+        :class="{ hot: port.active, offline: !port.device.online }"
+      />
       <path v-for="l in galaxy.links" :key="'cl' + l.id" :d="l.d" class="wire comp ownership" :class="{ hot: l.active, selected: l.id === focusedId }" />
       <!-- Companion internal circulation: body↔brain↔memory loop (focused + active only). -->
       <template v-for="f in flows" :key="'fp' + f.id">
@@ -286,17 +348,27 @@ function deviceOnline(d: RuntimeDevice) {
     </div>
 
     <button
-      v-for="bead in turnBeads"
-      :key="'turn-' + bead.turn.turn_id"
-      class="gx-turn"
+      v-for="bead in activityBadges"
+      :key="'activity-' + bead.activity.activity_id"
+      class="gx-activity"
       :class="[
-        't-' + turnTone(bead.turn.status, bead.turn.outcome),
-        { selected: selectedTurnId === bead.turn.turn_id, live: bead.live },
+        't-' + turnTone(bead.activity.status, bead.activity.outcome),
+        { selected: selectedTurnId === bead.activity.turn_id, live: bead.live },
       ]"
       :style="ptStyle(bead.x, bead.y)"
-      :title="`${bead.turn.status} · ${bead.turn.terminal_reason || bead.turn.phase || bead.turn.turn_id}`"
-      @click.stop="$emit('select-turn', bead.turn.turn_id, bead.companionId)"
+      :title="`${activityKindLabel(bead.activity.kind)} · ${bead.activity.summary}`"
+      @click.stop="openActivityBadge(bead.activity, bead.companionId, bead.activityMoon)"
     ><span>{{ bead.label }}</span></button>
+
+    <button
+      v-for="port in galaxy.devicePorts"
+      :key="'device-' + port.device.device_id"
+      class="gx-device"
+      :class="{ online: port.device.online, active: port.active }"
+      :style="ptStyle(port.x, port.y)"
+      :title="`${deviceShort(port.device)} · ${devicePresenceLabel(port.device)}`"
+      @click.stop="$emit('open-moon', port.body)"
+    >{{ port.device.online ? '●' : '○' }}</button>
 
     <el-popover v-for="n in galaxy.nodes" :key="'c' + n.c.id" placement="top" :width="300" trigger="hover" popper-class="cy-pop" :show-after="60">
       <template #reference>
@@ -387,6 +459,9 @@ function deviceOnline(d: RuntimeDevice) {
 .wire.sat.link-act { stroke: rgba(255, 46, 136, .38); }
 .wire.sat.selected { stroke-width: 1.55; opacity: .92; filter: drop-shadow(0 0 3px currentColor); }
 .wire.sat.dim { stroke: rgba(109, 106, 153, 0.3); }
+.wire.device-link { stroke: rgba(0, 234, 255, .28); stroke-width: .9; stroke-dasharray: 2 3; }
+.wire.device-link.hot { stroke: var(--cy-cyan); stroke-width: 1.5; filter: drop-shadow(0 0 4px var(--cy-cyan)); }
+.wire.device-link.offline { stroke: rgba(109, 106, 153, .25); }
 .event-highlight { fill: none; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 8 5; opacity: .9; animation: dashflow .7s linear infinite; }
 /* A lit flow leg reads as an energized conduit: solid, brighter than the idle
    dashed leg. stroke-opacity + glow are bound inline (JS-resolved, scaled by
@@ -440,13 +515,16 @@ function deviceOnline(d: RuntimeDevice) {
 /* §one signal: the moon matching the current stage pulses + rings, tracking the
    signal to the body / memory / activity in step with the bus wavefront + trace. */
 .gx-sat.stage-here { animation: nodepulse var(--dur-breath) ease-in-out infinite; box-shadow: 0 0 22px currentColor; border-width: 1.5px; }
-.gx-turn { position: absolute; z-index: 7; width: 23px; height: 23px; margin: -11.5px 0 0 -11.5px; padding: 0; border: 1px solid rgba(109, 106, 153, .7); border-radius: 50%; background: rgba(8, 5, 20, .92); color: var(--cy-txt-dim); font: 700 7px/1 var(--cy-mono); cursor: pointer; box-shadow: 0 0 8px rgba(109, 106, 153, .25); transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast); }
-.gx-turn:hover, .gx-turn.selected { transform: scale(1.25); z-index: 9; }
-.gx-turn.t-ok { border-color: var(--cy-green); color: var(--cy-green); box-shadow: 0 0 9px rgba(100, 255, 180, .45); }
-.gx-turn.t-warn { border-color: var(--cy-yellow); color: var(--cy-yellow); box-shadow: 0 0 9px rgba(247, 255, 74, .45); }
-.gx-turn.t-bad { border-color: var(--cy-mag); color: var(--cy-mag); box-shadow: 0 0 11px rgba(255, 46, 136, .55); }
-.gx-turn.t-live, .gx-turn.live { border-color: var(--cy-cyan); color: var(--cy-cyan); animation: nodepulse var(--dur-breath) ease-in-out infinite; }
-.gx-turn.selected { outline: 1px solid #fff; outline-offset: 3px; }
+.gx-activity { position: absolute; z-index: 7; min-width: 32px; height: 20px; transform: translate(-50%, -50%); padding: 0 6px; border: 1px solid rgba(109, 106, 153, .7); border-radius: 10px; background: rgba(8, 5, 20, .94); color: var(--cy-txt-dim); font: 700 7.5px/1 var(--cy-mono); cursor: pointer; box-shadow: 0 0 8px rgba(109, 106, 153, .25); transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast); }
+.gx-activity:hover, .gx-activity.selected { transform: translate(-50%, -50%) scale(1.16); z-index: 9; }
+.gx-activity.t-ok { border-color: var(--cy-green); color: var(--cy-green); }
+.gx-activity.t-warn { border-color: var(--cy-yellow); color: var(--cy-yellow); }
+.gx-activity.t-bad { border-color: var(--cy-mag); color: var(--cy-mag); box-shadow: 0 0 11px rgba(255, 46, 136, .55); }
+.gx-activity.t-live, .gx-activity.live { border-color: var(--cy-cyan); color: var(--cy-cyan); animation: nodepulse var(--dur-breath) ease-in-out infinite; }
+.gx-activity.selected { outline: 1px solid #fff; outline-offset: 2px; }
+.gx-device { position: absolute; z-index: 6; width: 25px; height: 25px; transform: translate(-50%, -50%); padding: 0; overflow: hidden; border: 1px solid rgba(109, 106, 153, .55); border-radius: 50%; background: rgba(8, 5, 20, .94); color: var(--cy-txt-dim); font: 700 6.5px/1 var(--cy-mono); cursor: pointer; }
+.gx-device.online { border-color: var(--cy-green); color: var(--cy-green); }
+.gx-device.active { border-color: var(--cy-cyan); color: var(--cy-cyan); box-shadow: 0 0 12px rgba(0, 234, 255, .65); animation: nodepulse var(--dur-breath) ease-in-out infinite; }
 .s-glyph { font-size: 15px; font-style: normal; line-height: 1; color: currentColor; text-shadow: 0 0 8px currentColor; }
 .s-label { display: block; margin: 3px 0 2px; font: 700 8.5px/1 var(--cy-mono); color: var(--cy-txt-dim); letter-spacing: 0.04em; }
 .s-val { display: block; max-width: 68px; margin: 0 auto; font: 800 10px/1.05 var(--cy-sans); color: #eaf6ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -462,6 +540,7 @@ function deviceOnline(d: RuntimeDevice) {
 /* Semantic zoom (A3.4): the focused companion pops; siblings recede. */
 .galaxy.has-focus .gx-comp:not(.focused) { opacity: 0.3; filter: saturate(0.5); }
 .galaxy.has-focus .gx-sat:not(.focused-sat) { opacity: 0.18; filter: saturate(0.45); }
+.galaxy.has-focus .gx-device:not(.active) { opacity: .38; }
 .galaxy.has-focus .wire.comp:not(.hot) { stroke-opacity: 0.4; }
 .gx-comp.focused { transform: translate(-50%, -50%) scale(1.14); box-shadow: 0 0 46px rgba(0, 234, 255, 0.6); border-width: 2px; z-index: 5; }
 .gx-comp.focused:hover { transform: translate(-50%, -50%) scale(1.16); }
@@ -472,7 +551,7 @@ function deviceOnline(d: RuntimeDevice) {
 @keyframes nodepulse { 0%, 100% { box-shadow: 0 0 16px currentColor; } 50% { box-shadow: 0 0 30px currentColor; } }
 @keyframes dashflow { to { stroke-dashoffset: -26; } }
 @media (prefers-reduced-motion: reduce) {
-  .gx-owner, .gx-comp.active, .gx-sat.t-live, .gx-sat.stage-here, .gx-turn, .orbit-ring, .event-highlight { animation: none !important; }
+  .gx-owner, .gx-comp.active, .gx-sat.t-live, .gx-sat.stage-here, .gx-activity, .gx-device, .orbit-ring, .event-highlight { animation: none !important; }
   /* Hide the travelling dots entirely (not just their motion) so they don't
      clump at the origin. Lit flow legs stay brightened — a static, motion-free
      signal of which conduits are active. */

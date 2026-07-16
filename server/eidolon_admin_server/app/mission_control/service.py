@@ -23,6 +23,7 @@ from .schemas import (
     EvidenceChain,
     EvidenceStep,
     PermissionLedgerItem,
+    RuntimeActivity,
     RuntimeTraceSpan,
     RuntimeCapabilityCard,
     RuntimeCompanion,
@@ -34,6 +35,7 @@ from .schemas import (
     RuntimeLaneItem,
     RuntimeMemory,
     RuntimeOwner,
+    RuntimeRouteHop,
     RuntimeService,
     RuntimeSnapshot,
     RuntimeStoryStep,
@@ -102,7 +104,7 @@ async def build_snapshot(
     runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
     runtime_jobs = _dedupe_jobs(runtime_jobs)[:12]
 
-    data_runtime_events = _events_from_data(data_events)
+    data_runtime_events = _enrich_event_scope(_events_from_data(data_events), runtime_devices)
     recent_events = list(data_runtime_events)
     recent_events.extend(_events_from_turns(turns[:5]))
     recent_events.extend(_events_from_jobs(runtime_jobs[:5]))
@@ -115,6 +117,7 @@ async def build_snapshot(
     agent_runtime_turns = [_turn(row) for row in turns]
     runtime_turns = _project_runtime_turns(data_runtime_events, agent_runtime_turns)
     active_turn = _active_turn(runtime_turns)
+    activities = _project_runtime_activities(runtime_turns, runtime_jobs, recent_events)
 
     source_status = _coalesce_statuses(statuses)
     experience = _experience(
@@ -154,7 +157,7 @@ async def build_snapshot(
         companions=[_runtime_companion(row) for row in companions],
         devices=runtime_devices,
         services=services,
-        active_turn=active_turn,
+        activities=activities,
         recent_turns=runtime_turns[:12],
         memory=memory,
         jobs=runtime_jobs,
@@ -222,6 +225,59 @@ def hub_event_to_runtime(raw: dict[str, Any]) -> RuntimeEvent:
         summary=f"Hub event: {event_type}",
         payload=_safe_payload(raw),
     )
+
+
+def _enrich_event_scope(
+    events: list[RuntimeEvent],
+    devices: list[RuntimeDevice],
+) -> list[RuntimeEvent]:
+    """Attach owner/companion scope from the authoritative device binding.
+
+    Hub and older audit events frequently carry only ``device_id``. Resolving
+    that identity here keeps every consumer on one attribution rule and leaves
+    the producers and their hot paths untouched.
+    """
+
+    by_id = {device.device_id: device for device in devices}
+    enriched: list[RuntimeEvent] = []
+    for event in events:
+        device = by_id.get(event.device_id or "")
+        if device is None:
+            enriched.append(event)
+            continue
+        enriched.append(
+            event.model_copy(
+                update={
+                    "owner_id": event.owner_id or device.owner_id,
+                    "companion_id": event.companion_id or device.companion_id,
+                }
+            )
+        )
+    return enriched
+
+
+async def enrich_runtime_event(
+    request: Request,
+    event: RuntimeEvent,
+    *,
+    owner_id: str | None = None,
+) -> RuntimeEvent:
+    """Resolve a live event's scope without changing the originating system."""
+
+    update: dict[str, Any] = {}
+    if owner_id and not event.owner_id:
+        update["owner_id"] = owner_id
+    if event.device_id and not event.companion_id:
+        store = _store(request)
+        if store is not None:
+            try:
+                row = await store.devices.get_device(event.device_id)
+            except Exception:  # noqa: BLE001 - observability enrichment is best effort
+                row = None
+            if row is not None:
+                update["owner_id"] = event.owner_id or getattr(row, "owner_id", None) or owner_id
+                update["companion_id"] = getattr(row, "bound_companion_id", None)
+    return event.model_copy(update=update) if update else event
 
 
 def _store(request: Request) -> DataStore | None:
@@ -907,20 +963,269 @@ def _stage_status(status: Any) -> str:
     return "done" if value else "pending"
 
 
+_ACTIVE_ACTIVITY_STATES = {
+    "running",
+    "active",
+    "pending",
+    "queued",
+    "accepted",
+    "processing",
+    "generating",
+    "speaking",
+    "deferred",
+}
+
+
 def _active_turn(turns: list[RuntimeTurn]) -> RuntimeTurn | None:
-    active_states = {
-        "running",
-        "pending",
-        "queued",
-        "processing",
-        "generating",
-        "speaking",
-        "deferred",
-    }
     for turn in turns:
-        if turn.status.lower() in active_states:
+        if _activity_is_active(turn.status):
             return turn
     return None
+
+
+def _activity_is_active(status: str) -> bool:
+    return status.lower() in _ACTIVE_ACTIVITY_STATES
+
+
+def _project_runtime_activities(
+    turns: list[RuntimeTurn],
+    jobs: list[RuntimeJob],
+    events: list[RuntimeEvent],
+) -> list[RuntimeActivity]:
+    """Project independent runtime facts into concurrent observer lanes."""
+
+    activities = [_voice_activity(turn) for turn in turns[:12]]
+    activities.extend(_job_activity(job) for job in jobs[:12])
+    activities.extend(
+        activity
+        for event in events
+        if (activity := _event_activity(event)) is not None
+    )
+    ordered = sorted(
+        activities,
+        key=lambda item: (
+            _activity_is_active(item.status),
+            _as_utc(item.updated_at or item.started_at) or datetime.min.replace(tzinfo=UTC),
+        ),
+        reverse=True,
+    )
+    # A noisy device must not evict every other companion from the observatory.
+    # This is display back-pressure only; the persisted event ledger stays whole.
+    bounded: list[RuntimeActivity] = []
+    per_scope: dict[str, int] = {}
+    for activity in ordered:
+        scope = activity.companion_id or f"owner:{activity.owner_id}"
+        if per_scope.get(scope, 0) >= 12 and not _activity_is_active(activity.status):
+            continue
+        bounded.append(activity)
+        per_scope[scope] = per_scope.get(scope, 0) + 1
+        if len(bounded) >= 48:
+            break
+    return bounded
+
+
+def _voice_activity(turn: RuntimeTurn) -> RuntimeActivity:
+    route: list[RuntimeRouteHop] = []
+    if turn.device_id:
+        route.append(
+            RuntimeRouteHop(
+                hop_id=f"voice:{turn.turn_id}:device-in",
+                node_type="device",
+                node_id=turn.device_id,
+                label=turn.device_id,
+                stage="input",
+                status="done",
+                direction="in",
+                ts=turn.started_at,
+            )
+        )
+    if turn.companion_id:
+        route.append(
+            RuntimeRouteHop(
+                hop_id=f"voice:{turn.turn_id}:companion",
+                node_type="companion",
+                node_id=turn.companion_id,
+                label="Companion",
+                stage="identity",
+                status="done",
+                direction="in",
+                ts=turn.started_at,
+            )
+        )
+    for index, stage in enumerate(turn.stages):
+        key = str(stage.get("key") or f"stage-{index}")
+        node_type, node_id, direction = _voice_stage_node(key, turn.device_id)
+        route.append(
+            RuntimeRouteHop(
+                hop_id=f"voice:{turn.turn_id}:{key}:{index}",
+                node_type=node_type,
+                node_id=node_id,
+                label=str(stage.get("label") or key),
+                stage=key,
+                status=str(stage.get("status") or "pending"),
+                direction=direction,
+                latency_ms=_int_or_none(stage.get("latency_ms")),
+            )
+        )
+    active = _activity_is_active(turn.status)
+    current = next((hop.hop_id for hop in reversed(route) if hop.status == "running"), None)
+    if active and current is None and route:
+        current = route[-1].hop_id
+    playback_seen = any(hop.stage in {"tts", "playback"} for hop in route)
+    return RuntimeActivity(
+        activity_id=f"voice:{turn.turn_id}",
+        kind="voice_turn",
+        owner_id=turn.owner_id,
+        companion_id=turn.companion_id or None,
+        trace_id=turn.trace_id,
+        turn_id=turn.turn_id,
+        origin_device_id=turn.device_id,
+        target_device_ids=[turn.device_id] if turn.device_id and playback_seen else [],
+        status=turn.status,
+        outcome=turn.outcome,
+        summary=_voice_activity_summary(turn),
+        current_hop_id=current,
+        started_at=turn.started_at,
+        updated_at=turn.finished_at or turn.started_at,
+        finished_at=turn.finished_at,
+        event_ids=turn.event_ids,
+        route=route,
+    )
+
+
+def _voice_stage_node(stage: str, device_id: str | None) -> tuple[str, str, str]:
+    if stage == "playback" and device_id:
+        return "device", device_id, "out"
+    if stage in {"memory_recall", "memory_write"}:
+        return "memory", "memory", "out"
+    if stage in {"agent_turn", "brain", "response", "tools"}:
+        return "service", "agent", "internal"
+    return "service", "channel", "out" if stage == "tts" else "in"
+
+
+def _voice_activity_summary(turn: RuntimeTurn) -> str:
+    if _activity_is_active(turn.status):
+        stage = next(
+            (str(item.get("label") or "") for item in reversed(turn.stages) if item.get("status") == "running"),
+            "语音轮次进行中",
+        )
+        return stage
+    if turn.status == "interrupted":
+        return "语音轮次已被用户打断"
+    if turn.outcome == "failure":
+        return "语音轮次失败"
+    return "语音轮次已完成"
+
+
+def _job_activity(job: RuntimeJob) -> RuntimeActivity:
+    active = _activity_is_active(job.status)
+    route = [
+        RuntimeRouteHop(
+            hop_id=f"job:{job.job_id}:agent",
+            node_type="service",
+            node_id="agent",
+            label="智能体任务编排",
+            stage="dispatch",
+            status="done" if not active else "running",
+            direction="out",
+            ts=job.created_at,
+        )
+    ]
+    provider_id = job.provider.lower() or "agent"
+    if provider_id != "agent":
+        route.append(
+            RuntimeRouteHop(
+                hop_id=f"job:{job.job_id}:provider",
+                node_type="provider",
+                node_id=provider_id,
+                label=job.provider or job.kind or "后台执行器",
+                stage="execute",
+                status="running" if active else _stage_status(job.status),
+                direction="out",
+                ts=job.updated_at or job.created_at,
+            )
+        )
+    return RuntimeActivity(
+        activity_id=f"job:{job.job_id}",
+        kind="background_job",
+        owner_id=job.owner_id,
+        companion_id=job.companion_id,
+        turn_id=job.turn_id,
+        job_id=job.job_id,
+        status=job.status,
+        outcome="deferred" if active else "failure" if job.status.lower() in {"failed", "error", "errored"} else "success",
+        summary=job.summary or f"{job.provider}:{job.kind}",
+        current_hop_id=route[-1].hop_id if active else None,
+        started_at=job.created_at,
+        updated_at=job.updated_at or job.created_at,
+        finished_at=job.completed_at,
+        route=route,
+    )
+
+
+def _event_activity(event: RuntimeEvent) -> RuntimeActivity | None:
+    lowered = event.type.lower()
+    if "command" in lowered:
+        kind = "device_command"
+        outbound = True
+    elif lowered.startswith("guard.") or ".guard." in lowered:
+        kind = "guard_event"
+        outbound = False
+    elif event.device_id and (event.source == "hub" or lowered.startswith("device.")):
+        kind = "device_event"
+        outbound = False
+    else:
+        return None
+
+    route: list[RuntimeRouteHop] = []
+    endpoints: list[tuple[str, str, str, str]] = []
+    if outbound:
+        if event.companion_id:
+            endpoints.append(("companion", event.companion_id, "Companion", "out"))
+        endpoints.append(("service", "hub", "设备中枢", "out"))
+        if event.device_id:
+            endpoints.append(("device", event.device_id, event.device_id, "out"))
+    else:
+        if event.device_id:
+            endpoints.append(("device", event.device_id, event.device_id, "in"))
+        endpoints.append(("service", "hub", "设备中枢", "in"))
+        if event.companion_id:
+            endpoints.append(("companion", event.companion_id, "Companion", "in"))
+    status = str(event.payload.get("status") or "completed")
+    active = _activity_is_active(status)
+    for index, (node_type, node_id, label, direction) in enumerate(endpoints):
+        route.append(
+            RuntimeRouteHop(
+                hop_id=f"event:{event.event_id}:{index}",
+                node_type=node_type,
+                node_id=node_id,
+                label=label,
+                stage="command" if outbound else "observe",
+                status="running" if active and index == len(endpoints) - 1 else "done",
+                direction=direction,
+                ts=event.ts,
+            )
+        )
+    return RuntimeActivity(
+        activity_id=f"event:{event.event_id}",
+        kind=kind,
+        owner_id=event.owner_id or "",
+        companion_id=event.companion_id,
+        trace_id=event.trace_id,
+        turn_id=event.turn_id,
+        job_id=event.job_id,
+        origin_device_id=event.device_id if not outbound else None,
+        target_device_ids=[event.device_id] if outbound and event.device_id else [],
+        status=status,
+        outcome="deferred" if active else event.outcome,
+        summary=event.summary,
+        current_hop_id=route[-1].hop_id if active and route else None,
+        started_at=event.ts,
+        updated_at=event.ts,
+        finished_at=None if active else event.ts,
+        event_ids=[event.event_id],
+        route=route,
+    )
 
 
 def _job(row: Any) -> RuntimeJob:

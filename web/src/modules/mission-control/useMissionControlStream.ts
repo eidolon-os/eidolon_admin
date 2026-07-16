@@ -6,6 +6,7 @@ import { listOwners, type OwnerView } from '@/api/eidolonData'
 import {
   getMissionControlSnapshot,
   missionControlEventsUrl,
+  type RuntimeActivity,
   type RuntimeCompanion,
   type RuntimeEvent,
   type RuntimeSnapshot,
@@ -14,7 +15,6 @@ import {
 } from '@/api/missionControl'
 import { useEventStream } from '@/components/useEventStream'
 import {
-  currentStageKey,
   demoFlowDevice,
   demoFlowTurn,
   eventBelongsToTurn,
@@ -28,7 +28,8 @@ import {
   type PulseScope,
   type PulseTone,
 } from './flow'
-import { INFRA, SVC_GLYPH, STAGE_SVC } from './constants'
+import { INFRA, SVC_GLYPH } from './constants'
+import { activityServiceId, activitySortTime, isActiveActivity } from './activity'
 import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
 
@@ -65,6 +66,23 @@ export interface FlowPulse {
   leg: FlowLeg
   dir: 'in' | 'out'
   tone: PulseTone
+  deviceId?: string
+}
+
+function demoActivity(turn: RuntimeTurn): RuntimeActivity {
+  return {
+    activity_id: `demo:${turn.turn_id}`,
+    kind: 'voice_turn', owner_id: turn.owner_id, companion_id: turn.companion_id,
+    trace_id: turn.trace_id, turn_id: turn.turn_id, job_id: null,
+    origin_device_id: turn.device_id, target_device_ids: turn.device_id ? [turn.device_id] : [],
+    status: turn.status, outcome: turn.outcome, summary: 'DEV visual flow',
+    current_hop_id: 'demo:agent', started_at: turn.started_at, updated_at: turn.started_at,
+    finished_at: null, event_ids: [],
+    route: [{
+      hop_id: 'demo:agent', node_type: 'service', node_id: 'agent', label: 'Demo agent',
+      stage: 'agent_turn', status: 'running', direction: 'internal', ts: null, latency_ms: null,
+    }],
+  }
 }
 
 export function useMissionControlStream(opts: MissionControlMode = {}) {
@@ -103,10 +121,18 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const devices = computed(() => snapshot.value?.devices || [])
   const services = computed(() => snapshot.value?.services || [])
   const jobs = computed(() => snapshot.value?.jobs || [])
+  const activities = computed(() => snapshot.value?.activities || [])
+  const activeActivities = computed(() => activities.value.filter(isActiveActivity))
   const companions = computed<RuntimeCompanion[]>(() => {
     const list = snapshot.value?.companions || []
     return list.length ? list : snapshot.value?.companion ? [snapshot.value.companion] : []
   })
+  const companionNames = computed<Record<string, string>>(() => Object.fromEntries(
+    companions.value.map((companion) => [companion.companion_id, companion.display_name || companion.companion_id]),
+  ))
+  const deviceNames = computed<Record<string, string>>(() => Object.fromEntries(
+    devices.value.map((device) => [device.device_id, device.name || device.device_id]),
+  ))
 
   const ownerName = computed(
     () => snapshot.value?.owner?.display_name || snapshot.value?.owner?.owner_id || '未选择主人',
@@ -117,19 +143,17 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     () => jobs.value.filter((j) => ACTIVE_STATES.includes((j.status || '').toLowerCase())).length,
   )
   const degradedSources = computed(() => (snapshot.value?.source_status || []).filter((s) => !s.ok))
-  const activeTurn = computed<RuntimeTurn | null>(
-    () => snapshot.value?.active_turn || snapshot.value?.recent_turns?.[0] || null,
-  )
   const runtimeTurns = computed(() => snapshot.value?.recent_turns || [])
   const selectedTurn = computed<RuntimeTurn | null>(() =>
     selectedTurnId.value
       ? runtimeTurns.value.find((turn) => turn.turn_id === selectedTurnId.value) || null
       : null,
   )
-  const pipelineActive = computed(() => {
-    const t = snapshot.value?.active_turn
-    return t ? ACTIVE_STATES.includes((t.status || '').toLowerCase()) : false
+  const activeTurn = computed<RuntimeTurn | null>(() => {
+    const voice = activeActivities.value.find((activity) => activity.kind === 'voice_turn' && activity.turn_id)
+    return voice ? runtimeTurns.value.find((turn) => turn.turn_id === voice.turn_id) || null : null
   })
+  const pipelineActive = computed(() => activeActivities.value.length > 0)
   const primaryCompanionId = computed(() => snapshot.value?.companion?.companion_id || '')
   const privacyMode = computed(() =>
     privacyModeLabel(memory.value?.privacy_mode || activeTurn.value?.privacy_mode || 'safe'),
@@ -148,7 +172,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     return eventId ? recentEvents.value.find((event) => event.event_id === eventId) || null : null
   })
   const traceId = computed(() =>
-    (selectedTurn.value?.trace_id || activeTurn.value?.trace_id || activeTurn.value?.turn_id || snapshot.value?.owner?.owner_id || 'STANDBY').slice(0, 14).toUpperCase(),
+    (selectedTurn.value?.trace_id || activeActivities.value[0]?.trace_id || activeActivities.value[0]?.activity_id || snapshot.value?.owner?.owner_id || 'STANDBY').slice(0, 14).toUpperCase(),
   )
   const traceSpans = computed(() => {
     const spans = snapshot.value?.trace_spans || []
@@ -165,20 +189,26 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
 
   // ── companions projected into the sovereign-domain view ───────────────
   const companionUnits = computed<CompanionUnit[]>(() => {
-    const t = snapshot.value?.active_turn
     const m = memory.value
     const activeRealm = m?.active_realm_id
     return companions.value.map((c, i) => {
       let devs = devices.value.filter((d) => d.companion_id === c.companion_id)
       const cJobs = jobs.value.filter((j) => j.companion_id === c.companion_id)
       const cTurns = runtimeTurns.value.filter((turn) => turn.companion_id === c.companion_id)
-      let active = t && t.companion_id === c.companion_id && ACTIVE_STATES.includes((t.status || '').toLowerCase()) ? t : null
+      const cActivities = activities.value
+        .filter((activity) => activity.companion_id === c.companion_id)
+        .sort((a, b) => activitySortTime(b) - activitySortTime(a))
+      let activeActivity = cActivities.find(isActiveActivity) || null
+      let active = activeActivity?.turn_id
+        ? cTurns.find((turn) => turn.turn_id === activeActivity?.turn_id) || null
+        : null
       let turn = selectedTurn.value?.companion_id === c.companion_id ? selectedTurn.value : active
       // DEV-only: overlay a synthetic turn + online body on the demo target so
       // both flow legs light. Purely presentational — never touches the wire.
       if (isDemoFlowTarget(c.companion_id, i, demoFlow)) {
         if (!turn) turn = demoFlowTurn(c.companion_id || 'demo')
         if (!active) active = turn
+        if (!activeActivity) activeActivity = demoActivity(turn)
         if (!devs.some((d) => d.online))
           devs = devs.length
             ? devs.map((d, di) => (di === 0 ? { ...d, online: true } : d))
@@ -197,6 +227,8 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         runners: isActiveRealm ? `${m?.runners_online ?? 0}/${m?.runners_total ?? 0}` : '',
         write: isActiveRealm ? (m?.fanout_allowed ? m?.last_write_disposition || 'ALLOW' : 'HOLD') : '',
         devices: devs,
+        activities: cActivities,
+        activeActivity,
         activeTurn: active,
         turn,
         turns: cTurns,
@@ -237,7 +269,10 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       if (tone !== 'bad' && pulseThrottled(lastLegEmit.get(key) ?? 0, nowMs)) return
       lastLegEmit.set(key, nowMs)
       const id = `fp-${pulseSeq++}`
-      activePulses.value = [...activePulses.value, { id, companionId: cid, leg: p.leg, dir: p.dir, tone }].slice(-12)
+      activePulses.value = [...activePulses.value, {
+        id, companionId: cid, leg: p.leg, dir: p.dir, tone,
+        deviceId: e.device_id || undefined,
+      }].slice(-12)
       const timer = window.setTimeout(() => {
         activePulses.value = activePulses.value.filter((x) => x.id !== id)
         pulseTimers.delete(timer)
@@ -278,6 +313,13 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     if (selectedTurn.value && (!f || selectedTurn.value.companion_id === f.id)) return selectedTurn.value
     if (!f) return activeTurn.value
     return f.activeTurn || f.turns[0] || null
+  })
+  const scopedActivities = computed(() => {
+    const scoped = focusedCompanion.value
+      ? activities.value.filter((activity) => activity.companion_id === focusedCompanion.value!.id)
+      : activities.value
+    const active = scoped.filter(isActiveActivity)
+    return (active.length ? active : scoped.slice(0, 4)).sort((a, b) => activitySortTime(b) - activitySortTime(a))
   })
   const scopedJobs = computed(() => (focusedCompanion.value ? focusedCompanion.value.jobs : jobs.value))
   // permission_ledger carries device_id (no companion_id) — scope via device→companion.
@@ -343,11 +385,20 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
       }
     }),
   )
-  // Which infra node the active turn's current stage lights (signal flow).
-  const hotService = computed(() => {
-    const key = currentStageKey(snapshot.value?.active_turn)
-    return key ? STAGE_SVC[key] || '' : ''
+  // Concurrent observer lanes may have different playheads on the substrate.
+  const serviceActivityOwners = computed<Record<string, string[]>>(() => {
+    const ownersByService: Record<string, string[]> = {}
+    for (const activity of activeActivities.value) {
+      const serviceId = activityServiceId(activity)
+      if (!serviceId) continue
+      const companion = companionUnits.value.find((item) => item.id === activity.companion_id)
+      const label = companion?.name || activity.companion_id || activity.kind
+      const labels = ownersByService[serviceId] || (ownersByService[serviceId] = [])
+      if (!labels.includes(label)) labels.push(label)
+    }
+    return ownersByService
   })
+  const hotServices = computed(() => Object.keys(serviceActivityOwners.value))
 
   // ── header chrome ────────────────────────────────────────────────────
   const clock = computed(() => fmtClock(now.value))
@@ -432,7 +483,8 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // state
     owners, ownerId, snapshot, liveEvents, loading, error, streamState, now, replay,
     // primitives
-    experience, memory, devices, services, jobs, companions,
+    experience, memory, devices, services, jobs, activities, activeActivities, companions,
+    companionNames, deviceNames,
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
     activeTurn, runtimeTurns, selectedTurn, selectedTurnId, selectedEventId,
     highlightedEvent, hoveredEventId,
@@ -440,11 +492,11 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     recentEvents, traceId, traceSpans, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,
-    focusedCompanionId, focusedCompanion, scopedTurn, scopedJobs, scopedPermissions, companionEvents,
+    focusedCompanionId, focusedCompanion, scopedTurn, scopedActivities, scopedJobs, scopedPermissions, companionEvents,
     // Tier-2 event pulses (P4 preview)
     activePulses, flowEventsEnabled,
     // infra rail
-    infraNodes, hotService,
+    infraNodes, hotServices, serviceActivityOwners,
     // header chrome
     clock, streamLabelText, systemStateText,
     // actions

@@ -36,8 +36,9 @@ import {
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
 import { statusClass } from '../src/modules/mission-control/format'
+import { activityBadgeLabel, activityServiceId, isActiveActivity, summarizeActivityBadges } from '../src/modules/mission-control/activity'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
-import type { RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
+import type { RuntimeActivity, RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
 
 // ── fixtures ────────────────────────────────────────────────────────────
 function device(over: Partial<RuntimeDevice> = {}): RuntimeDevice {
@@ -62,13 +63,64 @@ function companion(over: Partial<CompanionUnit> = {}): CompanionUnit {
   return {
     id: 'c1', name: 'Aria', kind: 'companion', status: 'active', genome: '',
     realm: '', isActiveRealm: false, recall: null, runners: '', write: '',
-    devices: [], activeTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
+    devices: [], activities: [], activeActivity: null,
+    activeTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
+  }
+}
+function activity(over: Partial<RuntimeActivity> = {}): RuntimeActivity {
+  return {
+    activity_id: 'voice:t1', kind: 'voice_turn', owner_id: 'o1', companion_id: 'c1',
+    trace_id: 't1', turn_id: 't1', job_id: null, origin_device_id: 'd1',
+    target_device_ids: [], status: 'running', outcome: 'deferred', summary: 'thinking',
+    current_hop_id: 'h2', started_at: '2026-07-16T10:00:00Z', updated_at: '2026-07-16T10:00:01Z',
+    finished_at: null, event_ids: [],
+    route: [
+      { hop_id: 'h1', node_type: 'service', node_id: 'channel', label: 'Channel', stage: 'speech', status: 'done', direction: 'in', ts: null, latency_ms: 20 },
+      { hop_id: 'h2', node_type: 'service', node_id: 'agent', label: 'Agent', stage: 'brain', status: 'running', direction: 'internal', ts: null, latency_ms: null },
+    ],
+    ...over,
   }
 }
 
 it('renders a session-reconciled orphan turn as a failure', () => {
   expect(statusClass('orphaned')).toBe('bad')
   expect(statusClass('interrupted')).toBe('warn')
+})
+
+describe('runtime activity projection helpers', () => {
+  it('recognises independent active lanes and resolves their substrate playhead', () => {
+    const voice = activity()
+    const guard = activity({
+      activity_id: 'guard:g1', kind: 'guard_event', companion_id: 'guard',
+      current_hop_id: 'guard-hub',
+      route: [{ hop_id: 'guard-hub', node_type: 'service', node_id: 'hub', label: 'Hub', stage: 'observe', status: 'running', direction: 'in', ts: null, latency_ms: null }],
+    })
+    expect(isActiveActivity(voice)).toBe(true)
+    expect(isActiveActivity(guard)).toBe(true)
+    expect(activityServiceId(voice)).toBe('agent')
+    expect(activityServiceId(guard)).toBe('hub')
+  })
+
+  it('uses meaningful state/time labels instead of per-companion T1..T6 indexes', () => {
+    expect(activityBadgeLabel(activity())).toBe('当前')
+    expect(activityBadgeLabel(activity({
+      status: 'completed', outcome: 'success',
+      finished_at: '2026-07-16T11:58:30Z', updated_at: '2026-07-16T11:58:30Z',
+    }), Date.parse('2026-07-16T12:00:00Z'))).toBe('1分')
+    expect(activityBadgeLabel(activity({ kind: 'guard_event', status: 'completed', outcome: 'success' }))).toBe('守护')
+    expect(activityBadgeLabel(activity({ status: 'failed', outcome: 'failure' }))).toBe('失败')
+  })
+
+  it('groups repeated Guard/device facts without hiding distinct voice turns', () => {
+    const rows = summarizeActivityBadges([
+      activity({ activity_id: 'g1', kind: 'guard_event', status: 'completed', outcome: 'success' }),
+      activity({ activity_id: 'g2', kind: 'guard_event', status: 'completed', outcome: 'success' }),
+      activity({ activity_id: 'v1', kind: 'voice_turn', status: 'completed', outcome: 'success' }),
+      activity({ activity_id: 'v2', kind: 'voice_turn', status: 'completed', outcome: 'success' }),
+    ], Date.parse('2026-07-16T12:00:00Z'))
+    expect(rows.map((row) => row.label)).toContain('守护×2')
+    expect(rows.filter((row) => row.activity.kind === 'voice_turn')).toHaveLength(2)
+  })
 })
 
 // ── shouldFlow: which companions circulate ────────────────────────────────

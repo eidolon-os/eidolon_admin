@@ -513,7 +513,7 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
         "tools",
         "memory_write",
     ]
-    assert body["active_turn"] is None
+    assert not any(activity["status"] == "running" for activity in body["activities"])
     assert {span["turn_id"] for span in body["trace_spans"]} == {channel_turn_id}
     agent_event = next(event for event in body["recent_events"] if event["type"] == "agent.turn.observed")
     assert agent_event["trace_id"] == channel_turn_id
@@ -599,4 +599,67 @@ async def test_snapshot_reconciles_unclosed_turn_at_authoritative_session_end(
     assert turn["missing_milestones"] == ["terminal_event"]
     assert turn["event_ids"][-1] == "evt-orphan-session-end"
     assert turn["stages"][-1]["status"] == "degraded"
-    assert body["active_turn"] is None
+    assert not any(activity["status"] == "running" for activity in body["activities"])
+
+
+def test_activity_projection_keeps_concurrent_companions_independent() -> None:
+    turn_a = mission_control_service.RuntimeTurn(
+        turn_id="turn-a",
+        conversation_id="conv-a",
+        owner_id="owner-a",
+        companion_id="companion-a",
+        device_id="box-a",
+        status="running",
+        outcome="deferred",
+        started_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        stages=[{"key": "brain", "label": "A 思考", "status": "running"}],
+    )
+    turn_b = mission_control_service.RuntimeTurn(
+        turn_id="turn-b",
+        conversation_id="conv-b",
+        owner_id="owner-a",
+        companion_id="companion-b",
+        device_id="box-b",
+        status="speaking",
+        outcome="deferred",
+        started_at=datetime(2026, 7, 16, 12, 0, 1, tzinfo=UTC),
+        stages=[{"key": "playback", "label": "B 播放", "status": "running"}],
+    )
+
+    activities = mission_control_service._project_runtime_activities(
+        [turn_a, turn_b], [], []
+    )
+
+    active = {item.companion_id: item for item in activities}
+    assert active["companion-a"].current_hop_id.endswith(":brain:0")
+    assert active["companion-b"].current_hop_id.endswith(":playback:0")
+    assert active["companion-a"].route[-1].node_id == "agent"
+    assert active["companion-b"].route[-1].node_id == "box-b"
+
+
+def test_device_binding_enriches_guard_event_and_route() -> None:
+    device = mission_control_service.RuntimeDevice(
+        device_id="guard-device",
+        owner_id="owner-guard",
+        companion_id="guard-companion",
+    )
+    event = mission_control_service.RuntimeEvent(
+        event_id="guard-event",
+        ts=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        source="hub",
+        type="guard.presence.observed",
+        device_id="guard-device",
+        summary="Guard observed presence",
+    )
+
+    enriched = mission_control_service._enrich_event_scope([event], [device])[0]
+    activity = mission_control_service._event_activity(enriched)
+
+    assert enriched.companion_id == "guard-companion"
+    assert activity is not None
+    assert activity.kind == "guard_event"
+    assert [hop.node_id for hop in activity.route] == [
+        "guard-device",
+        "hub",
+        "guard-companion",
+    ]

@@ -114,7 +114,7 @@ export function flowLegs(c: CompanionUnit): FlowLegs {
   const hits = c.turn?.memory_hits ?? 0
   const mem = hits > 0
   const memBright = mem ? MEM_FLOOR + (1 - MEM_FLOOR) * Math.min(1, hits / MEM_SATURATION) : 0
-  return { body, mem, memBright, act: !!c.activeTurn }
+  return { body, mem, memBright, act: !!c.activeActivity }
 }
 
 const f1 = (n: number) => n.toFixed(1)

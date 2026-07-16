@@ -3,6 +3,7 @@
 // components consume — kept separate from the wire types in
 // `@/api/missionControl` so the UI can enrich without touching the contract.
 import type {
+  RuntimeActivity,
   RuntimeDevice,
   RuntimeEvent,
   RuntimeJob,
@@ -55,6 +56,8 @@ export interface CompanionUnit {
   runners: string
   write: string
   devices: RuntimeDevice[]
+  activities: RuntimeActivity[]
+  activeActivity: RuntimeActivity | null
   activeTurn: RuntimeTurn | null
   turn: RuntimeTurn | null
   turns: RuntimeTurn[]
@@ -96,5 +99,6 @@ export type DrawerTarget =
   | { type: 'owner' }
   | { type: 'companion'; c: CompanionUnit }
   | { type: 'moon'; s: Sat }
+  | { type: 'activity'; activity: RuntimeActivity }
   | { type: 'service'; n: InfraNode }
   | { type: 'trace' }

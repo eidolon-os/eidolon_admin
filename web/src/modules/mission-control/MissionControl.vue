@@ -7,7 +7,7 @@ import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CockpitHeader from './components/CockpitHeader.vue'
 import DrilldownDrawer from './components/DrilldownDrawer.vue'
-import LiveTraceTimeline from './components/LiveTraceTimeline.vue'
+import RuntimeActivityBoard from './components/RuntimeActivityBoard.vue'
 import RuntimeBusRail from './components/RuntimeBusRail.vue'
 import RecentEventsPanel from './components/RecentEventsPanel.vue'
 import SovereignConstellation from './components/SovereignConstellation.vue'
@@ -15,6 +15,7 @@ import OrbitField from './primitives/OrbitField.vue'
 import { useMissionControlStream } from './useMissionControlStream'
 import { prefersReducedMotion } from './motion'
 import type { CompanionUnit, DrawerTarget, InfraNode, Sat } from './types'
+import type { RuntimeActivity } from '@/api/missionControl'
 import './cockpit.tokens.css'
 
 const route = useRoute()
@@ -33,8 +34,8 @@ const mc = useMissionControlStream({ mode, ownerId: initialOwnerId, demoFlow, fl
 
 const {
   pipelineActive, error,
-  infraNodes, hotService, selectedEventId,
-  scopedTurn, companionEvents, focusedCompanion, focusedCompanionId,
+  infraNodes, hotServices, serviceActivityOwners, selectedEventId,
+  scopedActivities, companionEvents, focusedCompanion, focusedCompanionId,
 } = mc
 
 const drawer = ref<DrawerTarget | null>(null)
@@ -47,6 +48,11 @@ function openComp(c: CompanionUnit) { mc.followLive(); focusedCompanionId.value 
 function openMoon(s: Sat) { focusedCompanionId.value = s.c.id; drawer.value = { type: 'moon', s } }
 function openSvc(n: InfraNode) { drawer.value = { type: 'service', n } }
 function openTrace() { drawer.value = { type: 'trace' } }
+function openActivity(activity: RuntimeActivity) {
+  if (activity.companion_id) focusedCompanionId.value = activity.companion_id
+  if (activity.turn_id) mc.selectTurn(activity.turn_id, activity.companion_id || undefined)
+  drawer.value = { type: 'activity', activity }
+}
 function selectTurn(turnId: string, companionId: string) { mc.selectTurn(turnId, companionId); openTrace() }
 function selectEvent(event: Parameters<typeof mc.selectEvent>[0]) { mc.selectEvent(event) }
 function closeDrawer() { drawer.value = null }
@@ -91,9 +97,15 @@ function returnToConsole() { router.push({ name: 'home' }) }
 
     <SovereignConstellation :mc="mc" :focused-id="focusedCompanionId" @open-owner="openOwner" @open-companion="openComp" @open-moon="openMoon" @select-turn="selectTurn" />
 
-    <LiveTraceTimeline :turn="scopedTurn" :scope="focusedCompanion?.name || ''" @open="openTrace" />
+    <RuntimeActivityBoard
+      :activities="scopedActivities"
+      :companion-names="mc.companionNames.value"
+      :device-names="mc.deviceNames.value"
+      :scope="focusedCompanion?.name || ''"
+      @open="openActivity"
+    />
 
-    <RuntimeBusRail :nodes="infraNodes" :hot-service="hotService" :pipeline-active="pipelineActive" @open-service="openSvc" />
+    <RuntimeBusRail :nodes="infraNodes" :hot-services="hotServices" :activity-owners="serviceActivityOwners" :pipeline-active="pipelineActive" @open-service="openSvc" />
     <RecentEventsPanel :events="companionEvents" :scope="focusedCompanion?.name || ''" :selected-event-id="selectedEventId" @select="selectEvent" @hover="mc.hoverEvent" />
 
     <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openComp" @close="closeDrawer" />

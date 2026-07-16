@@ -118,6 +118,47 @@ class RuntimeTurn(BaseModel):
     stages: list[JsonDict] = Field(default_factory=list)
 
 
+class RuntimeRouteHop(BaseModel):
+    """One factual node visited by an observed runtime activity.
+
+    Hops are a read-only projection of persisted events, turns, and jobs. They
+    are deliberately not commands and never participate in runtime routing.
+    """
+
+    hop_id: str
+    node_type: str  # device | companion | service | memory | tool | provider
+    node_id: str
+    label: str
+    stage: str = ""
+    status: str = "pending"
+    direction: str = "internal"  # in | out | internal
+    ts: datetime | None = None
+    latency_ms: int | None = None
+
+
+class RuntimeActivity(BaseModel):
+    """Unified observer projection for concurrent work in Mission Control."""
+
+    activity_id: str
+    kind: str  # voice_turn | guard_event | device_command | background_job
+    owner_id: str = ""
+    companion_id: str | None = None
+    trace_id: str | None = None
+    turn_id: str | None = None
+    job_id: str | None = None
+    origin_device_id: str | None = None
+    target_device_ids: list[str] = Field(default_factory=list)
+    status: str = "pending"
+    outcome: RuntimeOutcome = "deferred"
+    summary: str = ""
+    current_hop_id: str | None = None
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+    finished_at: datetime | None = None
+    event_ids: list[str] = Field(default_factory=list)
+    route: list[RuntimeRouteHop] = Field(default_factory=list)
+
+
 class RuntimeJob(BaseModel):
     job_id: str
     owner_id: str
@@ -251,7 +292,7 @@ class RuntimeSnapshot(BaseModel):
     companions: list[RuntimeCompanion] = Field(default_factory=list)
     devices: list[RuntimeDevice] = Field(default_factory=list)
     services: list[RuntimeService] = Field(default_factory=list)
-    active_turn: RuntimeTurn | None = None
+    activities: list[RuntimeActivity] = Field(default_factory=list)
     recent_turns: list[RuntimeTurn] = Field(default_factory=list)
     memory: RuntimeMemory = Field(default_factory=RuntimeMemory)
     jobs: list[RuntimeJob] = Field(default_factory=list)
