@@ -3,9 +3,10 @@
 // Full-bleed, god's-eye observatory — reached from the sidebar launcher, with a
 // return-to-console affordance. This shell owns only layout + drawer routing;
 // all data/state lives in useMissionControlStream, all visuals in child comps.
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CockpitHeader from './components/CockpitHeader.vue'
+import CompanionInspector from './components/CompanionInspector.vue'
 import DrilldownDrawer from './components/DrilldownDrawer.vue'
 import RuntimeActivityBoard from './components/RuntimeActivityBoard.vue'
 import RuntimeBusRail from './components/RuntimeBusRail.vue'
@@ -14,7 +15,7 @@ import SovereignConstellation from './components/SovereignConstellation.vue'
 import OrbitField from './primitives/OrbitField.vue'
 import { useMissionControlStream } from './useMissionControlStream'
 import { prefersReducedMotion } from './motion'
-import type { CompanionUnit, DrawerTarget, InfraNode, Sat } from './types'
+import type { CompanionInspectorTab, CompanionUnit, DrawerTarget, InfraNode, Sat } from './types'
 import type { RuntimeActivity } from '@/api/missionControl'
 import './cockpit.tokens.css'
 
@@ -39,23 +40,51 @@ const {
 } = mc
 
 const drawer = ref<DrawerTarget | null>(null)
-// Clicking a companion (planet or its moon) focuses it — re-scoping the live
-// trace + event stream — and opens the deep-dive drawer, which carries that
-// companion's evidence (memory / tasks / permissions). Focus persists after the
-// drawer closes; the owner sun clears it back to owner scope.
-function openOwner() { mc.followLive(); focusedCompanionId.value = ''; drawer.value = { type: 'owner' } }
-function openComp(c: CompanionUnit) { mc.followLive(); focusedCompanionId.value = c.id; drawer.value = { type: 'companion', c } }
-function openMoon(s: Sat) { focusedCompanionId.value = s.c.id; drawer.value = { type: 'moon', s } }
+const inspectorTab = ref<CompanionInspectorTab>('overview')
+const selectedSatKind = computed(() => inspectorTab.value === 'overview' ? undefined : inspectorTab.value)
+
+// Selection and detail are deliberately separate. Planet/moon clicks only
+// focus the constellation and update the lightweight inspector. The modal
+// drawer is reserved for an explicit "完整详情" action.
+function focusCompanion(c: CompanionUnit, tab: CompanionInspectorTab) {
+  mc.followLive()
+  focusedCompanionId.value = c.id
+  inspectorTab.value = tab
+}
+function selectCompanion(c: CompanionUnit) { focusCompanion(c, 'overview') }
+function selectMoon(s: Sat) { focusCompanion(s.c, s.kind) }
+function clearCompanionFocus() {
+  mc.followLive()
+  focusedCompanionId.value = ''
+  inspectorTab.value = 'overview'
+}
+function openCompDetails(c: CompanionUnit) {
+  focusedCompanionId.value = c.id
+  drawer.value = { type: 'companion', c }
+}
+function openOwner() { clearCompanionFocus(); drawer.value = { type: 'owner' } }
 function openSvc(n: InfraNode) { drawer.value = { type: 'service', n } }
 function openTrace() { drawer.value = { type: 'trace' } }
 function openActivity(activity: RuntimeActivity) {
   if (activity.companion_id) focusedCompanionId.value = activity.companion_id
+  if (activity.companion_id) inspectorTab.value = 'act'
   if (activity.turn_id) mc.selectTurn(activity.turn_id, activity.companion_id || undefined)
   drawer.value = { type: 'activity', activity }
 }
-function selectTurn(turnId: string, companionId: string) { mc.selectTurn(turnId, companionId); openTrace() }
-function selectEvent(event: Parameters<typeof mc.selectEvent>[0]) { mc.selectEvent(event) }
+function selectTurn(turnId: string, companionId: string) { inspectorTab.value = 'act'; mc.selectTurn(turnId, companionId); openTrace() }
+function selectEvent(event: Parameters<typeof mc.selectEvent>[0]) {
+  if (event.companion_id) inspectorTab.value = 'act'
+  mc.selectEvent(event)
+}
 function closeDrawer() { drawer.value = null }
+
+function onEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape') return
+  if (drawer.value) closeDrawer()
+  else if (focusedCompanionId.value) clearCompanionFocus()
+}
+onMounted(() => window.addEventListener('keydown', onEscape))
+onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
 
 // Pointer parallax (A3.2): depth via subtle background offset. rAF-throttled,
 // off under reduced-motion. Drives --px/--py consumed by the ambient layers.
@@ -95,7 +124,28 @@ function returnToConsole() { router.push({ name: 'home' }) }
     <CockpitHeader :mc="mc" @return-console="returnToConsole" />
     <p v-if="error" class="cy-error">// {{ error }}</p>
 
-    <SovereignConstellation :mc="mc" :focused-id="focusedCompanionId" @open-owner="openOwner" @open-companion="openComp" @open-moon="openMoon" @select-turn="selectTurn" />
+    <section class="constellation-stage" :class="{ 'has-inspector': !!focusedCompanion }" @click.self="clearCompanionFocus">
+      <SovereignConstellation
+        :mc="mc"
+        :focused-id="focusedCompanionId"
+        :selected-kind="selectedSatKind"
+        @open-owner="openOwner"
+        @open-companion="selectCompanion"
+        @open-moon="selectMoon"
+        @clear-focus="clearCompanionFocus"
+        @select-turn="selectTurn"
+      />
+      <transition name="ci">
+        <CompanionInspector
+          v-if="focusedCompanion"
+          :companion="focusedCompanion"
+          :tab="inspectorTab"
+          @change-tab="inspectorTab = $event"
+          @details="openCompDetails"
+          @close="clearCompanionFocus"
+        />
+      </transition>
+    </section>
 
     <RuntimeActivityBoard
       :activities="scopedActivities"
@@ -116,7 +166,7 @@ function returnToConsole() { router.push({ name: 'home' }) }
       @hover="mc.hoverEvent"
     />
 
-    <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openComp" @close="closeDrawer" />
+    <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openCompDetails" @close="closeDrawer" />
   </main>
 </template>
 
@@ -138,8 +188,17 @@ function returnToConsole() { router.push({ name: 'home' }) }
 .cy-flicker { position: absolute; inset: 0; z-index: 4; pointer-events: none; background: rgba(0, 234, 255, 0.02); animation: flicker 5s steps(30) infinite; }
 
 .cy-error { position: relative; z-index: 1; padding: 9px 13px; color: var(--cy-mag); border: 1px solid var(--cy-mag); background: rgba(255, 46, 136, 0.08); }
+.constellation-stage { position: relative; display: flex; flex: 1 1 auto; min-height: 320px; width: 100%; }
+.constellation-stage :deep(.galaxy) { transition: width var(--dur-base) var(--ease-out), margin var(--dur-base) var(--ease-out); }
+.constellation-stage.has-inspector :deep(.galaxy) { width: calc(100% - 340px); margin-left: 0; margin-right: 340px; }
+.ci-enter-active, .ci-leave-active { transition: opacity var(--dur-base), transform var(--dur-base) var(--ease-out); }
+.ci-enter-from, .ci-leave-to { opacity: 0; transform: translateX(18px); }
 
 @keyframes gridrun { from { background-position: 0 0; } to { background-position: 0 46px; } }
 @keyframes flicker { 0%, 96%, 100% { opacity: 0.4; } 97% { opacity: 0.05; } 98% { opacity: 0.7; } }
 @media (prefers-reduced-motion: reduce) { .cy-grid, .cy-flicker { animation: none !important; } }
+@media (max-width: 980px) {
+  .constellation-stage.has-inspector :deep(.galaxy) { width: 100%; margin: 0 auto; }
+  .constellation-stage :deep(.companion-inspector) { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 48%; }
+}
 </style>

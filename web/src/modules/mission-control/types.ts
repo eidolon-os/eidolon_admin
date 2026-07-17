@@ -66,6 +66,7 @@ export interface CompanionUnit {
 }
 
 export type SatKind = 'body' | 'mem' | 'act'
+export type CompanionInspectorTab = 'overview' | SatKind
 export type SatAccent = 'cyan' | 'yellow' | 'mag'
 export type SatTone = 'ok' | 'live' | 'warn' | 'bad' | 'idle' | 'off'
 

@@ -11,11 +11,12 @@ import { activityKindLabel, currentActivityHop, isActiveActivity, summarizeActiv
 import type { CompanionUnit, GalaxyNode, Sat, SatKind, SatTone } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
 
-const props = defineProps<{ mc: MissionControlStream; focusedId?: string }>()
+const props = defineProps<{ mc: MissionControlStream; focusedId?: string; selectedKind?: SatKind }>()
 const emit = defineEmits<{
   (e: 'open-owner'): void
   (e: 'open-companion', c: CompanionUnit): void
   (e: 'open-moon', s: Sat): void
+  (e: 'clear-focus'): void
   (e: 'select-turn', turnId: string, companionId: string): void
 }>()
 
@@ -296,7 +297,7 @@ function deviceOnline(d: RuntimeDevice) {
 </script>
 
 <template>
-  <section class="galaxy" :class="{ 'has-focus': !!focusedId }">
+  <section class="galaxy" :class="{ 'has-focus': !!focusedId }" @click="$emit('clear-focus')">
     <svg class="gx-wires" :viewBox="`0 0 ${VBW} ${VBH}`" preserveAspectRatio="xMidYMid meet">
       <defs>
         <radialGradient id="sun" cx="50%" cy="42%" r="60%">
@@ -341,7 +342,7 @@ function deviceOnline(d: RuntimeDevice) {
       <circle :cx="CX" :cy="CY" r="150" fill="url(#sun)" opacity="0.5" />
     </svg>
 
-    <div class="gx-owner" :class="{ igniting }" :style="ptStyle(CX, CY)" title="点击查看主人全景" @click="$emit('open-owner')">
+    <div class="gx-owner" :class="{ igniting }" :style="ptStyle(CX, CY)" title="点击查看主人全景" @click.stop="$emit('open-owner')">
       <span class="o-kick">OWNER · 主人</span>
       <strong>{{ ownerName }}</strong>
       <em class="o-sub">{{ companionUnits.length }} 位伙伴</em>
@@ -372,7 +373,7 @@ function deviceOnline(d: RuntimeDevice) {
 
     <el-popover v-for="n in galaxy.nodes" :key="'c' + n.c.id" placement="top" :width="300" trigger="hover" popper-class="cy-pop" :show-after="60">
       <template #reference>
-        <div class="gx-comp" :class="{ primary: n.c.isPrimary, active: n.active, focused: n.c.id === focusedId }" :style="ptStyle(n.x, n.y)" @click="$emit('open-companion', n.c)">
+        <div class="gx-comp" :class="{ primary: n.c.isPrimary, active: n.active, focused: n.c.id === focusedId }" :style="ptStyle(n.x, n.y)" @click.stop="$emit('open-companion', n.c)">
           <i class="led" :class="statusClass(n.c.status)" />
           <b>{{ n.c.isPrimary ? '★ ' : '' }}{{ n.c.name }}</b>
           <span class="c-rt" :class="'t-' + runtime(n.c).cls">{{ runtime(n.c).text }}</span>
@@ -392,7 +393,7 @@ function deviceOnline(d: RuntimeDevice) {
 
     <el-popover v-for="s in galaxy.sats" :key="'s' + s.c.id + s.kind" placement="top" :width="290" trigger="hover" popper-class="cy-pop" :show-after="60">
       <template #reference>
-        <div class="gx-sat" :class="[`a-${s.accent}`, `t-${s.tone}`, { empty: s.empty, 'focused-sat': s.c.id === focusedId, 'stage-here': isStageHere(s) }]" :style="ptStyle(s.x, s.y)" @click="$emit('open-moon', s)">
+        <div class="gx-sat" :class="[`a-${s.accent}`, `t-${s.tone}`, { empty: s.empty, 'focused-sat': s.c.id === focusedId, 'selected-asset': s.c.id === focusedId && s.kind === selectedKind, 'stage-here': isStageHere(s) }]" :style="ptStyle(s.x, s.y)" @click.stop="$emit('open-moon', s)">
           <i class="s-glyph">{{ s.glyph }}</i>
           <span class="s-label">{{ s.label }}</span>
           <b class="s-val">{{ s.value }}</b>
@@ -515,6 +516,7 @@ function deviceOnline(d: RuntimeDevice) {
 /* §one signal: the moon matching the current stage pulses + rings, tracking the
    signal to the body / memory / activity in step with the bus wavefront + trace. */
 .gx-sat.stage-here { animation: nodepulse var(--dur-breath) ease-in-out infinite; box-shadow: 0 0 22px currentColor; border-width: 1.5px; }
+.gx-sat.selected-asset { transform: translate(-50%, -50%) scale(1.13); border-width: 2px; box-shadow: 0 0 28px currentColor, inset 0 0 14px color-mix(in srgb, currentColor 14%, transparent); z-index: 6; }
 .gx-activity { position: absolute; z-index: 7; min-width: 32px; height: 20px; transform: translate(-50%, -50%); padding: 0 6px; border: 1px solid rgba(109, 106, 153, .7); border-radius: 10px; background: rgba(8, 5, 20, .94); color: var(--cy-txt-dim); font: 700 7.5px/1 var(--cy-mono); cursor: pointer; box-shadow: 0 0 8px rgba(109, 106, 153, .25); transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast); }
 .gx-activity:hover, .gx-activity.selected { transform: translate(-50%, -50%) scale(1.16); z-index: 9; }
 .gx-activity.t-ok { border-color: var(--cy-green); color: var(--cy-green); }
