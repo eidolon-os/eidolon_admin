@@ -24,35 +24,19 @@ export const SVC_GLYPH: Record<string, string> = {
 /** Substrate architecture graph: node placement (in a 0..1000 × 0..300 space).
  * The columns follow the OS responsibility planes from the product blueprint;
  * node tier still controls its visual treatment and health semantics. */
-export const INFRA_VB = { w: 1000, h: 300 }
+export const INFRA_VB = { w: 1000, h: 360 }
 export interface InfraLayoutNode { id: string; x: number; y: number }
 export const INFRA_LAYOUT: InfraLayoutNode[] = [
-  // Realtime embodiment plane
-  { id: 'hub', x: 90, y: 105 },
-  { id: 'livekit', x: 245, y: 210 },
-  { id: 'channel', x: 390, y: 105 },
-  // Agent + memory core
-  { id: 'agent', x: 555, y: 105 },
-  { id: 'memory', x: 730, y: 105 },
-  // Event fabric + external execution
-  { id: 'nats', x: 630, y: 230 },
-  { id: 'mementos', x: 885, y: 185 },
+  // Body I/O fabric surrounding the logical sovereign kernel.
+  { id: 'hub', x: 90, y: 180 },
+  { id: 'livekit', x: 245, y: 85 },
+  { id: 'channel', x: 365, y: 145 },
+  // Runtime resources on the other side of the identity boundary.
+  { id: 'agent', x: 645, y: 115 },
+  { id: 'memory', x: 845, y: 115 },
+  { id: 'nats', x: 645, y: 280 },
+  { id: 'mementos', x: 860, y: 280 },
 ]
-
-export interface OsPlaneBand { id: string; label: string; code: string; x0: number; x1: number }
-/** OS responsibility planes. These are architectural captions, not synthetic
- * health nodes: every interactive node inside them still comes from INFRA. */
-export const OS_PLANE_BANDS: OsPlaneBand[] = [
-  { id: 'embodiment', label: '实时身体平面', code: 'REALTIME EMBODIMENT', x0: 8, x1: 455 },
-  { id: 'cognition', label: '智能、记忆与事件核心', code: 'AGENT + MEMORY + EVENT CORE', x0: 465, x1: 790 },
-  { id: 'execution', label: '扩展执行面', code: 'EXTENSION EXECUTORS', x0: 800, x1: 992 },
-]
-
-/** The stable sovereign waist proven by the runtime resolve contract. */
-export const IDENTITY_ENVELOPE = ['OWNER', 'COMPANION', 'MEMORY REALM', 'GENOME', 'BODY / SESSION']
-
-/** Product-level invariants represented by the current architecture. */
-export const OS_INVARIANTS = ['BODY REPLACEABLE', 'MEMORY OWNER-SCOPED', 'ACTION AUDITED', 'LOCAL-FIRST']
 
 export type InfraEdgeKind = 'rtc' | 'grpc' | 'nats' | 'task' | 'ctrl'
 export interface InfraEdge { from: string; to: string; kind: InfraEdgeKind; spine?: boolean }

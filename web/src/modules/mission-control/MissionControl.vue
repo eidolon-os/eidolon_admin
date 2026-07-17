@@ -42,6 +42,7 @@ const {
 const drawer = ref<DrawerTarget | null>(null)
 const inspectorTab = ref<CompanionInspectorTab>('overview')
 const selectedSatKind = computed(() => inspectorTab.value === 'overview' ? undefined : inspectorTab.value)
+const configuredRealmCount = computed(() => mc.companionUnits.value.filter((companion) => !!companion.realm).length)
 
 // Selection and detail are deliberately separate. Planet/moon clicks only
 // focus the constellation and update the lightweight inspector. The modal
@@ -155,7 +156,21 @@ function returnToConsole() { router.push({ name: 'home' }) }
       @open="openActivity"
     />
 
-    <RuntimeBusRail :nodes="infraNodes" :hot-services="hotServices" :activity-owners="serviceActivityOwners" :pipeline-active="pipelineActive" @open-service="openSvc" />
+    <RuntimeBusRail
+      :nodes="infraNodes"
+      :hot-services="hotServices"
+      :activity-owners="serviceActivityOwners"
+      :pipeline-active="pipelineActive"
+      :owner-name="mc.ownerName.value"
+      :scope-name="focusedCompanion?.name || ''"
+      :companion-count="mc.companionUnits.value.length"
+      :body-online="mc.onlineDevices.value"
+      :body-total="mc.devices.value.length"
+      :realm-count="configuredRealmCount"
+      :active-jobs="mc.activeJobs.value"
+      :active-routes="mc.activeActivities.value.length"
+      @open-service="openSvc"
+    />
     <RecentEventsPanel
       :events="companionEvents"
       :companion-names="mc.companionNames.value"
