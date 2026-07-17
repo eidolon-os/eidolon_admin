@@ -75,3 +75,17 @@ boards:
     sdkconfig: $CLIENT_ROOT/build/eidolon/esp-box-3/sdkconfig.esp-box-3
     partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon_box3.csv
     default_baud: 115200
+
+  - id: m5stack-core-s3
+    label: M5Stack CoreS3 (StackChan)
+    vendor: M5Stack
+    target: esp32s3
+    board_type: m5stack-core-s3
+    script_path: $CLIENT_ROOT/scripts/eidolon/eidolon-m5stack-core-s3.sh
+    build_dir: $CLIENT_ROOT/build
+    sdkconfig: $CLIENT_ROOT/sdkconfig
+    partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon.csv
+    default_baud: 115200
+    action_overrides:
+      flash_app: [flash, --app-only]
+      flash_assets: [flash, -p, assets]

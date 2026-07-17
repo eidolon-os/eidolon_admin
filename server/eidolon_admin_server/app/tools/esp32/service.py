@@ -953,6 +953,8 @@ def _artifact_kind(path: Path) -> str:
 
 def _guess_board_id(description: str, manufacturer: str, vid: str | None, pid: str | None) -> str | None:
     text = f"{description} {manufacturer} {vid or ''} {pid or ''}".lower()
+    if "m5stack" in text or "cores3" in text or "core s3" in text:
+        return "m5stack-core-s3"
     if "esp-box" in text or "box" in text:
         return "esp-box-3"
     if "alientek" in text or "atk" in text or "dnesp32" in text:

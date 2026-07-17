@@ -51,7 +51,7 @@ boards: []
 
 
 @pytest.mark.asyncio
-async def test_http_lists_three_board_profiles(tmp_path: Path) -> None:
+async def test_http_lists_four_board_profiles(tmp_path: Path) -> None:
     app = create_app(GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[]))
     app.state.esp32_tools = _service(tmp_path)
     async with httpx.AsyncClient(
@@ -65,6 +65,7 @@ async def test_http_lists_three_board_profiles(tmp_path: Path) -> None:
         "waveshare-esp32-s3-touch-amoled-206",
         "atk-dnesp32s3",
         "esp-box-3",
+        "m5stack-core-s3",
     ]
     assert all("erase_nvs" in {cap["action"] for cap in board["capabilities"]} for board in boards)
 
@@ -391,6 +392,45 @@ def test_run_action_builds_and_flashes_without_interactive_monitor(tmp_path: Pat
     )
     assert [step.args[-1] for step in steps] == ["build", "flash"]
     assert all("monitor" not in step.args for step in steps)
+
+
+def test_stackchan_core_s3_uses_board_script_contract(tmp_path: Path) -> None:
+    svc = _service(tmp_path)
+    board = svc.board("m5stack-core-s3")
+
+    assert board.target == "esp32s3"
+    assert board.board_type == "m5stack-core-s3"
+    assert board.script_path.endswith("scripts/eidolon/eidolon-m5stack-core-s3.sh")
+    assert board.build_dir.endswith("eidolon-client-esp32/build")
+    assert board.sdkconfig.endswith("eidolon-client-esp32/sdkconfig")
+    assert board.partition_csv.endswith("partitions/v2/16m_eidolon.csv")
+
+    app_step = svc._steps(
+        board,
+        Esp32JobRequest(
+            board_id=board.id,
+            action="flash_app",
+            port="/dev/cu.usbmodem1101",
+        ),
+    )[0]
+    assets_step = svc._steps(
+        board,
+        Esp32JobRequest(
+            board_id=board.id,
+            action="flash_assets",
+            port="/dev/cu.usbmodem1101",
+        ),
+    )[0]
+
+    assert app_step.args[-2:] == ["flash", "--app-only"]
+    assert assets_step.args[-3:] == ["flash", "-p", "assets"]
+
+
+def test_stackchan_serial_metadata_can_select_board() -> None:
+    from eidolon_admin_server.app.tools.esp32.service import _guess_board_id
+
+    assert _guess_board_id("M5Stack CoreS3", "M5Stack", "0x303A", "0x1001") == "m5stack-core-s3"
+    assert _guess_board_id("Core S3 USB Serial", "", None, None) == "m5stack-core-s3"
 
 
 @pytest.mark.asyncio
