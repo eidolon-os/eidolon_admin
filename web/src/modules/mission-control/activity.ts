@@ -38,6 +38,94 @@ export function activityKindLabel(kind: string): string {
   return '活动'
 }
 
+export function activityStatusLabel(status: string | null | undefined): string {
+  const key = (status || '').toLowerCase()
+  return ({
+    running: '进行中', active: '进行中', pending: '等待中', queued: '排队中',
+    completed: '已完成', succeeded: '已完成', success: '已完成',
+    interrupted: '已打断', rejected: '已拒绝', denied: '已拒绝',
+    timeout: '已超时', failed: '失败', error: '失败', orphaned: '已中断',
+  } as Record<string, string>)[key] || status || '未知'
+}
+
+export interface ActivityPhase {
+  key: string
+  label: string
+  glyph: string
+  status: string
+  latency_ms: number | null
+  current: boolean
+  hops: RuntimeRouteHop[]
+}
+
+const VOICE_PHASES: Record<string, { label: string; glyph: string }> = {
+  access: { label: '接入', glyph: '⬡' },
+  input: { label: '收音', glyph: '◉' },
+  brain: { label: '思考', glyph: '◊' },
+  output: { label: '回应', glyph: '◍' },
+  memory: { label: '记忆', glyph: '◈' },
+}
+
+function voicePhaseKey(hop: RuntimeRouteHop): keyof typeof VOICE_PHASES {
+  if (hop.stage.startsWith('memory_') || hop.node_type === 'memory') return 'memory'
+  if (['brain', 'response', 'tools', 'tool'].includes(hop.stage)) return 'brain'
+  if (['tts', 'playback'].includes(hop.stage)) return 'output'
+  if (hop.node_type === 'device' || hop.node_type === 'companion') return 'access'
+  return 'input'
+}
+
+function phaseStatus(hops: RuntimeRouteHop[]): string {
+  const states = hops.map((hop) => (hop.status || '').toLowerCase())
+  if (states.some((state) => ['failed', 'error', 'rejected', 'denied', 'orphaned'].includes(state))) return 'failed'
+  if (states.some((state) => state === 'running')) return 'running'
+  if (states.some((state) => ['pending', 'queued', 'degraded', 'interrupted'].includes(state))) return 'degraded'
+  return hops.at(-1)?.status || 'done'
+}
+
+/**
+ * Turns a raw route into a small number of semantic phases for the activity
+ * board. The original hops stay attached for the expandable detail view.
+ */
+export function activityPhases(
+  activity: RuntimeActivity,
+  labelHop: (hop: RuntimeRouteHop) => string = (hop) => hop.label,
+): ActivityPhase[] {
+  const current = currentActivityHop(activity)
+  if (activity.kind !== 'voice_turn') {
+    return activity.route.map((hop) => ({
+      key: hop.hop_id,
+      label: labelHop(hop),
+      glyph: hop.node_type === 'device' ? '⬡' : hop.node_type === 'companion' ? '◎' : '◇',
+      status: hop.status,
+      latency_ms: hop.latency_ms,
+      current: current?.hop_id === hop.hop_id,
+      hops: [hop],
+    }))
+  }
+
+  const grouped = new Map<string, RuntimeRouteHop[]>()
+  for (const hop of activity.route) {
+    const key = voicePhaseKey(hop)
+    const list = grouped.get(key) || []
+    list.push(hop)
+    grouped.set(key, list)
+  }
+  return Object.entries(VOICE_PHASES).flatMap(([key, meta]) => {
+    const hops = grouped.get(key) || []
+    if (!hops.length) return []
+    const latencies = hops.map((hop) => hop.latency_ms).filter((value): value is number => value != null)
+    return [{
+      key,
+      label: meta.label,
+      glyph: meta.glyph,
+      status: phaseStatus(hops),
+      latency_ms: latencies.length ? latencies.reduce((sum, value) => sum + value, 0) : null,
+      current: !!current && hops.some((hop) => hop.hop_id === current.hop_id),
+      hops,
+    }]
+  })
+}
+
 export function activityBadgeLabel(activity: RuntimeActivity, nowMs = Date.now()): string {
   if (isActiveActivity(activity)) return '当前'
   if (activity.outcome === 'failure') return '失败'

@@ -34,7 +34,7 @@ import {
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
 import { compactEventSummary, compactId, deviceShort, genomeStateLabel, memoryRealmStateLabel, statusClass } from '../src/modules/mission-control/format'
-import { activityBadgeLabel, activityServiceId, isActiveActivity, summarizeActivityBadges, traceSpansForTurn } from '../src/modules/mission-control/activity'
+import { activityBadgeLabel, activityPhases, activityServiceId, activityStatusLabel, isActiveActivity, summarizeActivityBadges, traceSpansForTurn } from '../src/modules/mission-control/activity'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
 import type { RuntimeActivity, RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
 
@@ -131,6 +131,29 @@ it('renders a session-reconciled orphan turn as a failure', () => {
 })
 
 describe('runtime activity projection helpers', () => {
+  it('compresses voice hops into semantic phases while preserving current state and facts', () => {
+    const voice = activity()
+    voice.route.push({
+      hop_id: 'h3', node_type: 'device', node_id: 'd1', label: '播放完成',
+      stage: 'playback', status: 'done', direction: 'out', ts: null, latency_ms: 420,
+    })
+    const phases = activityPhases(voice)
+    expect(phases.map((phase) => phase.key)).toEqual(['input', 'brain', 'output'])
+    expect(phases[0]?.hops.map((hop) => hop.hop_id)).toEqual(['h1'])
+    expect(phases[1]?.current).toBe(true)
+    expect(phases[1]?.label).toBe('思考')
+    expect(phases[2]?.hops.map((hop) => hop.hop_id)).toEqual(['h3'])
+    expect(phases[2]?.latency_ms).toBe(420)
+  })
+
+  it('keeps non-voice routes explicit and translates status labels', () => {
+    const command = activity({ kind: 'device_command' })
+    expect(activityPhases(command).map((phase) => phase.label)).toEqual(['Channel', 'Agent'])
+    expect(activityStatusLabel('completed')).toBe('已完成')
+    expect(activityStatusLabel('interrupted')).toBe('已打断')
+    expect(activityStatusLabel('timeout')).toBe('已超时')
+  })
+
   it('recognises independent active lanes and resolves their substrate playhead', () => {
     const voice = activity()
     const guard = activity({
