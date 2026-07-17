@@ -22,31 +22,37 @@ export const SVC_GLYPH: Record<string, string> = {
 }
 
 /** Substrate architecture graph: node placement (in a 0..1000 × 0..300 space).
- * Laid out in three horizontal tiers so the hierarchy reads at a glance:
- * 业务组件 (top) → 中间件 (middle) → 外挂 (bottom). Edges cross tiers to show
- * real dependencies. */
+ * The columns follow the OS responsibility planes from the product blueprint;
+ * node tier still controls its visual treatment and health semantics. */
 export const INFRA_VB = { w: 1000, h: 300 }
 export interface InfraLayoutNode { id: string; x: number; y: number }
 export const INFRA_LAYOUT: InfraLayoutNode[] = [
-  // 业务组件 — the request spine
-  { id: 'hub', x: 130, y: 80 },
-  { id: 'channel', x: 355, y: 80 },
-  { id: 'agent', x: 580, y: 80 },
-  { id: 'memory', x: 800, y: 80 },
-  // 中间件
-  { id: 'livekit', x: 250, y: 192 },
-  { id: 'nats', x: 660, y: 192 },
-  // 外挂 · 扩展
-  { id: 'mementos', x: 555, y: 262 },
+  // Realtime embodiment plane
+  { id: 'hub', x: 90, y: 105 },
+  { id: 'livekit', x: 245, y: 210 },
+  { id: 'channel', x: 390, y: 105 },
+  // Agent + memory core
+  { id: 'agent', x: 555, y: 105 },
+  { id: 'memory', x: 730, y: 105 },
+  // Event fabric + external execution
+  { id: 'nats', x: 630, y: 230 },
+  { id: 'mementos', x: 885, y: 185 },
 ]
 
-export interface TierBand { tier: 'service' | 'middleware' | 'external'; label: string; y0: number; y1: number }
-/** Horizontal tier bands (in INFRA_VB coords) for background zones + captions. */
-export const TIER_BANDS: TierBand[] = [
-  { tier: 'service', label: '业务组件', y0: 8, y1: 138 },
-  { tier: 'middleware', label: '中间件', y0: 148, y1: 222 },
-  { tier: 'external', label: '外挂 · 扩展', y0: 232, y1: 292 },
+export interface OsPlaneBand { id: string; label: string; code: string; x0: number; x1: number }
+/** OS responsibility planes. These are architectural captions, not synthetic
+ * health nodes: every interactive node inside them still comes from INFRA. */
+export const OS_PLANE_BANDS: OsPlaneBand[] = [
+  { id: 'embodiment', label: '实时身体平面', code: 'REALTIME EMBODIMENT', x0: 8, x1: 455 },
+  { id: 'cognition', label: '智能、记忆与事件核心', code: 'AGENT + MEMORY + EVENT CORE', x0: 465, x1: 790 },
+  { id: 'execution', label: '扩展执行面', code: 'EXTENSION EXECUTORS', x0: 800, x1: 992 },
 ]
+
+/** The stable sovereign waist proven by the runtime resolve contract. */
+export const IDENTITY_ENVELOPE = ['OWNER', 'COMPANION', 'MEMORY REALM', 'GENOME', 'BODY / SESSION']
+
+/** Product-level invariants represented by the current architecture. */
+export const OS_INVARIANTS = ['BODY REPLACEABLE', 'MEMORY OWNER-SCOPED', 'ACTION AUDITED', 'LOCAL-FIRST']
 
 export type InfraEdgeKind = 'rtc' | 'grpc' | 'nats' | 'task' | 'ctrl'
 export interface InfraEdge { from: string; to: string; kind: InfraEdgeKind; spine?: boolean }
