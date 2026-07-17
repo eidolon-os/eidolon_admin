@@ -6,7 +6,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { RuntimeActivity, RuntimeDevice } from '@/api/missionControl'
 import { currentStageKey, directedLegPath, eventToPulse, eventTone, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
-import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, statusClass } from '../format'
+import { compactId, devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, statusClass } from '../format'
 import { activityKindLabel, currentActivityHop, isActiveActivity, summarizeActivityBadges } from '../activity'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind, SatTone } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -383,9 +383,9 @@ function deviceOnline(d: RuntimeDevice) {
         <p class="pop-role">虚拟伙伴（agent），归属于主人 {{ ownerName }}。它拥有自己的身体、记忆与活动。</p>
         <div class="pop-rows">
           <div><dt>状态</dt><dd :class="statusClass(n.c.status)">{{ n.c.status }}</dd></div>
-          <div><dt>基因 genome</dt><dd>{{ n.c.genome || '—' }}</dd></div>
+          <div><dt>基因 genome</dt><dd :title="n.c.genome || undefined">{{ compactId(n.c.genome) || '—' }}</dd></div>
           <div><dt>身体</dt><dd>{{ n.c.devices.length }} 台 · {{ n.c.devices.filter(deviceOnline).length }} 在线</dd></div>
-          <div><dt>记忆空间</dt><dd :class="n.c.realm ? 'ok' : 'idle'">{{ n.c.realm || '未开通' }}</dd></div>
+          <div><dt>记忆空间</dt><dd :class="n.c.realm ? 'ok' : 'idle'" :title="n.c.realm || undefined">{{ compactId(n.c.realm) || '未开通' }}</dd></div>
         </div>
       </div>
     </el-popover>
@@ -410,8 +410,8 @@ function deviceOnline(d: RuntimeDevice) {
         <template v-else-if="s.kind === 'mem'">
           <p class="pop-role">属于这个伙伴的长期记忆资产，让它记得主人、保持连续性。</p>
           <div class="pop-rows">
-            <div><dt>记忆空间</dt><dd>{{ s.c.realm || '未开通' }}</dd></div>
-            <div><dt>基因 genome</dt><dd>{{ s.c.genome || '—' }}</dd></div>
+            <div><dt>记忆空间</dt><dd :title="s.c.realm || undefined">{{ compactId(s.c.realm) || '未开通' }}</dd></div>
+            <div><dt>基因 genome</dt><dd :title="s.c.genome || undefined">{{ compactId(s.c.genome) || '—' }}</dd></div>
             <div v-if="s.c.isActiveRealm"><dt>召回命中</dt><dd class="ok">{{ s.c.recall }}</dd></div>
             <div v-if="s.c.isActiveRealm"><dt>后台整理</dt><dd>{{ s.c.runners }}</dd></div>
             <div v-if="s.c.isActiveRealm"><dt>写入策略</dt><dd>{{ s.c.write }}</dd></div>

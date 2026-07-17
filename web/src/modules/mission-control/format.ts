@@ -1,7 +1,7 @@
 // Pure, framework-free formatting helpers for the cockpit. No reactivity,
 // no side effects — safe to unit-test. De-duplicated from the two former
 // mission-control SFCs (fmtLatency/fmtTime/statusClass were identical).
-import type { RuntimeDevice } from '@/api/missionControl'
+import type { RuntimeDevice, RuntimeEvent } from '@/api/missionControl'
 import type { StreamState } from './types'
 
 export function fmtLatency(ms: number | null | undefined): string {
@@ -23,6 +23,43 @@ export function fmtTime(iso: string | null | undefined): string {
 export function fmtClock(ms: number): string {
   const d = new Date(ms)
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
+}
+
+/**
+ * Shortens an opaque runtime identifier for dense observability surfaces.
+ * The caller should keep the original value in `title`/`aria-label`; this is
+ * presentation-only and must never be used as a key or API parameter.
+ */
+export function compactId(value: string | null | undefined, maxLength = 24): string {
+  const raw = String(value || '')
+  if (!raw || raw.length <= maxLength) return raw
+
+  const visible = Math.max(8, maxLength - 1)
+  const tail = Math.max(4, Math.min(8, Math.floor(visible * 0.4)))
+  const head = visible - tail
+  return `${raw.slice(0, head)}…${raw.slice(-tail)}`
+}
+
+/**
+ * Compacts only IDs that the event already exposes as structured fields.
+ * Arbitrary summary text is left untouched, while the full summary can remain
+ * available to the UI as a tooltip.
+ */
+export function compactEventSummary(event: RuntimeEvent): string {
+  let summary = event.summary || event.type
+  const ids = [
+    event.turn_id,
+    event.trace_id,
+    event.job_id,
+    event.conversation_id,
+    event.companion_id,
+    event.device_id,
+  ]
+    .filter((id): id is string => !!id && id.length > 24)
+    .sort((a, b) => b.length - a.length)
+
+  for (const id of new Set(ids)) summary = summary.split(id).join(compactId(id))
+  return summary
 }
 
 /** Maps a free-form status string to a semantic tone class. */

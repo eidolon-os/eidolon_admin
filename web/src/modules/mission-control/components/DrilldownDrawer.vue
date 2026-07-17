@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { MODE_CN, SVC_GLYPH } from '../constants'
-import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
+import { compactId, devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
 import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
 import ProofChainTiles from './ProofChainTiles.vue'
@@ -16,7 +16,7 @@ const props = defineProps<{ mc: MissionControlStream; target: DrawerTarget | nul
 defineEmits<{ (e: 'open-companion', c: CompanionUnit): void; (e: 'close'): void }>()
 
 const {
-  ownerName, companionUnits, onlineDevices, devices, memory,
+  ownerName, companionUnits, companionNames, onlineDevices, devices, memory,
   snapshot, experience, traceSpans,
   scopedTurn, scopedJobs, scopedPermissions, companionEvents, focusedCompanion, evidenceChains,
 } = props.mc
@@ -67,8 +67,8 @@ const drawerTurns = computed(() => {
           <h3>{{ drawerComp.name }}<i v-if="drawerComp.isPrimary" class="dw-pri">★ 主</i></h3>
           <p class="dw-role">{{ drawerComp.kind }} · {{ drawerComp.status }} · 归属 {{ ownerName }}</p>
           <div class="dw-grid">
-            <div><span>genome</span><b class="mono sm">{{ drawerComp.genome || '—' }}</b></div>
-            <div><span>记忆空间</span><b class="mono sm">{{ drawerComp.realm || '未开通' }}</b></div>
+            <div><span>genome</span><b class="mono sm" :title="drawerComp.genome || undefined" :aria-label="drawerComp.genome ? `完整 genome ID：${drawerComp.genome}` : undefined">{{ compactId(drawerComp.genome) || '—' }}</b></div>
+            <div><span>记忆空间</span><b class="mono sm" :title="drawerComp.realm || undefined" :aria-label="drawerComp.realm ? `完整记忆空间 ID：${drawerComp.realm}` : undefined">{{ compactId(drawerComp.realm) || '未开通' }}</b></div>
             <div><span>召回命中</span><b class="num">{{ drawerComp.recall ?? '—' }}</b></div>
             <div><span>后台整理</span><b class="num">{{ drawerComp.runners || '—' }}</b></div>
           </div>
@@ -104,17 +104,17 @@ const drawerTurns = computed(() => {
           <h3>{{ activityKindLabel(target.activity.kind) }}</h3>
           <p class="dw-role">{{ target.activity.summary }}。这是只读事件投影，不参与轮次、设备命令或任务调度。</p>
           <div class="dw-grid">
-            <div><span>Companion</span><b class="mono sm">{{ target.activity.companion_id || '未归属' }}</b></div>
+            <div><span>Companion</span><b class="mono sm" :title="target.activity.companion_id || undefined">{{ target.activity.companion_id ? companionNames[target.activity.companion_id] || compactId(target.activity.companion_id) : '未归属' }}</b></div>
             <div><span>状态</span><b :class="statusClass(target.activity.status)">{{ target.activity.status }}</b></div>
             <div><span>当前节点</span><b class="mono sm">{{ currentActivityHop(target.activity)?.label || '已结束' }}</b></div>
-            <div><span>关联 ID</span><b class="mono sm">{{ target.activity.turn_id || target.activity.job_id || target.activity.activity_id }}</b></div>
+            <div><span>关联 ID</span><b class="mono sm" :title="target.activity.turn_id || target.activity.job_id || target.activity.activity_id">{{ compactId(target.activity.turn_id || target.activity.job_id || target.activity.activity_id) }}</b></div>
           </div>
           <span class="dw-sect">路径 · ROUTE</span>
           <ol v-if="target.activity.route.length" class="dw-stages">
             <li v-for="hop in target.activity.route" :key="hop.hop_id" class="dw-stage" :class="statusClass(hop.status)">
               <i class="led" :class="statusClass(hop.status)" />
               <b>{{ hop.label }}</b>
-              <em>{{ hop.node_type }} · {{ hop.node_id }}<template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
+              <em :title="hop.node_id">{{ hop.node_type }} · {{ compactId(hop.node_id) }}<template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
             </li>
           </ol>
           <p v-else class="dw-empty">该事件没有足够的事实节点可形成路径</p>
@@ -144,8 +144,8 @@ const drawerTurns = computed(() => {
           <div v-if="scopedTurn" class="dw-grid">
             <div><span>状态</span><b :class="statusClass(scopedTurn.status)">{{ scopedTurn.status }}</b></div>
             <div><span>阶段</span><b class="mono sm">{{ scopedTurn.phase || '—' }}</b></div>
-            <div><span>Channel Turn</span><b class="mono sm">{{ scopedTurn.channel_turn_id || '未观测' }}</b></div>
-            <div><span>Agent Turn</span><b class="mono sm">{{ scopedTurn.agent_turn_id || '未进入' }}</b></div>
+            <div><span>Channel Turn</span><b class="mono sm" :title="scopedTurn.channel_turn_id || undefined">{{ compactId(scopedTurn.channel_turn_id) || '未观测' }}</b></div>
+            <div><span>Agent Turn</span><b class="mono sm" :title="scopedTurn.agent_turn_id || undefined">{{ compactId(scopedTurn.agent_turn_id) || '未进入' }}</b></div>
           </div>
           <p v-if="scopedTurn?.terminal_reason" class="dw-role">终态：{{ scopedTurn.terminal_reason }}</p>
           <p v-if="scopedTurn?.missing_milestones?.length" class="dw-role warn">缺失印记：{{ scopedTurn.missing_milestones.join(' · ') }}</p>

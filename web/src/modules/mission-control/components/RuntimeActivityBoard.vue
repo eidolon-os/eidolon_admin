@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { RuntimeActivity } from '@/api/missionControl'
 import { activityKindLabel, currentActivityHop, isActiveActivity } from '../activity'
-import { fmtLatency, statusClass } from '../format'
+import { compactId, fmtLatency, statusClass } from '../format'
 
 const props = defineProps<{
   activities: RuntimeActivity[]
@@ -30,7 +30,7 @@ function hopLabel(hop: RuntimeActivity['route'][number]): string {
     <div v-if="visible.length" class="ab-lanes">
       <button v-for="activity in visible" :key="activity.activity_id" class="ab-lane" @click="$emit('open', activity)">
         <span class="ab-kind" :class="statusClass(activity.status)">{{ activityKindLabel(activity.kind) }}</span>
-        <span class="ab-owner">{{ activity.companion_id ? companionNames[activity.companion_id] || activity.companion_id : 'OWNER' }}</span>
+        <span class="ab-owner" :title="activity.companion_id || undefined">{{ activity.companion_id ? companionNames[activity.companion_id] || compactId(activity.companion_id) : 'OWNER' }}</span>
         <ol v-if="activity.route.length" class="ab-route">
           <li
             v-for="(hop, index) in activity.route"

@@ -8,6 +8,7 @@ import { getPalaceGraph, type GraphSnapshot } from '@/api/memory'
 import PalaceGraph from '@/modules/memory/components/PalaceGraph.vue'
 import type { RuntimeMemory } from '@/api/missionControl'
 import type { CompanionUnit } from '../types'
+import { compactId } from '../format'
 
 const props = defineProps<{ memory: RuntimeMemory | undefined; companion?: CompanionUnit | null }>()
 
@@ -21,7 +22,8 @@ const view = computed(() => {
       hasHit: recall != null && recall > 0,
       write: c.write || '—',
       runners: c.runners || '—',
-      realmText: c.realm || '未开通',
+      realmText: compactId(c.realm) || '未开通',
+      realmFull: c.realm || '',
       graphRealm: c.realm || '',
     }
   }
@@ -32,6 +34,7 @@ const view = computed(() => {
     write: m?.last_write_disposition || (m?.fanout_allowed ? 'ALLOW' : 'HOLD'),
     runners: `${m?.runners_online ?? 0}/${m?.runners_total ?? 0}`,
     realmText: `${m?.realms_total ?? 0} 个`,
+    realmFull: '',
     graphRealm: m?.active_realm_id || '',
   }
 })
@@ -67,7 +70,7 @@ async function toggle() {
       <div><dt>召回命中</dt><dd class="num" :class="{ ok: view.hasHit }">{{ view.recallText }}</dd></div>
       <div><dt>写入</dt><dd>{{ view.write }}</dd></div>
       <div><dt>后台整理</dt><dd class="num">{{ view.runners }}</dd></div>
-      <div><dt>记忆空间</dt><dd class="num">{{ view.realmText }}</dd></div>
+      <div><dt>记忆空间</dt><dd class="num" :title="view.realmFull || undefined">{{ view.realmText }}</dd></div>
     </div>
     <div v-if="expanded" class="mem-graph" v-loading="loading">
       <PalaceGraph v-if="graph" :snapshot="graph" />

@@ -33,7 +33,7 @@ import {
   type Pt,
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
-import { statusClass } from '../src/modules/mission-control/format'
+import { compactEventSummary, compactId, statusClass } from '../src/modules/mission-control/format'
 import { activityBadgeLabel, activityServiceId, isActiveActivity, summarizeActivityBadges, traceSpansForTurn } from '../src/modules/mission-control/activity'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
 import type { RuntimeActivity, RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
@@ -79,6 +79,26 @@ function activity(over: Partial<RuntimeActivity> = {}): RuntimeActivity {
     ...over,
   }
 }
+
+describe('runtime identifier presentation', () => {
+  it('leaves readable IDs intact and compacts opaque long IDs without losing both ends', () => {
+    expect(compactId('02fde968f29042aa')).toBe('02fde968f29042aa')
+    expect(compactId('g_guard_62042b427925d7ca0bcc7685e4708e421496b1a1')).toBe('g_guard_62042b4…1496b1a1')
+  })
+
+  it('only compacts structured IDs embedded in event summaries', () => {
+    const turnId = '7e361bd7669f4b31bbb7e558e0fbce9a'
+    const runtimeEvent: RuntimeEvent = {
+      event_id: 'evt-1', ts: '2026-07-16T10:00:00Z', source: 'memory',
+      type: 'memory.fanout', severity: 'info', outcome: 'success', privacy: 'safe',
+      event_origin: 'polling', trace_id: turnId, owner_id: 'o1', companion_id: 'c1',
+      device_id: null, conversation_id: null, turn_id: turnId, job_id: null,
+      summary: `memory fanout absorbed · turn:${turnId}`, payload: {},
+    }
+    expect(compactEventSummary(runtimeEvent)).toBe(`memory fanout absorbed · turn:${compactId(turnId)}`)
+    expect(compactEventSummary({ ...runtimeEvent, turn_id: null, trace_id: null })).toContain(turnId)
+  })
+})
 
 it('renders a session-reconciled orphan turn as a failure', () => {
   expect(statusClass('orphaned')).toBe('bad')

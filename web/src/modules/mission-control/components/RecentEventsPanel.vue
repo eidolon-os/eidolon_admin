@@ -5,7 +5,7 @@
 // filters the events by companion).
 import type { RuntimeEvent } from '@/api/missionControl'
 import { SVC_GLYPH } from '../constants'
-import { fmtTime } from '../format'
+import { compactEventSummary, fmtTime } from '../format'
 import OriginBadge from '../primitives/OriginBadge.vue'
 
 defineProps<{ events: RuntimeEvent[]; scope?: string; selectedEventId?: string }>()
@@ -50,7 +50,7 @@ function srcColor(s: string): string {
         <em class="ev-ts num">{{ fmtTime(e.ts) }}</em>
         <OriginBadge :origin="e.event_origin" />
         <b class="ev-src">{{ SVC_GLYPH[e.source] || '·' }} {{ e.source.toUpperCase() }}</b>
-        <span class="ev-sum">{{ e.summary || e.type }}</span>
+        <span class="ev-sum" :title="e.summary || e.type">{{ compactEventSummary(e) }}</span>
       </li>
     </transition-group>
     <p v-else class="ev-idle">暂无事件</p>
