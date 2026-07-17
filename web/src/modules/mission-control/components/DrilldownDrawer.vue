@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import type { RuntimeRouteHop } from '@/api/missionControl'
 import { MODE_CN, SVC_GLYPH } from '../constants'
-import { compactId, devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, fmtTime, statusClass } from '../format'
+import { compactId, devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, fmtTime, genomeStateLabel, memoryRealmStateLabel, statusClass } from '../format'
 import AgentSpanInspector from './AgentSpanInspector.vue'
 import CapabilityRegistry from './CapabilityRegistry.vue'
 import ProofChainTiles from './ProofChainTiles.vue'
@@ -32,6 +33,11 @@ const drawerTurns = computed(() => {
   if (!c) return []
   return (snapshot.value?.recent_turns || []).filter((t) => t.companion_id === c.id).slice(0, 6)
 })
+function hopLabel(hop: RuntimeRouteHop): string {
+  if (hop.node_type === 'device') return props.mc.deviceNames.value[hop.node_id] || '身体'
+  if (hop.node_type === 'companion') return props.mc.companionNames.value[hop.node_id] || 'Companion'
+  return hop.label
+}
 </script>
 
 <template>
@@ -67,15 +73,15 @@ const drawerTurns = computed(() => {
           <h3>{{ drawerComp.name }}<i v-if="drawerComp.isPrimary" class="dw-pri">★ 主</i></h3>
           <p class="dw-role">{{ drawerComp.kind }} · {{ drawerComp.status }} · 归属 {{ ownerName }}</p>
           <div class="dw-grid">
-            <div><span>genome</span><b class="mono sm" :title="drawerComp.genome || undefined" :aria-label="drawerComp.genome ? `完整 genome ID：${drawerComp.genome}` : undefined">{{ compactId(drawerComp.genome) || '—' }}</b></div>
-            <div><span>记忆空间</span><b class="mono sm" :title="drawerComp.realm || undefined" :aria-label="drawerComp.realm ? `完整记忆空间 ID：${drawerComp.realm}` : undefined">{{ compactId(drawerComp.realm) || '未开通' }}</b></div>
+            <div><span>基因 genome</span><b :class="drawerComp.genome ? 'ok' : 'idle'" :title="drawerComp.genome || undefined">{{ genomeStateLabel(drawerComp.genome) }}</b></div>
+            <div><span>记忆空间</span><b :class="drawerComp.realm ? 'ok' : 'idle'" :title="drawerComp.realm || undefined">{{ memoryRealmStateLabel(drawerComp.realm) }}</b></div>
             <div><span>召回命中</span><b class="num">{{ drawerComp.recall ?? '—' }}</b></div>
             <div><span>后台整理</span><b class="num">{{ drawerComp.runners || '—' }}</b></div>
           </div>
           <span class="dw-sect">身体 / 化身 · {{ drawerComp.devices.length }}</span>
           <div class="dw-list">
             <div v-for="d in drawerComp.devices" :key="d.device_id" class="dw-row">
-              <i class="led" :class="devicePresenceClass(d)" /><b>{{ deviceType(d) }}</b><em>{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}{{ d.interaction_mode ? ' · ' + d.interaction_mode : '' }}</em>
+              <i class="led" :class="devicePresenceClass(d)" /><b>{{ deviceType(d) }}</b><em :title="d.device_id">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}{{ d.interaction_mode ? ' · ' + d.interaction_mode : '' }}</em>
             </div>
             <p v-if="!drawerComp.devices.length" class="dw-empty">未绑定身体</p>
             <p class="dw-readonly">只读观察 · 身体创建、绑定与启动请在设备管理中操作</p>
@@ -113,8 +119,8 @@ const drawerTurns = computed(() => {
           <ol v-if="target.activity.route.length" class="dw-stages">
             <li v-for="hop in target.activity.route" :key="hop.hop_id" class="dw-stage" :class="statusClass(hop.status)">
               <i class="led" :class="statusClass(hop.status)" />
-              <b>{{ hop.label }}</b>
-              <em :title="hop.node_id">{{ hop.node_type }} · {{ compactId(hop.node_id) }}<template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
+              <b>{{ hopLabel(hop) }}</b>
+              <em :title="hop.node_id">{{ hop.node_type }}<template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
             </li>
           </ol>
           <p v-else class="dw-empty">该事件没有足够的事实节点可形成路径</p>

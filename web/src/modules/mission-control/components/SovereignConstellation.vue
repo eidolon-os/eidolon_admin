@@ -6,7 +6,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { RuntimeActivity, RuntimeDevice } from '@/api/missionControl'
 import { currentStageKey, directedLegPath, eventToPulse, eventTone, flowDur, flowEventDur, flowLegs, flowPath, flowStagger, shouldFlow, stageMoon, type FlowLeg, type PulseTone } from '../flow'
-import { compactId, devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, statusClass } from '../format'
+import { devicePresenceClass, devicePresenceLabel, deviceShort, deviceType, fmtLatency, genomeStateLabel, memoryRealmStateLabel, statusClass } from '../format'
 import { activityKindLabel, currentActivityHop, isActiveActivity, summarizeActivityBadges } from '../activity'
 import type { CompanionUnit, GalaxyNode, Sat, SatKind, SatTone } from '../types'
 import type { MissionControlStream } from '../useMissionControlStream'
@@ -366,7 +366,7 @@ function deviceOnline(d: RuntimeDevice) {
       class="gx-device"
       :class="{ online: port.device.online, active: port.active }"
       :style="ptStyle(port.x, port.y)"
-      :title="`${deviceShort(port.device)} · ${devicePresenceLabel(port.device)}`"
+      :title="`${deviceShort(port.device)} · ${port.device.device_id} · ${devicePresenceLabel(port.device)}`"
       @click.stop="$emit('open-moon', port.body)"
     >{{ port.device.online ? '●' : '○' }}</button>
 
@@ -383,9 +383,9 @@ function deviceOnline(d: RuntimeDevice) {
         <p class="pop-role">虚拟伙伴（agent），归属于主人 {{ ownerName }}。它拥有自己的身体、记忆与活动。</p>
         <div class="pop-rows">
           <div><dt>状态</dt><dd :class="statusClass(n.c.status)">{{ n.c.status }}</dd></div>
-          <div><dt>基因 genome</dt><dd :title="n.c.genome || undefined">{{ compactId(n.c.genome) || '—' }}</dd></div>
+          <div><dt>基因 genome</dt><dd :class="n.c.genome ? 'ok' : 'idle'" :title="n.c.genome || undefined">{{ genomeStateLabel(n.c.genome) }}</dd></div>
           <div><dt>身体</dt><dd>{{ n.c.devices.length }} 台 · {{ n.c.devices.filter(deviceOnline).length }} 在线</dd></div>
-          <div><dt>记忆空间</dt><dd :class="n.c.realm ? 'ok' : 'idle'" :title="n.c.realm || undefined">{{ compactId(n.c.realm) || '未开通' }}</dd></div>
+          <div><dt>记忆空间</dt><dd :class="n.c.realm ? 'ok' : 'idle'" :title="n.c.realm || undefined">{{ memoryRealmStateLabel(n.c.realm) }}</dd></div>
         </div>
       </div>
     </el-popover>
@@ -403,15 +403,15 @@ function deviceOnline(d: RuntimeDevice) {
         <template v-if="s.kind === 'body'">
           <p class="pop-role">伙伴的物理 / 虚拟入口。设备只是入口，身份仍归属主人。</p>
           <div v-if="s.c.devices.length" class="pop-rows">
-            <div v-for="d in s.c.devices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="devicePresenceClass(d)">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}</dd></div>
+            <div v-for="d in s.c.devices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="devicePresenceClass(d)" :title="d.device_id">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}</dd></div>
           </div>
           <p v-else class="pop-role dim">这个伙伴还没有绑定任何身体。</p>
         </template>
         <template v-else-if="s.kind === 'mem'">
           <p class="pop-role">属于这个伙伴的长期记忆资产，让它记得主人、保持连续性。</p>
           <div class="pop-rows">
-            <div><dt>记忆空间</dt><dd :title="s.c.realm || undefined">{{ compactId(s.c.realm) || '未开通' }}</dd></div>
-            <div><dt>基因 genome</dt><dd :title="s.c.genome || undefined">{{ compactId(s.c.genome) || '—' }}</dd></div>
+            <div><dt>记忆空间</dt><dd :class="s.c.realm ? 'ok' : 'idle'" :title="s.c.realm || undefined">{{ memoryRealmStateLabel(s.c.realm) }}</dd></div>
+            <div><dt>基因 genome</dt><dd :class="s.c.genome ? 'ok' : 'idle'" :title="s.c.genome || undefined">{{ genomeStateLabel(s.c.genome) }}</dd></div>
             <div v-if="s.c.isActiveRealm"><dt>召回命中</dt><dd class="ok">{{ s.c.recall }}</dd></div>
             <div v-if="s.c.isActiveRealm"><dt>后台整理</dt><dd>{{ s.c.runners }}</dd></div>
             <div v-if="s.c.isActiveRealm"><dt>写入策略</dt><dd>{{ s.c.write }}</dd></div>
@@ -439,7 +439,7 @@ function deviceOnline(d: RuntimeDevice) {
         <div class="pop-h"><b>待认领设备</b><em>UNCLAIMED</em></div>
         <p class="pop-role">这些身体还没有绑定到任何主人 / 伙伴，等待认领与授权。</p>
         <div class="pop-rows">
-          <div v-for="d in unboundDevices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="devicePresenceClass(d)">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}</dd></div>
+          <div v-for="d in unboundDevices" :key="d.device_id"><dt>{{ deviceType(d) }}</dt><dd :class="devicePresenceClass(d)" :title="d.device_id">{{ deviceShort(d) }} · {{ devicePresenceLabel(d) }}</dd></div>
         </div>
       </div>
     </el-popover>

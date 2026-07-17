@@ -30,7 +30,7 @@ import {
 } from './flow'
 import { INFRA, SVC_GLYPH } from './constants'
 import { activityServiceId, activitySortTime, isActiveActivity, traceSpansForTurn } from './activity'
-import { fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
+import { deviceShort, fmtClock, fmtLatency, privacyModeLabel, streamLabel, systemStateLabel } from './format'
 import type { CompanionUnit, InfraNode, StreamState } from './types'
 
 const POLL_MS = 8000
@@ -131,7 +131,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     companions.value.map((companion) => [companion.companion_id, companion.display_name || companion.companion_id]),
   ))
   const deviceNames = computed<Record<string, string>>(() => Object.fromEntries(
-    devices.value.map((device) => [device.device_id, device.name || device.device_id]),
+    devices.value.map((device) => [device.device_id, deviceShort(device)]),
   ))
 
   const ownerName = computed(

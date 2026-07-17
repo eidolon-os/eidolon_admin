@@ -8,7 +8,7 @@ import { getPalaceGraph, type GraphSnapshot } from '@/api/memory'
 import PalaceGraph from '@/modules/memory/components/PalaceGraph.vue'
 import type { RuntimeMemory } from '@/api/missionControl'
 import type { CompanionUnit } from '../types'
-import { compactId } from '../format'
+import { memoryRealmStateLabel } from '../format'
 
 const props = defineProps<{ memory: RuntimeMemory | undefined; companion?: CompanionUnit | null }>()
 
@@ -22,7 +22,7 @@ const view = computed(() => {
       hasHit: recall != null && recall > 0,
       write: c.write || '—',
       runners: c.runners || '—',
-      realmText: compactId(c.realm) || '未开通',
+      realmText: memoryRealmStateLabel(c.realm),
       realmFull: c.realm || '',
       graphRealm: c.realm || '',
     }

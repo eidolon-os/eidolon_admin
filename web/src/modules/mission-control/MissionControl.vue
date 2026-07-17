@@ -106,7 +106,15 @@ function returnToConsole() { router.push({ name: 'home' }) }
     />
 
     <RuntimeBusRail :nodes="infraNodes" :hot-services="hotServices" :activity-owners="serviceActivityOwners" :pipeline-active="pipelineActive" @open-service="openSvc" />
-    <RecentEventsPanel :events="companionEvents" :scope="focusedCompanion?.name || ''" :selected-event-id="selectedEventId" @select="selectEvent" @hover="mc.hoverEvent" />
+    <RecentEventsPanel
+      :events="companionEvents"
+      :companion-names="mc.companionNames.value"
+      :device-names="mc.deviceNames.value"
+      :scope="focusedCompanion?.name || ''"
+      :selected-event-id="selectedEventId"
+      @select="selectEvent"
+      @hover="mc.hoverEvent"
+    />
 
     <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openComp" @close="closeDrawer" />
   </main>

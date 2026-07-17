@@ -33,7 +33,7 @@ import {
   type Pt,
 } from '../src/modules/mission-control/flow'
 import { DURATION } from '../src/modules/mission-control/motion'
-import { compactEventSummary, compactId, statusClass } from '../src/modules/mission-control/format'
+import { compactEventSummary, compactId, deviceShort, genomeStateLabel, memoryRealmStateLabel, statusClass } from '../src/modules/mission-control/format'
 import { activityBadgeLabel, activityServiceId, isActiveActivity, summarizeActivityBadges, traceSpansForTurn } from '../src/modules/mission-control/activity'
 import type { CompanionUnit } from '../src/modules/mission-control/types'
 import type { RuntimeActivity, RuntimeDevice, RuntimeEvent, RuntimeTurn, RuntimeTurnStage } from '../src/api/missionControl'
@@ -97,6 +97,31 @@ describe('runtime identifier presentation', () => {
     }
     expect(compactEventSummary(runtimeEvent)).toBe(`memory fanout absorbed · turn:${compactId(turnId)}`)
     expect(compactEventSummary({ ...runtimeEvent, turn_id: null, trace_id: null })).toContain(turnId)
+  })
+
+  it('uses asset state and device tail labels outside diagnostic views', () => {
+    expect(genomeStateLabel('g_opaque')).toBe('已绑定')
+    expect(genomeStateLabel('')).toBe('未绑定')
+    expect(memoryRealmStateLabel('r_opaque')).toBe('已配置')
+    expect(memoryRealmStateLabel(null)).toBe('未开通')
+    expect(deviceShort(device({
+      device_id: '24:ec:4a:52:f3:54',
+      name: '24:ec:4a:52:f3:54',
+    }))).toBe('尾号 F3:54')
+  })
+
+  it('replaces a structured device ID in event text with its readable label', () => {
+    const deviceId = '24:ec:4a:52:f3:54'
+    const runtimeEvent: RuntimeEvent = {
+      event_id: 'evt-2', ts: '2026-07-16T10:00:00Z', source: 'hub',
+      type: 'device.command', severity: 'info', outcome: 'success', privacy: 'safe',
+      event_origin: 'polling', trace_id: null, owner_id: 'o1', companion_id: null,
+      device_id: deviceId, conversation_id: null, turn_id: null, job_id: null,
+      summary: `device command acked · device:${deviceId}`, payload: {},
+    }
+    expect(compactEventSummary(runtimeEvent, {
+      deviceNames: { [deviceId]: '尾号 F3:54' },
+    })).toBe('device command acked · device:尾号 F3:54')
   })
 })
 

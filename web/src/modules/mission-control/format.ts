@@ -40,13 +40,32 @@ export function compactId(value: string | null | undefined, maxLength = 24): str
   return `${raw.slice(0, head)}…${raw.slice(-tail)}`
 }
 
+export function genomeStateLabel(genomeId: string | null | undefined): string {
+  return genomeId ? '已绑定' : '未绑定'
+}
+
+export function memoryRealmStateLabel(realmId: string | null | undefined): string {
+  return realmId ? '已配置' : '未开通'
+}
+
 /**
  * Compacts only IDs that the event already exposes as structured fields.
  * Arbitrary summary text is left untouched, while the full summary can remain
  * available to the UI as a tooltip.
  */
-export function compactEventSummary(event: RuntimeEvent): string {
+export function compactEventSummary(
+  event: RuntimeEvent,
+  names: { companionNames?: Record<string, string>; deviceNames?: Record<string, string> } = {},
+): string {
   let summary = event.summary || event.type
+  const readableIds = [
+    [event.companion_id, event.companion_id ? names.companionNames?.[event.companion_id] : ''],
+    [event.device_id, event.device_id ? names.deviceNames?.[event.device_id] : ''],
+  ] as const
+  for (const [id, label] of readableIds) {
+    if (id && label && id !== label) summary = summary.split(id).join(label)
+  }
+
   const ids = [
     event.turn_id,
     event.trace_id,
@@ -107,8 +126,11 @@ export function devicePresenceClass(d: RuntimeDevice): 'ok' | 'warn' | 'bad' | '
 
 /** Compact device name for tight tiles. */
 export function deviceShort(d: RuntimeDevice): string {
-  const n = d.name || d.device_id || ''
-  return n.length > 13 ? '…' + n.slice(-10) : n
+  const id = String(d.device_id || '').trim()
+  const name = String(d.name || '').trim()
+  if (name && name !== id) return name
+  if (/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(id)) return `尾号 ${id.slice(-5).toUpperCase()}`
+  return compactId(id, 18) || '未命名设备'
 }
 
 export function privacyModeLabel(mode: string | null | undefined): string {
