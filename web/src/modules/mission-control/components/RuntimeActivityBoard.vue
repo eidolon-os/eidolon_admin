@@ -150,9 +150,12 @@ function openFromKeyboard(event: KeyboardEvent, activity: RuntimeActivity): void
 .ab-meta em { color: var(--cy-cyan); font-style: normal; }
 .ab-meta b { min-width: 26px; padding: 4px 7px; border: 1px solid rgba(0, 234, 255, .22); color: var(--cy-txt); text-align: center; }
 .ab-meta b i { color: var(--cy-txt-dim); font-style: normal; }
-.ab-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(520px, 100%), 1fr)); gap: 8px; }
-.ab-lane { --lane-tone: var(--cy-txt-dim); position: relative; min-width: 0; overflow: hidden; padding: 10px 11px 8px; border: 1px solid rgba(134, 151, 210, .14); background: linear-gradient(145deg, rgba(11, 8, 28, .92), rgba(5, 4, 16, .88)); color: inherit; cursor: pointer; transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast); }
-.ab-lane.expanded { grid-column: 1 / -1; }
+.ab-cards { display: flex; gap: 8px; overflow-x: auto; overflow-y: hidden; padding: 0 0 4px; scroll-snap-type: x proximity; scrollbar-color: rgba(0, 234, 255, .35) rgba(134, 151, 210, .08); scrollbar-width: thin; }
+.ab-cards::-webkit-scrollbar { height: 4px; }
+.ab-cards::-webkit-scrollbar-track { background: rgba(134, 151, 210, .08); }
+.ab-cards::-webkit-scrollbar-thumb { background: rgba(0, 234, 255, .35); box-shadow: 0 0 8px rgba(0, 234, 255, .18); }
+.ab-lane { --lane-tone: var(--cy-txt-dim); position: relative; flex: 0 0 min(520px, calc(100% - 12px)); min-width: 0; overflow: hidden; padding: 10px 11px 8px; border: 1px solid rgba(134, 151, 210, .14); background: linear-gradient(145deg, rgba(11, 8, 28, .92), rgba(5, 4, 16, .88)); color: inherit; cursor: pointer; scroll-snap-align: start; transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast), box-shadow var(--dur-fast), flex-basis var(--dur-base) var(--ease-out); }
+.ab-lane.expanded { flex-basis: min(760px, calc(100% - 12px)); }
 .ab-lane::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 2px; background: var(--lane-tone); box-shadow: 0 0 12px var(--lane-tone); opacity: .8; }
 .ab-lane::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(105deg, transparent 25%, color-mix(in srgb, var(--lane-tone) 7%, transparent) 50%, transparent 75%); transform: translateX(-110%); opacity: 0; }
 .ab-lane.ok { --lane-tone: var(--cy-green); }
@@ -203,7 +206,6 @@ function openFromKeyboard(event: KeyboardEvent, activity: RuntimeActivity): void
 @keyframes phasePulse { 50% { transform: scale(1.08); box-shadow: 0 0 16px currentColor; } }
 @media (max-width: 720px) {
   .ab-title small { display: none; }
-  .ab-cards { grid-template-columns: 1fr; }
   .ab-lane.expanded .ab-steps { grid-template-columns: 1fr; }
   .ab-phases { overflow-x: auto; grid-template-columns: repeat(var(--phase-count), minmax(92px, 1fr)); padding-bottom: 3px; }
   .ab-foot > em { display: none; }
