@@ -119,6 +119,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
   const experience = computed(() => snapshot.value?.experience)
   const memory = computed(() => snapshot.value?.memory)
   const devices = computed(() => snapshot.value?.devices || [])
+  const runtimeBlackboard = computed(() => snapshot.value?.runtime_blackboard)
   const services = computed(() => snapshot.value?.services || [])
   const jobs = computed(() => snapshot.value?.jobs || [])
   const activities = computed(() => snapshot.value?.activities || [])
@@ -483,7 +484,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     // state
     owners, ownerId, snapshot, liveEvents, loading, error, streamState, now, replay,
     // primitives
-    experience, memory, devices, services, jobs, activities, activeActivities, companions,
+    experience, memory, devices, runtimeBlackboard, services, jobs, activities, activeActivities, companions,
     companionNames, deviceNames,
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
     primaryActiveVoiceTurn, runtimeTurns, selectedTurn, selectedTurnId, selectedEventId,

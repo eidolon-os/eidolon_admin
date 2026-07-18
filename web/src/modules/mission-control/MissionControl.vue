@@ -7,6 +7,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CockpitHeader from './components/CockpitHeader.vue'
 import CompanionInspector from './components/CompanionInspector.vue'
+import DeviceRuntimeBlackboard from './components/DeviceRuntimeBlackboard.vue'
 import DrilldownDrawer from './components/DrilldownDrawer.vue'
 import RuntimeActivityBoard from './components/RuntimeActivityBoard.vue'
 import RuntimeBusRail from './components/RuntimeBusRail.vue'
@@ -124,6 +125,8 @@ function returnToConsole() { router.push({ name: 'home' }) }
 
     <CockpitHeader :mc="mc" @return-console="returnToConsole" />
     <p v-if="error" class="cy-error">// {{ error }}</p>
+
+    <DeviceRuntimeBlackboard :mc="mc" />
 
     <section class="constellation-stage" :class="{ 'has-inspector': !!focusedCompanion }" @click.self="clearCompanionFocus">
       <SovereignConstellation

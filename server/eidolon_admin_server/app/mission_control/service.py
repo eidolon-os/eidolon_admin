@@ -18,6 +18,12 @@ import httpx
 from fastapi import Request
 
 from eidolon_data import DataStore
+from eidolon_sdk.biz.body import (
+    DEVICE_BLACKBOARD_BUCKET,
+    OwnerDeviceBlackboardSnapshot,
+    RuntimeDeviceEntry,
+    owner_device_blackboard_key,
+)
 
 from .schemas import (
     EvidenceChain,
@@ -28,6 +34,7 @@ from .schemas import (
     RuntimeCapabilityCard,
     RuntimeCompanion,
     RuntimeDevice,
+    RuntimeDeviceBlackboard,
     RuntimeEvent,
     RuntimeExperience,
     RuntimeJob,
@@ -80,19 +87,37 @@ async def build_snapshot(
         )
     owner_id = owner.owner_id
 
-    companions, devices, conversations, memory_realms, jobs, data_events = await asyncio.gather(
+    (
+        companions,
+        devices,
+        conversations,
+        memory_realms,
+        jobs,
+        data_events,
+        guard_bindings,
+    ) = await asyncio.gather(
         _safe(statuses, "data.companions", store.companions.list_for_owner(owner_id), []),
         _safe(statuses, "data.devices", store.devices.list_devices_for_owner(owner_id), []),
         _safe(statuses, "data.conversations", store.conversations.list_for_owner(owner_id, limit=20), []),
         _safe(statuses, "data.memory", store.memory_repo.list_realms_for_owner(owner_id), []),
         _safe(statuses, "data.jobs", store.jobs.list_for_owner(owner_id, limit=20), []),
         _safe(statuses, "data.events", store.events.list_for_owner(owner_id, limit=240), []),
+        _safe(statuses, "data.guard_bindings", store.guard_bindings.list_for_owner(owner_id), []),
     )
     statuses.append(_status("data", True, started))
 
     companion = _default_companion(companions)
+    guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
+    runtime_blackboard = await _runtime_blackboard(request, owner_id, statuses)
     hub_devices = await _hub_devices(request, statuses)
-    runtime_devices = _merge_devices(devices, hub_devices)
+    runtime_devices = _merge_devices(
+        devices,
+        hub_devices,
+        runtime_blackboard=runtime_blackboard,
+        owner_id=owner_id,
+        companions=companions,
+        guard_device_ids=guard_device_ids,
+    )
     services, service_statuses = await _services(request)
     statuses.extend(service_statuses)
 
@@ -164,6 +189,7 @@ async def build_snapshot(
         jobs=runtime_jobs,
         recent_events=recent_events,
         source_status=source_status,
+        runtime_blackboard=runtime_blackboard,
         experience=experience,
         trace_spans=trace_spans,
         evidence_chains=evidence_chains,
@@ -302,6 +328,72 @@ async def _hub_devices(request: Request, statuses: list[SourceStatus]) -> list[A
         return []
     statuses.append(_status("hub", True, started, f"{len(rows)} devices"))
     return rows
+
+
+async def _runtime_blackboard(
+    request: Request,
+    owner_id: str,
+    statuses: list[SourceStatus],
+) -> RuntimeDeviceBlackboard:
+    """Read exactly one owner-scoped current snapshot directly from NATS KV."""
+
+    key = owner_device_blackboard_key(owner_id)
+    client = getattr(request.app.state, "nats_kv", None)
+    if client is None:
+        detail = "NATS KV client unavailable"
+        statuses.append(SourceStatus(source="runtime.blackboard", ok=False, detail=detail))
+        return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
+
+    started = time.perf_counter()
+    try:
+        raw = await client.get_existing(DEVICE_BLACKBOARD_BUCKET, key)
+    except Exception as exc:  # noqa: BLE001 - observatory must fail closed
+        detail = f"NATS KV read failed: {exc}"
+        statuses.append(SourceStatus(source="runtime.blackboard", ok=False, detail=detail))
+        return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
+
+    if raw is None:
+        detail = "No current snapshot for selected owner"
+        statuses.append(_status("runtime.blackboard", True, started, detail))
+        return RuntimeDeviceBlackboard(health="empty", detail=detail, key=key)
+
+    try:
+        snapshot = OwnerDeviceBlackboardSnapshot.from_bytes(
+            raw,
+            expected_owner_id=owner_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - malformed/foreign data fails closed
+        detail = f"Invalid owner snapshot: {exc}"
+        statuses.append(SourceStatus(source="runtime.blackboard", ok=False, detail=detail))
+        return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
+
+    now = datetime.now(UTC)
+    if not snapshot.ready:
+        detail = "Hub snapshot is not ready"
+        health = "degraded"
+        available = False
+    elif snapshot.hub_lease_expires_at <= now:
+        detail = "Hub snapshot lease expired"
+        health = "degraded"
+        available = False
+    elif not snapshot.devices:
+        detail = "Snapshot ready; no current runtime devices"
+        health = "empty"
+        available = True
+    else:
+        online = sum(1 for row in snapshot.devices.values() if row.is_online(now=now))
+        detail = f"Snapshot ready; {online}/{len(snapshot.devices)} devices online"
+        health = "healthy"
+        available = True
+
+    statuses.append(_status("runtime.blackboard", available, started, detail))
+    return RuntimeDeviceBlackboard(
+        health=health,
+        available=available,
+        detail=detail,
+        key=key,
+        snapshot=snapshot,
+    )
 
 
 async def _agent_turns(
@@ -540,84 +632,148 @@ async def _safe(
         return fallback
 
 
-def _merge_devices(data_devices: list[Any], hub_devices: list[Any]) -> list[RuntimeDevice]:
+def _merge_devices(
+    data_devices: list[Any],
+    hub_devices: list[Any],
+    *,
+    runtime_blackboard: RuntimeDeviceBlackboard,
+    owner_id: str,
+    companions: list[Any] = (),
+    guard_device_ids: frozenset[str] = frozenset(),
+) -> list[RuntimeDevice]:
+    companion_by_id = {
+        getattr(c, "companion_id", ""): c
+        for c in companions
+        if getattr(c, "companion_id", "")
+    }
     by_id: dict[str, dict[str, Any]] = {}
     for row in data_devices:
-        by_id[row.device_id] = {"data": row, "hub": None}
+        by_id[row.device_id] = {"data": row, "hub": None, "runtime": None}
+    runtime_rows: dict[str, RuntimeDeviceEntry] = {}
+    if runtime_blackboard.available and runtime_blackboard.snapshot is not None:
+        runtime_rows = dict(runtime_blackboard.snapshot.devices)
+        for row in runtime_rows.values():
+            by_id.setdefault(
+                row.device_id,
+                {"data": None, "hub": None, "runtime": None},
+            )["runtime"] = row
     for row in hub_devices:
-        by_id.setdefault(row.device_id, {"data": None, "hub": None})["hub"] = row
+        # Hub's admin list is global. Only join rows already proven to belong
+        # to this owner by eidolon_data or the owner-isolated blackboard.
+        if row.device_id not in by_id and getattr(row, "owner_id", None) != owner_id:
+            continue
+        by_id.setdefault(
+            row.device_id,
+            {"data": None, "hub": None, "runtime": None},
+        )["hub"] = row
 
     devices = []
     for device_id, parts in by_id.items():
         data = parts["data"]
         hub = parts["hub"]
-        name = getattr(data, "name", "") or getattr(hub, "name", "") or device_id
+        runtime = parts["runtime"]
+        name = (
+            getattr(runtime, "name", "")
+            or getattr(data, "name", "")
+            or getattr(hub, "name", "")
+            or device_id
+        )
         kind = getattr(data, "kind", "") or getattr(hub, "kind", "") or "unknown"
-        status = getattr(hub, "status", "") or getattr(data, "status", "") or "offline"
-        last_seen = _as_utc(getattr(hub, "last_seen", None) or getattr(data, "last_seen_at", None))
-        capabilities = _capabilities(data, hub)
+        if runtime_blackboard.available:
+            status = getattr(runtime, "status", "") or "offline"
+            online = bool(runtime and runtime.is_online())
+        else:
+            status = "degraded" if runtime_blackboard.health == "degraded" else "offline"
+            online = False
+        last_seen = _as_utc(
+            getattr(runtime, "last_seen_at", None)
+            or getattr(data, "last_seen_at", None)
+        )
+        capabilities = (
+            sorted(capability.name for capability in runtime.capabilities)
+            if online
+            else []
+        )
+        companion_id = (
+            getattr(runtime, "provider_companion_id", None)
+            or getattr(data, "bound_companion_id", None)
+        )
+        bound_companion = companion_by_id.get(companion_id) if companion_id else None
+        is_guard = device_id in guard_device_ids or _is_guard_companion(bound_companion)
+        role, role_kind = _device_role(bound_companion, is_guard)
         devices.append(
             RuntimeDevice(
                 device_id=device_id,
                 name=name,
-                role=_device_role(device_id, name, kind, capabilities),
+                role=role,
+                role_kind=role_kind,
                 kind=kind,
                 status=status,
-                online=status == "online",
+                online=online,
                 approved=bool(getattr(hub, "approved", False) or getattr(data, "approved_at", None)),
-                owner_id=getattr(data, "owner_id", None),
-                companion_id=getattr(data, "bound_companion_id", None),
+                owner_id=getattr(data, "owner_id", None) or (owner_id if runtime else None),
+                companion_id=companion_id,
                 interaction_mode=getattr(data, "interaction_mode", None),
-                room_name=getattr(hub, "room_name", "") or ((getattr(data, "network_json", {}) or {}).get("room_name") or ""),
-                participant_sid=getattr(hub, "participant_sid", ""),
+                room_name=getattr(runtime, "room_name", ""),
+                participant_sid=getattr(runtime, "participant_sid", ""),
                 last_seen_at=last_seen,
                 capabilities=capabilities,
                 signals={
                     "missed_probes": getattr(hub, "missed_probes", 0),
                     "paired": bool(getattr(hub, "paired", False)),
-                    "source": "hub+data" if data and hub else ("data" if data else "hub"),
+                    "source": "runtime_blackboard",
+                    "blackboard_health": runtime_blackboard.health,
+                    "registration_id": getattr(runtime, "registration_id", ""),
+                    "manifest_revision": getattr(runtime, "manifest_revision", ""),
+                    "presence_revision": getattr(runtime, "presence_revision", ""),
                 },
             )
         )
-    return sorted(devices, key=lambda item: (not item.online, item.role, item.device_id))
+    return sorted(devices, key=lambda item: (not item.online, item.role_kind, item.device_id))
 
 
-def _capabilities(data: Any, hub: Any) -> list[str]:
-    caps: set[str] = set()
-    raw = getattr(data, "capabilities_json", None) or {}
-    if isinstance(raw, dict):
-        for key, value in raw.items():
-            if isinstance(value, bool) and value:
-                caps.add(key)
-            elif isinstance(value, list):
-                caps.update(str(item) for item in value)
-    kind = (getattr(data, "kind", "") or getattr(hub, "kind", "") or "").lower()
-    name = (getattr(data, "name", "") or getattr(hub, "name", "") or "").lower()
-    blob = f"{kind} {name}"
-    if "box" in blob:
-        caps.update({"voice", "speaker", "display", "sensor"})
-    if "2.06" in blob or "amoled" in blob or "touch" in blob:
-        caps.update({"ptt", "display", "touch", "voice"})
-    if "camera" in blob or "vision" in blob or "atk" in blob:
-        caps.update({"camera.snapshot", "vision", "sensor"})
-    if not caps and "esp" in blob:
-        caps.update({"voice", "control"})
-    return sorted(caps)
+def _is_guard_companion(companion: Any) -> bool:
+    """Guard is a companion role, never a device/hardware attribute. Mirrors
+    resolve.orchestrator._is_guard_companion so both read the same signal."""
+    if companion is None:
+        return False
+    return (
+        str(getattr(companion, "kind", "") or "") == "guard"
+        or str(getattr(companion, "companion_type", "") or "") == "guard"
+    )
 
 
-def _device_role(device_id: str, name: str, kind: str, caps: list[str]) -> str:
-    blob = f"{device_id} {name} {kind} {' '.join(caps)}".lower()
-    if "2.06" in blob or "pocket" in blob or "ptt" in blob:
-        return "Pocket PTT Controller"
-    if "camera" in blob or "vision" in blob or "atk" in blob:
-        return "Vision Node"
-    if "box" in blob and ("dock" in blob or "sensor" in blob):
-        return "Room Voice / Sensor Dock"
-    if "box" in blob:
-        return "Room Voice Node"
-    if "web" in blob:
-        return "Web Body"
-    return "Body Node"
+def _device_role(bound_companion: Any, is_guard: bool) -> tuple[str, str]:
+    """A device's logical role comes from the companion it is bound to, not
+    from its board `kind`. Returns (human_label, role_kind classifier)."""
+    if is_guard:
+        return "守护哨兵", "guard"
+    if bound_companion is not None:
+        return "对话身体", "persona"
+    return "未绑定", "unbound"
+
+
+# A guard binding no longer relevant to the device: revoked or replaced.
+_GUARD_BINDING_TERMINAL_STATES = frozenset({"revoked", "replaced"})
+
+
+def _active_guard_bindings(bindings: list[Any]) -> dict[str, str]:
+    """Map guard-bound device_id → guard companion_id for live bindings.
+
+    The device↔guard-companion binding lives in ``guard_bindings`` (not in the
+    device's ``bound_companion_id``), so this is how a device's guard role is
+    read from its binding rather than guessed from hardware or a capability."""
+    result: dict[str, str] = {}
+    for row in bindings:
+        device_id = getattr(row, "device_id", "") or ""
+        if not device_id:
+            continue
+        if getattr(row, "revoked_at", None) is not None:
+            continue
+        if str(getattr(row, "state", "") or "") in _GUARD_BINDING_TERMINAL_STATES:
+            continue
+        result[device_id] = getattr(row, "guard_companion_id", "") or ""
+    return result
 
 
 def _is_prepared_web_body(device: RuntimeDevice) -> bool:
@@ -1426,7 +1582,7 @@ def _evidence_chains(
     only 'proven' when every step has real backing — mock is never marked live."""
     online = [d for d in devices if d.online]
     has_camera = any(
-        "camera.snapshot" in d.capabilities or "camera" in f"{d.kind} {d.role}".lower()
+        "camera.snapshot" in d.capabilities or "camera" in d.kind.lower()
         for d in devices
     )
     camera_grant = next((i for i in ledger if i.kind == "camera.take_photo"), None)

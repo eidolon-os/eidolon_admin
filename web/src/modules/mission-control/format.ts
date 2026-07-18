@@ -90,12 +90,16 @@ export function statusClass(status: string | null | undefined): 'ok' | 'warn' | 
   return 'idle'
 }
 
-/** Human label for a device's embodiment (physical vs virtual body). */
+/**
+ * Human label for a device's embodiment (physical vs virtual body). This is a
+ * hardware distinction, so it reads only the board `kind` — never the logical
+ * role, which comes from the bound companion.
+ */
 export function deviceType(d: RuntimeDevice): string {
-  const k = `${d.kind} ${d.role}`.toLowerCase()
-  if (k.includes('esp32') || k.includes('box') || k.includes('camera') || k.includes('atk') || k.includes('ptt')) return '物理身体'
+  const k = String(d.kind || '').toLowerCase()
   if (k.includes('web') || k.includes('virtual')) return '虚拟身体'
-  return '设备'
+  if (!k || k === 'unknown') return '设备'
+  return '物理身体'
 }
 
 export function isPreparedWebBody(d: RuntimeDevice): boolean {

@@ -9,7 +9,14 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from ..mission_control.schemas import RuntimeDevice, SourceStatus
-from ..mission_control.service import _hub_devices, _merge_devices, _select_owner, _store
+from ..mission_control.service import (
+    _active_guard_bindings,
+    _hub_devices,
+    _merge_devices,
+    _runtime_blackboard,
+    _select_owner,
+    _store,
+)
 
 router = APIRouter(prefix="/devices", tags=["devices"])
 
@@ -47,14 +54,31 @@ async def fleet(
         data_devices = await store.devices.list_devices_for_owner(owner.owner_id)
     except Exception:  # noqa: BLE001
         data_devices = []
+    try:
+        guard_bindings = await store.guard_bindings.list_for_owner(owner.owner_id)
+    except Exception:  # noqa: BLE001
+        guard_bindings = []
+    # device_id -> guard companion_id for live guard bindings. This binding, not
+    # the device's hardware kind, is what makes a device a guard sentinel.
+    guard_companion_by_device = _active_guard_bindings(guard_bindings)
     hub_devices = await _hub_devices(request, statuses)
-    merged = _merge_devices(data_devices, hub_devices)
+    runtime_blackboard = await _runtime_blackboard(request, owner.owner_id, statuses)
+    merged = _merge_devices(
+        data_devices,
+        hub_devices,
+        runtime_blackboard=runtime_blackboard,
+        owner_id=owner.owner_id,
+        companions=companions,
+        guard_device_ids=frozenset(guard_companion_by_device),
+    )
 
     by_companion: dict[str, list[RuntimeDevice]] = {}
     unbound: list[RuntimeDevice] = []
     known = {c.companion_id for c in companions}
     for device in merged:
-        cid = device.companion_id
+        # Guard devices bind to their guard companion via guard_bindings, not
+        # via bound_companion_id — group them under that companion.
+        cid = guard_companion_by_device.get(device.device_id) or device.companion_id
         if cid and cid in known:
             by_companion.setdefault(cid, []).append(device)
         else:

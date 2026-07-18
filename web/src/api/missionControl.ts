@@ -64,7 +64,10 @@ export interface RuntimeCompanion {
 export interface RuntimeDevice {
   device_id: string
   name: string
+  // Logical role from the bound companion (human label + stable classifier),
+  // never inferred from the hardware `kind`.
   role: string
+  role_kind: 'guard' | 'persona' | 'unbound' | string
   kind: string
   status: string
   online: boolean
@@ -77,6 +80,53 @@ export interface RuntimeDevice {
   last_seen_at: string | null
   capabilities: string[]
   signals: Record<string, any>
+}
+
+export interface RuntimeCapabilityContract {
+  name: string
+  version: number
+  description: string
+  input_schema: Record<string, any>
+  result_schema: Record<string, any>
+}
+
+export interface RuntimeBlackboardDevice {
+  device_id: string
+  registration_id: string
+  provider_companion_id: string | null
+  provider_companion_name: string
+  name: string
+  aliases: string[]
+  visibility: 'owner' | 'bound_companion'
+  capabilities: RuntimeCapabilityContract[]
+  manifest_revision: string
+  status: 'registered_waiting_transport' | 'online'
+  registered_at: string
+  lease_expires_at: string
+  last_seen_at: string | null
+  room_name: string
+  participant_sid: string
+  presence_revision: string
+}
+
+export interface RuntimeBlackboardSnapshot {
+  schema_version: 2
+  owner_id: string
+  epoch: string
+  revision: number
+  ready: boolean
+  hub_lease_expires_at: string
+  updated_at: string
+  devices: Record<string, RuntimeBlackboardDevice>
+}
+
+export interface RuntimeDeviceBlackboard {
+  health: 'healthy' | 'degraded' | 'empty'
+  available: boolean
+  detail: string
+  bucket: string
+  key: string
+  snapshot: RuntimeBlackboardSnapshot | null
 }
 
 export interface RuntimeTurnStage {
@@ -276,6 +326,7 @@ export interface RuntimeSnapshot {
   jobs: RuntimeJob[]
   recent_events: RuntimeEvent[]
   source_status: SourceStatus[]
+  runtime_blackboard: RuntimeDeviceBlackboard
   experience: RuntimeExperience
   trace_spans: RuntimeTraceSpan[]
   evidence_chains: EvidenceChain[]

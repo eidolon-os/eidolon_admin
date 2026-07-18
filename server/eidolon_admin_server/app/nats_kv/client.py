@@ -263,6 +263,20 @@ class KVClient:
             return None
         return entry.value
 
+    async def get_existing(self, bucket: str, key: str) -> bytes | None:
+        """Read a key from an existing bucket without creating that bucket.
+
+        This is the read-only counterpart to :meth:`ensure_bucket`.  Observer
+        surfaces (for example Mission Control) must be able to consume a
+        bucket owned by another service without becoming a second bucket
+        creator or writer.  The bucket handle is cached, but values are always
+        fetched directly from JetStream on every call.
+        """
+        await self.connect()
+        if bucket not in self._buckets:
+            self._buckets[bucket] = await self._js.key_value(bucket=bucket)
+        return await self.get(bucket, key)
+
     async def put(self, bucket: str, key: str, value: bytes) -> None:
         kv = await self._kv(bucket)
         await kv.put(key, value)

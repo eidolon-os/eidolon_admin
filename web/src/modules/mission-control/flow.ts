@@ -194,7 +194,7 @@ export function demoFlowTurn(companionId: string): RuntimeTurn {
 /** Synthetic online body, so the body leg lights when a demo companion has none. */
 export function demoFlowDevice(companionId: string): RuntimeDevice {
   return {
-    device_id: `demo-body-${companionId}`, name: 'demo body', role: '', kind: 'virtual',
+    device_id: `demo-body-${companionId}`, name: 'demo body', role: '', role_kind: 'unbound', kind: 'virtual',
     status: 'online', online: true, approved: true, owner_id: null,
     companion_id: companionId, interaction_mode: null, room_name: '',
     participant_sid: '', last_seen_at: null, capabilities: [], signals: {},

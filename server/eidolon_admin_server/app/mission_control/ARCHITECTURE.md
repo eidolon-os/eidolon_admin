@@ -13,6 +13,20 @@ Mission Control only reads those facts and projects them into
 changes a command, or schedules a job. Projection or SSE failure therefore
 degrades the page only; it cannot change the normal runtime flow.
 
+Device runtime availability and capability contracts are a separate current
+fact surface. Mission Control reads exactly one key per selected owner from the
+Hub-owned JetStream KV bucket `EIDOLON_RUNTIME_DEVICES`:
+
+`owner.<sha256(owner_id)>.current`
+
+The Admin does not create or write this bucket, scan other owner keys, Watch
+updates, or cache snapshot values. Every snapshot page request performs a fresh
+KV `get` and validates the strict SDK schema v2 plus the embedded `owner_id`.
+Only a ready snapshot with a live Hub lease may project online devices and
+capability names. Missing, malformed, foreign-owner, not-ready, and expired
+snapshots fail closed; persisted `devices.capabilities_json` is inventory
+metadata and is never used as an online capability fallback.
+
 The Mission Control UI follows the same boundary: it may select, filter, and
 open observed facts, but it does not create/bind/start a body. Those operations
 belong to the normal Devices and Companion administration surfaces.

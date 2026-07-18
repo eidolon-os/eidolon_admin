@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from eidolon_data import DataSettings, DataStore
+from eidolon_sdk.biz.body import (
+    OwnerDeviceBlackboardSnapshot,
+    owner_device_blackboard_key,
+)
 from fastapi import FastAPI
 
 from eidolon_admin_server.app.mission_control import service as mission_control_service
@@ -96,10 +100,283 @@ async def test_snapshot_degrades_without_runtime_sources(
     assert body["owner"]["owner_id"] == "owner-mc"
     assert body["companion"]["display_name"] == "Xiaoyi"
     assert body["companions"][0]["display_name"] == "Xiaoyi"
-    assert body["devices"][0]["role"] == "Room Voice / Sensor Dock"
-    assert body["devices"][0]["capabilities"] == ["display", "sensor", "speaker", "voice"]
+    # Role is read from the bound (persona) companion, not the board kind.
+    assert body["devices"][0]["role"] == "对话身体"
+    assert body["devices"][0]["role_kind"] == "persona"
+    assert body["devices"][0]["status"] == "degraded"
+    assert body["devices"][0]["capabilities"] == []
+    assert body["runtime_blackboard"]["health"] == "degraded"
+    assert body["runtime_blackboard"]["snapshot"] is None
     assert any(item["source"] == "hub" and not item["ok"] for item in body["source_status"])
     assert body["privacy_notice"].startswith("Default safe mode")
+
+
+async def test_device_role_reads_from_bound_companion_not_board_kind(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+) -> None:
+    await data_store.owner_service.create_owner(
+        owner_id="owner-role",
+        display_name="Role Owner",
+        actor_type="test",
+    )
+    workspace = await data_store.workspace_provisioning.provision_workspace(
+        owner_id="owner-role",
+        companion_display_name="Xiaoyi",
+        actor_type="test",
+    )
+    # Persona body: role comes from the persona companion it is bound to.
+    await data_store.devices.create_device(
+        device_id="persona-desk",
+        owner_id="owner-role",
+        name="Desk Body",
+        kind="m5stack-core-s3",
+        bound_companion_id=workspace.companion.companion_id,
+    )
+    # Guard sentinel: guard-capable device bound to a guard companion only via
+    # guard_bindings (never via bound_companion_id).
+    guard = await data_store.guard_bindings.ensure_guard_companion(
+        owner_id="owner-role", companion_id="guard-role"
+    )
+    await data_store.devices.create_device(
+        device_id="atk-sentinel",
+        owner_id="owner-role",
+        name="Hallway Cam",
+        kind="atk-dnesp32s3",
+        capabilities_json={"guard": True},
+    )
+    await data_store.guard_bindings.claim(
+        owner_id="owner-role",
+        device_id="atk-sentinel",
+        guard_companion_id=guard.companion_id,
+    )
+
+    resp = await client.get("/api/mission-control/snapshot?owner_id=owner-role")
+    assert resp.status_code == 200
+    devices = {row["device_id"]: row for row in resp.json()["devices"]}
+
+    # Persona binding -> persona role; the board kind never leaks into the role.
+    assert devices["persona-desk"]["role_kind"] == "persona"
+    assert devices["persona-desk"]["role"] == "对话身体"
+    assert devices["persona-desk"]["kind"] == "m5stack-core-s3"
+
+    # Guard binding -> guard role, even though the device is not bound via
+    # bound_companion_id and its board kind says nothing about "guard".
+    assert devices["atk-sentinel"]["role_kind"] == "guard"
+    assert devices["atk-sentinel"]["role"] == "守护哨兵"
+    assert devices["atk-sentinel"]["kind"] == "atk-dnesp32s3"
+
+
+class _FakeRuntimeKV:
+    def __init__(self, raw: bytes | None = None, error: Exception | None = None) -> None:
+        self.raw = raw
+        self.error = error
+        self.calls: list[tuple[str, str]] = []
+
+    async def get_existing(self, bucket: str, key: str) -> bytes | None:
+        self.calls.append((bucket, key))
+        if self.error is not None:
+            raise self.error
+        return self.raw
+
+
+def _runtime_snapshot_bytes(
+    owner_id: str,
+    *,
+    ready: bool = True,
+    hub_lease_delta: int = 60,
+    device_lease_delta: int = 45,
+) -> bytes:
+    now = datetime.now(UTC)
+    snapshot = OwnerDeviceBlackboardSnapshot.model_validate(
+        {
+            "schema_version": 2,
+            "owner_id": owner_id,
+            "epoch": "epoch-live-7",
+            "revision": 19,
+            "ready": ready,
+            "hub_lease_expires_at": now + timedelta(seconds=hub_lease_delta),
+            "updated_at": now,
+            "devices": {
+                "guard-online": {
+                    "device_id": "guard-online",
+                    "registration_id": "reg-current-3",
+                    "provider_companion_id": "companion-guard",
+                    "provider_companion_name": "Guard Companion",
+                    "name": "ATK Guard",
+                    "aliases": ["门卫", "guard"],
+                    "visibility": "bound_companion",
+                    "capabilities": [
+                        {
+                            "name": "device.roll_call",
+                            "version": 3,
+                            "description": "Play the current roll-call cue.",
+                            "input_schema": {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": False,
+                            },
+                            "result_schema": {
+                                "type": "object",
+                                "properties": {"played": {"type": "boolean"}},
+                                "required": ["played"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    ],
+                    "manifest_revision": "sha256:manifest-current",
+                    "status": "online",
+                    "registered_at": now - timedelta(seconds=20),
+                    "lease_expires_at": now + timedelta(seconds=device_lease_delta),
+                    "last_seen_at": now,
+                    "room_name": "device-guard-online-control",
+                    "participant_sid": "PA_GUARD",
+                    "presence_revision": "presence-9",
+                }
+            },
+        }
+    )
+    return snapshot.to_bytes()
+
+
+async def test_runtime_blackboard_reads_only_selected_owner_current_key() -> None:
+    owner_id = "owner-blackboard-a"
+    kv = _FakeRuntimeKV(_runtime_snapshot_bytes(owner_id))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
+    statuses: list[mission_control_service.SourceStatus] = []
+
+    result = await mission_control_service._runtime_blackboard(  # noqa: SLF001
+        request, owner_id, statuses
+    )
+
+    assert kv.calls == [
+        ("EIDOLON_RUNTIME_DEVICES", owner_device_blackboard_key(owner_id))
+    ]
+    assert result.health == "healthy"
+    assert result.available is True
+    assert result.snapshot is not None
+    assert result.snapshot.owner_id == owner_id
+    device = result.snapshot.devices["guard-online"]
+    assert device.registration_id == "reg-current-3"
+    assert device.provider_companion_name == "Guard Companion"
+    assert device.capabilities[0].model_dump(mode="json") == {
+        "name": "device.roll_call",
+        "version": 3,
+        "description": "Play the current roll-call cue.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {"played": {"type": "boolean"}},
+            "required": ["played"],
+            "additionalProperties": False,
+        },
+    }
+    assert statuses[-1].source == "runtime.blackboard" and statuses[-1].ok
+
+
+async def test_runtime_blackboard_rejects_cross_owner_snapshot() -> None:
+    kv = _FakeRuntimeKV(_runtime_snapshot_bytes("owner-foreign"))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
+    statuses: list[mission_control_service.SourceStatus] = []
+
+    result = await mission_control_service._runtime_blackboard(  # noqa: SLF001
+        request, "owner-selected", statuses
+    )
+
+    assert result.health == "degraded"
+    assert result.available is False
+    assert result.snapshot is None
+    assert "owner mismatch" in result.detail
+    assert statuses[-1].ok is False
+
+
+@pytest.mark.parametrize(
+    ("ready", "hub_lease_delta", "detail"),
+    [(False, 60, "not ready"), (True, -1, "lease expired")],
+)
+async def test_runtime_blackboard_retains_raw_degraded_snapshot_but_fails_closed(
+    ready: bool,
+    hub_lease_delta: int,
+    detail: str,
+) -> None:
+    owner_id = "owner-degraded"
+    kv = _FakeRuntimeKV(
+        _runtime_snapshot_bytes(
+            owner_id,
+            ready=ready,
+            hub_lease_delta=hub_lease_delta,
+        )
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
+    statuses: list[mission_control_service.SourceStatus] = []
+    blackboard = await mission_control_service._runtime_blackboard(  # noqa: SLF001
+        request, owner_id, statuses
+    )
+
+    persistent = SimpleNamespace(
+        device_id="guard-online",
+        owner_id=owner_id,
+        name="Persisted Guard",
+        kind="atk_camera",
+        status="active",
+        bound_companion_id="companion-guard",
+        capabilities_json={"camera.capture": True},
+        approved_at=datetime.now(UTC),
+        network_json={},
+    )
+    devices = mission_control_service._merge_devices(  # noqa: SLF001
+        [persistent],
+        [],
+        runtime_blackboard=blackboard,
+        owner_id=owner_id,
+    )
+
+    assert blackboard.snapshot is not None  # raw current fields remain inspectable
+    assert blackboard.health == "degraded"
+    assert blackboard.available is False
+    assert detail in blackboard.detail
+    assert devices[0].online is False
+    assert devices[0].status == "degraded"
+    assert devices[0].capabilities == []
+
+
+async def test_runtime_merge_uses_online_contract_and_drops_foreign_hub_rows() -> None:
+    owner_id = "owner-runtime"
+    kv = _FakeRuntimeKV(_runtime_snapshot_bytes(owner_id))
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
+    statuses: list[mission_control_service.SourceStatus] = []
+    blackboard = await mission_control_service._runtime_blackboard(  # noqa: SLF001
+        request, owner_id, statuses
+    )
+    own_hub = SimpleNamespace(
+        device_id="guard-online",
+        owner_id=None,
+        approved=True,
+        paired=True,
+        missed_probes=0,
+    )
+    foreign_hub = SimpleNamespace(
+        device_id="foreign-device",
+        owner_id="owner-foreign",
+        approved=True,
+    )
+
+    devices = mission_control_service._merge_devices(  # noqa: SLF001
+        [],
+        [own_hub, foreign_hub],
+        runtime_blackboard=blackboard,
+        owner_id=owner_id,
+    )
+
+    assert [device.device_id for device in devices] == ["guard-online"]
+    assert devices[0].owner_id == owner_id
+    assert devices[0].online is True
+    assert devices[0].capabilities == ["device.roll_call"]
+    assert devices[0].room_name == "device-guard-online-control"
 
 
 async def test_snapshot_sorts_mixed_timezone_events(

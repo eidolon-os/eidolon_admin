@@ -11,6 +11,7 @@ them by retention policy; for tests they're effectively ephemeral).
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -66,6 +67,41 @@ async def test_ensure_bucket_creates_new(kv: KVClient, bucket_name: str) -> None
 
 
 # ---- put / get / delete --------------------------------------------------
+
+
+async def test_get_existing_opens_bucket_without_creating_or_caching_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Bucket:
+        def __init__(self) -> None:
+            self.values = {"owner.current": b"revision-1"}
+
+        async def get(self, key: str):
+            return type("Entry", (), {"value": self.values[key]})()
+
+    class _JetStream:
+        def __init__(self, bucket: _Bucket) -> None:
+            self.bucket = bucket
+            self.opened: list[str] = []
+
+        async def key_value(self, *, bucket: str):
+            self.opened.append(bucket)
+            return self.bucket
+
+    client = KVClient()
+    bucket = _Bucket()
+    js = _JetStream(bucket)
+    client._js = js
+
+    async def _connected() -> None:
+        return None
+
+    monkeypatch.setattr(client, "connect", _connected)
+
+    assert await client.get_existing("RUNTIME", "owner.current") == b"revision-1"
+    bucket.values["owner.current"] = b"revision-2"
+    assert await client.get_existing("RUNTIME", "owner.current") == b"revision-2"
+    assert js.opened == ["RUNTIME"]
 
 
 @pytest.mark.asyncio

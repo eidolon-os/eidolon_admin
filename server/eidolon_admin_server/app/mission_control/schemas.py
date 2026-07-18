@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from eidolon_sdk.biz.body import OwnerDeviceBlackboardSnapshot
+
 JsonDict = dict[str, Any]
 
 RuntimeSource = Literal[
@@ -78,7 +80,11 @@ class RuntimeCompanion(BaseModel):
 class RuntimeDevice(BaseModel):
     device_id: str
     name: str = ""
-    role: str = "Body Node"
+    # Logical role, read from the companion this device is bound to — never
+    # inferred from the hardware `kind`. `role` is the human label; `role_kind`
+    # is the stable classifier: guard | persona | unbound.
+    role: str = "未绑定"
+    role_kind: str = "unbound"
     kind: str = "unknown"
     status: str = "offline"
     online: bool = False
@@ -91,6 +97,17 @@ class RuntimeDevice(BaseModel):
     last_seen_at: datetime | None = None
     capabilities: list[str] = Field(default_factory=list)
     signals: JsonDict = Field(default_factory=dict)
+
+
+class RuntimeDeviceBlackboard(BaseModel):
+    """Read-only health envelope around one owner's exact KV snapshot."""
+
+    health: Literal["healthy", "degraded", "empty"] = "empty"
+    available: bool = False
+    detail: str = "No current runtime device snapshot"
+    bucket: str = "EIDOLON_RUNTIME_DEVICES"
+    key: str = ""
+    snapshot: OwnerDeviceBlackboardSnapshot | None = None
 
 
 class RuntimeTurn(BaseModel):
@@ -298,6 +315,9 @@ class RuntimeSnapshot(BaseModel):
     jobs: list[RuntimeJob] = Field(default_factory=list)
     recent_events: list[RuntimeEvent] = Field(default_factory=list)
     source_status: list[SourceStatus] = Field(default_factory=list)
+    runtime_blackboard: RuntimeDeviceBlackboard = Field(
+        default_factory=RuntimeDeviceBlackboard
+    )
     experience: RuntimeExperience = Field(default_factory=RuntimeExperience)
     trace_spans: list[RuntimeTraceSpan] = Field(default_factory=list)
     evidence_chains: list[EvidenceChain] = Field(default_factory=list)
