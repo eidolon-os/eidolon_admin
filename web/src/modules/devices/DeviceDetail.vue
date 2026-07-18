@@ -2,16 +2,19 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Link } from '@element-plus/icons-vue'
+import { ArrowLeft, Bell, Link, VideoPlay } from '@element-plus/icons-vue'
 import { useOwnersStore } from '@/stores/owners'
 import {
   bindOwnerDevice,
+  identifyOwnerDevice,
   listOwnerCompanions,
   listOwnerDevices,
+  listOwnerGuardBindings,
   type CompanionView,
   type DeviceView as OwnerDeviceView,
+  type GuardBindingView,
 } from '@/api/eidolonData'
-import { listDevices, type DeviceView as HubDeviceView } from '@/api/devices'
+import { listDevices, wakeDevice, type DeviceView as HubDeviceView } from '@/api/devices'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 
 const route = useRoute()
@@ -22,15 +25,21 @@ const deviceId = computed(() => String(route.params.deviceId || ''))
 const ownerDevice = ref<OwnerDeviceView | null>(null)
 const hubDevice = ref<HubDeviceView | null>(null)
 const companions = ref<CompanionView[]>([])
+const guardBindings = ref<GuardBindingView[]>([])
 const companionId = ref('')
 const loading = ref(false)
 const saving = ref(false)
+const starting = ref(false)
+const identifying = ref(false)
 
-const isGuard = computed(() => {
-  const raw = `${ownerDevice.value?.kind || ''} ${hubDevice.value?.kind || ''}`.toLowerCase()
-  const capabilities = ownerDevice.value?.capabilities_json || {}
-  return raw.includes('guard') || Boolean((capabilities as Record<string, any>).guard)
-})
+// Guard is a role carried by the bound guard companion, expressed through a
+// live guard binding — not by the device's hardware kind or capability flag.
+const isGuard = computed(() => guardBindings.value.some(
+  (binding) => binding.device_id === deviceId.value
+    && !binding.revoked_at
+    && binding.state !== 'revoked'
+    && binding.state !== 'replaced',
+))
 
 const productState = computed(() => {
   if (!hubDevice.value && ownerDevice.value?.kind === 'web') return ownerDevice.value.bound_companion_id ? '已准备' : '待绑定'
@@ -42,6 +51,37 @@ const productState = computed(() => {
   return '已就绪'
 })
 
+const canStartSession = computed(() => {
+  const device = hubDevice.value
+  return Boolean(
+    ownerDevice.value?.bound_companion_id
+    && !isGuard.value
+    && device?.enabled
+    && device.approved
+    && device.status === 'online'
+    && device.participant_sid
+    && device.room_name?.endsWith('-control'),
+  )
+})
+
+const sessionActive = computed(() => Boolean(
+  hubDevice.value?.status === 'online'
+  && hubDevice.value.room_name
+  && !hubDevice.value.room_name.endsWith('-control'),
+))
+
+const canIdentify = computed(() => {
+  const device = hubDevice.value
+  return Boolean(
+    ownerDevice.value
+    && device?.enabled
+    && device.approved
+    && device.status === 'online'
+    && device.participant_sid
+    && device.room_name,
+  )
+})
+
 onMounted(load)
 watch([ownerId, deviceId], load)
 
@@ -49,13 +89,15 @@ async function load() {
   if (!ownerId.value || !deviceId.value) return
   loading.value = true
   try {
-    const [ownerRows, companionRows, hub] = await Promise.all([
+    const [ownerRows, companionRows, hub, bindings] = await Promise.all([
       listOwnerDevices(ownerId.value),
       listOwnerCompanions(ownerId.value),
       listDevices().catch(() => ({ devices: [], hub_available: false, discovery: null })),
+      listOwnerGuardBindings(ownerId.value).catch(() => [] as GuardBindingView[]),
     ])
     ownerDevice.value = ownerRows.find((item) => item.device_id === deviceId.value) || null
     hubDevice.value = hub.devices.find((item) => item.device_id === deviceId.value) || null
+    guardBindings.value = bindings
     companions.value = companionRows.filter((item) => item.kind !== 'guard' && item.companion_type !== 'guard')
     companionId.value = ownerDevice.value?.bound_companion_id || ''
   } catch (error) {
@@ -87,6 +129,33 @@ async function saveBinding() {
     ElMessage.error(extractErrorMessage(error))
   } finally {
     saving.value = false
+  }
+}
+
+async function startSession() {
+  if (!hubDevice.value || !canStartSession.value) return
+  starting.value = true
+  try {
+    await wakeDevice(hubDevice.value.device_id)
+    ElMessage.success('已下发会话启动命令')
+    await load()
+  } catch (error) {
+    ElMessage.error(`启动失败: ${extractErrorMessage(error)}`)
+  } finally {
+    starting.value = false
+  }
+}
+
+async function identify() {
+  if (!ownerId.value || !canIdentify.value) return
+  identifying.value = true
+  try {
+    await identifyOwnerDevice(ownerId.value, deviceId.value)
+    ElMessage.success('已下发点名命令')
+  } catch (error) {
+    ElMessage.error(`点名失败: ${extractErrorMessage(error)}`)
+  } finally {
+    identifying.value = false
   }
 }
 </script>
@@ -125,7 +194,14 @@ async function saveBinding() {
       </section>
 
       <section class="panel">
-        <header><h2>运行状态</h2><p>Hub 可达性与当前会话信息。</p></header>
+        <header class="runtime-head">
+          <div><h2>运行状态</h2><p>Hub 可达性与当前会话信息。</p></div>
+          <div class="runtime-actions">
+            <el-tag v-if="sessionActive" type="success" effect="dark">Session active</el-tag>
+            <el-button v-if="canIdentify" :icon="Bell" :loading="identifying" @click="identify">点名</el-button>
+            <el-button v-if="canStartSession" type="primary" :icon="VideoPlay" :loading="starting" @click="startSession">Start session</el-button>
+          </div>
+        </header>
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="类型">{{ ownerDevice?.kind || hubDevice?.kind || 'unknown' }}</el-descriptions-item>
           <el-descriptions-item label="Hub 批准">{{ hubDevice ? (hubDevice.approved ? '已批准' : '待批准') : '不适用' }}</el-descriptions-item>
@@ -156,6 +232,8 @@ async function saveBinding() {
 .title-row code { color: var(--eid-text-muted); font-size: 10px; }
 .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .panel > header { margin-bottom: 14px; }
+.runtime-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.runtime-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .panel h2 { margin: 0; color: var(--eid-text-primary); font-size: 16px; }
 .panel header p { margin: 4px 0 0; color: var(--eid-text-muted); font-size: 11px; }
 .panel code { color: var(--eid-text-secondary); font-size: 10px; overflow-wrap: anywhere; }

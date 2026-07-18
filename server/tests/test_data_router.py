@@ -23,6 +23,7 @@ from eidolon_admin_server.app.data.owner_delete_finalizer import (
     OwnerDeleteJournal,
     finalize_owner_delete_jobs,
 )
+from eidolon_admin_server.app.data.hub_client import HubRuntimeUnavailable
 from eidolon_admin_server.app.data.router import router as data_router
 from eidolon_admin_server.app.guard.router import router as guard_router
 from eidolon_admin_server.app.memory.runners import memory_palace_path
@@ -58,6 +59,9 @@ class FakeHubDeviceClient:
             "esp-ghost": _runtime_device("esp-ghost", name="Ghost ESP", status="offline", approved=True),
         }
         self.approved: list[str] = []
+        # When set, refresh_device_config raises as the real Hub does for an
+        # offline device (409 -> HubRuntimeUnavailable).
+        self.refresh_fails = False
 
     async def list_devices(self) -> list[SimpleNamespace]:
         return list(self.devices.values())
@@ -74,6 +78,10 @@ class FakeHubDeviceClient:
         }
 
     async def refresh_device_config(self, device_id: str) -> None:
+        if self.refresh_fails:
+            raise HubRuntimeUnavailable(
+                f"Device {device_id} is not currently connected", status_code=409
+            )
         return None
 
 
@@ -902,6 +910,10 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         assert second_body.status_code == 200
         assert second_body.json()["bound_companion_id"] == "c_owner-devices_default"
 
+        # Claiming an approved-but-offline device must succeed even though the
+        # best-effort config.refresh push fails (Hub 409): the binding persists
+        # and the device re-pulls config on reconnect.
+        fake_hub.refresh_fails = True
         offline_body = await client.post(
             "/api/owners/owner-devices/nearby-devices/esp-ghost/claim",
             json={

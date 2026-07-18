@@ -19,9 +19,12 @@ import {
 } from '@/api/eidolonData'
 import {
   approveDevice,
+  getFleet,
   listDevices as listHubDevices,
   type DeviceView as HubDeviceView,
 } from '@/api/devices'
+import type { RuntimeDevice } from '@/api/missionControl'
+import { devicePresenceLabel } from '@/modules/mission-control/format'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 
 const props = defineProps<{ ownerId: string }>()
@@ -33,6 +36,10 @@ const devices = ref<DeviceView[]>([])
 const nearbyDevices = ref<NearbyDeviceView[]>([])
 const companions = ref<CompanionView[]>([])
 const hubDevices = ref<HubDeviceView[]>([])
+// Live runtime presence keyed by device_id, sourced from the same fleet join as
+// the "我的设备" view so the 状态 column agrees with it (data.status is a
+// lifecycle field — "active" for any claimed device — not presence).
+const runtimeById = ref<Record<string, RuntimeDevice>>({})
 const hubAvailable = ref(true)
 const actionOpen = ref(false)
 const actionMode = ref<'claim' | 'bind'>('claim')
@@ -68,6 +75,15 @@ async function load() {
     devices.value = owned
     companions.value = ownerCompanions.filter((item) => item.kind !== 'guard' && item.companion_type !== 'guard')
     try {
+      const fleet = await getFleet(props.ownerId)
+      const map: Record<string, RuntimeDevice> = {}
+      for (const group of fleet.groups) for (const device of group.devices) map[device.device_id] = device
+      for (const device of fleet.unbound) map[device.device_id] = device
+      runtimeById.value = map
+    } catch {
+      runtimeById.value = {}
+    }
+    try {
       const [nearby, hub] = await Promise.all([
         listNearbyOwnerDevices(props.ownerId),
         listHubDevices(),
@@ -98,6 +114,13 @@ async function refreshAfterApproval(deviceId: string) {
 }
 
 defineExpose({ load, refreshAfterApproval })
+
+// Live presence, consistent with the "我的设备" fleet view; falls back to the
+// data lifecycle status only when the device is absent from the fleet join.
+function presenceLabel(row: DeviceView): string {
+  const runtime = runtimeById.value[row.device_id]
+  return runtime ? devicePresenceLabel(runtime) : row.status
+}
 
 function companionLabel(companionId: string | null | undefined) {
   if (!companionId) return '未绑定'
@@ -310,7 +333,7 @@ async function identifyNearby(device: NearbyDeviceView) {
         <el-table-column label="Companion" min-width="170">
           <template #default="{ row }"><el-tag :type="row.bound_companion_id ? 'success' : 'warning'" size="small">{{ companionLabel(row.bound_companion_id) }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="110" />
+        <el-table-column label="状态" width="110"><template #default="{ row }">{{ presenceLabel(row) }}</template></el-table-column>
         <el-table-column label="最近在线" width="180"><template #default="{ row }">{{ formatTimestamp(row.last_seen_at) }}</template></el-table-column>
         <el-table-column label="操作" width="330" align="right" fixed="right">
           <template #default="{ row }">

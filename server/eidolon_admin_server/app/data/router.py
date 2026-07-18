@@ -904,7 +904,13 @@ async def claim_nearby_device(
             "interaction_mode": payload.interaction_mode,
         },
     )
-    await hub.refresh_device_config(device_id)
+    # config.refresh is a best-effort live nudge; the claim + companion binding
+    # above already persisted. An offline device (Hub replies 409/unreachable)
+    # re-pulls its config on reconnect, so it must not fail the whole claim.
+    try:
+        await hub.refresh_device_config(device_id)
+    except HubRuntimeUnavailable as exc:
+        logger.info("deferred config.refresh for offline device %s: %s", device_id, exc)
     return _device(row)
 
 

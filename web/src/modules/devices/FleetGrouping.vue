@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Connection, VideoPlay } from '@element-plus/icons-vue'
-import { getFleet, type FleetResponse } from '@/api/devices'
+import { Bell, Connection, VideoPlay } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { getFleet, wakeDevice, type FleetResponse } from '@/api/devices'
+import { identifyOwnerDevice } from '@/api/eidolonData'
 import type { RuntimeDevice } from '@/api/missionControl'
 import {
   devicePresenceClass,
@@ -37,6 +39,8 @@ const loading = ref(false)
 const statusFilter = ref<StatusFilter>('all')
 const kindFilter = ref<KindFilter>('all')
 const groupMode = ref<GroupMode>('companion')
+const startingId = ref('')
+const identifyingId = ref('')
 
 const allItems = computed<BodyItem[]>(() => {
   const grouped = (fleet.value?.groups || []).flatMap((group) => group.devices.map((device) => ({
@@ -103,10 +107,9 @@ function isWebBody(device: RuntimeDevice): boolean {
 }
 
 function productKind(device: RuntimeDevice): Exclude<KindFilter, 'all'> {
-  const capabilities = (device.capabilities || []).map((value) => String(value).toLowerCase())
-  const raw = `${device.kind || ''} ${device.role || ''}`.toLowerCase()
-  if (raw.includes('guard') || capabilities.some((value) => value.includes('guard'))) return 'security'
-  if (isWebBody(device) || raw.includes('virtual')) return 'web'
+  // Security is a role from the bound guard companion, not a hardware trait.
+  if (String(device.role_kind || '') === 'guard') return 'security'
+  if (isWebBody(device) || String(device.kind || '').toLowerCase().includes('virtual')) return 'web'
   return 'physical'
 }
 
@@ -155,6 +158,57 @@ function launchBody(item: BodyItem) {
     companionId: item.companionId,
     deviceId: item.device.device_id,
   }), '_blank', 'noopener')
+}
+
+function canStartSession(item: BodyItem): boolean {
+  const device = item.device
+  return (
+    !!item.companionId
+    && productKind(device) === 'physical'
+    && device.approved
+    && device.online
+    && !!device.participant_sid
+    && !!device.room_name
+    && device.room_name.endsWith('-control')
+  )
+}
+
+function canIdentify(item: BodyItem): boolean {
+  const device = item.device
+  return (
+    productKind(device) !== 'web'
+    && device.approved
+    && device.online
+    && !!device.participant_sid
+    && !!device.room_name
+  )
+}
+
+async function identify(item: BodyItem) {
+  if (!canIdentify(item)) return
+  identifyingId.value = item.device.device_id
+  try {
+    await identifyOwnerDevice(props.ownerId, item.device.device_id)
+    ElMessage.success('已下发点名命令')
+  } catch (error: any) {
+    ElMessage.error(`点名失败: ${error?.response?.data?.detail || error?.message || 'unknown error'}`)
+  } finally {
+    identifyingId.value = ''
+  }
+}
+
+async function startSession(item: BodyItem) {
+  if (!canStartSession(item)) return
+  startingId.value = item.device.device_id
+  try {
+    await wakeDevice(item.device.device_id)
+    ElMessage.success('已下发会话启动命令')
+    await load()
+  } catch (error: any) {
+    ElMessage.error(`启动失败: ${error?.response?.data?.detail || error?.message || 'unknown error'}`)
+  } finally {
+    startingId.value = ''
+  }
 }
 
 function goConnect() {
@@ -215,7 +269,9 @@ function goDetail(item: BodyItem) {
             </div>
             <div class="row-actions">
               <el-button size="small" text @click="goDetail(item)">详情</el-button>
+              <el-button v-if="canIdentify(item)" size="small" :icon="Bell" :loading="identifyingId === item.device.device_id" @click="identify(item)">点名</el-button>
               <el-button v-if="isWebBody(item.device) && item.companionId" size="small" type="primary" plain :icon="VideoPlay" @click="launchBody(item)">启动</el-button>
+              <el-button v-else-if="canStartSession(item)" size="small" type="primary" :icon="VideoPlay" :loading="startingId === item.device.device_id" @click="startSession(item)">Start session</el-button>
               <el-button v-else-if="!item.companionId" size="small" type="warning" plain @click="goConnect">去绑定</el-button>
             </div>
           </li>
@@ -248,7 +304,7 @@ function goDetail(item: BodyItem) {
 .body-main strong { color: var(--eid-text-primary); font-size: 12px; }
 .body-main span { color: var(--eid-text-secondary); font-size: 11px; }
 .body-main em { color: var(--eid-text-muted); font-size: 10px; font-style: normal; }
-.row-actions { display: flex; align-items: center; gap: 4px; }
+.row-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eid-text-muted); }
 .dot.st-ok { background: var(--eid-success); box-shadow: 0 0 6px var(--eid-success); }
 .dot.st-warn { background: var(--eid-warning); box-shadow: 0 0 6px var(--eid-warning); }
