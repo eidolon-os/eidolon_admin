@@ -679,19 +679,15 @@ def _merge_devices(
             or device_id
         )
         kind = getattr(data, "kind", "") or getattr(hub, "kind", "") or "unknown"
-        if runtime_blackboard.available:
-            status = getattr(runtime, "status", "") or "offline"
-            online = bool(runtime and runtime.is_online())
-        else:
-            status = "degraded" if runtime_blackboard.health == "degraded" else "offline"
-            online = False
+        status, online, presence_source = _device_presence(runtime, hub)
         last_seen = _as_utc(
             getattr(runtime, "last_seen_at", None)
+            or getattr(hub, "last_seen", None)
             or getattr(data, "last_seen_at", None)
         )
         capabilities = (
             sorted(capability.name for capability in runtime.capabilities)
-            if online
+            if online and runtime is not None
             else []
         )
         companion_id = (
@@ -711,18 +707,37 @@ def _merge_devices(
                 status=status,
                 online=online,
                 approved=bool(getattr(hub, "approved", False) or getattr(data, "approved_at", None)),
-                owner_id=getattr(data, "owner_id", None) or (owner_id if runtime else None),
+                owner_id=(
+                    getattr(data, "owner_id", None)
+                    or getattr(hub, "owner_id", None)
+                    or (owner_id if runtime else None)
+                ),
                 companion_id=companion_id,
                 interaction_mode=getattr(data, "interaction_mode", None),
-                room_name=getattr(runtime, "room_name", ""),
-                participant_sid=getattr(runtime, "participant_sid", ""),
+                room_name=(
+                    getattr(runtime, "room_name", "")
+                    or getattr(hub, "room_name", "")
+                ),
+                participant_sid=(
+                    getattr(runtime, "participant_sid", "")
+                    or getattr(hub, "participant_sid", "")
+                ),
                 last_seen_at=last_seen,
                 capabilities=capabilities,
                 signals={
                     "missed_probes": getattr(hub, "missed_probes", 0),
                     "paired": bool(getattr(hub, "paired", False)),
-                    "source": "runtime_blackboard",
+                    "source": (
+                        "runtime_blackboard"
+                        if runtime is not None
+                        else "hub+data"
+                        if hub is not None and data is not None
+                        else presence_source
+                    ),
+                    "presence_source": presence_source,
                     "blackboard_health": runtime_blackboard.health,
+                    "blackboard_available": runtime_blackboard.available,
+                    "blackboard_detail": runtime_blackboard.detail,
                     "registration_id": getattr(runtime, "registration_id", ""),
                     "manifest_revision": getattr(runtime, "manifest_revision", ""),
                     "presence_revision": getattr(runtime, "presence_revision", ""),
@@ -730,6 +745,22 @@ def _merge_devices(
             )
         )
     return sorted(devices, key=lambda item: (not item.online, item.role_kind, item.device_id))
+
+
+def _device_presence(runtime: Any, hub: Any) -> tuple[str, bool, str]:
+    """Project device presence independently from blackboard source health."""
+
+    if runtime is not None:
+        online = bool(runtime.is_online())
+        return ("online" if online else "offline"), online, "runtime_blackboard"
+
+    if hub is not None:
+        status = str(getattr(hub, "status", "") or "").strip().lower()
+        if status not in {"online", "degraded", "offline", "unknown"}:
+            status = "offline"
+        return status, status == "online", "hub"
+
+    return "offline", False, "data"
 
 
 def _is_guard_companion(companion: Any) -> bool:

@@ -71,7 +71,7 @@ async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
     await app.state.http_client.aclose()
 
 
-async def test_snapshot_degrades_without_runtime_sources(
+async def test_snapshot_keeps_device_offline_when_runtime_sources_degrade(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
@@ -103,7 +103,10 @@ async def test_snapshot_degrades_without_runtime_sources(
     # Role is read from the bound (persona) companion, not the board kind.
     assert body["devices"][0]["role"] == "对话身体"
     assert body["devices"][0]["role_kind"] == "persona"
-    assert body["devices"][0]["status"] == "degraded"
+    assert body["devices"][0]["status"] == "offline"
+    assert body["devices"][0]["online"] is False
+    assert body["devices"][0]["signals"]["presence_source"] == "data"
+    assert body["devices"][0]["signals"]["blackboard_health"] == "degraded"
     assert body["devices"][0]["capabilities"] == []
     assert body["runtime_blackboard"]["health"] == "degraded"
     assert body["runtime_blackboard"]["snapshot"] is None
@@ -340,8 +343,91 @@ async def test_runtime_blackboard_retains_raw_degraded_snapshot_but_fails_closed
     assert blackboard.available is False
     assert detail in blackboard.detail
     assert devices[0].online is False
-    assert devices[0].status == "degraded"
+    assert devices[0].status == "offline"
     assert devices[0].capabilities == []
+    assert devices[0].signals["presence_source"] == "data"
+    assert devices[0].signals["blackboard_health"] == "degraded"
+
+
+@pytest.mark.parametrize(
+    ("hub_status", "expected_status", "expected_online"),
+    [
+        ("offline", "offline", False),
+        ("degraded", "degraded", False),
+        ("online", "online", True),
+    ],
+)
+def test_degraded_blackboard_does_not_override_hub_device_presence(
+    hub_status: str,
+    expected_status: str,
+    expected_online: bool,
+) -> None:
+    owner_id = "owner-hub-fallback"
+    persistent = SimpleNamespace(
+        device_id="box-fallback",
+        owner_id=owner_id,
+        name="Persisted Box",
+        kind="esp_box_3",
+        bound_companion_id=None,
+        approved_at=datetime.now(UTC),
+    )
+    hub = SimpleNamespace(
+        device_id="box-fallback",
+        owner_id=owner_id,
+        name="Hub Box",
+        kind="esp_box_3",
+        status=hub_status,
+        approved=True,
+        paired=True,
+        missed_probes=85,
+        room_name="" if hub_status != "online" else "box-control",
+        participant_sid="" if hub_status != "online" else "PA_BOX",
+        last_seen=datetime.now(UTC),
+    )
+    blackboard = mission_control_service.RuntimeDeviceBlackboard(
+        health="degraded",
+        available=False,
+        detail="Hub snapshot lease expired",
+    )
+
+    devices = mission_control_service._merge_devices(  # noqa: SLF001
+        [persistent],
+        [hub],
+        runtime_blackboard=blackboard,
+        owner_id=owner_id,
+    )
+
+    device = devices[0]
+    assert device.status == expected_status
+    assert device.online is expected_online
+    assert device.signals["source"] == "hub+data"
+    assert device.signals["presence_source"] == "hub"
+    assert device.signals["blackboard_health"] == "degraded"
+    assert device.signals["blackboard_detail"] == "Hub snapshot lease expired"
+
+
+async def test_expired_runtime_device_lease_projects_consistent_offline_status() -> None:
+    owner_id = "owner-expired-device"
+    kv = _FakeRuntimeKV(
+        _runtime_snapshot_bytes(owner_id, hub_lease_delta=60, device_lease_delta=-1)
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
+    statuses: list[mission_control_service.SourceStatus] = []
+    blackboard = await mission_control_service._runtime_blackboard(  # noqa: SLF001
+        request, owner_id, statuses
+    )
+
+    devices = mission_control_service._merge_devices(  # noqa: SLF001
+        [],
+        [],
+        runtime_blackboard=blackboard,
+        owner_id=owner_id,
+    )
+
+    assert blackboard.available is True
+    assert devices[0].status == "offline"
+    assert devices[0].online is False
+    assert devices[0].signals["presence_source"] == "runtime_blackboard"
 
 
 async def test_runtime_merge_uses_online_contract_and_drops_foreign_hub_rows() -> None:

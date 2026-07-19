@@ -107,3 +107,15 @@ async def test_fleet_groups_devices_by_companion_binding(
     unbound_ids = {d["device_id"] for d in body["unbound"]}
     assert unbound_ids == {"loose-body"}
     assert body["unbound"][0]["role_kind"] == "unbound"
+
+    all_devices = [
+        device
+        for group in body["groups"]
+        for device in group["devices"]
+    ] + body["unbound"]
+    assert {device["status"] for device in all_devices} == {"offline"}
+    assert all(device["online"] is False for device in all_devices)
+    assert all(
+        device["signals"]["blackboard_health"] == "degraded"
+        for device in all_devices
+    )
