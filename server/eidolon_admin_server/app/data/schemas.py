@@ -193,9 +193,12 @@ class NearbyDeviceListResponse(BaseModel):
 
 
 class DeviceClaimRequest(BaseModel):
+    # interaction_mode is deliberately absent: a device's turn-taking mode is
+    # firmware-declared (X-Device-Interaction-Mode header, per board) and is the
+    # sole source of truth. The admin has no override knob — claiming a device or
+    # binding a companion is orthogonal to interaction mode.
     name: str | None = None
     companion_id: str | None = None
-    interaction_mode: str | None = None
     access_policy_json: JsonDict = Field(default_factory=dict)
     metadata_json: JsonDict = Field(default_factory=dict)
 

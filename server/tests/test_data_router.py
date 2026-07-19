@@ -867,18 +867,22 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
         )
         assert pending_claim.status_code == 412
 
+        # interaction_mode is firmware-declared (sole source of truth); claiming a
+        # device is orthogonal to turn-taking mode. Even a stray interaction_mode in
+        # the payload is ignored — it is never stored as an admin override.
         added = await client.post(
             "/api/owners/owner-devices/nearby-devices/esp-near/claim",
             json={
                 "name": "Nearby ESP",
                 "companion_id": "c_owner-devices_default",
-                "interaction_mode": "voice",
+                "interaction_mode": "full_duplex",
             },
         )
         assert added.status_code == 200
         assert added.json()["owner_id"] == "owner-devices"
         assert added.json()["status"] == "active"
         assert added.json()["bound_companion_id"] == "c_owner-devices_default"
+        assert added.json()["interaction_mode"] is None
         assert added.json()["metadata_json"]["source"] == "hub_runtime"
         assert added.json()["metadata_json"]["hub_approved"] is True
         assert fake_hub.approved == []
@@ -904,11 +908,12 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
             json={
                 "name": "Second ESP",
                 "companion_id": "c_owner-devices_default",
-                "interaction_mode": "voice",
             },
         )
         assert second_body.status_code == 200
         assert second_body.json()["bound_companion_id"] == "c_owner-devices_default"
+        # Claim never stores interaction_mode → firmware-declared mode stands (NULL).
+        assert second_body.json()["interaction_mode"] is None
 
         # Claiming an approved-but-offline device must succeed even though the
         # best-effort config.refresh push fails (Hub 409): the binding persists
@@ -919,7 +924,6 @@ async def test_owner_nearby_devices_identify_and_add_to_owner(
             json={
                 "name": "Offline ESP",
                 "companion_id": "c_owner-devices_default",
-                "interaction_mode": "voice",
             },
         )
         assert offline_body.status_code == 200

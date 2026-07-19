@@ -167,10 +167,12 @@ async function submitAction() {
   try {
     const companionId = actionCompanionId.value || null
     if (actionMode.value === 'claim') {
+      // interaction_mode is firmware-declared per board (X-Device-Interaction-Mode)
+      // and is the sole source of truth — there is no admin override. Claiming a
+      // device / binding a companion is orthogonal to turn-taking mode.
       await addNearbyDeviceToOwner(props.ownerId, actionDeviceId.value, {
         name: actionName.value.trim() || actionDeviceId.value,
         companion_id: companionId,
-        interaction_mode: companionId ? 'voice' : null,
         access_policy_json: companionId
           ? { conversation: true, voice_input: true, voice_output: true, memory_recall: true }
           : {},

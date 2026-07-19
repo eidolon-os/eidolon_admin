@@ -246,9 +246,10 @@ export interface NearbyDeviceListResponse {
 }
 
 export interface DeviceAddToOwnerRequest {
+  // No interaction_mode: it is firmware-declared (sole source of truth), not an
+  // admin/claim input. DeviceView.interaction_mode remains for read-only display.
   name?: string | null
   companion_id?: string | null
-  interaction_mode?: string | null
   access_policy_json?: JsonDict
   metadata_json?: JsonDict
 }

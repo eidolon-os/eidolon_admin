@@ -876,7 +876,6 @@ async def claim_nearby_device(
             name=payload.name or runtime_device.name or runtime_device.device_id,
             kind=runtime_device.kind or "unknown",
             companion_id=payload.companion_id,
-            interaction_mode=payload.interaction_mode,
             network_json=network_json,
             access_policy_json=payload.access_policy_json,
             metadata_json=metadata_json,
@@ -901,7 +900,6 @@ async def claim_nearby_device(
         actor_type="admin",
         payload_json={
             "companion_id": payload.companion_id,
-            "interaction_mode": payload.interaction_mode,
         },
     )
     # config.refresh is a best-effort live nudge; the claim + companion binding
