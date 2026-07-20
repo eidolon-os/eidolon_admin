@@ -581,6 +581,20 @@ async function onMoreCommand(command: string, d: DeviceView) {
         </template>
       </el-table-column>
 
+      <el-table-column label="Interaction Mode" min-width="150">
+        <template #default="{ row }">
+          <el-tag
+            v-if="row.device.interaction_mode"
+            :type="row.device.interaction_mode === 'full_duplex' ? 'success' : 'info'"
+            size="small"
+            effect="plain"
+          >
+            {{ row.device.interaction_mode }}
+          </el-tag>
+          <span v-else class="mono muted">null</span>
+        </template>
+      </el-table-column>
+
       <el-table-column label="Action" width="300" align="right" fixed="right">
         <template #default="{ row }">
           <div class="row-actions">

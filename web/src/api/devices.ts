@@ -38,6 +38,9 @@ export interface DeviceView {
   room_name?: string
   participant_sid?: string
   missed_probes?: number
+  // Firmware-declared turn-taking mode; null when the device has not declared one
+  // (shown as null — never silently defaulted to half_duplex).
+  interaction_mode?: string | null
   metadata?: Record<string, any>
 }
 
@@ -89,6 +92,7 @@ function normalizeDevice(raw: any): DeviceView {
     room_name: raw.room_name || '',
     participant_sid: raw.participant_sid || '',
     missed_probes: raw.missed_probes ?? 0,
+    interaction_mode: raw.interaction_mode ?? null,
     metadata: raw.metadata || {},
   }
 }
