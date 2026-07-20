@@ -264,7 +264,7 @@ function goDetail(item: BodyItem) {
             <i class="dot" :class="'st-' + devicePresenceClass(item.device)" />
             <div class="body-main">
               <strong>{{ item.device.name || deviceShort(item.device) }}</strong>
-              <span>{{ deviceType(item.device) }} · {{ devicePresenceLabel(item.device) }} · {{ sourceLabel(item.device) }}</span>
+              <span>{{ deviceType(item.device) }} · {{ devicePresenceLabel(item.device) }} · {{ sourceLabel(item.device) }} · <span class="mode" :class="{ 'mode-full': item.device.interaction_mode === 'full_duplex', 'mode-null': !item.device.interaction_mode }">{{ item.device.interaction_mode || 'null' }}</span></span>
               <em>{{ groupMode === 'kind' ? `${item.companionName} · ` : '' }}{{ bodyHint(item) }}</em>
             </div>
             <div class="row-actions">
@@ -304,6 +304,9 @@ function goDetail(item: BodyItem) {
 .body-main strong { color: var(--eid-text-primary); font-size: 12px; }
 .body-main span { color: var(--eid-text-secondary); font-size: 11px; }
 .body-main em { color: var(--eid-text-muted); font-size: 10px; font-style: normal; }
+.body-main .mode { font-family: var(--eid-font-mono); }
+.body-main .mode-full { color: var(--eid-success); }
+.body-main .mode-null { color: var(--eid-text-muted); font-style: italic; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--eid-text-muted); }
 .dot.st-ok { background: var(--eid-success); box-shadow: 0 0 6px var(--eid-success); }
