@@ -1,0 +1,130 @@
+"""Offline generation of a companion's looping idle clip (plan §8.2).
+
+At face-upload time we feed the digital-human (Ditto) service the configured
+face plus a few seconds of silence and store the returned fragmented-MP4 as the
+companion's idle loop.  This runs off-request (FastAPI ``BackgroundTasks``) so a
+slow generation never blocks the upload, and it is fully gated: with no service
+URL configured, nothing is generated and the face still works (web falls back to
+the still micro-motion).
+
+Generation is deliberately isolated behind :func:`generate_idle_clip` so it can
+be stubbed in tests — the real service is remote and self-signed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import logging
+import wave
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+
+def build_silence_wav(seconds: float, *, sample_rate: int = 16000) -> bytes:
+    """A minimal mono int16 WAV of silence — the idle "audio" driving Ditto."""
+    frames = max(1, int(seconds * sample_rate))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)  # int16
+        w.setframerate(sample_rate)
+        w.writeframes(b"\x00\x00" * frames)
+    return buf.getvalue()
+
+
+async def generate_idle_clip(
+    *,
+    service_url: str,
+    image_bytes: bytes,
+    seconds: float,
+    width: int,
+    height: int,
+    fps: float,
+    verify_ssl: bool,
+    timeout_sec: float,
+) -> bytes:
+    """POST face + silence to Ditto ``/api/stream_video`` and return the fMP4 body.
+
+    Mirrors the channel avatar worker's request shape (multipart ``audio`` /
+    ``image`` / ``device_info`` / ``format``) but collects the whole response
+    into a single clip instead of streaming it.
+    """
+    device_info = json.dumps(
+        {
+            "prefer_fps": fps,
+            "format": "mp4",
+            "jpeg_quality": 80,
+            "max_video_resolution": f"{width}x{height}",
+            "screen_width": width,
+            "screen_height": height,
+        },
+        separators=(",", ":"),
+    )
+    files = {
+        "audio": ("idle.wav", build_silence_wav(seconds), "audio/wav"),
+        "image": ("face.jpg", image_bytes, "image/jpeg"),
+    }
+    data = {"device_info": device_info, "format": "mp4"}
+    url = f"{service_url.rstrip('/')}/api/stream_video"
+    async with httpx.AsyncClient(verify=verify_ssl, timeout=timeout_sec) as client:
+        resp = await client.post(url, files=files, data=data)
+        resp.raise_for_status()
+        clip = resp.content
+    if not clip:
+        raise RuntimeError("digital-human service returned an empty idle clip")
+    return clip
+
+
+async def run_idle_generation(store, settings, *, face_asset_id: str) -> None:
+    """Background task: generate + store the idle clip for one face asset.
+
+    Best-effort and self-contained: marks ``generating`` → ``ready``/``failed``
+    on the face asset. Any error is captured onto the row (``idle_error``) rather
+    than raised, since it runs detached from the request.
+    """
+    try:
+        asset = await store.companion_face_assets.get(face_asset_id)
+        if asset is None:
+            logger.warning("[idle-gen] face asset %s vanished before generation", face_asset_id)
+            return
+        await store.companion_face_assets.set_idle_status(face_asset_id, "generating")
+        image_bytes = store.object_storage.get(asset.cond_storage_key)
+        clip = await generate_idle_clip(
+            service_url=settings.avatar_service_url,
+            image_bytes=image_bytes,
+            seconds=settings.avatar_idle_seconds,
+            width=settings.avatar_width,
+            height=settings.avatar_height,
+            fps=settings.avatar_fps,
+            verify_ssl=settings.avatar_verify_ssl,
+            timeout_sec=settings.avatar_request_timeout_sec,
+        )
+        digest = hashlib.sha256(clip).hexdigest()
+        storage_key = f"{asset.owner_id}/companion-avatar/{asset.companion_id}/idle-{face_asset_id}.mp4"
+        store.object_storage.put(storage_key, clip, expected_sha256=digest)
+        try:
+            await store.companion_face_assets.set_idle_clip(
+                face_asset_id,
+                storage_key=storage_key,
+                content_type="video/mp4",
+                size_bytes=len(clip),
+                sha256=digest,
+            )
+        except Exception:
+            store.object_storage.delete(storage_key)
+            raise
+        logger.info(
+            "[idle-gen] idle clip ready face_asset=%s bytes=%d", face_asset_id, len(clip)
+        )
+    except Exception as exc:  # noqa: BLE001 — detached task; record, don't crash
+        logger.exception("[idle-gen] idle generation failed for %s", face_asset_id)
+        try:
+            await store.companion_face_assets.set_idle_status(
+                face_asset_id, "failed", error=str(exc)[:500]
+            )
+        except Exception:
+            logger.exception("[idle-gen] could not record idle failure for %s", face_asset_id)

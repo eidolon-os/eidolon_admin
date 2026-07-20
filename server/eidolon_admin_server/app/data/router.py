@@ -12,14 +12,27 @@ from uuid import uuid4
 from eidolon_data import DataStore
 from eidolon_data.repositories.persona import PersonaGenomeConflict
 from eidolon_data.services import CompanionDeletionError, OwnerWorkspaceError
-from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy.exc import IntegrityError
+
+from ..settings import get_settings
 
 from .companion_avatar_images import (
     MAX_RAW_IMAGE_BYTES,
     CompanionAvatarImageError,
     normalize_companion_avatar_image,
 )
+from .idle_generation import run_idle_generation
 from .hub_client import HubRuntimeUnavailable
 from .owner_backup import create_owner_backup
 from .owner_delete_finalizer import (
@@ -582,9 +595,30 @@ def _companion_face(row: Any) -> CompanionFaceView:
         sha256=row.cond_sha256,
         width=row.width,
         height=row.height,
+        idle_status=row.idle_status,
+        idle_ready=row.idle_status == "ready" and bool(row.idle_storage_key),
+        idle_error=row.idle_error,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+async def _schedule_idle_generation(
+    background_tasks: BackgroundTasks, store: Any, face_asset_id: str
+) -> bool:
+    """Mark the asset idle-pending and schedule offline generation.
+
+    No-op (leaving idle_status untouched) when the Ditto service is unconfigured,
+    so the face works without any generation service. Returns whether scheduled.
+    """
+    settings = get_settings()
+    if not settings.avatar_service_url:
+        return False
+    await store.companion_face_assets.set_idle_status(face_asset_id, "pending")
+    background_tasks.add_task(
+        run_idle_generation, store, settings, face_asset_id=face_asset_id
+    )
+    return True
 
 
 @router.post(
@@ -596,6 +630,7 @@ async def set_companion_face(
     owner_id: str,
     companion_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     image: UploadFile = File(),
 ) -> CompanionFaceView:
     """Upload/replace the companion's display face (the digital-human ``cond_image``).
@@ -603,7 +638,8 @@ async def set_companion_face(
     The image is decoded, oriented, metadata-stripped, and re-encoded to JPEG;
     the bytes go to the object store and a new active face-asset version is
     recorded (superseding the prior one). The channel reads this at session
-    start to seed the talking-head service.
+    start to seed the talking-head service. When a Ditto service is configured,
+    a looping idle clip is generated offline in the background.
     """
     store = _store(request)
     await _require_owner(store, owner_id)
@@ -639,6 +675,8 @@ async def set_companion_face(
         raise
     finally:
         del normalized
+    if await _schedule_idle_generation(background_tasks, store, asset.face_asset_id):
+        asset = await store.companion_face_assets.get(asset.face_asset_id)
     return _companion_face(asset)
 
 
@@ -686,6 +724,58 @@ async def get_companion_face_image(
             "ETag": f'"{asset.cond_sha256}"',
         },
     )
+
+
+@router.get("/owners/{owner_id}/companions/{companion_id}/face/idle/video")
+async def get_companion_idle_video(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> Response:
+    """Stream the companion's generated looping idle clip (fragmented MP4)."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    asset = await store.companion_face_assets.get_active(companion_id)
+    if asset is None or asset.idle_status != "ready" or not asset.idle_storage_key:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion has no idle clip")
+    try:
+        data = store.object_storage.get(asset.idle_storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion idle clip missing") from exc
+    return Response(
+        content=data,
+        media_type=asset.idle_content_type or "video/mp4",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "ETag": f'"{asset.idle_sha256}"',
+        },
+    )
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/face/idle:regenerate",
+    response_model=CompanionFaceView,
+)
+async def regenerate_companion_idle(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> CompanionFaceView:
+    """Re-trigger idle-clip generation for the active face (e.g. after a failure)."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    asset = await store.companion_face_assets.get_active(companion_id)
+    if asset is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion has no configured face")
+    if not await _schedule_idle_generation(background_tasks, store, asset.face_asset_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "idle generation is not configured (no avatar service)"
+        )
+    return _companion_face(await store.companion_face_assets.get(asset.face_asset_id))
 
 
 @router.delete("/owners/{owner_id}/companions/{companion_id}/face")

@@ -86,6 +86,10 @@ class CompanionFaceView(BaseModel):
     sha256: str
     width: int | None = None
     height: int | None = None
+    # Offline idle-loop generation: none | pending | generating | ready | failed.
+    idle_status: str = "none"
+    idle_ready: bool = False
+    idle_error: str | None = None
     created_at: datetime
     updated_at: datetime
 
