@@ -5,7 +5,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ChatDotRound, Monitor, VideoPlay } from '@element-plus/icons-vue'
 import { useOwnersStore } from '@/stores/owners'
 import {
+  clearCompanionFace,
+  companionFaceImageUrl,
   createCompanionWebBody,
+  getCompanionFace,
   listCompanionDevices,
   listCompanionGenomes,
   listOwnerCompanions,
@@ -13,6 +16,8 @@ import {
   listOwnerEvents,
   listOwnerMemoryRealms,
   resetCompanionGenome,
+  uploadCompanionFace,
+  type CompanionFaceView,
   type CompanionView,
   type ConversationView,
   type DeviceView,
@@ -20,6 +25,7 @@ import {
   type MemoryRealmView,
   type PersonaGenomeHistoryResponse,
 } from '@/api/eidolonData'
+import type { UploadFile } from 'element-plus'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import { webBodyLaunchUrl } from '@/utils/clientWeb'
 
@@ -39,6 +45,8 @@ const events = ref<EventView[]>([])
 const loading = ref(false)
 const launching = ref(false)
 const resetting = ref(false)
+const face = ref<CompanionFaceView | null>(null)
+const faceUploading = ref(false)
 
 const section = computed<Section>({
   get: () => {
@@ -62,6 +70,11 @@ const companionRealms = computed(() => realms.value.filter((realm) => realm.comp
 const companionConversations = computed(() => conversations.value.filter((item) => item.companion_id === companionId.value))
 const companionEvents = computed(() => events.value.filter((item) => item.companion_id === companionId.value))
 const isGuard = computed(() => companion.value?.kind === 'guard' || companion.value?.companion_type === 'guard')
+const faceImageUrl = computed(() =>
+  ownerId.value && face.value
+    ? companionFaceImageUrl(ownerId.value, companionId.value, face.value.sha256)
+    : '',
+)
 
 onMounted(load)
 watch([ownerId, companionId], load)
@@ -84,10 +97,58 @@ async function load() {
     realms.value = realmRows
     conversations.value = conversationRows
     events.value = eventRows
+    await loadFace()
   } catch (error) {
     ElMessage.error(extractErrorMessage(error))
   } finally {
     loading.value = false
+  }
+}
+
+async function loadFace() {
+  // The display face is a normal companion concept only — Guard has no avatar.
+  if (!ownerId.value || !companion.value || isGuard.value) {
+    face.value = null
+    return
+  }
+  try {
+    face.value = await getCompanionFace(ownerId.value, companionId.value)
+  } catch {
+    face.value = null
+  }
+}
+
+async function onFaceSelected(uploadFile: UploadFile) {
+  const raw = uploadFile.raw
+  if (!ownerId.value || !raw) return
+  if (!raw.type.startsWith('image/')) {
+    ElMessage.error('请选择图片文件')
+    return
+  }
+  faceUploading.value = true
+  try {
+    face.value = await uploadCompanionFace(ownerId.value, companionId.value, raw)
+    ElMessage.success('已更新数字人形象')
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error))
+  } finally {
+    faceUploading.value = false
+  }
+}
+
+async function clearFace() {
+  if (!ownerId.value) return
+  try {
+    await ElMessageBox.confirm('恢复为默认形象？已上传的形象图将被移除。', '恢复默认形象', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await clearCompanionFace(ownerId.value, companionId.value)
+    face.value = null
+    ElMessage.success('已恢复默认形象')
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error))
   }
 }
 
@@ -178,6 +239,25 @@ async function resetPersona() {
       <article><span>人格画像</span><p>{{ character.portrait || (isGuard ? 'Guard 控制面身份' : '尚未填写') }}</p></article>
       <article><span>关系</span><p>{{ relationship.narrative || (isGuard ? '负责 Owner 身份识别与策略执行' : '尚未填写') }}</p></article>
       <article><span>表达</span><p>{{ expression.voice_portrait || (isGuard ? '不提供普通对话' : '尚未填写') }}</p></article>
+      <article v-if="!isGuard" class="face-card">
+        <span>数字人形象</span>
+        <div class="face-body">
+          <div class="face-preview">
+            <el-image v-if="faceImageUrl" :src="faceImageUrl" fit="cover" />
+            <div v-else class="face-placeholder">默认形象</div>
+          </div>
+          <div class="face-meta">
+            <p v-if="face">已配置形象 · v{{ face.version }} · {{ face.width }}×{{ face.height }}<br>说话时会用这张脸；静息时仍是粒子头像。</p>
+            <p v-else>说话时使用服务默认形象。上传一张清晰正脸图，作为数字人说话时的形象。</p>
+            <div class="face-actions">
+              <el-upload :auto-upload="false" :show-file-list="false" accept="image/*" :on-change="onFaceSelected">
+                <el-button type="primary" :loading="faceUploading">{{ face ? '更换形象' : '上传形象' }}</el-button>
+              </el-upload>
+              <el-button v-if="face" text @click="clearFace">恢复默认</el-button>
+            </div>
+          </div>
+        </div>
+      </article>
       <article class="stats"><span>资源</span><div><b>{{ devices.length }}</b> 身体 · <b>{{ companionRealms.length }}</b> 记忆域 · <b>{{ companionConversations.length }}</b> 对话</div></article>
     </div>
 
@@ -242,7 +322,13 @@ async function resetPersona() {
 .head-tags, .head-actions { gap: 8px; }
 .overview-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .overview-grid article, .info-panel { padding: 16px; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); }
-.overview-grid article.stats { grid-column: 1 / -1; }
+.overview-grid article.stats, .overview-grid article.face-card { grid-column: 1 / -1; }
+.face-card .face-body { display: flex; gap: 16px; margin-top: 10px; align-items: flex-start; }
+.face-preview { width: 112px; height: 112px; flex: 0 0 auto; border-radius: var(--eid-radius); overflow: hidden; border: 1px solid var(--eid-border); background: var(--eid-bg-elevated, rgba(255,255,255,.03)); }
+.face-preview .el-image { width: 100%; height: 100%; display: block; }
+.face-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--eid-text-muted); font-size: 12px; }
+.face-meta { display: flex; flex-direction: column; gap: 10px; }
+.face-actions { display: flex; align-items: center; gap: 10px; }
 .overview-grid span { color: var(--eid-text-muted); font-size: 10px; }
 .overview-grid p { color: var(--eid-text-secondary); font-size: 13px; line-height: 1.6; }
 .overview-grid .stats div { margin-top: 8px; color: var(--eid-text-secondary); }

@@ -55,6 +55,20 @@ export interface CompanionView {
   updated_at: string
 }
 
+export interface CompanionFaceView {
+  companion_id: string
+  face_asset_id: string
+  version: number
+  source: string
+  content_type: string
+  size_bytes: number
+  sha256: string
+  width: number | null
+  height: number | null
+  created_at: string
+  updated_at: string
+}
+
 export interface PersonaGenomeView {
   genome_id: string
   companion_id: string
@@ -428,6 +442,64 @@ export async function createCompanionWebBody(
     `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/devices/web`,
   )
   return data
+}
+
+/**
+ * The companion's display face (the digital-human ``cond_image``) shown when it
+ * speaks with video. Config lives on the companion, independent of the semantic
+ * persona genome; the channel resolves it at session start.
+ */
+export async function getCompanionFace(
+  ownerId: string,
+  companionId: string,
+): Promise<CompanionFaceView | null> {
+  try {
+    const { data } = await client.get<CompanionFaceView>(
+      `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/face`,
+      { suppressToast: true },
+    )
+    return data
+  } catch (error: any) {
+    if (error?.response?.status === 404) return null
+    throw error
+  }
+}
+
+export async function uploadCompanionFace(
+  ownerId: string,
+  companionId: string,
+  image: File,
+): Promise<CompanionFaceView> {
+  const form = new FormData()
+  form.append('image', image, image.name)
+  const { data } = await client.post<CompanionFaceView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/face`,
+    form,
+  )
+  return data
+}
+
+export async function clearCompanionFace(
+  ownerId: string,
+  companionId: string,
+): Promise<{ companion_id: string; cleared: boolean }> {
+  const { data } = await client.delete<{ companion_id: string; cleared: boolean }>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/face`,
+  )
+  return data
+}
+
+/** Absolute URL of the served face JPEG, cache-busted by the asset version. */
+export function companionFaceImageUrl(
+  ownerId: string,
+  companionId: string,
+  cacheKey: string | number = '',
+): string {
+  const base = client.defaults.baseURL ?? '/api'
+  const path =
+    `${base}/owners/${encodeURIComponent(ownerId)}`
+    + `/companions/${encodeURIComponent(companionId)}/face/image`
+  return cacheKey === '' ? path : `${path}?v=${encodeURIComponent(String(cacheKey))}`
 }
 
 export async function listOwnerPersonaGenomes(ownerId: string): Promise<PersonaGenomeView[]> {

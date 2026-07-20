@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 from typing import Any
+from uuid import uuid4
 
 from eidolon_data import DataStore
 from eidolon_data.repositories.persona import PersonaGenomeConflict
 from eidolon_data.services import CompanionDeletionError, OwnerWorkspaceError
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 
+from .companion_avatar_images import (
+    MAX_RAW_IMAGE_BYTES,
+    CompanionAvatarImageError,
+    normalize_companion_avatar_image,
+)
 from .hub_client import HubRuntimeUnavailable
 from .owner_backup import create_owner_backup
 from .owner_delete_finalizer import (
@@ -23,6 +30,7 @@ from .owner_delete_finalizer import (
 )
 from .schemas import (
     BootstrapResponse,
+    CompanionFaceView,
     CompanionListResponse,
     CompanionView,
     ConversationListResponse,
@@ -539,6 +547,13 @@ async def delete_companion(
     except CompanionDeletionError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
+    # The face-asset rows are gone; purge their blobs so no orphaned bytes leak.
+    for storage_key in result.face_asset_storage_keys:
+        try:
+            store.object_storage.delete(storage_key)
+        except Exception:  # noqa: BLE001 — best-effort blob GC, never block the delete
+            logger.warning("failed to purge companion face blob %s", storage_key, exc_info=True)
+
     memory: dict[str, Any] = {"purged": False}
     if purge_memory and result.realm_ids:
         memory = await purge_memory_realms(
@@ -554,6 +569,137 @@ async def delete_companion(
         "device_ids": result.device_ids,
         "memory": memory,
     }
+
+
+def _companion_face(row: Any) -> CompanionFaceView:
+    return CompanionFaceView(
+        companion_id=row.companion_id,
+        face_asset_id=row.face_asset_id,
+        version=row.version,
+        source=row.source,
+        content_type=row.cond_content_type,
+        size_bytes=row.cond_size_bytes,
+        sha256=row.cond_sha256,
+        width=row.width,
+        height=row.height,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+@router.post(
+    "/owners/{owner_id}/companions/{companion_id}/face",
+    response_model=CompanionFaceView,
+    status_code=status.HTTP_201_CREATED,
+)
+async def set_companion_face(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+    image: UploadFile = File(),
+) -> CompanionFaceView:
+    """Upload/replace the companion's display face (the digital-human ``cond_image``).
+
+    The image is decoded, oriented, metadata-stripped, and re-encoded to JPEG;
+    the bytes go to the object store and a new active face-asset version is
+    recorded (superseding the prior one). The channel reads this at session
+    start to seed the talking-head service.
+    """
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    raw = await image.read(MAX_RAW_IMAGE_BYTES + 1)
+    await image.close()
+    try:
+        normalized, width, height = normalize_companion_avatar_image(raw)
+    except CompanionAvatarImageError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    finally:
+        del raw
+    digest = hashlib.sha256(normalized).hexdigest()
+    storage_key = f"{owner_id}/companion-avatar/{companion_id}/{uuid4().hex}.jpg"
+    try:
+        store.object_storage.put(storage_key, normalized, expected_sha256=digest)
+        asset = await store.companion_face_assets.set_face(
+            companion_id=companion_id,
+            cond_storage_key=storage_key,
+            cond_content_type="image/jpeg",
+            cond_size_bytes=len(normalized),
+            cond_sha256=digest,
+            width=width,
+            height=height,
+            source="upload",
+        )
+    except (KeyError, ValueError) as exc:
+        store.object_storage.delete(storage_key)
+        code = status.HTTP_404_NOT_FOUND if isinstance(exc, KeyError) else status.HTTP_409_CONFLICT
+        raise HTTPException(code, str(exc)) from exc
+    except Exception:
+        store.object_storage.delete(storage_key)
+        raise
+    finally:
+        del normalized
+    return _companion_face(asset)
+
+
+@router.get(
+    "/owners/{owner_id}/companions/{companion_id}/face",
+    response_model=CompanionFaceView,
+)
+async def get_companion_face(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> CompanionFaceView:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    asset = await store.companion_face_assets.get_active(companion_id)
+    if asset is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion has no configured face")
+    return _companion_face(asset)
+
+
+@router.get("/owners/{owner_id}/companions/{companion_id}/face/image")
+async def get_companion_face_image(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> Response:
+    """Stream the active face JPEG for in-browser preview (authenticated app route)."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    asset = await store.companion_face_assets.get_active(companion_id)
+    if asset is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion has no configured face")
+    try:
+        data = store.object_storage.get(asset.cond_storage_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "companion face image missing") from exc
+    return Response(
+        content=data,
+        media_type=asset.cond_content_type,
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "ETag": f'"{asset.cond_sha256}"',
+        },
+    )
+
+
+@router.delete("/owners/{owner_id}/companions/{companion_id}/face")
+async def clear_companion_face(
+    owner_id: str,
+    companion_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Clear the configured face so the companion reverts to the default avatar."""
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    await _require_owner_companion(store, owner_id, companion_id)
+    cleared = await store.companion_face_assets.clear(companion_id)
+    return {"companion_id": companion_id, "cleared": cleared}
 
 
 @router.get("/owners/{owner_id}/persona-genomes", response_model=PersonaGenomeListResponse)

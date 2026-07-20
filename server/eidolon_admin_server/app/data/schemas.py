@@ -74,6 +74,22 @@ class CompanionListResponse(BaseModel):
     companions: list[CompanionView]
 
 
+class CompanionFaceView(BaseModel):
+    """Metadata for a companion's active display-face asset (never the bytes)."""
+
+    companion_id: str
+    face_asset_id: str
+    version: int
+    source: str
+    content_type: str
+    size_bytes: int
+    sha256: str
+    width: int | None = None
+    height: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkspaceInitializeRequest(BaseModel):
     companion_id: str | None = None
     companion_display_name: str = ""
