@@ -207,6 +207,9 @@ async function identify() {
           <el-descriptions-item label="Hub 批准">{{ hubDevice ? (hubDevice.approved ? '已批准' : '待批准') : '不适用' }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ hubDevice?.status || ownerDevice?.status || 'unknown' }}</el-descriptions-item>
           <el-descriptions-item label="Room">{{ hubDevice?.room_name || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="交互模式">
+            <span class="mode" :class="{ 'mode-full': (hubDevice?.interaction_mode || ownerDevice?.interaction_mode) === 'full_duplex', 'mode-null': !(hubDevice?.interaction_mode || ownerDevice?.interaction_mode) }">{{ hubDevice?.interaction_mode || ownerDevice?.interaction_mode || 'null' }}</span>
+          </el-descriptions-item>
           <el-descriptions-item label="最近在线">{{ formatTimestamp(hubDevice?.last_seen || ownerDevice?.last_seen_at) }}</el-descriptions-item>
         </el-descriptions>
       </section>
@@ -215,7 +218,6 @@ async function identify() {
     <section v-if="ownerDevice" class="panel">
       <header><h2>能力与接入信息</h2><p>调试字段只在详情页展示，不参与主导航分类。</p></header>
       <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="交互模式">{{ ownerDevice.interaction_mode || '—' }}</el-descriptions-item>
         <el-descriptions-item label="认证类型">{{ ownerDevice.auth_type || '—' }}</el-descriptions-item>
         <el-descriptions-item label="Capabilities" :span="2"><code>{{ JSON.stringify(ownerDevice.capabilities_json) }}</code></el-descriptions-item>
       </el-descriptions>
@@ -225,6 +227,9 @@ async function identify() {
 
 <style scoped>
 .device-detail { display: flex; width: min(1080px, 100%); margin: 0 auto; padding-bottom: 32px; flex-direction: column; gap: 14px; }
+.mode { font-family: var(--eid-font-mono); }
+.mode-full { color: var(--eid-success); }
+.mode-null { color: var(--eid-text-muted); font-style: italic; }
 .page-head, .panel { padding: 16px; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); }
 .title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-top: 10px; }
 .title-row p { margin: 0; color: var(--eid-text-muted); font-family: var(--eid-font-mono); font-size: 10px; letter-spacing: .12em; }
