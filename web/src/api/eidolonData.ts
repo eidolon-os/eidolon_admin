@@ -65,6 +65,10 @@ export interface CompanionFaceView {
   sha256: string
   width: number | null
   height: number | null
+  /** Offline idle-loop generation: none | pending | generating | ready | failed. */
+  idle_status: string
+  idle_ready: boolean
+  idle_error: string | null
   created_at: string
   updated_at: string
 }
@@ -500,6 +504,32 @@ export function companionFaceImageUrl(
     `${base}/owners/${encodeURIComponent(ownerId)}`
     + `/companions/${encodeURIComponent(companionId)}/face/image`
   return cacheKey === '' ? path : `${path}?v=${encodeURIComponent(String(cacheKey))}`
+}
+
+/** Absolute URL of the generated looping idle clip, cache-busted so a
+ * regenerated clip is refetched. */
+export function companionIdleVideoUrl(
+  ownerId: string,
+  companionId: string,
+  cacheKey: string | number = '',
+): string {
+  const base = client.defaults.baseURL ?? '/api'
+  const path =
+    `${base}/owners/${encodeURIComponent(ownerId)}`
+    + `/companions/${encodeURIComponent(companionId)}/face/idle/video`
+  return cacheKey === '' ? path : `${path}?v=${encodeURIComponent(String(cacheKey))}`
+}
+
+/** Re-trigger offline idle-clip generation for the active face (e.g. after a
+ * failure). Returns the face with its idle status moved to pending. */
+export async function regenerateCompanionIdle(
+  ownerId: string,
+  companionId: string,
+): Promise<CompanionFaceView> {
+  const { data } = await client.post<CompanionFaceView>(
+    `/owners/${encodeURIComponent(ownerId)}/companions/${encodeURIComponent(companionId)}/face/idle:regenerate`,
+  )
+  return data
 }
 
 export async function listOwnerPersonaGenomes(ownerId: string): Promise<PersonaGenomeView[]> {

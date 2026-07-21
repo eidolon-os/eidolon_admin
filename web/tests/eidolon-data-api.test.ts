@@ -9,6 +9,7 @@ vi.mock('../src/api/client', () => ({
     get: getMock,
     post: postMock,
     patch: patchMock,
+    defaults: { baseURL: '/api' },
   },
 }))
 
@@ -183,6 +184,26 @@ describe('api/eidolonData.ts', () => {
       3,
       `/owners/${owner}/companions/${companion}/genomes/g%2F0/rollback`,
       {},
+    )
+  })
+
+  it('re-triggers idle generation on the active face', async () => {
+    postMock.mockResolvedValueOnce({ data: { companion_id: 'c-1', idle_status: 'pending' } })
+    const { regenerateCompanionIdle } = await import('../src/api/eidolonData')
+    const res = await regenerateCompanionIdle('owner/a', 'c 1')
+    expect(postMock).toHaveBeenCalledWith(
+      '/owners/owner%2Fa/companions/c%201/face/idle:regenerate',
+    )
+    expect(res.idle_status).toBe('pending')
+  })
+
+  it('builds a cache-busted idle video URL', async () => {
+    const { companionIdleVideoUrl } = await import('../src/api/eidolonData')
+    expect(companionIdleVideoUrl('owner/a', 'c 1')).toBe(
+      '/api/owners/owner%2Fa/companions/c%201/face/idle/video',
+    )
+    expect(companionIdleVideoUrl('o', 'c', '2026-07-21T00:00:00Z')).toBe(
+      '/api/owners/o/companions/c/face/idle/video?v=2026-07-21T00%3A00%3A00Z',
     )
   })
 })

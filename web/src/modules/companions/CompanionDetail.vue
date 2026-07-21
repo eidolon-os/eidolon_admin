@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ChatDotRound, Monitor, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowLeft, ChatDotRound, Loading, Monitor, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { useOwnersStore } from '@/stores/owners'
 import {
   clearCompanionFace,
   companionFaceImageUrl,
+  companionIdleVideoUrl,
   createCompanionWebBody,
   getCompanionFace,
   listCompanionDevices,
@@ -15,6 +16,7 @@ import {
   listOwnerConversations,
   listOwnerEvents,
   listOwnerMemoryRealms,
+  regenerateCompanionIdle,
   resetCompanionGenome,
   uploadCompanionFace,
   type CompanionFaceView,
@@ -28,6 +30,7 @@ import {
 import type { UploadFile } from 'element-plus'
 import { extractErrorMessage, formatTimestamp } from '@/utils/format'
 import { webBodyLaunchUrl } from '@/utils/clientWeb'
+import { describeIdleFace, idleTagType } from './idleFace'
 
 type Section = 'overview' | 'persona' | 'memory' | 'bodies' | 'activity'
 
@@ -47,6 +50,13 @@ const launching = ref(false)
 const resetting = ref(false)
 const face = ref<CompanionFaceView | null>(null)
 const faceUploading = ref(false)
+const idleRegenerating = ref(false)
+const idle = computed(() => describeIdleFace(face.value))
+const idleVideoUrl = computed(() =>
+  ownerId.value && idle.value?.ready
+    ? companionIdleVideoUrl(ownerId.value, companionId.value, face.value?.updated_at || '')
+    : '',
+)
 
 const section = computed<Section>({
   get: () => {
@@ -152,6 +162,45 @@ async function clearFace() {
   }
 }
 
+async function regenerateIdle() {
+  if (!ownerId.value || idleRegenerating.value) return
+  idleRegenerating.value = true
+  try {
+    face.value = await regenerateCompanionIdle(ownerId.value, companionId.value)
+    ElMessage.success('已开始重新生成 idle 动画')
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error))
+  } finally {
+    idleRegenerating.value = false
+  }
+}
+
+// While a clip is generating, refresh the face so the operator sees it become
+// ready without a manual reload — bounded so a stuck job can't poll forever.
+const IDLE_POLL_MS = 5000
+const IDLE_POLL_MAX = 24
+let idlePollTimer: ReturnType<typeof setInterval> | undefined
+function stopIdlePoll() {
+  if (idlePollTimer) {
+    clearInterval(idlePollTimer)
+    idlePollTimer = undefined
+  }
+}
+watch(
+  () => idle.value?.generating ?? false,
+  (generating) => {
+    stopIdlePoll()
+    if (!generating) return
+    let ticks = 0
+    idlePollTimer = setInterval(async () => {
+      ticks += 1
+      await loadFace()
+      if (ticks >= IDLE_POLL_MAX || !(idle.value?.generating)) stopIdlePoll()
+    }, IDLE_POLL_MS)
+  },
+)
+onBeforeUnmount(stopIdlePoll)
+
 function back() {
   router.push({ name: 'companions', query: { owner_id: ownerId.value || undefined } })
 }
@@ -246,13 +295,29 @@ async function resetPersona() {
             <el-image v-if="faceImageUrl" :src="faceImageUrl" fit="cover" />
             <div v-else class="face-placeholder">默认形象</div>
           </div>
+          <div v-if="idle?.ready && idleVideoUrl" class="face-preview" title="idle 循环预览">
+            <video :src="idleVideoUrl" autoplay loop muted playsinline />
+          </div>
           <div class="face-meta">
-            <p v-if="face">已配置形象 · v{{ face.version }} · {{ face.width }}×{{ face.height }}<br>说话时会用这张脸；静息时仍是粒子头像。</p>
+            <p v-if="face">已配置形象 · v{{ face.version }} · {{ face.width }}×{{ face.height }}<br>说话时用这张脸；静息播放生成的 idle 动画（未生成时回退微动 / 粒子头）。</p>
             <p v-else>说话时使用服务默认形象。上传一张清晰正脸图，作为数字人说话时的形象。</p>
+            <div v-if="face && idle" class="idle-row">
+              <el-tag :type="idleTagType(idle.tone)" size="small" effect="plain">
+                idle 动画：{{ idle.label }}
+                <el-icon v-if="idle.generating" class="is-loading"><Loading /></el-icon>
+              </el-tag>
+              <span class="idle-hint">{{ idle.hint }}</span>
+            </div>
             <div class="face-actions">
               <el-upload :auto-upload="false" :show-file-list="false" accept="image/*" :on-change="onFaceSelected">
                 <el-button type="primary" :loading="faceUploading">{{ face ? '更换形象' : '上传形象' }}</el-button>
               </el-upload>
+              <el-button
+                v-if="face && idle?.canRegenerate"
+                :icon="Refresh"
+                :loading="idleRegenerating"
+                @click="regenerateIdle"
+              >{{ idle.status === 'failed' ? '重试生成 idle' : '重新生成 idle' }}</el-button>
               <el-button v-if="face" text @click="clearFace">恢复默认</el-button>
             </div>
           </div>
@@ -325,9 +390,12 @@ async function resetPersona() {
 .overview-grid article.stats, .overview-grid article.face-card { grid-column: 1 / -1; }
 .face-card .face-body { display: flex; gap: 16px; margin-top: 10px; align-items: flex-start; }
 .face-preview { width: 112px; height: 112px; flex: 0 0 auto; border-radius: var(--eid-radius); overflow: hidden; border: 1px solid var(--eid-border); background: var(--eid-bg-elevated, rgba(255,255,255,.03)); }
-.face-preview .el-image { width: 100%; height: 100%; display: block; }
+.face-preview .el-image, .face-preview video { width: 100%; height: 100%; display: block; object-fit: cover; }
 .face-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--eid-text-muted); font-size: 12px; }
 .face-meta { display: flex; flex-direction: column; gap: 10px; }
+.idle-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.idle-row .el-tag { display: inline-flex; align-items: center; gap: 4px; }
+.idle-hint { color: var(--eid-text-muted); font-size: 11px; line-height: 1.5; }
 .face-actions { display: flex; align-items: center; gap: 10px; }
 .overview-grid span { color: var(--eid-text-muted); font-size: 10px; }
 .overview-grid p { color: var(--eid-text-secondary); font-size: 13px; line-height: 1.6; }
