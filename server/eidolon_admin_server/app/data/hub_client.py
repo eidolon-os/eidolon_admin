@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -65,6 +66,27 @@ class HubDeviceRuntimeClient:
                 "payload": {"reason": "owner_admin_identify"},
                 "ttl_ms": 30_000,
                 "qos": "ack",
+            },
+        )
+        return body if isinstance(body, dict) else {}
+
+    async def wiggle_device(self, device_id: str) -> dict[str, Any]:
+        # "动一动": nudge the body into its awake / back-at-desk reaction
+        # (sound + head sway + RGB + expression). A fresh action_id per call
+        # means every click re-triggers even for an already-awake device.
+        body = await self._request_json(
+            "POST",
+            f"/api/admin/devices/{device_id}/commands",
+            json={
+                "op": "body.presence.set",
+                "payload": {
+                    "state": "awake",
+                    "guard_epoch": 0,
+                    "correlation_id": "owner_admin_wiggle",
+                    "action_id": f"wiggle-{uuid4().hex}",
+                },
+                "ttl_ms": 15_000,
+                "qos": "result",
             },
         )
         return body if isinstance(body, dict) else {}

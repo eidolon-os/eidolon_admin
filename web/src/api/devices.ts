@@ -139,10 +139,14 @@ export async function setDeviceEnabled(id: string, enabled: boolean): Promise<De
   return normalizeDevice(data)
 }
 
-async function sendDeviceCommand(id: string, op: string): Promise<Record<string, any>> {
+async function sendDeviceCommand(
+  id: string,
+  op: string,
+  payload: Record<string, any> = {},
+): Promise<Record<string, any>> {
   const { data } = await client.post<Record<string, any>>(
     `/services/hub/devices/${encodeURIComponent(id)}/commands`,
-    { op, payload: {} },
+    { op, payload },
   )
   return data
 }
@@ -153,6 +157,17 @@ export async function wakeDevice(id: string): Promise<Record<string, any>> {
 
 export async function identifyDevice(id: string): Promise<Record<string, any>> {
   return sendDeviceCommand(id, 'device.identify')
+}
+
+export async function wiggleDevice(id: string): Promise<Record<string, any>> {
+  // "动一动": body.presence.set(awake) re-triggers the back-at-desk reaction.
+  // Fresh action_id per call so every click fires even when already awake.
+  return sendDeviceCommand(id, 'body.presence.set', {
+    state: 'awake',
+    guard_epoch: 0,
+    correlation_id: 'owner_admin_wiggle',
+    action_id: `wiggle-${Date.now()}`,
+  })
 }
 
 export async function refreshDeviceConfig(id: string): Promise<Record<string, any>> {

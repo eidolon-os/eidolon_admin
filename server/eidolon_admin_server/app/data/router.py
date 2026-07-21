@@ -1048,6 +1048,22 @@ async def identify_nearby_owner_device(owner_id: str, device_id: str, request: R
         raise HTTPException(exc.status_code, str(exc)) from exc
 
 
+@router.post("/owners/{owner_id}/nearby-devices/{device_id}/wiggle")
+async def wiggle_nearby_owner_device(owner_id: str, device_id: str, request: Request) -> dict[str, Any]:
+    await _require_owner(_store(request), owner_id)
+    hub = _require_hub_device_client(request)
+    try:
+        runtime_device = await hub.get_device(device_id)
+        if not runtime_device.approved:
+            raise HTTPException(
+                status.HTTP_412_PRECONDITION_FAILED,
+                "device must be approved in Hub before Owner actions",
+            )
+        return await hub.wiggle_device(device_id)
+    except HubRuntimeUnavailable as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
 @router.post("/owners/{owner_id}/nearby-devices/{device_id}/claim", response_model=DeviceView)
 @router.post(
     "/owners/{owner_id}/nearby-devices/{device_id}/add-to-owner",
@@ -1173,6 +1189,18 @@ async def identify_owner_device(owner_id: str, device_id: str, request: Request)
     hub = _require_hub_device_client(request)
     try:
         return await hub.identify_device(device.device_id)
+    except HubRuntimeUnavailable as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@router.post("/owners/{owner_id}/devices/{device_id}/wiggle")
+async def wiggle_owner_device(owner_id: str, device_id: str, request: Request) -> dict[str, Any]:
+    store = _store(request)
+    await _require_owner(store, owner_id)
+    device = await _require_owner_device(store, owner_id, device_id)
+    hub = _require_hub_device_client(request)
+    try:
+        return await hub.wiggle_device(device.device_id)
     except HubRuntimeUnavailable as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 

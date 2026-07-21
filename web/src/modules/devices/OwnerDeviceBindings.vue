@@ -2,12 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Bell, CloseBold, Delete, Link, Plus, Refresh } from '@element-plus/icons-vue'
+import { Bell, CloseBold, Delete, Link, MagicStick, Plus, Refresh } from '@element-plus/icons-vue'
 import {
   addNearbyDeviceToOwner,
   bindOwnerDevice,
   identifyNearbyDevice,
   identifyOwnerDevice,
+  wiggleNearbyDevice,
+  wiggleOwnerDevice,
   listNearbyOwnerDevices,
   listOwnerCompanions,
   listOwnerDevices,
@@ -48,6 +50,7 @@ const actionName = ref('')
 const actionCompanionId = ref('')
 const actionLoading = ref(false)
 const identifyingId = ref('')
+const wigglingId = ref('')
 const unbindingId = ref('')
 const releasingId = ref('')
 const approvingId = ref('')
@@ -255,6 +258,30 @@ async function identifyNearby(device: NearbyDeviceView) {
     identifyingId.value = ''
   }
 }
+
+async function wiggleOwned(device: DeviceView) {
+  wigglingId.value = device.device_id
+  try {
+    await wiggleOwnerDevice(props.ownerId, device.device_id)
+    ElMessage.success('动一动命令已下发')
+  } catch (error) {
+    ElMessage.error(`动一动失败: ${extractErrorMessage(error)}`)
+  } finally {
+    wigglingId.value = ''
+  }
+}
+
+async function wiggleNearby(device: NearbyDeviceView) {
+  wigglingId.value = device.device_id
+  try {
+    await wiggleNearbyDevice(props.ownerId, device.device_id)
+    ElMessage.success('动一动命令已下发')
+  } catch (error) {
+    ElMessage.error(`动一动失败: ${extractErrorMessage(error)}`)
+  } finally {
+    wigglingId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -316,6 +343,7 @@ async function identifyNearby(device: NearbyDeviceView) {
         <el-table-column label="下一步" width="190" align="right" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="Bell" :loading="identifyingId === row.device_id" @click="identifyNearby(row)">点名</el-button>
+            <el-button size="small" :icon="MagicStick" :loading="wigglingId === row.device_id" @click="wiggleNearby(row)">动一动</el-button>
             <el-button size="small" type="primary" :icon="Plus" @click="openClaim(row)">认领并绑定</el-button>
           </template>
         </el-table-column>
@@ -340,6 +368,7 @@ async function identifyNearby(device: NearbyDeviceView) {
         <el-table-column label="操作" width="330" align="right" fixed="right">
           <template #default="{ row }">
             <el-button size="small" :icon="Bell" :loading="identifyingId === row.device_id" @click="identifyOwned(row)">点名</el-button>
+            <el-button size="small" :icon="MagicStick" :loading="wigglingId === row.device_id" @click="wiggleOwned(row)">动一动</el-button>
             <el-button size="small" type="primary" plain :icon="Link" @click="openBind(row)">{{ row.bound_companion_id ? '换绑' : '绑定' }}</el-button>
             <el-button size="small" :icon="CloseBold" :disabled="!row.bound_companion_id" :loading="unbindingId === row.device_id" @click="unbind(row)">解绑</el-button>
             <el-button size="small" type="danger" plain :icon="Delete" :loading="releasingId === row.device_id" @click="release(row)">释放</el-button>

@@ -3,11 +3,12 @@
 // bodies discovered by Hub. Host-local web bodies live in the owner inventory
 // above this table and do not need Hub approval.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { Bell, Refresh, VideoPlay } from '@element-plus/icons-vue'
+import { Bell, MagicStick, Refresh, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   approveDevice,
   identifyDevice,
+  wiggleDevice,
   listDevices,
   refreshDevices,
   refreshDeviceConfig,
@@ -340,6 +341,22 @@ async function onIdentify(d: DeviceView) {
   })
 }
 
+async function onWiggle(d: DeviceView) {
+  if (!canSendDeviceCommand(d)) {
+    ElMessage.warning(commandUnavailableReason(d))
+    return
+  }
+  await withBusy(d, async () => {
+    try {
+      await wiggleDevice(d.device_id)
+      ElMessage.success('已下发动一动命令')
+      await refresh()
+    } catch (e: any) {
+      ElMessage.error(`动一动失败: ${extractErrorMessage(e)}`)
+    }
+  })
+}
+
 async function onRollCallReachable() {
   const targets = callableDevices.value
   if (targets.length === 0) {
@@ -442,6 +459,7 @@ async function onMoreCommand(command: string, d: DeviceView) {
   if (command === 'connection') openDetail(d, 'connection')
   if (command === 'raw') openDetail(d, 'raw')
   if (command === 'identify') await onIdentify(d)
+  if (command === 'wiggle') await onWiggle(d)
   if (command === 'refresh-config') await onRefreshConfig(d)
   if (command === 'enable') await onToggleEnabled(d, true)
   if (command === 'disable') await onToggleEnabled(d, false)
@@ -616,6 +634,16 @@ async function onMoreCommand(command: string, d: DeviceView) {
               </span>
             </el-tooltip>
             <el-button
+              v-if="row.readiness === 'pending_approval'"
+              size="small"
+              :icon="MagicStick"
+              :loading="busyDeviceId === row.device.device_id"
+              :disabled="!canSendDeviceCommand(row.device)"
+              @click="onWiggle(row.device)"
+            >
+              动一动
+            </el-button>
+            <el-button
               size="small"
               :type="primaryAction(row).type"
               :icon="primaryAction(row).icon"
@@ -632,6 +660,7 @@ async function onMoreCommand(command: string, d: DeviceView) {
                   <el-dropdown-item command="connection">Connection</el-dropdown-item>
                   <el-dropdown-item command="raw">Raw JSON</el-dropdown-item>
                   <el-dropdown-item command="identify" :disabled="!canSendDeviceCommand(row.device)">点名</el-dropdown-item>
+                  <el-dropdown-item command="wiggle" :disabled="!canSendDeviceCommand(row.device)">动一动</el-dropdown-item>
                   <el-dropdown-item command="refresh-config" :disabled="!canSendDeviceCommand(row.device)">Refresh config</el-dropdown-item>
                   <el-dropdown-item :command="row.device.enabled ? 'disable' : 'enable'">
                     {{ row.device.enabled ? 'Disable' : 'Enable' }}

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Bell, Connection, VideoPlay } from '@element-plus/icons-vue'
+import { Bell, Connection, MagicStick, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { getFleet, wakeDevice, type FleetResponse } from '@/api/devices'
-import { identifyOwnerDevice } from '@/api/eidolonData'
+import { identifyOwnerDevice, wiggleOwnerDevice } from '@/api/eidolonData'
 import type { RuntimeDevice } from '@/api/missionControl'
 import {
   devicePresenceClass,
@@ -41,6 +41,7 @@ const kindFilter = ref<KindFilter>('all')
 const groupMode = ref<GroupMode>('companion')
 const startingId = ref('')
 const identifyingId = ref('')
+const wigglingId = ref('')
 
 const allItems = computed<BodyItem[]>(() => {
   const grouped = (fleet.value?.groups || []).flatMap((group) => group.devices.map((device) => ({
@@ -197,6 +198,19 @@ async function identify(item: BodyItem) {
   }
 }
 
+async function wiggle(item: BodyItem) {
+  if (!canIdentify(item)) return
+  wigglingId.value = item.device.device_id
+  try {
+    await wiggleOwnerDevice(props.ownerId, item.device.device_id)
+    ElMessage.success('已下发动一动命令')
+  } catch (error: any) {
+    ElMessage.error(`动一动失败: ${error?.response?.data?.detail || error?.message || 'unknown error'}`)
+  } finally {
+    wigglingId.value = ''
+  }
+}
+
 async function startSession(item: BodyItem) {
   if (!canStartSession(item)) return
   startingId.value = item.device.device_id
@@ -270,6 +284,7 @@ function goDetail(item: BodyItem) {
             <div class="row-actions">
               <el-button size="small" text @click="goDetail(item)">详情</el-button>
               <el-button v-if="canIdentify(item)" size="small" :icon="Bell" :loading="identifyingId === item.device.device_id" @click="identify(item)">点名</el-button>
+              <el-button v-if="canIdentify(item)" size="small" :icon="MagicStick" :loading="wigglingId === item.device.device_id" @click="wiggle(item)">动一动</el-button>
               <el-button v-if="isWebBody(item.device) && item.companionId" size="small" type="primary" plain :icon="VideoPlay" @click="launchBody(item)">启动</el-button>
               <el-button v-else-if="canStartSession(item)" size="small" type="primary" :icon="VideoPlay" :loading="startingId === item.device.device_id" @click="startSession(item)">Start session</el-button>
               <el-button v-else-if="!item.companionId" size="small" type="warning" plain @click="goConnect">去绑定</el-button>

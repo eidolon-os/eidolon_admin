@@ -731,9 +731,23 @@ export async function identifyNearbyDevice(ownerId: string, deviceId: string): P
   return data
 }
 
+export async function wiggleNearbyDevice(ownerId: string, deviceId: string): Promise<JsonDict> {
+  const { data } = await client.post<JsonDict>(
+    `/owners/${encodeURIComponent(ownerId)}/nearby-devices/${encodeURIComponent(deviceId)}/wiggle`,
+  )
+  return data
+}
+
 export async function identifyOwnerDevice(ownerId: string, deviceId: string): Promise<JsonDict> {
   const { data } = await client.post<JsonDict>(
     `/owners/${encodeURIComponent(ownerId)}/devices/${encodeURIComponent(deviceId)}/identify`,
+  )
+  return data
+}
+
+export async function wiggleOwnerDevice(ownerId: string, deviceId: string): Promise<JsonDict> {
+  const { data } = await client.post<JsonDict>(
+    `/owners/${encodeURIComponent(ownerId)}/devices/${encodeURIComponent(deviceId)}/wiggle`,
   )
   return data
 }

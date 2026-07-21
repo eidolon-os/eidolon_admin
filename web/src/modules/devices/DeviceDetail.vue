@@ -2,11 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Bell, Link, VideoPlay } from '@element-plus/icons-vue'
+import { ArrowLeft, Bell, Link, MagicStick, VideoPlay } from '@element-plus/icons-vue'
 import { useOwnersStore } from '@/stores/owners'
 import {
   bindOwnerDevice,
   identifyOwnerDevice,
+  wiggleOwnerDevice,
   listOwnerCompanions,
   listOwnerDevices,
   listOwnerGuardBindings,
@@ -31,6 +32,7 @@ const loading = ref(false)
 const saving = ref(false)
 const starting = ref(false)
 const identifying = ref(false)
+const wiggling = ref(false)
 
 // Guard is a role carried by the bound guard companion, expressed through a
 // live guard binding — not by the device's hardware kind or capability flag.
@@ -158,6 +160,19 @@ async function identify() {
     identifying.value = false
   }
 }
+
+async function wiggle() {
+  if (!ownerId.value || !canIdentify.value) return
+  wiggling.value = true
+  try {
+    await wiggleOwnerDevice(ownerId.value, deviceId.value)
+    ElMessage.success('已下发动一动命令')
+  } catch (error) {
+    ElMessage.error(`动一动失败: ${extractErrorMessage(error)}`)
+  } finally {
+    wiggling.value = false
+  }
+}
 </script>
 
 <template>
@@ -199,6 +214,7 @@ async function identify() {
           <div class="runtime-actions">
             <el-tag v-if="sessionActive" type="success" effect="dark">Session active</el-tag>
             <el-button v-if="canIdentify" :icon="Bell" :loading="identifying" @click="identify">点名</el-button>
+            <el-button v-if="canIdentify" :icon="MagicStick" :loading="wiggling" @click="wiggle">动一动</el-button>
             <el-button v-if="canStartSession" type="primary" :icon="VideoPlay" :loading="starting" @click="startSession">Start session</el-button>
           </div>
         </header>
