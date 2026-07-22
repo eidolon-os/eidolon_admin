@@ -77,11 +77,27 @@ boards:
     default_baud: 115200
 
   - id: m5stack-core-s3
-    label: M5Stack CoreS3 (StackChan)
+    label: M5Stack CoreS3 (纯核心板，无舵机身体)
     vendor: M5Stack
     target: esp32s3
     board_type: m5stack-core-s3
     script_path: $CLIENT_ROOT/scripts/eidolon/eidolon-m5stack-core-s3.sh
+    build_dir: $CLIENT_ROOT/build
+    sdkconfig: $CLIENT_ROOT/sdkconfig
+    partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon.csv
+    default_baud: 115200
+    action_overrides:
+      flash_app: [flash, --app-only]
+      flash_assets: [flash, -p, assets]
+
+  # StackChan = CoreS3 + PY32 舵机底座 + RGB 环。必须用 m5stack-stackchan 板
+  # (m5stack-core-s3 板没有身体代码，动一动只会响声音不会晃头/亮灯)。
+  - id: m5stack-stackchan
+    label: M5Stack StackChan (舵机身体 + RGB)
+    vendor: M5Stack
+    target: esp32s3
+    board_type: m5stack-stackchan
+    script_path: $CLIENT_ROOT/scripts/eidolon/eidolon-m5stack-stackchan.sh
     build_dir: $CLIENT_ROOT/build
     sdkconfig: $CLIENT_ROOT/sdkconfig
     partition_csv: $CLIENT_ROOT/partitions/v2/16m_eidolon.csv
