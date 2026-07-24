@@ -14,23 +14,11 @@ from fastapi import FastAPI
 from PIL import Image
 
 from eidolon_admin_server.app.data import idle_generation
-from eidolon_admin_server.app.data import router as data_router_mod
 from eidolon_admin_server.app.data.router import router as data_router
+from eidolon_admin_server.app.settings import AvatarConfig
 
 # A small stand-in for the fragmented-MP4 idle clip the Ditto service returns.
 FAKE_FMP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"idle-clip-body"
-
-
-def _ditto_settings(url: str = "http://ditto.test") -> SimpleNamespace:
-    return SimpleNamespace(
-        avatar_service_url=url,
-        avatar_idle_seconds=2.0,
-        avatar_width=448,
-        avatar_height=448,
-        avatar_fps=25.0,
-        avatar_verify_ssl=False,
-        avatar_request_timeout_sec=30.0,
-    )
 
 
 @pytest.fixture
@@ -47,9 +35,19 @@ async def data_store(tmp_path) -> AsyncIterator[DataStore]:
 
 
 @pytest.fixture
-async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
+def avatar_config() -> AvatarConfig:
+    # Idle generation disabled by default (empty service_url); tests opt in by
+    # setting service_url on this same instance the app reads.
+    return AvatarConfig()
+
+
+@pytest.fixture
+async def client(
+    data_store: DataStore, avatar_config: AvatarConfig
+) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
     app.state.data_store = data_store
+    app.state.gateway_config = SimpleNamespace(avatar=avatar_config)
     app.include_router(data_router, prefix="/api")
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -148,9 +146,9 @@ async def test_rejects_undersized_and_non_image(
 
 
 async def test_idle_generation_on_upload_when_configured(
-    client: httpx.AsyncClient, data_store: DataStore, monkeypatch
+    client: httpx.AsyncClient, avatar_config: AvatarConfig, monkeypatch
 ) -> None:
-    monkeypatch.setattr(data_router_mod, "get_settings", lambda: _ditto_settings())
+    avatar_config.service_url = "http://ditto.test"
 
     async def _fake_generate(**kwargs) -> bytes:
         assert kwargs["service_url"] == "http://ditto.test"
@@ -179,10 +177,8 @@ async def test_idle_generation_on_upload_when_configured(
     assert video.content == FAKE_FMP4
 
 
-async def test_no_idle_generation_when_unconfigured(
-    client: httpx.AsyncClient, monkeypatch
-) -> None:
-    monkeypatch.setattr(data_router_mod, "get_settings", lambda: _ditto_settings(url=""))
+async def test_no_idle_generation_when_unconfigured(client: httpx.AsyncClient) -> None:
+    # avatar_config defaults to service_url="" → generation disabled.
     companion_id = await _owner_with_companion(client)
     base = f"/api/owners/owner-a/companions/{companion_id}/face"
 
@@ -193,9 +189,9 @@ async def test_no_idle_generation_when_unconfigured(
 
 
 async def test_idle_generation_failure_is_recorded(
-    client: httpx.AsyncClient, monkeypatch
+    client: httpx.AsyncClient, avatar_config: AvatarConfig, monkeypatch
 ) -> None:
-    monkeypatch.setattr(data_router_mod, "get_settings", lambda: _ditto_settings())
+    avatar_config.service_url = "http://ditto.test"
 
     async def _boom(**kwargs) -> bytes:
         raise RuntimeError("ditto unreachable")
@@ -221,10 +217,8 @@ async def test_idle_generation_failure_is_recorded(
     assert (await client.get(f"{base}/idle/video")).content == FAKE_FMP4
 
 
-async def test_regenerate_requires_configured_service(
-    client: httpx.AsyncClient, monkeypatch
-) -> None:
-    monkeypatch.setattr(data_router_mod, "get_settings", lambda: _ditto_settings(url=""))
+async def test_regenerate_requires_configured_service(client: httpx.AsyncClient) -> None:
+    # avatar_config defaults to service_url="" → regenerate is a 409.
     companion_id = await _owner_with_companion(client)
     base = f"/api/owners/owner-a/companions/{companion_id}/face"
     await client.post(base, files={"image": ("face.png", _image_bytes(), "image/png")})

@@ -79,9 +79,10 @@ async def generate_idle_clip(
     return clip
 
 
-async def run_idle_generation(store, settings, *, face_asset_id: str) -> None:
+async def run_idle_generation(store, avatar_cfg, *, face_asset_id: str) -> None:
     """Background task: generate + store the idle clip for one face asset.
 
+    ``avatar_cfg`` is the gateway's :class:`AvatarConfig` (from services.yaml).
     Best-effort and self-contained: marks ``generating`` → ``ready``/``failed``
     on the face asset. Any error is captured onto the row (``idle_error``) rather
     than raised, since it runs detached from the request.
@@ -94,14 +95,14 @@ async def run_idle_generation(store, settings, *, face_asset_id: str) -> None:
         await store.companion_face_assets.set_idle_status(face_asset_id, "generating")
         image_bytes = store.object_storage.get(asset.cond_storage_key)
         clip = await generate_idle_clip(
-            service_url=settings.avatar_service_url,
+            service_url=avatar_cfg.service_url,
             image_bytes=image_bytes,
-            seconds=settings.avatar_idle_seconds,
-            width=settings.avatar_width,
-            height=settings.avatar_height,
-            fps=settings.avatar_fps,
-            verify_ssl=settings.avatar_verify_ssl,
-            timeout_sec=settings.avatar_request_timeout_sec,
+            seconds=avatar_cfg.idle_seconds,
+            width=avatar_cfg.width,
+            height=avatar_cfg.height,
+            fps=avatar_cfg.fps,
+            verify_ssl=avatar_cfg.verify_ssl,
+            timeout_sec=avatar_cfg.request_timeout_sec,
         )
         digest = hashlib.sha256(clip).hexdigest()
         storage_key = f"{asset.owner_id}/companion-avatar/{asset.companion_id}/idle-{face_asset_id}.mp4"

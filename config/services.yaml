@@ -14,6 +14,19 @@ admin:
     - http://127.0.0.1:$EIDOLON_CLIENT_WEB_PORT
     - http://localhost:$EIDOLON_CLIENT_WEB_PORT
 
+# Digital-human (Ditto) service, used offline at face-upload time to generate a
+# companion's looping idle clip from the configured face + silence. Empty
+# service_url disables idle generation (the face still works). Self-signed host
+# → verify_ssl stays false.
+avatar:
+  service_url: https://111.2.199.31:61320
+  idle_seconds: 4.0
+  width: 448
+  height: 448
+  fps: 25.0
+  verify_ssl: false
+  request_timeout_sec: 120.0
+
 services:
 
   - id: admin

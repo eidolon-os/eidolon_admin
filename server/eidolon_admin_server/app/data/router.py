@@ -25,7 +25,7 @@ from fastapi import (
 )
 from sqlalchemy.exc import IntegrityError
 
-from ..settings import get_settings
+from ..settings import AvatarConfig
 
 from .companion_avatar_images import (
     MAX_RAW_IMAGE_BYTES,
@@ -603,20 +603,28 @@ def _companion_face(row: Any) -> CompanionFaceView:
     )
 
 
+def _avatar_config(request: Request) -> AvatarConfig:
+    """The gateway's avatar/Ditto config (services.yaml → GatewayConfig.avatar);
+    a disabled default when the gateway config isn't on app state (e.g. tests)."""
+    gateway = getattr(request.app.state, "gateway_config", None)
+    cfg = getattr(gateway, "avatar", None)
+    return cfg if isinstance(cfg, AvatarConfig) else AvatarConfig()
+
+
 async def _schedule_idle_generation(
-    background_tasks: BackgroundTasks, store: Any, face_asset_id: str
+    request: Request, background_tasks: BackgroundTasks, store: Any, face_asset_id: str
 ) -> bool:
     """Mark the asset idle-pending and schedule offline generation.
 
     No-op (leaving idle_status untouched) when the Ditto service is unconfigured,
     so the face works without any generation service. Returns whether scheduled.
     """
-    settings = get_settings()
-    if not settings.avatar_service_url:
+    avatar_cfg = _avatar_config(request)
+    if not avatar_cfg.service_url:
         return False
     await store.companion_face_assets.set_idle_status(face_asset_id, "pending")
     background_tasks.add_task(
-        run_idle_generation, store, settings, face_asset_id=face_asset_id
+        run_idle_generation, store, avatar_cfg, face_asset_id=face_asset_id
     )
     return True
 
@@ -675,7 +683,7 @@ async def set_companion_face(
         raise
     finally:
         del normalized
-    if await _schedule_idle_generation(background_tasks, store, asset.face_asset_id):
+    if await _schedule_idle_generation(request, background_tasks, store, asset.face_asset_id):
         asset = await store.companion_face_assets.get(asset.face_asset_id)
     return _companion_face(asset)
 
@@ -771,7 +779,7 @@ async def regenerate_companion_idle(
     asset = await store.companion_face_assets.get_active(companion_id)
     if asset is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "companion has no configured face")
-    if not await _schedule_idle_generation(background_tasks, store, asset.face_asset_id):
+    if not await _schedule_idle_generation(request, background_tasks, store, asset.face_asset_id):
         raise HTTPException(
             status.HTTP_409_CONFLICT, "idle generation is not configured (no avatar service)"
         )

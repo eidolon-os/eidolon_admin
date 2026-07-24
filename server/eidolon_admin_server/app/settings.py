@@ -114,8 +114,32 @@ class AdminBindConfig(BaseModel):
     )
 
 
+class AvatarConfig(BaseModel):
+    """Digital-human (Ditto) service used offline at face-upload time to generate
+    a companion's looping idle clip from the configured face + silence.
+
+    Empty ``service_url`` disables idle generation entirely — the face still
+    works (web/mobile fall back to the still micro-motion / placeholder). The
+    service is self-signed, so certificate verification defaults off.
+    """
+
+    service_url: str = ""
+    idle_seconds: float = 4.0
+    width: int = 448
+    height: int = 448
+    fps: float = 25.0
+    verify_ssl: bool = False
+    request_timeout_sec: float = 120.0
+
+    @field_validator("service_url")
+    @classmethod
+    def _strip_trailing(cls, v: str) -> str:
+        return v.rstrip("/")
+
+
 class GatewayConfig(BaseModel):
     admin: AdminBindConfig = Field(default_factory=AdminBindConfig)
+    avatar: AvatarConfig = Field(default_factory=AvatarConfig)
     services: list[ServiceConfig] = Field(default_factory=list)
 
     def find(self, service_id: str) -> ServiceConfig | None:
@@ -159,17 +183,6 @@ class Settings(BaseSettings):
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
     esp32_tools_file: Path = _REPO_ROOT / "config" / "esp32_tools.yaml"
-    # Digital-human (Ditto) service, used offline at face-upload time to generate
-    # a looping idle clip from the configured face + silence. Empty disables idle
-    # generation entirely (the face still works; web falls back to the still
-    # micro-motion). The service is self-signed, so verification defaults off.
-    avatar_service_url: str = ""
-    avatar_idle_seconds: float = 4.0
-    avatar_width: int = 448
-    avatar_height: int = 448
-    avatar_fps: float = 25.0
-    avatar_verify_ssl: bool = False
-    avatar_request_timeout_sec: float = 120.0
     voiceprint_root: Path = Field(default_factory=default_voiceprint_root)
     speaker_model_dir: Path = Field(default_factory=default_3dspeaker_model_dir)
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf
