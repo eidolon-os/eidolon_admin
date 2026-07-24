@@ -17,22 +17,38 @@ import hashlib
 import io
 import json
 import logging
+import random
 import wave
+from array import array
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
 
-def build_silence_wav(seconds: float, *, sample_rate: int = 16000) -> bytes:
-    """A minimal mono int16 WAV of silence — the idle "audio" driving Ditto."""
+def build_idle_wav(
+    seconds: float, *, drive_level: float = 0.0, sample_rate: int = 16000
+) -> bytes:
+    """A mono int16 WAV that drives the idle clip.
+
+    ``drive_level`` 0.0 → pure silence (closed-mouth, minimal motion). Above 0 it
+    fills low-level (deterministic) noise scaled to that amplitude, giving Ditto
+    more to animate — see ``AvatarConfig.idle_drive_level`` for the caveat that
+    higher values read as speech (mouth movement), not richer natural idle.
+    """
     frames = max(1, int(seconds * sample_rate))
+    if drive_level <= 0:
+        pcm = b"\x00\x00" * frames
+    else:
+        amp = max(1, min(32767, int(drive_level * 32767)))
+        rnd = random.Random(0)  # deterministic so regenerating is reproducible
+        pcm = array("h", (rnd.randint(-amp, amp) for _ in range(frames))).tobytes()
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)  # int16
         w.setframerate(sample_rate)
-        w.writeframes(b"\x00\x00" * frames)
+        w.writeframes(pcm)
     return buf.getvalue()
 
 
@@ -46,6 +62,7 @@ async def generate_idle_clip(
     fps: float,
     verify_ssl: bool,
     timeout_sec: float,
+    drive_level: float = 0.0,
 ) -> bytes:
     """POST face + silence to Ditto ``/api/stream_video`` and return the fMP4 body.
 
@@ -65,7 +82,7 @@ async def generate_idle_clip(
         separators=(",", ":"),
     )
     files = {
-        "audio": ("idle.wav", build_silence_wav(seconds), "audio/wav"),
+        "audio": ("idle.wav", build_idle_wav(seconds, drive_level=drive_level), "audio/wav"),
         "image": ("face.jpg", image_bytes, "image/jpeg"),
     }
     data = {"device_info": device_info, "format": "mp4"}
@@ -103,6 +120,7 @@ async def run_idle_generation(store, avatar_cfg, *, face_asset_id: str) -> None:
             fps=avatar_cfg.fps,
             verify_ssl=avatar_cfg.verify_ssl,
             timeout_sec=avatar_cfg.request_timeout_sec,
+            drive_level=getattr(avatar_cfg, "idle_drive_level", 0.0),
         )
         digest = hashlib.sha256(clip).hexdigest()
         storage_key = f"{asset.owner_id}/companion-avatar/{asset.companion_id}/idle-{face_asset_id}.mp4"

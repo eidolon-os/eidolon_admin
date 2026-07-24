@@ -21,6 +21,25 @@ from eidolon_admin_server.app.settings import AvatarConfig
 FAKE_FMP4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + b"idle-clip-body"
 
 
+def _wav_pcm(data: bytes) -> bytes:
+    import io
+    import wave
+
+    with wave.open(io.BytesIO(data)) as w:
+        assert w.getframerate() == 16000
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2
+        return w.readframes(w.getnframes())
+
+
+def test_build_idle_wav_drive_level_controls_amplitude():
+    silent = _wav_pcm(idle_generation.build_idle_wav(0.05, drive_level=0.0))
+    driven = _wav_pcm(idle_generation.build_idle_wav(0.05, drive_level=0.05))
+    assert set(silent) == {0}  # 0.0 → pure silence (closed-mouth idle)
+    assert len(driven) == len(silent)  # same duration
+    assert set(driven) != {0}  # >0 → drives facial motion
+
+
 @pytest.fixture
 async def data_store(tmp_path) -> AsyncIterator[DataStore]:
     store = DataStore.open(

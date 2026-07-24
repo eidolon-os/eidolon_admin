@@ -26,6 +26,11 @@ avatar:
   fps: 25.0
   verify_ssl: false
   request_timeout_sec: 120.0
+  # Idle motion amplitude. 0.0 = pure silence (closed-mouth, minimal motion).
+  # Raise a little (e.g. 0.02–0.06) for more facial motion, but note higher
+  # values read as speech (mouth movement), not richer natural idle — tune on
+  # real hardware and regenerate.
+  idle_drive_level: 0.0
 
 services:
 

@@ -130,6 +130,13 @@ class AvatarConfig(BaseModel):
     fps: float = 25.0
     verify_ssl: bool = False
     request_timeout_sec: float = 120.0
+    # Amplitude (0.0–1.0) of the audio that drives the idle clip. Ditto is
+    # audio-driven, so 0.0 (pure silence) gives a closed-mouth, minimally-moving
+    # face; raising it feeds low-level noise for more facial motion — but because
+    # the model reads audio as speech, higher values tend toward mouth movement
+    # (a mumbling look) rather than richer *natural* idle. Tune on real hardware;
+    # keep small (e.g. 0.02–0.06) if used at all.
+    idle_drive_level: float = 0.0
 
     @field_validator("service_url")
     @classmethod

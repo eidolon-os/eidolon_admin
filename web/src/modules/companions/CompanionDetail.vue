@@ -291,12 +291,19 @@ async function resetPersona() {
       <article v-if="!isGuard" class="face-card">
         <span>数字人形象</span>
         <div class="face-body">
-          <div class="face-preview">
-            <el-image v-if="faceImageUrl" :src="faceImageUrl" fit="cover" />
-            <div v-else class="face-placeholder">默认形象</div>
+          <div class="face-preview-group">
+            <div class="face-preview">
+              <el-image v-if="faceImageUrl" :src="faceImageUrl" fit="cover" />
+              <div v-else class="face-placeholder">默认形象</div>
+            </div>
+            <span class="preview-caption">静态脸</span>
           </div>
-          <div v-if="idle?.ready && idleVideoUrl" class="face-preview" title="idle 循环预览">
-            <video :src="idleVideoUrl" autoplay loop muted playsinline />
+          <div v-if="idle?.ready && idleVideoUrl" class="face-preview-group">
+            <div class="face-preview is-idle" title="idle 循环预览（自动播放）">
+              <video :src="idleVideoUrl" autoplay loop muted playsinline />
+              <span class="idle-badge">▶ 循环</span>
+            </div>
+            <span class="preview-caption is-idle">idle 循环</span>
           </div>
           <div class="face-meta">
             <p v-if="face">已配置形象 · v{{ face.version }} · {{ face.width }}×{{ face.height }}<br>说话时用这张脸；静息播放生成的 idle 动画（未生成时回退微动 / 粒子头）。</p>
@@ -389,7 +396,12 @@ async function resetPersona() {
 .overview-grid article, .info-panel { padding: 16px; border: 1px solid var(--eid-border); border-radius: var(--eid-radius); background: var(--eid-bg-panel); }
 .overview-grid article.stats, .overview-grid article.face-card { grid-column: 1 / -1; }
 .face-card .face-body { display: flex; gap: 16px; margin-top: 10px; align-items: flex-start; }
-.face-preview { width: 112px; height: 112px; flex: 0 0 auto; border-radius: var(--eid-radius); overflow: hidden; border: 1px solid var(--eid-border); background: var(--eid-bg-elevated, rgba(255,255,255,.03)); }
+.face-preview-group { display: flex; flex-direction: column; align-items: center; gap: 6px; flex: 0 0 auto; }
+.preview-caption { color: var(--eid-text-muted); font-size: 11px; }
+.preview-caption.is-idle { color: var(--eid-accent, #22d3ee); }
+.face-preview { position: relative; width: 112px; height: 112px; border-radius: var(--eid-radius); overflow: hidden; border: 1px solid var(--eid-border); background: var(--eid-bg-elevated, rgba(255,255,255,.03)); }
+.face-preview.is-idle { border-color: var(--eid-accent, #22d3ee); box-shadow: 0 0 0 1px var(--eid-accent, #22d3ee) inset; }
+.idle-badge { position: absolute; left: 6px; top: 6px; padding: 1px 7px; border-radius: 999px; font-size: 10px; line-height: 1.6; background: rgba(0,0,0,.6); color: #fff; letter-spacing: .04em; }
 .face-preview .el-image, .face-preview video { width: 100%; height: 100%; display: block; object-fit: cover; }
 .face-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--eid-text-muted); font-size: 12px; }
 .face-meta { display: flex; flex-direction: column; gap: 10px; }
