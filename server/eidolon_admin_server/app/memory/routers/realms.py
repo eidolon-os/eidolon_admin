@@ -12,6 +12,7 @@ from ..runners import (
     RealmEntry,
     find_agent_processes,
     find_consolidator_processes,
+    inspect_palace_backend,
     load_realms,
     realms_source_path,
 )
@@ -41,6 +42,10 @@ async def _build_detail(
         port=entry.port,
         enabled=entry.enabled,
         engine=entry.engine,
+        **inspect_palace_backend(
+            entry.palace_path,
+            configured_backend=entry.configured_backend,
+        ),
         status=entry.status,
         palace_path=entry.palace_path,
         mcp_http_url=entry.mcp_http_url,
@@ -69,6 +74,20 @@ async def _build_detail(
                 )
                 if status.get("palace_path"):
                     detail.palace_path = str(status["palace_path"])
+                detail.configured_backend = str(
+                    status.get("mempalace_backend") or detail.configured_backend
+                )
+                detail.mempalace_version = str(
+                    status.get("mempalace_version") or ""
+                )
+                detail.backend_state = str(
+                    status.get("backend_state") or detail.backend_state
+                )
+                detail.backend_issue = str(
+                    status.get("backend_issue") or detail.backend_issue
+                )
+                if isinstance(status.get("backend_artifacts"), list):
+                    detail.backend_artifacts = status["backend_artifacts"]
         except Exception:  # noqa: BLE001 - best-effort enrichment
             pass
     detail.runtime_state = memory_runtime_state(

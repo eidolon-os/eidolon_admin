@@ -17,6 +17,30 @@ export function memoryAgentStatus(row: MemoryRealmDetail): RuntimeStatus {
     }
   }
 
+  if (row.backend_state === 'conflict') {
+    return {
+      type: 'danger',
+      label: 'BACKEND CONFLICT',
+      hint: row.backend_issue || `Configured backend ${row.configured_backend} conflicts with palace artifacts.`,
+    }
+  }
+
+  if (row.backend_state === 'invalid') {
+    return {
+      type: 'danger',
+      label: 'INVALID BACKEND',
+      hint: row.backend_issue || `Configured backend ${row.configured_backend} is invalid.`,
+    }
+  }
+
+  if (row.backend_state === 'stale_artifact') {
+    return {
+      type: 'warning',
+      label: 'STALE ARTIFACT',
+      hint: row.backend_issue || 'An invalid unselected backend artifact requires cleanup.',
+    }
+  }
+
   if (row.runtime_state === 'initializing') {
     return {
       type: 'warning',

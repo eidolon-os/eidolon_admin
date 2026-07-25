@@ -24,6 +24,17 @@ export interface RunnerInfo {
   port: number
   enabled: boolean
   engine: string
+  mempalace_version: string
+  configured_backend: string
+  backend_state: 'ready' | 'uninitialized' | 'stale_artifact' | 'conflict' | 'invalid' | 'unknown' | string
+  backend_issue: string
+  backend_artifacts: Array<{
+    backend: string
+    path: string
+    state: 'absent' | 'valid' | 'invalid' | string
+    size_bytes: number
+    detail: string
+  }>
   status: string
   palace_path: string
   running: boolean
@@ -74,6 +85,14 @@ export interface ConsolidatorStatus {
   log_path: string
 }
 
+export interface MemoryBackendArtifact {
+  backend: string
+  path: string
+  state: 'absent' | 'valid' | 'invalid' | string
+  size_bytes: number
+  detail: string
+}
+
 export interface MemoryRealmDetail {
   memory_realm_id: string
   owner_id: string
@@ -81,6 +100,10 @@ export interface MemoryRealmDetail {
   port: number
   enabled: boolean
   engine: string
+  configured_backend: string
+  backend_state: 'ready' | 'uninitialized' | 'stale_artifact' | 'conflict' | 'invalid' | 'unknown' | string
+  backend_issue: string
+  backend_artifacts: MemoryBackendArtifact[]
   status: string
   palace_path: string
   mcp_http_url: string

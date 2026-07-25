@@ -167,12 +167,20 @@ async def call_tool(
     arguments: dict[str, Any] | None = None,
 ) -> Any:
     """One-shot MCP tool call. Returns decoded JSON or raises HTTPException."""
+    tool_error: Any = None
+    payload: Any = None
     async with open_session(memory_realm_id) as (session, _url):
         result = await session.call_tool(tool, arguments or {})
         if result.isError:
-            err = _parse_text_content(result.content) or "tool returned error"
-            raise HTTPException(502, f"tool {tool!r} error: {err}")
-        return _parse_text_content(result.content)
+            tool_error = _parse_text_content(result.content) or "tool returned error"
+        else:
+            payload = _parse_text_content(result.content)
+    # Raise outside the MCP task-group context. Otherwise the HTTPException can
+    # be wrapped in BaseExceptionGroup during session teardown and mislabeled
+    # by open_session as "agent unreachable".
+    if tool_error is not None:
+        raise HTTPException(502, f"tool {tool!r} error: {tool_error}")
+    return payload
 
 
 async def list_tools(memory_realm_id: str) -> list[dict[str, Any]]:

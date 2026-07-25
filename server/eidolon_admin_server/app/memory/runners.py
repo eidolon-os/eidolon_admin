@@ -21,13 +21,25 @@ from pathlib import Path
 from typing import Any
 
 import psutil
+import yaml
 from eidolon_data import load_settings
 from eidolon_sdk.memory import memory_space_storage_name
 
+from ..settings import default_eidolon_root
 from .runtime_route import MemoryRuntimeRoute, default_mcp_base_port, route_for_realm
 
 _AGENT_CLI = "eidolon-memory-agent"
 _CONSOLIDATOR_CLI = "eidolon-memory-consolidator"
+_BACKEND_ARTIFACTS = {
+    "chroma": "chroma.sqlite3",
+    "qdrant": "qdrant_backend.json",
+    "pgvector": "pgvector_backend.json",
+    "sqlite_exact": "sqlite_exact.sqlite3",
+}
+_SQLITE_REQUIRED_TABLES = {
+    "chroma": frozenset({"collections", "embeddings"}),
+    "sqlite_exact": frozenset({"collections", "documents"}),
+}
 
 
 def realms_source_path() -> Path:
@@ -42,18 +54,46 @@ def memory_log_dir() -> Path:
     ).expanduser()
 
 
+def memory_settings_path() -> Path:
+    """Return the one Memory settings file used by the runtime and Admin."""
+    configured = os.environ.get("EIDOLON_MEMORY_SETTINGS_YAML", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (default_eidolon_root() / "eidolon_memory" / "config" / "settings.yaml").resolve()
+
+
+def _memory_settings_yaml() -> dict[str, Any]:
+    path = memory_settings_path()
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def configured_mempalace_backend() -> str:
+    """Read the globally authoritative MemPalace backend selection."""
+    raw = _memory_settings_yaml().get("mempalace")
+    if not isinstance(raw, dict):
+        return "unknown"
+    backend = str(raw.get("backend") or "").strip().lower()
+    return backend or "unknown"
+
+
 def memory_palaces_root() -> Path:
-    """Best-effort admin display root for memory worker palace directories."""
-    return (
-        Path(
-            os.environ.get(
-                "EIDOLON_MEMORY_PALACES_ROOT",
-                Path.home() / "eidolon" / "memory" / "mempalaces",
-            )
-        )
-        .expanduser()
-        .resolve()
+    """Resolve the same Palace root precedence used by the Memory runtime."""
+    env = os.environ.get("EIDOLON_MEMORY_PALACES_ROOT", "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    runtime = _memory_settings_yaml().get("runtime")
+    configured = (
+        str(runtime.get("palaces_root") or "").strip()
+        if isinstance(runtime, dict)
+        else ""
     )
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (Path.home() / "eidolon" / "memory" / "mempalaces").resolve()
 
 
 def memory_palace_path(memory_realm_id: str) -> str:
@@ -108,6 +148,7 @@ class RealmEntry:
     runtime_route: MemoryRuntimeRoute
     enabled: bool
     engine: str = "mempalace"
+    configured_backend: str = "chroma"
     status: str = "active"
     palace_path: str = ""
     consolidator: ConsolidatorConfig | None = None
@@ -151,6 +192,7 @@ def _load_realms_from_eidolon_data(db_path: Path) -> list[RealmEntry]:
                 r.owner_id,
                 r.companion_id,
                 r.engine,
+                r.engine_config_json,
                 r.policy_json,
                 r.status,
                 o.profile_json AS owner_profile_json,
@@ -168,6 +210,7 @@ def _load_realms_from_eidolon_data(db_path: Path) -> list[RealmEntry]:
     entries: list[RealmEntry] = []
     used_ports: set[int] = set()
     base_port = default_mcp_base_port()
+    global_backend = configured_mempalace_backend()
     for row in rows:
         profile = _json_dict(row["owner_profile_json"])
         settings = _json_dict(row["owner_settings_json"])
@@ -194,6 +237,7 @@ def _load_realms_from_eidolon_data(db_path: Path) -> list[RealmEntry]:
                 ),
                 enabled=enabled,
                 engine=str(row["engine"] or "mempalace"),
+                configured_backend=global_backend,
                 status=str(row["status"] or "active"),
                 palace_path=memory_palace_path(memory_realm_id),
                 consolidator=consolidator,
@@ -212,6 +256,127 @@ def _json_dict(value: object) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def inspect_palace_backend(
+    palace_path: str | Path,
+    *,
+    configured_backend: str = "chroma",
+) -> dict[str, Any]:
+    """Inspect backend artifacts without creating or mutating database files.
+
+    Configuration remains authoritative. Artifact discovery is only a
+    consistency check: an empty/corrupt foreign file is reported as invalid,
+    while a second valid backend is reported as a conflict.
+    """
+    palace = Path(palace_path).expanduser()
+    artifacts: list[dict[str, Any]] = []
+    for backend, filename in _BACKEND_ARTIFACTS.items():
+        path = palace / filename
+        item: dict[str, Any] = {
+            "backend": backend,
+            "path": str(path),
+            "state": "absent",
+            "size_bytes": 0,
+            "detail": "",
+        }
+        if path.is_file():
+            try:
+                item["size_bytes"] = path.stat().st_size
+                if item["size_bytes"] == 0:
+                    item["state"] = "invalid"
+                    item["detail"] = "empty artifact"
+                elif backend in _SQLITE_REQUIRED_TABLES:
+                    item["state"], item["detail"] = _inspect_sqlite_artifact(
+                        path,
+                        _SQLITE_REQUIRED_TABLES[backend],
+                    )
+                else:
+                    item["state"], item["detail"] = _inspect_json_artifact(path)
+            except OSError as exc:
+                item["state"] = "invalid"
+                item["detail"] = f"{type(exc).__name__}: {exc}"
+        artifacts.append(item)
+
+    configured = configured_backend.strip().lower() or "chroma"
+    selected = next((a for a in artifacts if a["backend"] == configured), None)
+    foreign_valid = [
+        a["backend"]
+        for a in artifacts
+        if a["backend"] != configured and a["state"] == "valid"
+    ]
+    invalid = [a for a in artifacts if a["state"] == "invalid"]
+
+    if selected is None:
+        state = "invalid"
+        issue = f"unsupported configured backend {configured!r}"
+    elif foreign_valid:
+        state = "conflict"
+        issue = (
+            f"configured backend {configured!r} conflicts with valid artifacts: "
+            f"{', '.join(foreign_valid)}"
+        )
+    elif selected["state"] == "invalid":
+        state = "invalid"
+        issue = f"configured backend {configured!r} artifact is invalid: {selected['detail']}"
+    elif invalid:
+        state = "stale_artifact"
+        issue = "; ".join(
+            f"{a['backend']}: {a['detail']}" for a in invalid
+        )
+    elif selected["state"] == "valid":
+        state = "ready"
+        issue = ""
+    else:
+        state = "uninitialized"
+        issue = f"configured backend {configured!r} has no initialized artifact"
+
+    return {
+        "configured_backend": configured,
+        "backend_state": state,
+        "backend_issue": issue,
+        "backend_artifacts": artifacts,
+    }
+
+
+def _inspect_sqlite_artifact(
+    path: Path,
+    required_tables: frozenset[str],
+) -> tuple[str, str]:
+    try:
+        conn = sqlite3.connect(
+            f"file:{path}?mode=ro&immutable=1",
+            uri=True,
+            timeout=2.0,
+        )
+        try:
+            row = conn.execute("PRAGMA quick_check").fetchone()
+            if not row or str(row[0]).strip().lower() != "ok":
+                return "invalid", f"quick_check={row[0] if row else 'no result'}"
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return "invalid", f"{type(exc).__name__}: {exc}"
+    missing = sorted(required_tables - tables)
+    if missing:
+        return "invalid", f"missing required tables: {', '.join(missing)}"
+    return "valid", ""
+
+
+def _inspect_json_artifact(path: Path) -> tuple[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return "invalid", f"{type(exc).__name__}: {exc}"
+    if not isinstance(payload, dict):
+        return "invalid", "marker must contain a JSON object"
+    return "valid", ""
 
 
 def _memory_realm_id_from_cmdline(cmd: list[str]) -> str | None:
@@ -333,8 +498,13 @@ async def list_runners() -> dict[str, Any]:
             "port": u.port,
             "enabled": u.enabled,
             "engine": u.engine,
+            "configured_backend": u.configured_backend,
             "status": u.status,
             "palace_path": u.palace_path,
+            **inspect_palace_backend(
+                u.palace_path,
+                configured_backend=u.configured_backend,
+            ),
             "running": running,
             "listening": listening,
             "agent_log_path": child_log_path(u.id, "agent"),

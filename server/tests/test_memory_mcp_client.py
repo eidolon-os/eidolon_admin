@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 from aiohttp import web
+from fastapi import HTTPException
 
 from eidolon_admin_server.app.memory import mcp_client as mc
 from eidolon_admin_server.app.memory.mcp_client import (
@@ -159,3 +160,28 @@ async def test_open_session_wraps_upstream_502_as_unreachable(monkeypatch) -> No
     assert exc_info.value.status_code == 502
     # The inner cause must surface — operator needs the actual symptom.
     assert "502" in detail or "Bad Gateway" in detail
+
+
+async def test_call_tool_business_error_is_not_labeled_unreachable(monkeypatch) -> None:
+    class _Result:
+        isError = True
+        content = [{"text": "backend artifact conflict"}]
+
+    class _Session:
+        async def call_tool(self, _tool, _arguments):
+            return _Result()
+
+    @asynccontextmanager
+    async def _session(_memory_realm_id):
+        yield _Session(), "http://127.0.0.1:18806/mcp"
+
+    monkeypatch.setattr(mc, "open_session", _session)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await mc.call_tool("r:alice:default", "eidolon_memory_list")
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == (
+        "tool 'eidolon_memory_list' error: backend artifact conflict"
+    )
+    assert "unreachable" not in exc_info.value.detail

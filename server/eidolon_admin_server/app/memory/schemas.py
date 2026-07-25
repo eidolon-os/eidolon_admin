@@ -42,6 +42,11 @@ class RealmDetail(BaseModel):
     port: int
     enabled: bool
     engine: str = "mempalace"
+    mempalace_version: str = ""
+    configured_backend: str = "chroma"
+    backend_state: str = "unknown"
+    backend_issue: str = ""
+    backend_artifacts: list[dict[str, Any]] = Field(default_factory=list)
     status: str = "active"
     palace_path: str = ""
     mcp_http_url: str = ""

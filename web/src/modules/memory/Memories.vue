@@ -20,7 +20,11 @@ const runtimeStatus = computed(() =>
     : { type: 'info' as const, label: 'NO REALM', hint: 'No memory realm selected.' },
 )
 const memoryReady = computed(() =>
-  Boolean(currentRealm.value?.enabled && currentRealm.value?.agent_reachable),
+  Boolean(
+    currentRealm.value?.enabled
+      && currentRealm.value?.agent_reachable
+      && !['conflict', 'invalid', 'stale_artifact'].includes(currentRealm.value?.backend_state || ''),
+  ),
 )
 
 let runtimeTimer: ReturnType<typeof setInterval> | null = null

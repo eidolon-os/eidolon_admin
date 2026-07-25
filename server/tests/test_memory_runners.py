@@ -106,6 +106,29 @@ async def test_memory_realm_id_from_cmdline_preserves_opaque_space_id():
     assert f(["x", "--port", "8030"]) is None
 
 
+async def test_inspect_palace_backend_distinguishes_empty_stale_artifact(
+    tmp_path: Path,
+):
+    chroma = sqlite3.connect(tmp_path / "chroma.sqlite3")
+    with chroma:
+        chroma.execute("CREATE TABLE collections (id TEXT)")
+        chroma.execute("CREATE TABLE embeddings (id TEXT)")
+    chroma.close()
+    (tmp_path / "sqlite_exact.sqlite3").touch()
+
+    report = runners_mod.inspect_palace_backend(
+        tmp_path,
+        configured_backend="chroma",
+    )
+
+    assert report["backend_state"] == "stale_artifact"
+    assert report["configured_backend"] == "chroma"
+    by_backend = {item["backend"]: item for item in report["backend_artifacts"]}
+    assert by_backend["chroma"]["state"] == "valid"
+    assert by_backend["sqlite_exact"]["state"] == "invalid"
+    assert by_backend["sqlite_exact"]["detail"] == "empty artifact"
+
+
 async def _http(app):
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://gw"
@@ -165,9 +188,17 @@ async def test_load_realms_derives_routes_when_engine_config_is_empty(
     tmp_path, monkeypatch
 ):
     data_db = _write_eidolon_data(tmp_path)
+    memory_settings = tmp_path / "memory-settings.yaml"
+    memory_settings.write_text(
+        "runtime:\n"
+        f"  palaces_root: {tmp_path / 'mempalaces'}\n"
+        "mempalace:\n"
+        "  backend: chroma\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
     monkeypatch.setenv("EIDOLON_MEMORY_MCP_PORT", "8030")
-    monkeypatch.setenv("EIDOLON_MEMORY_PALACES_ROOT", str(tmp_path / "mempalaces"))
+    monkeypatch.setenv("EIDOLON_MEMORY_SETTINGS_YAML", str(memory_settings))
 
     realms = runners_mod.load_realms()
 
@@ -178,6 +209,32 @@ async def test_load_realms_derives_routes_when_engine_config_is_empty(
     assert alice.palace_path == str(
         tmp_path / "mempalaces" / memory_space_storage_name("r:alice:default")
     )
+    assert alice.configured_backend == "chroma"
+
+
+async def test_load_realms_uses_global_backend_not_realm_override(
+    tmp_path, monkeypatch
+):
+    data_db = _write_eidolon_data(tmp_path)
+    memory_settings = tmp_path / "memory-settings.yaml"
+    memory_settings.write_text(
+        "mempalace:\n"
+        "  backend: qdrant\n",
+        encoding="utf-8",
+    )
+    conn = sqlite3.connect(data_db)
+    with conn:
+        conn.execute(
+            "UPDATE memory_realms SET engine_config_json = ?",
+            (json.dumps({"backend": "sqlite_exact"}),),
+        )
+    conn.close()
+    monkeypatch.setenv("EIDOLON_DATA_SQLITE_PATH", str(data_db))
+    monkeypatch.setenv("EIDOLON_MEMORY_SETTINGS_YAML", str(memory_settings))
+
+    realms = runners_mod.load_realms()
+
+    assert {realm.configured_backend for realm in realms} == {"qdrant"}
 
 
 async def test_load_realms_ignores_legacy_palace_path_overrides(tmp_path, monkeypatch):
