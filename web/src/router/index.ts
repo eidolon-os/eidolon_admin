@@ -114,10 +114,19 @@ const routes: RouteRecordRaw[] = [
         name: 'system-firmware',
         component: () => import('@/modules/tools/Esp32.vue'),
       },
+      {
+        path: 'advanced/system/mobile',
+        name: 'system-mobile',
+        component: () => import('@/modules/tools/Mobile.vue'),
+      },
       // Legacy deep link — firmware is a system tool, independent of Owner devices.
       {
         path: 'tools/esp32',
         redirect: { name: 'system-firmware' },
+      },
+      {
+        path: 'tools/mobile',
+        redirect: { name: 'system-mobile' },
       },
       {
         path: 'services/:serviceId/:feature',

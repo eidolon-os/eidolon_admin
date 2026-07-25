@@ -140,6 +140,7 @@ export const navigation: NavGroup[] = [
       { id: 'hub-commands', label: 'Hub · Commands', hint: '控制面', icon: 'Position', section: 'Device Infrastructure', route: { name: 'feature', params: { serviceId: 'hub', feature: 'commands' } } },
       { id: 'hub-metrics', label: 'Hub · Metrics', hint: '运行计数', icon: 'DataLine', section: 'Device Infrastructure', route: { name: 'feature', params: { serviceId: 'hub', feature: 'metrics' } } },
       { id: 'device-firmware', label: 'Firmware & Serial', hint: '烧录 / 串口 / 诊断', icon: 'Tools', section: 'System Tools', route: { name: 'system-firmware' } },
+      { id: 'device-mobile', label: 'Mobile', hint: 'Android · 编译 / 安装 / ADB 日志', icon: 'Cellphone', section: 'System Tools', route: { name: 'system-mobile' } },
       { id: 'data-inspector', label: 'Data Inspector', hint: '主权域原始记录', icon: 'Grid', section: 'Data', route: { name: 'data-inspector', params: { section: 'conversations' } }, activeMatch: { name: 'data-inspector' } },
       { id: 'workspace-initialize', label: 'Workspace Initialization', hint: 'Companion / Genome / Realm 原始配置', icon: 'SetUp', section: 'Data', route: { name: 'workspace-initialize' } },
     ],
