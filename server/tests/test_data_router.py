@@ -346,12 +346,25 @@ async def test_guard_policy_configuration_is_revision_checked_and_audited(
                 "candidate_debounce_ms": 600,
                 "absence_timeout_ms": 1200,
                 "consecutive_capture_failures": 3,
+                "owner_face_interval_ms": 500,
+                "owner_presence_enter_ms": 600,
             },
         },
     )
     assert runtime_updated.status_code == 200
     assert runtime_updated.json()["runtime_revision"] == 2
     assert runtime_updated.json()["config_revision"] == 2
+    assert runtime_updated.json()["runtime_config_json"]["owner_face_interval_ms"] == 500
+    assert runtime_updated.json()["runtime_config_json"]["owner_presence_enter_ms"] == 600
+
+    runtime_sensitive = await client.put(
+        f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/runtime-config",
+        json={
+            "expected_revision": 2,
+            "runtime_config_json": {"raw_image": "forbidden"},
+        },
+    )
+    assert runtime_sensitive.status_code == 422
 
     runtime_stale = await client.put(
         f"/api/guard/owners/owner-guard-config/bindings/{binding['binding_id']}/runtime-config",

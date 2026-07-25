@@ -148,7 +148,10 @@ async def update_binding_runtime_config(
     binding = await store.guard_bindings.get(binding_id)
     if binding is None or binding.owner_id != owner_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "guard binding not found")
-    _assert_control_only_config(payload.runtime_config_json)
+    # GuardRuntimeConfig is a strict, extra-forbid whitelist. Unlike the
+    # generic policy-config heuristic below, it can safely admit legitimate
+    # control fields such as owner_face_interval_ms without mistaking the word
+    # "face" for biometric media.
     _validate_runtime_config(payload.runtime_config_json)
     try:
         row = await store.guard_bindings.update_runtime_config(
