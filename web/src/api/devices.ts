@@ -1,5 +1,11 @@
 import client from './client'
 import type { RuntimeDevice } from './missionControl'
+import {
+  CONTROL_OP_ROOM_JOIN,
+  SESSION_INTENT_FIELD,
+  SESSION_INTENT_USER_INITIATED,
+  type RoomJoinPayload,
+} from '../protocol/eidolonContract'
 
 // Server-side fleet join (hub presence/approval + eidolon_data ownership),
 // grouped by owner → companion. See app/devices/router.py.
@@ -152,7 +158,13 @@ async function sendDeviceCommand(
 }
 
 export async function wakeDevice(id: string): Promise<Record<string, any>> {
-  return sendDeviceCommand(id, 'room.join')
+  // An owner clicking "启动会话" is a normal conversation, not an autonomous
+  // proactive report. Proactive orchestration uses Hub's separate path and
+  // explicitly sends proactive_initiated.
+  const payload = {
+    [SESSION_INTENT_FIELD]: SESSION_INTENT_USER_INITIATED,
+  } satisfies RoomJoinPayload
+  return sendDeviceCommand(id, CONTROL_OP_ROOM_JOIN, payload)
 }
 
 export async function identifyDevice(id: string): Promise<Record<string, any>> {
