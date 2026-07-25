@@ -54,7 +54,7 @@ async def kg_entity(
     include_sensitive: bool = False,
 ) -> KgEntityResponse:
     args: dict[str, Any] = {
-        "entity": name,
+        "name": name,
         "direction": direction,
         "include_sensitive": include_sensitive,
     }

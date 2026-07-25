@@ -39,6 +39,7 @@ class RealmDetail(BaseModel):
     memory_realm_id: str
     owner_id: str
     companion_id: str
+    companion_display_name: str = ""
     port: int
     enabled: bool
     engine: str = "mempalace"
@@ -98,6 +99,17 @@ class MemorySearchResponse(BaseModel):
 class MemoryListResponse(BaseModel):
     records: list[dict[str, Any]] = Field(default_factory=list)
     total_hint: int = 0
+
+
+class MemoryCommandStatusResponse(BaseModel):
+    request_id: str
+    status: str
+    kind: str = ""
+    resource_id: str | None = None
+    error: str | None = None
+    attempts: int = 0
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class MemoryCreateRequest(BaseModel):

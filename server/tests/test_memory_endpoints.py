@@ -145,6 +145,7 @@ async def test_realms_list(app):
     alice = data["realms"][0]
     assert alice["owner_id"] == "alice"
     assert alice["companion_id"] == "default"
+    assert alice["companion_display_name"] == "default"
     assert alice["enabled"] is True
     assert alice["agent_reachable"] is True
     assert alice["palace_initialized"] is True
@@ -331,7 +332,16 @@ async def test_memories_search_accepts_single_record_dict(app):
 
 
 async def test_memories_list_returns_total_hint(app):
-    fake = {"records": [{"key": "k1"}, {"key": "k2"}], "total_hint": 42}
+    fake = {
+        "records": [
+            {
+                "key": "k1",
+                "metadata": {"wing": "Wing_Profile", "room": "profile_core"},
+            },
+            {"key": "k2"},
+        ],
+        "total_hint": 42,
+    }
     with patch(
         "eidolon_admin_server.app.memory.routers.memories.call_tool",
         new=AsyncMock(return_value=fake),
@@ -344,6 +354,8 @@ async def test_memories_list_returns_total_hint(app):
     data = resp.json()
     assert data["total_hint"] == 42
     assert len(data["records"]) == 2
+    assert data["records"][0]["wing"] == "Wing_Profile"
+    assert data["records"][0]["room"] == "profile_core"
 
 
 async def test_memories_list_tolerates_list_payload(app):
@@ -361,6 +373,32 @@ async def test_memories_list_tolerates_list_payload(app):
     data = resp.json()
     assert data["records"] == fake
     assert data["total_hint"] == 2
+
+
+async def test_memory_command_status_is_observable(app):
+    fake = {
+        "request_id": "request-1",
+        "kind": "memory_intent",
+        "status": "applied",
+        "resource_id": "drawer-1",
+        "attempts": 1,
+        "created_at": "2026-07-25T00:00:00Z",
+        "updated_at": "2026-07-25T00:00:01Z",
+    }
+    with patch(
+        "eidolon_admin_server.app.memory.routers.memories.call_tool",
+        new=AsyncMock(return_value=fake),
+    ) as mock:
+        async with await _http(app) as ac:
+            resp = await ac.get(
+                "/api/memory/commands/request-1",
+                params={"memory_realm_id": "r:alice:default"},
+            )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "applied"
+    assert mock.await_args.args[1] == "eidolon_memory_command_status"
+    assert mock.await_args.args[2] == {"request_id": "request-1"}
 
 
 # -- hierarchy ----------------------------------------------------------------
@@ -509,6 +547,8 @@ async def test_kg_entity(app):
     # direction passed through
     args = mock.await_args.args
     assert args[1] == "eidolon_memory_kg_query_entity"
+    assert args[2]["name"] == "alice"
+    assert "entity" not in args[2]
     assert args[2]["direction"] == "both"
 
 

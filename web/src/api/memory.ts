@@ -97,6 +97,7 @@ export interface MemoryRealmDetail {
   memory_realm_id: string
   owner_id: string
   companion_id: string
+  companion_display_name: string
   port: number
   enabled: boolean
   engine: string
@@ -189,6 +190,17 @@ export interface MemoryListResponse {
   total_hint: number
 }
 
+export interface MemoryCommandStatus {
+  request_id: string
+  status: 'accepted' | 'retrying' | 'applied' | 'failed' | 'unknown' | string
+  kind: string
+  resource_id: string | null
+  error: string | null
+  attempts: number
+  created_at: string
+  updated_at: string
+}
+
 export interface MemoryCreateBody {
   memory_realm_id: string
   wing?: string
@@ -219,6 +231,17 @@ export async function listMemories(
   const { data } = await client.get<MemoryListResponse>('/memory/memories', {
     params: { memory_realm_id: realmId, limit, offset, include_private: includePrivate },
   })
+  return data
+}
+
+export async function getMemoryCommandStatus(
+  realmId: string,
+  requestId: string,
+): Promise<MemoryCommandStatus> {
+  const { data } = await client.get<MemoryCommandStatus>(
+    `/memory/commands/${encodeURIComponent(requestId)}`,
+    { params: { memory_realm_id: realmId } },
+  )
   return data
 }
 

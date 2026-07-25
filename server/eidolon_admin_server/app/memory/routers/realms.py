@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from ..mcp_client import call_tool, probe_reachable
 from ..presentation import agent_log_path_for, consolidator_status, memory_runtime_state
@@ -33,12 +33,17 @@ async def _build_detail(
     *,
     agent_map: dict,
     cons_map: dict,
+    companion_names: dict[str, str],
 ) -> RealmDetail:
     proc = agent_map.get(entry.id)
     detail = RealmDetail(
         memory_realm_id=entry.memory_realm_id,
         owner_id=entry.owner_id,
         companion_id=entry.companion_id,
+        companion_display_name=companion_names.get(
+            entry.companion_id,
+            entry.companion_id,
+        ),
         port=entry.port,
         enabled=entry.enabled,
         engine=entry.engine,
@@ -100,12 +105,32 @@ async def _build_detail(
 
 
 @router.get("/realms", response_model=RealmsListResponse)
-async def list_memory_realms() -> RealmsListResponse:
+async def list_memory_realms(request: Request) -> RealmsListResponse:
     entries = load_realms()
     agent_map = find_agent_processes()
     cons_map = find_consolidator_processes()
+    companion_names: dict[str, str] = {}
+    store = getattr(request.app.state, "data_store", None)
+    if store is not None:
+        for companion_id in dict.fromkeys(e.companion_id for e in entries):
+            try:
+                companion = await store.companions.get(companion_id)
+            except Exception:  # noqa: BLE001 - labels are optional enrichment
+                companion = None
+            if companion is not None:
+                companion_names[companion_id] = (
+                    companion.display_name or companion.companion_id
+                )
     details = await asyncio.gather(
-        *(_build_detail(e, agent_map=agent_map, cons_map=cons_map) for e in entries)
+        *(
+            _build_detail(
+                e,
+                agent_map=agent_map,
+                cons_map=cons_map,
+                companion_names=companion_names,
+            )
+            for e in entries
+        )
     )
     return RealmsListResponse(
         realms_source=str(realms_source_path()),

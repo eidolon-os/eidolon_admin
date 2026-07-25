@@ -1,19 +1,32 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useMemoryRealmStore } from '@/stores/memoryRealm'
 import { memoryAgentStatus } from '@/utils/memoryRuntime'
 
 const store = useMemoryRealmStore()
+const route = useRoute()
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+function applyRouteScope() {
+  const realmId = String(route.query.memory_realm_id || '')
+  const companionId = String(route.query.companion_id || '')
+  store.setRouteScope(realmId, companionId)
+}
+
+applyRouteScope()
+
 onMounted(async () => {
-  // Respect a prior selection (sticky across sessions); don't force-reset to
-  // the backend default on every mount. The interval still force-refreshes.
   await store.load()
   refreshTimer = setInterval(() => {
     if (!store.loading) void store.load(true)
   }, 10_000)
 })
+
+watch(
+  () => [route.query.memory_realm_id, route.query.companion_id],
+  applyRouteScope,
+)
 
 onBeforeUnmount(() => {
   if (refreshTimer) clearInterval(refreshTimer)
@@ -21,12 +34,18 @@ onBeforeUnmount(() => {
 
 const options = computed(() =>
   store.realms.map((realm) => ({
-    label: `${realm.memory_realm_id}${realm.enabled ? '' : ' (disabled)'} · :${realm.port}`,
-    hint: `${realm.owner_id} / ${realm.companion_id}`,
+    label: `${realm.companion_display_name || realm.companion_id}${realm.enabled ? '' : ' (disabled)'} · ${realm.memory_realm_id.slice(-8)}`,
+    hint: `${realm.memory_realm_id} · owner ${realm.owner_id} · ${realm.configured_backend}`,
     status: memoryAgentStatus(realm),
     value: realm.memory_realm_id,
   })),
 )
+
+const scopeLabel = computed(() => {
+  const realm = store.currentRealm
+  if (!realm) return 'Memory scope'
+  return realm.companion_display_name || realm.companion_id
+})
 
 const current = computed({
   get: () => store.currentId,
@@ -36,12 +55,12 @@ const current = computed({
 
 <template>
   <div class="realm-selector">
-    <span class="prefix">Memory realm</span>
+    <span class="prefix">{{ scopeLabel }}</span>
     <el-select
       v-model="current"
       placeholder="选择 realm"
       size="small"
-      style="width: 260px"
+      style="width: 340px"
       :loading="store.loading"
     >
       <el-option

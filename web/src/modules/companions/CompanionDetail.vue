@@ -213,6 +213,18 @@ function chat() {
   })
 }
 
+function openMemoryConsole() {
+  router.push({
+    name: 'feature',
+    params: { serviceId: 'memory', feature: 'memories' },
+    query: {
+      owner_id: ownerId.value,
+      companion_id: companionId.value,
+      memory_realm_id: companionRealms.value[0]?.realm_id,
+    },
+  })
+}
+
 function goSecurity() {
   router.push({ name: 'identity-security', query: { owner_id: ownerId.value || undefined } })
 }
@@ -356,7 +368,10 @@ async function resetPersona() {
     </div>
 
     <section v-else-if="section === 'memory'" class="info-panel">
-      <header><div><h2>记忆域</h2><p>当前 Companion 使用的长期记忆空间。</p></div></header>
+      <header>
+        <div><h2>记忆域</h2><p>当前 Companion 使用的长期记忆空间。</p></div>
+        <el-button :disabled="!companionRealms.length" @click="openMemoryConsole">打开 Memory 控制台</el-button>
+      </header>
       <el-table :data="companionRealms" size="small" stripe>
         <el-table-column prop="realm_id" label="Realm" min-width="220" />
         <el-table-column prop="engine" label="Engine" width="150" />

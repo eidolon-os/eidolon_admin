@@ -5,10 +5,32 @@ from __future__ import annotations
 from fastapi import APIRouter, Query, Request
 
 from ..mcp_client import call_tool
-from ..schemas import MemoryListResponse, MemorySearchResponse
+from ..schemas import (
+    MemoryCommandStatusResponse,
+    MemoryListResponse,
+    MemorySearchResponse,
+)
 from ..space import memory_actor_context_for_realm
 
 router = APIRouter()
+
+
+def _normalize_records(records: object) -> list[dict]:
+    if not isinstance(records, list):
+        return []
+    normalized: list[dict] = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        item = dict(record)
+        metadata = item.get("metadata")
+        if isinstance(metadata, dict):
+            if "wing" not in item and metadata.get("wing") is not None:
+                item["wing"] = metadata["wing"]
+            if "room" not in item and metadata.get("room") is not None:
+                item["room"] = metadata["room"]
+        normalized.append(item)
+    return normalized
 
 
 @router.get("/memories/search", response_model=MemorySearchResponse)
@@ -42,7 +64,7 @@ async def search_memories(
         records = [result]
     else:
         records = []
-    return MemorySearchResponse(records=records or [])
+    return MemorySearchResponse(records=_normalize_records(records))
 
 
 @router.get("/memories", response_model=MemoryListResponse)
@@ -59,9 +81,32 @@ async def list_memories(
     )
     if isinstance(result, dict):
         return MemoryListResponse(
-            records=result.get("records") or [],
+            records=_normalize_records(result.get("records")),
             total_hint=int(result.get("total_hint") or 0),
         )
     if isinstance(result, list):
-        return MemoryListResponse(records=result, total_hint=len(result))
+        return MemoryListResponse(
+            records=_normalize_records(result),
+            total_hint=len(result),
+        )
     return MemoryListResponse()
+
+
+@router.get(
+    "/commands/{request_id}",
+    response_model=MemoryCommandStatusResponse,
+)
+async def memory_command_status(
+    request_id: str,
+    memory_realm_id: str = Query(...),
+) -> MemoryCommandStatusResponse:
+    result = await call_tool(
+        memory_realm_id,
+        "eidolon_memory_command_status",
+        {"request_id": request_id},
+    )
+    if not isinstance(result, dict):
+        result = {"request_id": request_id, "status": "unknown"}
+    result.setdefault("request_id", request_id)
+    result.setdefault("status", "unknown")
+    return MemoryCommandStatusResponse.model_validate(result)
