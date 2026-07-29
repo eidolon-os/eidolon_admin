@@ -120,7 +120,7 @@ function hopLabel(hop: RuntimeRouteHop): string {
             <li v-for="hop in target.activity.route" :key="hop.hop_id" class="dw-stage" :class="statusClass(hop.status)">
               <i class="led" :class="statusClass(hop.status)" />
               <b>{{ hopLabel(hop) }}</b>
-              <em :title="hop.node_id">{{ hop.node_type }}<template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
+              <em :title="hop.node_id">{{ hop.stage || hop.node_type }}<template v-if="hop.ts"> · {{ fmtTime(hop.ts) }}</template><template v-if="hop.latency_ms != null"> · {{ fmtLatency(hop.latency_ms) }}</template></em>
             </li>
           </ol>
           <p v-else class="dw-empty">该事件没有足够的事实节点可形成路径</p>

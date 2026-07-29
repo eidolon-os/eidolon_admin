@@ -138,9 +138,7 @@ async def test_device_role_reads_from_bound_companion_not_board_kind(
     )
     # Guard sentinel: guard-capable device bound to a guard companion only via
     # guard_bindings (never via bound_companion_id).
-    guard = await data_store.guard_bindings.ensure_guard_companion(
-        owner_id="owner-role", companion_id="guard-role"
-    )
+    guard = await data_store.guard_bindings.ensure_guard_companion(owner_id="owner-role", companion_id="guard-role")
     await data_store.devices.create_device(
         device_id="atk-sentinel",
         owner_id="owner-role",
@@ -252,9 +250,7 @@ async def test_runtime_blackboard_reads_only_selected_owner_current_key() -> Non
         request, owner_id, statuses
     )
 
-    assert kv.calls == [
-        ("EIDOLON_RUNTIME_DEVICES", owner_device_blackboard_key(owner_id))
-    ]
+    assert kv.calls == [("EIDOLON_RUNTIME_DEVICES", owner_device_blackboard_key(owner_id))]
     assert result.health == "healthy"
     assert result.available is True
     assert result.snapshot is not None
@@ -408,9 +404,7 @@ def test_degraded_blackboard_does_not_override_hub_device_presence(
 
 async def test_expired_runtime_device_lease_projects_consistent_offline_status() -> None:
     owner_id = "owner-expired-device"
-    kv = _FakeRuntimeKV(
-        _runtime_snapshot_bytes(owner_id, hub_lease_delta=60, device_lease_delta=-1)
-    )
+    kv = _FakeRuntimeKV(_runtime_snapshot_bytes(owner_id, hub_lease_delta=60, device_lease_delta=-1))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
     statuses: list[mission_control_service.SourceStatus] = []
     blackboard = await mission_control_service._runtime_blackboard(  # noqa: SLF001
@@ -579,9 +573,7 @@ async def test_live_enrichment_never_invents_owner_for_global_hub_frame(
 
 async def test_events_tail_streams_new_db_events(data_store: DataStore) -> None:
     """P2d — the cursor tail turns owner-scoped audit rows into live RuntimeEvents."""
-    await data_store.owner_service.create_owner(
-        owner_id="owner-tail-x", display_name="Tail", actor_type="test"
-    )
+    await data_store.owner_service.create_owner(owner_id="owner-tail-x", display_name="Tail", actor_type="test")
     await data_store.events.record_event(
         event_type="owner.updated",
         owner_id="owner-tail-x",
@@ -649,9 +641,7 @@ async def test_snapshot_replay_sets_demo_mode(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
-    await data_store.owner_service.create_owner(
-        owner_id="owner-r", display_name="R", actor_type="test"
-    )
+    await data_store.owner_service.create_owner(owner_id="owner-r", display_name="R", actor_type="test")
     resp = await client.get("/api/mission-control/snapshot?owner_id=owner-r&mode=replay")
     assert resp.status_code == 200
     assert resp.json()["demo_mode"] == "replay"
@@ -661,9 +651,7 @@ async def test_snapshot_exposes_contract_layer(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
-    await data_store.owner_service.create_owner(
-        owner_id="owner-cl", display_name="CL", actor_type="test"
-    )
+    await data_store.owner_service.create_owner(owner_id="owner-cl", display_name="CL", actor_type="test")
     await data_store.workspace_provisioning.provision_workspace(
         owner_id="owner-cl", companion_display_name="Xiaoyi", actor_type="test"
     )
@@ -785,7 +773,11 @@ async def test_snapshot_projects_channel_only_rejected_turn(
             "status": "rejected",
             "terminal_reason": "voiceprint_commit_blocked",
             "durations_ms": {"speech_stop_to_commit": None},
-            "missing_milestones": ["turn_committed", "brain_first_delta", "first_audio"],
+            "missing_milestones": [
+                "turn_committed",
+                "brain_first_delta",
+                "first_audio",
+            ],
         },
     )
 
@@ -819,9 +811,7 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
     owner_id = "owner-trace-merge"
     companion_id = "c_owner-trace-merge_default"
     channel_turn_id = "channel-turn-merged"
-    await data_store.owner_service.create_owner(
-        owner_id=owner_id, display_name="Voice Owner", actor_type="test"
-    )
+    await data_store.owner_service.create_owner(owner_id=owner_id, display_name="Voice Owner", actor_type="test")
     await data_store.workspace_provisioning.provision_workspace(
         owner_id=owner_id,
         companion_display_name="Xiaoyi",
@@ -1036,9 +1026,7 @@ def test_activity_projection_keeps_concurrent_companions_independent() -> None:
         stages=[{"key": "playback", "label": "B 播放", "status": "running"}],
     )
 
-    activities = mission_control_service._project_runtime_activities(
-        [turn_a, turn_b], [], []
-    )
+    activities = mission_control_service._project_runtime_activities([turn_a, turn_b], [], [])
 
     active = {item.companion_id: item for item in activities}
     assert active["companion-a"].current_hop_id.endswith(":brain:0")
@@ -1072,6 +1060,149 @@ def test_device_binding_enriches_guard_event_and_route() -> None:
         "guard-device",
         "hub",
         "guard-companion",
+    ]
+
+
+def test_presence_auth_events_form_one_timestamped_cross_device_activity() -> None:
+    base = datetime(2026, 7, 16, 12, 0, tzinfo=UTC)
+
+    def event(
+        event_id: str,
+        offset_ms: int,
+        event_type: str,
+        device_id: str | None,
+        payload: dict | None = None,
+    ):
+        return mission_control_service.RuntimeEvent(
+            event_id=event_id,
+            ts=base + timedelta(milliseconds=offset_ms),
+            source="channel" if event_type.startswith("channel.") else "hub",
+            type=event_type,
+            trace_id="flow-presence-1",
+            owner_id="owner-a",
+            companion_id="companion-a",
+            device_id=device_id,
+            summary=event_type,
+            payload=payload or {},
+        )
+
+    events = [
+        event("radar", 0, "ambient.presence.state", "box-3"),
+        event("fanout-1", 40, "hub.device_flow.broadcasted", "box-3"),
+        event(
+            "verify",
+            180,
+            "companion.flow.node",
+            "atk",
+            {
+                "stage": "atk.owner_verification",
+                "status": "running",
+                "label": "ATK verifying owner",
+            },
+        ),
+        event("confirmed", 820, "identity.owner_presence.confirmed", "atk"),
+        event(
+            "authorize",
+            1050,
+            "hub.voice_session.authorized",
+            "box-3",
+            {"stage": "hub.voice_authorize"},
+        ),
+        event("channel", 1320, "channel.session.started", "box-3"),
+    ]
+
+    activities = mission_control_service._project_runtime_activities([], [], events)
+
+    assert len(activities) == 1
+    activity = activities[0]
+    assert activity.kind == "presence_auth"
+    assert activity.status == "completed"
+    assert [hop.node_id for hop in activity.route] == [
+        "box-3",
+        "hub",
+        "atk",
+        "atk",
+        "hub",
+        "channel",
+    ]
+    assert [hop.latency_ms for hop in activity.route] == [
+        None,
+        40,
+        140,
+        640,
+        230,
+        270,
+    ]
+    assert all(hop.ts is not None for hop in activity.route)
+
+
+def test_presence_heartbeats_refresh_activity_without_creating_route_hops() -> None:
+    base = datetime.now(UTC) - timedelta(seconds=10)
+
+    def event(
+        event_id: str,
+        offset_ms: int,
+        state: str,
+        observation: str,
+    ):
+        return mission_control_service.RuntimeEvent(
+            event_id=event_id,
+            ts=base + timedelta(milliseconds=offset_ms),
+            source="hub",
+            type="ambient.presence.state",
+            trace_id="flow-presence-heartbeat",
+            owner_id="owner-a",
+            companion_id="companion-a",
+            device_id="box-3",
+            summary="ambient.presence.state",
+            payload={"state": state, "observation": observation},
+        )
+
+    edge = event("edge", 0, "present", "edge")
+    heartbeat_1 = event("heartbeat-1", 5_000, "present", "heartbeat")
+    heartbeat_2 = event("heartbeat-2", 10_000, "present", "heartbeat")
+
+    activities = mission_control_service._project_runtime_activities([], [], [edge, heartbeat_1, heartbeat_2])
+
+    assert len(activities) == 1
+    activity = activities[0]
+    assert activity.status == "running"
+    assert activity.updated_at == heartbeat_2.ts
+    assert activity.event_ids == ["edge", "heartbeat-1", "heartbeat-2"]
+    assert len(activity.route) == 1
+    assert activity.route[0].label == "BOX radar present (edge)"
+
+
+def test_vacant_presence_state_completes_an_unconsumed_assertion() -> None:
+    base = datetime.now(UTC) - timedelta(seconds=1)
+
+    def event(event_id: str, offset_ms: int, state: str):
+        return mission_control_service.RuntimeEvent(
+            event_id=event_id,
+            ts=base + timedelta(milliseconds=offset_ms),
+            source="hub",
+            type="ambient.presence.state",
+            trace_id="flow-presence-vacant",
+            owner_id="owner-a",
+            companion_id="companion-a",
+            device_id="box-3",
+            summary="ambient.presence.state",
+            payload={"state": state, "observation": "edge"},
+        )
+
+    activities = mission_control_service._project_runtime_activities(
+        [], [], [event("present", 0, "present"), event("vacant", 500, "vacant")]
+    )
+
+    assert len(activities) == 1
+    activity = activities[0]
+    assert activity.status == "completed"
+    assert activity.outcome == "success"
+    assert activity.summary == "Ambient presence ended before Voice Room activation"
+    assert activity.finished_at == base + timedelta(milliseconds=500)
+    assert [hop.label for hop in activity.route] == [
+        "BOX radar present (edge)",
+        "BOX radar vacant (edge)",
     ]
 
 

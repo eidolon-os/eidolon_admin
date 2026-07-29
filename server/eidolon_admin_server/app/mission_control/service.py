@@ -64,9 +64,7 @@ _TEXT_KEYS = {
 }
 
 
-async def build_snapshot(
-    request: Request, owner_id: str | None = None, demo_mode: str = "live"
-) -> RuntimeSnapshot:
+async def build_snapshot(request: Request, owner_id: str | None = None, demo_mode: str = "live") -> RuntimeSnapshot:
     started = time.perf_counter()
     generated_at = datetime.now(UTC)
     statuses: list[SourceStatus] = []
@@ -74,9 +72,7 @@ async def build_snapshot(
     if store is None:
         return RuntimeSnapshot(
             generated_at=generated_at,
-            source_status=[
-                SourceStatus(source="data", ok=False, detail="eidolon_data unavailable")
-            ],
+            source_status=[SourceStatus(source="data", ok=False, detail="eidolon_data unavailable")],
         )
 
     owner = await _select_owner(store, owner_id)
@@ -98,11 +94,31 @@ async def build_snapshot(
     ) = await asyncio.gather(
         _safe(statuses, "data.companions", store.companions.list_for_owner(owner_id), []),
         _safe(statuses, "data.devices", store.devices.list_devices_for_owner(owner_id), []),
-        _safe(statuses, "data.conversations", store.conversations.list_for_owner(owner_id, limit=20), []),
-        _safe(statuses, "data.memory", store.memory_repo.list_realms_for_owner(owner_id), []),
+        _safe(
+            statuses,
+            "data.conversations",
+            store.conversations.list_for_owner(owner_id, limit=20),
+            [],
+        ),
+        _safe(
+            statuses,
+            "data.memory",
+            store.memory_repo.list_realms_for_owner(owner_id),
+            [],
+        ),
         _safe(statuses, "data.jobs", store.jobs.list_for_owner(owner_id, limit=20), []),
-        _safe(statuses, "data.events", store.events.list_for_owner(owner_id, limit=240), []),
-        _safe(statuses, "data.guard_bindings", store.guard_bindings.list_for_owner(owner_id), []),
+        _safe(
+            statuses,
+            "data.events",
+            store.events.list_for_owner(owner_id, limit=240),
+            [],
+        ),
+        _safe(
+            statuses,
+            "data.guard_bindings",
+            store.guard_bindings.list_for_owner(owner_id),
+            [],
+        ),
     )
     statuses.append(_status("data", True, started))
 
@@ -157,11 +173,7 @@ async def build_snapshot(
         recent_events=recent_events,
         source_status=source_status,
     )
-    trace_spans = [
-        span
-        for turn in runtime_turns[:12]
-        for span in _trace_spans(turn)
-    ]
+    trace_spans = [span for turn in runtime_turns[:12] for span in _trace_spans(turn)]
     permission_ledger = _permission_ledger(recent_events)
     evidence_chains = _evidence_chains(
         companion=companion,
@@ -217,11 +229,7 @@ def hub_event_to_runtime(raw: dict[str, Any]) -> RuntimeEvent:
     if event_type == "command_updated":
         status = str(raw.get("status") or "unknown")
         raw_payload = raw.get("payload")
-        op = str(
-            raw.get("op")
-            or (raw_payload.get("op") if isinstance(raw_payload, dict) else "")
-            or "device.command"
-        )
+        op = str(raw.get("op") or (raw_payload.get("op") if isinstance(raw_payload, dict) else "") or "device.command")
         severity = "error" if status in {"failed", "timeout", "rejected"} else "info"
         return RuntimeEvent(
             event_id=str(raw.get("command_id") or f"mc-hub-{uuid4().hex}"),
@@ -462,13 +470,16 @@ async def _memory_summary(
                 1
                 for row in rows
                 if isinstance(row, dict)
-                and (
-                    row.get("worker_running")
-                    or row.get("agent_reachable")
-                    or row.get("runtime_state") == "running"
-                )
+                and (row.get("worker_running") or row.get("agent_reachable") or row.get("runtime_state") == "running")
             )
-        statuses.append(_status("memory.runners", True, started, f"{runners_online}/{runners_total} online"))
+        statuses.append(
+            _status(
+                "memory.runners",
+                True,
+                started,
+                f"{runners_online}/{runners_total} online",
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         statuses.append(SourceStatus(source="memory.runners", ok=False, detail=str(exc)))
 
@@ -494,15 +505,13 @@ async def _memory_summary(
         last_write_disposition=disposition,
         fanout_allowed=bool(write_summary.get("fanout_allowed")),
         privacy_mode=_str_or_none(observability_summary.get("privacy_mode")) if turns else None,
-        summary=(
-            f"{hit_count} recall hit(s), write {disposition or 'pending'}"
-            if turns
-            else "Waiting for turn trace"
-        ),
+        summary=(f"{hit_count} recall hit(s), write {disposition or 'pending'}" if turns else "Waiting for turn trace"),
     )
 
 
-async def _services(request: Request) -> tuple[list[RuntimeService], list[SourceStatus]]:
+async def _services(
+    request: Request,
+) -> tuple[list[RuntimeService], list[SourceStatus]]:
     registry = getattr(request.app.state, "registry", None)
     http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
     if registry is None or http_client is None:
@@ -532,7 +541,11 @@ async def _services(request: Request) -> tuple[list[RuntimeService], list[Source
             full = f"{group}:{prog}" if group else prog
             info = sv_by_full.get(full)
             states.append(getattr(info, "statename", "UNKNOWN") if info else "UNKNOWN")
-        return True, (bool(states) and all(s == "RUNNING" for s in states)), ", ".join(states)
+        return (
+            True,
+            (bool(states) and all(s == "RUNNING" for s in states)),
+            ", ".join(states),
+        )
 
     async def _probe(svc: Any) -> RuntimeService:
         started = time.perf_counter()
@@ -575,7 +588,10 @@ async def _services(request: Request) -> tuple[list[RuntimeService], list[Source
 
     # Shared infrastructure (NATS / LiveKit): supervised-only, not in the
     # service registry, so surface them from supervisord process state.
-    for sid, name, full in (("nats", "NATS", "nats:nats-server"), ("livekit", "LiveKit", "livekit:livekit-server")):
+    for sid, name, full in (
+        ("nats", "NATS", "nats:nats-server"),
+        ("livekit", "LiveKit", "livekit:livekit-server"),
+    ):
         if any(r.service_id == sid for r in rows):
             continue
         info = sv_by_full.get(full)
@@ -641,11 +657,7 @@ def _merge_devices(
     companions: list[Any] = (),
     guard_device_ids: frozenset[str] = frozenset(),
 ) -> list[RuntimeDevice]:
-    companion_by_id = {
-        getattr(c, "companion_id", ""): c
-        for c in companions
-        if getattr(c, "companion_id", "")
-    }
+    companion_by_id = {getattr(c, "companion_id", ""): c for c in companions if getattr(c, "companion_id", "")}
     by_id: dict[str, dict[str, Any]] = {}
     for row in data_devices:
         by_id[row.device_id] = {"data": row, "hub": None, "runtime": None}
@@ -672,12 +684,7 @@ def _merge_devices(
         data = parts["data"]
         hub = parts["hub"]
         runtime = parts["runtime"]
-        name = (
-            getattr(runtime, "name", "")
-            or getattr(data, "name", "")
-            or getattr(hub, "name", "")
-            or device_id
-        )
+        name = getattr(runtime, "name", "") or getattr(data, "name", "") or getattr(hub, "name", "") or device_id
         kind = getattr(data, "kind", "") or getattr(hub, "kind", "") or "unknown"
         status, online, presence_source = _device_presence(runtime, hub)
         last_seen = _as_utc(
@@ -686,14 +693,9 @@ def _merge_devices(
             or getattr(data, "last_seen_at", None)
         )
         capabilities = (
-            sorted(capability.name for capability in runtime.capabilities)
-            if online and runtime is not None
-            else []
+            sorted(capability.name for capability in runtime.capabilities) if online and runtime is not None else []
         )
-        companion_id = (
-            getattr(runtime, "provider_companion_id", None)
-            or getattr(data, "bound_companion_id", None)
-        )
+        companion_id = getattr(runtime, "provider_companion_id", None) or getattr(data, "bound_companion_id", None)
         bound_companion = companion_by_id.get(companion_id) if companion_id else None
         is_guard = device_id in guard_device_ids or _is_guard_companion(bound_companion)
         role, role_kind = _device_role(bound_companion, is_guard)
@@ -708,20 +710,12 @@ def _merge_devices(
                 online=online,
                 approved=bool(getattr(hub, "approved", False) or getattr(data, "approved_at", None)),
                 owner_id=(
-                    getattr(data, "owner_id", None)
-                    or getattr(hub, "owner_id", None)
-                    or (owner_id if runtime else None)
+                    getattr(data, "owner_id", None) or getattr(hub, "owner_id", None) or (owner_id if runtime else None)
                 ),
                 companion_id=companion_id,
                 interaction_mode=getattr(data, "interaction_mode", None),
-                room_name=(
-                    getattr(runtime, "room_name", "")
-                    or getattr(hub, "room_name", "")
-                ),
-                participant_sid=(
-                    getattr(runtime, "participant_sid", "")
-                    or getattr(hub, "participant_sid", "")
-                ),
+                room_name=(getattr(runtime, "room_name", "") or getattr(hub, "room_name", "")),
+                participant_sid=(getattr(runtime, "participant_sid", "") or getattr(hub, "participant_sid", "")),
                 last_seen_at=last_seen,
                 capabilities=capabilities,
                 signals={
@@ -895,12 +889,18 @@ def _project_runtime_turns(
     used_agent_ids: set[str] = set()
     projected: list[RuntimeTurn] = []
     for channel_turn_id, turn_events in grouped.items():
-        ordered = sorted(turn_events, key=lambda event: _as_utc(event.ts) or datetime.min.replace(tzinfo=UTC))
+        ordered = sorted(
+            turn_events,
+            key=lambda event: _as_utc(event.ts) or datetime.min.replace(tzinfo=UTC),
+        )
         trace_id = next((event.trace_id for event in ordered if event.trace_id), channel_turn_id)
         agent_turn = agent_by_trace.get(trace_id)
         if agent_turn is not None:
             used_agent_ids.add(agent_turn.turn_id)
-        terminal = next((event for event in reversed(ordered) if event.type in _CHANNEL_TERMINAL_TYPES), None)
+        terminal = next(
+            (event for event in reversed(ordered) if event.type in _CHANNEL_TERMINAL_TYPES),
+            None,
+        )
         room_name = next(
             (str(event.payload.get("room_name") or "") for event in ordered if event.payload.get("room_name")),
             "",
@@ -931,8 +931,10 @@ def _project_runtime_turns(
             status = "running"
             outcome = "deferred"
         started_at = _as_utc(ordered[0].ts) if ordered else None
-        finished_at = _as_utc(terminal.ts) if terminal else (
-            _as_utc(session_boundary.ts) if session_boundary is not None else None
+        finished_at = (
+            _as_utc(terminal.ts)
+            if terminal
+            else (_as_utc(session_boundary.ts) if session_boundary is not None else None)
         )
         elapsed_ms = (
             int((finished_at - started_at).total_seconds() * 1000)
@@ -983,8 +985,7 @@ def _project_runtime_turns(
                     if terminal
                     else (
                         "session_failed_without_turn_terminal"
-                        if session_boundary is not None
-                        and session_boundary.type == "channel.session.failed"
+                        if session_boundary is not None and session_boundary.type == "channel.session.failed"
                         else "session_ended_without_turn_terminal"
                         if session_boundary is not None
                         else ""
@@ -997,7 +998,9 @@ def _project_runtime_turns(
                 missing_milestones=(
                     [str(item) for item in terminal.payload.get("missing_milestones") or []]
                     if terminal
-                    else ["terminal_event"] if session_boundary is not None else []
+                    else ["terminal_event"]
+                    if session_boundary is not None
+                    else []
                 ),
                 stages=stages,
             )
@@ -1035,7 +1038,12 @@ def _channel_turn_stages(
         previous_elapsed = max(previous_elapsed, elapsed)
         if key not in stage_rows:
             ordered_keys.append(key)
-            stage_rows[key] = {"key": key, "label": label, "status": "done", "latency_ms": latency}
+            stage_rows[key] = {
+                "key": key,
+                "label": label,
+                "status": "done",
+                "latency_ms": latency,
+            }
         else:
             stage_rows[key]["label"] = label
             stage_rows[key]["latency_ms"] = int(stage_rows[key].get("latency_ms") or 0) + latency
@@ -1184,11 +1192,14 @@ def _project_runtime_activities(
 ) -> list[RuntimeActivity]:
     """Project independent runtime facts into concurrent observer lanes."""
 
+    flow_activities, grouped_event_ids = _presence_flow_activities(events)
     activities = [_voice_activity(turn) for turn in turns[:12]]
     activities.extend(_job_activity(job) for job in jobs[:12])
+    activities.extend(flow_activities)
     activities.extend(
         activity
         for event in events
+        if event.event_id not in grouped_event_ids
         if (activity := _event_activity(event)) is not None
     )
     ordered = sorted(
@@ -1212,6 +1223,183 @@ def _project_runtime_activities(
         if len(bounded) >= 48:
             break
     return bounded
+
+
+_PRESENCE_FLOW_TYPES = frozenset(
+    {
+        "ambient.presence.state",
+        "companion.flow.node",
+        "identity.owner_presence.confirmed",
+        "hub.device_flow.broadcasted",
+        "hub.voice_session.authorized",
+        "channel.session.started",
+        "channel.session.failed",
+    }
+)
+
+
+def _presence_flow_activities(
+    events: list[RuntimeEvent],
+) -> tuple[list[RuntimeActivity], set[str]]:
+    """Correlate the distributed presence-auth route by its device flow id."""
+
+    by_trace: dict[str, list[RuntimeEvent]] = {}
+    for event in events:
+        if event.trace_id and event.type in _PRESENCE_FLOW_TYPES:
+            by_trace.setdefault(event.trace_id, []).append(event)
+
+    activities: list[RuntimeActivity] = []
+    consumed: set[str] = set()
+    for trace_id, grouped in by_trace.items():
+        if not any(
+            event.type
+            in {
+                "ambient.presence.state",
+                "identity.owner_presence.confirmed",
+            }
+            for event in grouped
+        ):
+            continue
+        ordered = sorted(
+            grouped,
+            key=lambda event: _as_utc(event.ts) or datetime.min.replace(tzinfo=UTC),
+        )
+        consumed.update(event.event_id for event in ordered)
+        # Heartbeats refresh the assertion lease and activity timestamp, but
+        # are not orchestration hops. Rendering each heartbeat would turn a
+        # healthy assertion into an ever-growing fake route.
+        route_events = [
+            event
+            for event in ordered
+            if not (event.type == "ambient.presence.state" and event.payload.get("observation") == "heartbeat")
+        ]
+        if not route_events:
+            # Recent-event retention can outlive the original edge. Keep one
+            # factual hop rather than hiding the active assertion entirely.
+            route_events = [ordered[-1]]
+        route: list[RuntimeRouteHop] = []
+        previous_ts: datetime | None = None
+        for index, event in enumerate(route_events):
+            ts = _as_utc(event.ts)
+            latency_ms = None
+            if ts is not None and previous_ts is not None:
+                latency_ms = max(0, int((ts - previous_ts).total_seconds() * 1000))
+            if ts is not None:
+                previous_ts = ts
+            node_type, node_id, label, stage = _presence_flow_hop(event)
+            route.append(
+                RuntimeRouteHop(
+                    hop_id=f"presence:{trace_id}:{event.event_id}:{index}",
+                    node_type=node_type,
+                    node_id=node_id,
+                    label=label,
+                    stage=stage,
+                    status="done",
+                    direction="internal",
+                    ts=event.ts,
+                    latency_ms=latency_ms,
+                )
+            )
+
+        terminal = next(
+            (
+                event
+                for event in reversed(ordered)
+                if event.type in {"channel.session.started", "channel.session.failed"}
+                or str(event.payload.get("status") or "") in {"timeout", "failed"}
+                or (event.type == "ambient.presence.state" and event.payload.get("state") == "vacant")
+            ),
+            None,
+        )
+        if terminal is None:
+            updated = _as_utc(ordered[-1].ts)
+            stale = updated is not None and (datetime.now(UTC) - updated).total_seconds() > 10
+            status = "timeout" if stale else "running"
+        elif terminal.type == "channel.session.started" or (
+            terminal.type == "ambient.presence.state" and terminal.payload.get("state") == "vacant"
+        ):
+            status = "completed"
+        else:
+            status = str(terminal.payload.get("status") or "failed")
+        active = _activity_is_active(status)
+        if active and route:
+            route[-1].status = "running"
+        owner_id = next((event.owner_id for event in ordered if event.owner_id), "")
+        companion_id = next(
+            (event.companion_id for event in reversed(ordered) if event.companion_id),
+            None,
+        )
+        origin = next(
+            (event.device_id for event in ordered if event.type == "ambient.presence.state" and event.device_id),
+            None,
+        )
+        activities.append(
+            RuntimeActivity(
+                activity_id=f"presence:{trace_id}",
+                kind="presence_auth",
+                owner_id=owner_id or "",
+                companion_id=companion_id,
+                trace_id=trace_id,
+                origin_device_id=origin,
+                target_device_ids=list(
+                    dict.fromkeys(event.device_id for event in ordered if event.device_id and event.device_id != origin)
+                ),
+                status=status,
+                outcome=("deferred" if active else "success" if status == "completed" else "failure"),
+                summary=(
+                    "Radar trigger → owner verification → Voice Room"
+                    if status == "completed" and any(event.type == "channel.session.started" for event in ordered)
+                    else "Ambient presence ended before Voice Room activation"
+                    if status == "completed"
+                    else "Owner presence authentication in progress"
+                    if active
+                    else "Owner presence authentication did not complete"
+                ),
+                current_hop_id=route[-1].hop_id if active and route else None,
+                started_at=ordered[0].ts,
+                updated_at=ordered[-1].ts,
+                finished_at=None if active else terminal.ts if terminal else ordered[-1].ts,
+                event_ids=[event.event_id for event in ordered],
+                route=route,
+            )
+        )
+    return activities, consumed
+
+
+def _presence_flow_hop(
+    event: RuntimeEvent,
+) -> tuple[str, str, str, str]:
+    if event.type.startswith("hub."):
+        label = (
+            "Hub Voice Room authorization"
+            if event.type == "hub.voice_session.authorized"
+            else "Hub owner-scoped broadcast"
+        )
+        return (
+            "service",
+            "hub",
+            label,
+            str(event.payload.get("stage") or "hub.broadcast"),
+        )
+    if event.type.startswith("channel.session."):
+        return "service", "channel", "Channel Voice Room", "channel.session"
+    if event.type == "ambient.presence.state":
+        state = str(event.payload.get("state") or "unknown")
+        observation = str(event.payload.get("observation") or "")
+        suffix = f" ({observation})" if observation else ""
+        return (
+            "device",
+            event.device_id or "unknown-device",
+            f"BOX radar {state}{suffix}",
+            "box.radar_presence",
+        )
+    stage = str(event.payload.get("stage") or event.type)
+    label = str(event.payload.get("label") or "")
+    if not label:
+        label = {
+            "identity.owner_presence.confirmed": "ATK owner confirmed",
+        }.get(event.type, event.type)
+    return "device", event.device_id or "unknown-device", label, stage
 
 
 def _voice_activity(turn: RuntimeTurn) -> RuntimeActivity:
@@ -1343,7 +1531,11 @@ def _job_activity(job: RuntimeJob) -> RuntimeActivity:
         turn_id=job.turn_id,
         job_id=job.job_id,
         status=job.status,
-        outcome="deferred" if active else "failure" if job.status.lower() in {"failed", "error", "errored"} else "success",
+        outcome="deferred"
+        if active
+        else "failure"
+        if job.status.lower() in {"failed", "error", "errored"}
+        else "success",
         summary=job.summary or f"{job.provider}:{job.kind}",
         current_hop_id=route[-1].hop_id if active else None,
         started_at=job.created_at,
@@ -1451,7 +1643,12 @@ def _long_task_job(row: dict[str, Any]) -> RuntimeJob:
         kind=str(row.get("task_type") or "long_task"),
         status=str(row.get("status") or "unknown"),
         summary=_redact_text(task, keep=64),
-        progress=_safe_payload({"summary": row.get("progress_summary"), "external_status": row.get("external_status")}),
+        progress=_safe_payload(
+            {
+                "summary": row.get("progress_summary"),
+                "external_status": row.get("external_status"),
+            }
+        ),
         result_summary=_redact_text(str(row.get("result_tts_summary") or row.get("result_text") or ""), keep=80),
         created_at=_parse_dt(row.get("created_at")),
         updated_at=_parse_dt(row.get("updated_at")),
@@ -1482,11 +1679,7 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
         outcome = getattr(row, "outcome", None) or "success"
         raw_payload = row.payload_json or {}
         payload = _safe_payload(raw_payload)
-        device_id = (
-            row.subject_id
-            if row.subject_type == "device"
-            else _str_or_none(raw_payload.get("device_id"))
-        )
+        device_id = row.subject_id if row.subject_type == "device" else _str_or_none(raw_payload.get("device_id"))
         events.append(
             RuntimeEvent(
                 event_id=row.event_id,
@@ -1612,29 +1805,55 @@ def _evidence_chains(
     """Derive the three demo proof-chains. Confidence = done/total; a chain is
     only 'proven' when every step has real backing — mock is never marked live."""
     online = [d for d in devices if d.online]
-    has_camera = any(
-        "camera.snapshot" in d.capabilities or "camera" in d.kind.lower()
-        for d in devices
-    )
+    has_camera = any("camera.snapshot" in d.capabilities or "camera" in d.kind.lower() for d in devices)
     camera_grant = next((i for i in ledger if i.kind == "camera.take_photo"), None)
-    active_jobs = [j for j in jobs if (j.status or "").lower() in {"running", "queued", "accepted", "pending", "active"}]
+    active_jobs = [
+        j for j in jobs if (j.status or "").lower() in {"running", "queued", "accepted", "pending", "active"}
+    ]
     done_jobs = [j for j in jobs if (j.status or "").lower() in {"succeeded", "done", "completed"}]
 
     cross_body = [
-        EvidenceStep(key="bodies", label="多身体在线", done=len(devices) >= 2, detail=f"{len(online)}/{len(devices)} 在线"),
-        EvidenceStep(key="identity", label="同一身份与记忆域", done=companion is not None and memory.realms_total > 0),
-        EvidenceStep(key="write", label="记忆写入", done=memory.last_write_disposition is not None),
-        EvidenceStep(key="recall", label="跨身体召回命中", done=memory.last_recall_hits > 0, detail=f"{memory.last_recall_hits} hit"),
+        EvidenceStep(
+            key="bodies",
+            label="多身体在线",
+            done=len(devices) >= 2,
+            detail=f"{len(online)}/{len(devices)} 在线",
+        ),
+        EvidenceStep(
+            key="identity",
+            label="同一身份与记忆域",
+            done=companion is not None and memory.realms_total > 0,
+        ),
+        EvidenceStep(
+            key="write",
+            label="记忆写入",
+            done=memory.last_write_disposition is not None,
+        ),
+        EvidenceStep(
+            key="recall",
+            label="跨身体召回命中",
+            done=memory.last_recall_hits > 0,
+            detail=f"{memory.last_recall_hits} hit",
+        ),
     ]
     vision = [
         EvidenceStep(key="capability", label="视觉身体", done=has_camera),
-        EvidenceStep(key="authorized", label="授权调用摄像头", done=camera_grant is not None, detail=camera_grant.summary if camera_grant else ""),
+        EvidenceStep(
+            key="authorized",
+            label="授权调用摄像头",
+            done=camera_grant is not None,
+            detail=camera_grant.summary if camera_grant else "",
+        ),
         EvidenceStep(key="retention", label="仅摘要 · 不留原图", done=camera_grant is not None),
     ]
     coworker = [
         EvidenceStep(key="delegate", label="任务交办", done=bool(jobs)),
         EvidenceStep(key="running", label="后台执行", done=bool(active_jobs) or bool(done_jobs)),
-        EvidenceStep(key="artifact", label="产物完成", done=any(j.result_summary for j in done_jobs)),
+        EvidenceStep(
+            key="artifact",
+            label="产物完成",
+            done=any(j.result_summary for j in done_jobs),
+        ),
         EvidenceStep(key="report", label="回报 / 落库", done=bool(done_jobs)),
     ]
 
@@ -1642,12 +1861,34 @@ def _evidence_chains(
         done = sum(1 for s in steps if s.done)
         total = len(steps)
         status = "proven" if done == total else "partial" if done else "pending"
-        return EvidenceChain(key=key, title=title, claim=claim, status=status, confidence=round(done / total * 100), steps=steps)
+        return EvidenceChain(
+            key=key,
+            title=title,
+            claim=claim,
+            status=status,
+            confidence=round(done / total * 100),
+            steps=steps,
+        )
 
     return [
-        _chain("cross_body_memory", "跨身体记忆", "同一伙伴的身份与记忆不绑定任何单一硬件。", cross_body),
-        _chain("vision_permission", "视觉授权", "摄像头是受权限管理的视觉身体，默认只留摘要、不扩散原图。", vision),
-        _chain("coworker_task", "Coworker 任务", "前台对话可把上下文交给后台数字员工并回报产物。", coworker),
+        _chain(
+            "cross_body_memory",
+            "跨身体记忆",
+            "同一伙伴的身份与记忆不绑定任何单一硬件。",
+            cross_body,
+        ),
+        _chain(
+            "vision_permission",
+            "视觉授权",
+            "摄像头是受权限管理的视觉身体，默认只留摘要、不扩散原图。",
+            vision,
+        ),
+        _chain(
+            "coworker_task",
+            "Coworker 任务",
+            "前台对话可把上下文交给后台数字员工并回报产物。",
+            coworker,
+        ),
     ]
 
 
@@ -1705,11 +1946,15 @@ def _experience(
     owner_name = getattr(owner, "display_name", "") or getattr(owner, "owner_id", "") or "当前用户"
     latest_event = recent_events[0] if recent_events else None
     turn_event = _latest_event(recent_events, "turn")
-    running_jobs = [job for job in jobs if job.status not in {"ok", "done", "succeeded", "completed", "failed", "errored"}]
+    running_jobs = [
+        job for job in jobs if job.status not in {"ok", "done", "succeeded", "completed", "failed", "errored"}
+    ]
     degraded = [status for status in source_status if not status.ok]
     active_activities = [activity for activity in activities if _activity_is_active(activity.status)]
     completion = _experience_completion(devices, services, activities, memory, jobs, recent_events)
-    system_state = "active" if active_activities else ("working" if running_jobs else ("watching" if latest_event else "standby"))
+    system_state = (
+        "active" if active_activities else ("working" if running_jobs else ("watching" if latest_event else "standby"))
+    )
 
     if primary_voice_turn:
         headline = f"{companion_name} 正在处理一次来自身体的交互"
@@ -1730,10 +1975,7 @@ def _experience(
         headline = f"{companion_name} 的 Agent OS 待命中"
         subheadline = "连接硬件或发起一次对话后，这里会显示系统如何调度身体、记忆和任务。"
 
-    plain_summary = (
-        f"{owner_name} 面前看到的是一个 companion；这块屏幕展示的是背后的 Agent OS："
-        f"{len(devices)} 个身体、{memory.realms_total} 个记忆空间、{len(services)} 个运行服务，以及最近 {len(recent_events)} 条安全摘要事件。"
-    )
+    plain_summary = f"{owner_name} 面前看到的是一个 companion；这块屏幕展示的是背后的 Agent OS：{len(devices)} 个身体、{memory.realms_total} 个记忆空间、{len(services)} 个运行服务，以及最近 {len(recent_events)} 条安全摘要事件。"
     if degraded:
         next_best_action = f"有 {len(degraded)} 个信息源暂时不可用；当前链路仍会持续显示已接入的实时状态。"
     elif not devices:
@@ -1796,13 +2038,11 @@ def _storyline(
             detail=(
                 f"最近一次交互状态：{_friendly_status(primary_voice_turn.status)}"
                 if primary_voice_turn
-                else (
-                    f"最近一次交互事件：{turn_event.summary}"
-                    if turn_event
-                    else "等待一次真实对话或 PTT 输入"
-                )
+                else (f"最近一次交互事件：{turn_event.summary}" if turn_event else "等待一次真实对话或 PTT 输入")
             ),
-            status=_stage_status(primary_voice_turn.status) if primary_voice_turn else ("done" if turn_event else "pending"),
+            status=_stage_status(primary_voice_turn.status)
+            if primary_voice_turn
+            else ("done" if turn_event else "pending"),
             source="agent",
             ts=primary_voice_turn.started_at if primary_voice_turn else (turn_event.ts if turn_event else None),
         ),
@@ -1875,9 +2115,7 @@ def _experience_lanes(
             key="turn",
             title="一次交互",
             headline=(
-                f"最近一次交互：{_friendly_status(primary_voice_turn.status)}"
-                if primary_voice_turn
-                else "等待用户开口"
+                f"最近一次交互：{_friendly_status(primary_voice_turn.status)}" if primary_voice_turn else "等待用户开口"
             ),
             detail="这里展示从身体输入到智能体回应的关键步骤，不展示私密原文。",
             status=_stage_status(primary_voice_turn.status) if primary_voice_turn else "pending",
@@ -1898,9 +2136,21 @@ def _experience_lanes(
             detail="记忆用于让 companion 跨身体保持连续，但默认只显示数量、策略和摘要。",
             status="done" if memory.realms_total else "pending",
             items=[
-                RuntimeLaneItem(label="活跃记忆空间", value=memory.active_realm_id or "未配置", status="done" if memory.active_realm_id else "pending"),
-                RuntimeLaneItem(label="写入策略", value=_friendly_memory_write(memory.last_write_disposition), status="done" if memory.fanout_allowed else "idle"),
-                RuntimeLaneItem(label="记忆后台", value=f"{memory.runners_online}/{memory.runners_total} 在线", status="done" if memory.runners_online else "idle"),
+                RuntimeLaneItem(
+                    label="活跃记忆空间",
+                    value=memory.active_realm_id or "未配置",
+                    status="done" if memory.active_realm_id else "pending",
+                ),
+                RuntimeLaneItem(
+                    label="写入策略",
+                    value=_friendly_memory_write(memory.last_write_disposition),
+                    status="done" if memory.fanout_allowed else "idle",
+                ),
+                RuntimeLaneItem(
+                    label="记忆后台",
+                    value=f"{memory.runners_online}/{memory.runners_total} 在线",
+                    status="done" if memory.runners_online else "idle",
+                ),
             ],
         ),
         RuntimeLane(
@@ -1908,7 +2158,9 @@ def _experience_lanes(
             title="行动调度",
             headline=f"{len(jobs)} 个任务可见" if jobs else "还没有后台任务",
             detail="整理、查询、生成和委托类行动会在这里持续推进。",
-            status="running" if any(_stage_status(job.status) == "running" for job in jobs) else ("done" if jobs else "pending"),
+            status="running"
+            if any(_stage_status(job.status) == "running" for job in jobs)
+            else ("done" if jobs else "pending"),
             items=[
                 RuntimeLaneItem(
                     label=job.kind,
@@ -1988,7 +2240,9 @@ def _capability_cards(
         RuntimeCapabilityCard(
             key="vision",
             title="视觉/传感器",
-            metric="可见" if ("camera.snapshot" in caps or any(_is_sensor_event(event) for event in events)) else "待接入",
+            metric="可见"
+            if ("camera.snapshot" in caps or any(_is_sensor_event(event) for event in events))
+            else "待接入",
             status="done" if "camera.snapshot" in caps else "pending",
             detail="高敏输入默认展示授权和摘要，不展示原始图像。",
         ),
@@ -2127,7 +2381,7 @@ def _friendly_source(value: str) -> str:
         "memory": "记忆系统",
         "data": "事实账本",
         "admin": "控制台",
-            "mission_control": "飞控台",
+        "mission_control": "飞控台",
     }.get(value, value)
 
 
@@ -2162,7 +2416,17 @@ def _friendly_service_name(service_id: str, name: str) -> str:
 
 def _is_sensor_event(event: RuntimeEvent) -> bool:
     blob = f"{event.type} {event.summary} {event.device_id or ''}".lower()
-    return any(token in blob for token in ("camera", "sensor", "photo", "vision", "command", "device.command"))
+    return any(
+        token in blob
+        for token in (
+            "camera",
+            "sensor",
+            "photo",
+            "vision",
+            "command",
+            "device.command",
+        )
+    )
 
 
 def _latest_event(events: list[RuntimeEvent], token: str) -> RuntimeEvent | None:

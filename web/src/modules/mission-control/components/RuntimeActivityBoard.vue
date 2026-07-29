@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { RuntimeActivity, RuntimeRouteHop } from '@/api/missionControl'
 import { activityKindLabel, activityPhases, activityStatusLabel, isActiveActivity } from '../activity'
-import { compactId, fmtLatency, statusClass } from '../format'
+import { compactId, fmtLatency, fmtTime, statusClass } from '../format'
 
 const props = defineProps<{
   activities: RuntimeActivity[]
@@ -129,6 +129,7 @@ function openFromKeyboard(event: KeyboardEvent, activity: RuntimeActivity): void
               <i class="led" :class="statusClass(hop.status)" />
               <b>{{ hopLabel(hop) }}</b>
               <small>{{ hop.stage || hop.node_type }}</small>
+              <em v-if="hop.ts" class="num" :title="hop.ts">{{ fmtTime(hop.ts) }}</em>
               <em v-if="hop.latency_ms != null" class="num">{{ fmtLatency(hop.latency_ms) }}</em>
             </li>
           </ol>
@@ -193,7 +194,7 @@ function openFromKeyboard(event: KeyboardEvent, activity: RuntimeActivity): void
 .ab-foot > em { margin-left: auto; color: var(--cy-txt-dim); font-style: normal; }
 .ab-steps { display: grid; gap: 3px; margin: 7px 0 0; padding: 7px 0 0; border-top: 1px dashed rgba(0, 234, 255, .16); list-style: none; cursor: default; }
 .ab-lane.expanded .ab-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.ab-steps li { display: grid; grid-template-columns: 20px 7px minmax(0, 1fr) auto auto; align-items: center; gap: 7px; min-width: 0; padding: 4px 5px; background: rgba(255, 255, 255, .018); }
+.ab-steps li { display: grid; grid-template-columns: 20px 7px minmax(0, 1fr) auto auto auto; align-items: center; gap: 7px; min-width: 0; padding: 4px 5px; background: rgba(255, 255, 255, .018); }
 .ab-steps .led { width: 6px; height: 6px; }
 .ab-step-index { color: rgba(134, 151, 210, .5); font: 700 7px/1 var(--cy-mono); }
 .ab-steps b { overflow: hidden; color: var(--cy-txt); font: 700 9px/1.2 var(--cy-sans); text-overflow: ellipsis; white-space: nowrap; }

@@ -35,6 +35,7 @@ export function activityKindLabel(kind: string): string {
   if (kind === 'device_command') return '指令'
   if (kind === 'device_event') return '设备'
   if (kind === 'background_job') return '任务'
+  if (kind === 'presence_auth') return '到场认证'
   return '活动'
 }
 
@@ -94,7 +95,7 @@ export function activityPhases(
   if (activity.kind !== 'voice_turn') {
     return activity.route.map((hop) => ({
       key: hop.hop_id,
-      label: labelHop(hop),
+      label: activity.kind === 'presence_auth' ? hop.label : labelHop(hop),
       glyph: hop.node_type === 'device' ? '⬡' : hop.node_type === 'companion' ? '◎' : '◇',
       status: hop.status,
       latency_ms: hop.latency_ms,
