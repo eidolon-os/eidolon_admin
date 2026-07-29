@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -158,7 +158,15 @@ async def build_snapshot(request: Request, owner_id: str | None = None, demo_mod
     agent_runtime_turns = [_turn(row) for row in turns]
     runtime_turns = _project_runtime_turns(data_runtime_events, agent_runtime_turns)
     primary_voice_turn = _primary_active_voice_turn(runtime_turns)
-    activities = _project_runtime_activities(runtime_turns, runtime_jobs, recent_events)
+    # Activity reduction gets the wider owner ledger, not the presentation
+    # slice. A bounded recent-events window may begin in the middle of a trace;
+    # reducing that fragment can strand an earlier "running" flow node.
+    activities = _project_runtime_activities(
+        runtime_turns,
+        runtime_jobs,
+        data_runtime_events,
+        observed_at=generated_at,
+    )
 
     source_status = _coalesce_statuses(statuses)
     experience = _experience(
@@ -1189,10 +1197,16 @@ def _project_runtime_activities(
     turns: list[RuntimeTurn],
     jobs: list[RuntimeJob],
     events: list[RuntimeEvent],
+    *,
+    observed_at: datetime | None = None,
 ) -> list[RuntimeActivity]:
     """Project independent runtime facts into concurrent observer lanes."""
 
-    flow_activities, grouped_event_ids = _presence_flow_activities(events)
+    now = _as_utc(observed_at) or datetime.now(UTC)
+    flow_activities, grouped_event_ids = _presence_flow_activities(
+        events,
+        observed_at=now,
+    )
     activities = [_voice_activity(turn) for turn in turns[:12]]
     activities.extend(_job_activity(job) for job in jobs[:12])
     activities.extend(flow_activities)
@@ -1200,7 +1214,7 @@ def _project_runtime_activities(
         activity
         for event in events
         if event.event_id not in grouped_event_ids
-        if (activity := _event_activity(event)) is not None
+        if (activity := _event_activity(event, observed_at=now)) is not None
     )
     ordered = sorted(
         activities,
@@ -1237,12 +1251,30 @@ _PRESENCE_FLOW_TYPES = frozenset(
     }
 )
 
+_PRESENCE_FLOW_STAGE_PREFIXES = (
+    "atk.owner_",
+    "atk.presence_",
+    "box.owner_",
+    "box.voice_",
+)
+_PRESENCE_FLOW_DEFAULT_LEASE_MS = 15_000
+_ORPHAN_EVENT_STALE_MS = 30_000
+
 
 def _presence_flow_activities(
     events: list[RuntimeEvent],
+    *,
+    observed_at: datetime | None = None,
 ) -> tuple[list[RuntimeActivity], set[str]]:
-    """Correlate the distributed presence-auth route by its device flow id."""
+    """Reduce distributed presence-auth facts into one lane per trace.
 
+    A trace fragment remains reducible when its root event has fallen outside
+    the snapshot window. Semantic flow nodes are sufficient to identify the
+    lane, while terminal siblings and assertion leases determine whether it is
+    still active.
+    """
+
+    now = _as_utc(observed_at) or datetime.now(UTC)
     by_trace: dict[str, list[RuntimeEvent]] = {}
     for event in events:
         if event.trace_id and event.type in _PRESENCE_FLOW_TYPES:
@@ -1251,14 +1283,7 @@ def _presence_flow_activities(
     activities: list[RuntimeActivity] = []
     consumed: set[str] = set()
     for trace_id, grouped in by_trace.items():
-        if not any(
-            event.type
-            in {
-                "ambient.presence.state",
-                "identity.owner_presence.confirmed",
-            }
-            for event in grouped
-        ):
+        if not _is_presence_flow_trace(grouped):
             continue
         ordered = sorted(
             grouped,
@@ -1313,7 +1338,8 @@ def _presence_flow_activities(
         )
         if terminal is None:
             updated = _as_utc(ordered[-1].ts)
-            stale = updated is not None and (datetime.now(UTC) - updated).total_seconds() > 10
+            lease_ms = _presence_flow_lease_ms(ordered)
+            stale = updated is not None and (now - updated).total_seconds() * 1_000 > lease_ms
             status = "timeout" if stale else "running"
         elif terminal.type == "channel.session.started" or (
             terminal.type == "ambient.presence.state" and terminal.payload.get("state") == "vacant"
@@ -1324,6 +1350,14 @@ def _presence_flow_activities(
         active = _activity_is_active(status)
         if active and route:
             route[-1].status = "running"
+        if active:
+            finished_at = None
+        elif terminal is not None:
+            finished_at = terminal.ts
+        elif status == "timeout" and updated is not None:
+            finished_at = updated + timedelta(milliseconds=lease_ms)
+        else:
+            finished_at = ordered[-1].ts
         owner_id = next((event.owner_id for event in ordered if event.owner_id), "")
         companion_id = next(
             (event.companion_id for event in reversed(ordered) if event.companion_id),
@@ -1358,12 +1392,43 @@ def _presence_flow_activities(
                 current_hop_id=route[-1].hop_id if active and route else None,
                 started_at=ordered[0].ts,
                 updated_at=ordered[-1].ts,
-                finished_at=None if active else terminal.ts if terminal else ordered[-1].ts,
+                finished_at=finished_at,
                 event_ids=[event.event_id for event in ordered],
                 route=route,
             )
         )
     return activities, consumed
+
+
+def _is_presence_flow_trace(events: list[RuntimeEvent]) -> bool:
+    """Identify a presence flow without requiring its root fact."""
+
+    if any(
+        event.type
+        in {
+            "ambient.presence.state",
+            "identity.owner_presence.confirmed",
+        }
+        for event in events
+    ):
+        return True
+    return any(
+        event.type == "companion.flow.node"
+        and str(event.payload.get("stage") or "").startswith(_PRESENCE_FLOW_STAGE_PREFIXES)
+        for event in events
+    )
+
+
+def _presence_flow_lease_ms(events: list[RuntimeEvent]) -> int:
+    """Use the latest renewable assertion lease, with a safe fragment bound."""
+
+    for event in reversed(events):
+        if event.type != "ambient.presence.state":
+            continue
+        lease_ms = event.payload.get("lease_ms")
+        if isinstance(lease_ms, int) and lease_ms > 0:
+            return lease_ms
+    return _PRESENCE_FLOW_DEFAULT_LEASE_MS
 
 
 def _presence_flow_hop(
@@ -1545,7 +1610,11 @@ def _job_activity(job: RuntimeJob) -> RuntimeActivity:
     )
 
 
-def _event_activity(event: RuntimeEvent) -> RuntimeActivity | None:
+def _event_activity(
+    event: RuntimeEvent,
+    *,
+    observed_at: datetime | None = None,
+) -> RuntimeActivity | None:
     lowered = event.type.lower()
     if "command" in lowered:
         kind = "device_command"
@@ -1574,6 +1643,18 @@ def _event_activity(event: RuntimeEvent) -> RuntimeActivity | None:
         if event.companion_id:
             endpoints.append(("companion", event.companion_id, "Companion", "in"))
     status = str(event.payload.get("status") or "completed")
+    event_ts = _as_utc(event.ts)
+    now = _as_utc(observed_at) or datetime.now(UTC)
+    stale_active = (
+        _activity_is_active(status)
+        and event_ts is not None
+        and (now - event_ts).total_seconds() * 1_000 > _ORPHAN_EVENT_STALE_MS
+    )
+    if stale_active:
+        status = "timeout"
+    finished_at = (
+        event_ts + timedelta(milliseconds=_ORPHAN_EVENT_STALE_MS) if stale_active and event_ts is not None else event.ts
+    )
     active = _activity_is_active(status)
     for index, (node_type, node_id, label, direction) in enumerate(endpoints):
         route.append(
@@ -1599,12 +1680,12 @@ def _event_activity(event: RuntimeEvent) -> RuntimeActivity | None:
         origin_device_id=event.device_id if not outbound else None,
         target_device_ids=[event.device_id] if outbound and event.device_id else [],
         status=status,
-        outcome="deferred" if active else event.outcome,
+        outcome=("deferred" if active else "failure" if stale_active else event.outcome),
         summary=event.summary,
         current_hop_id=route[-1].hop_id if active and route else None,
         started_at=event.ts,
         updated_at=event.ts,
-        finished_at=None if active else event.ts,
+        finished_at=None if active else finished_at,
         event_ids=[event.event_id],
         route=route,
     )

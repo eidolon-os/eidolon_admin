@@ -1206,6 +1206,139 @@ def test_vacant_presence_state_completes_an_unconsumed_assertion() -> None:
     ]
 
 
+def test_rootless_presence_flow_fragment_still_reduces_its_terminal() -> None:
+    """A presentation window may omit the root without orphaning running."""
+
+    base = datetime(2026, 7, 29, 15, 32, 41, tzinfo=UTC)
+
+    def event(
+        event_id: str,
+        offset_ms: int,
+        event_type: str,
+        status: str,
+        stage: str,
+    ):
+        return mission_control_service.RuntimeEvent(
+            event_id=event_id,
+            ts=base + timedelta(milliseconds=offset_ms),
+            source="hub",
+            type=event_type,
+            trace_id="flow-presence-fragment",
+            owner_id="owner-a",
+            companion_id="companion-a",
+            device_id="atk" if stage.startswith("atk.") else "box-3",
+            summary=event_type,
+            payload={
+                "stage": stage,
+                "status": status,
+                "label": stage,
+            },
+        )
+
+    events = [
+        event(
+            "atk-running",
+            0,
+            "companion.flow.node",
+            "running",
+            "atk.owner_verification",
+        ),
+        event(
+            "atk-broadcast",
+            400,
+            "hub.device_flow.broadcasted",
+            "completed",
+            "hub.broadcast",
+        ),
+        event(
+            "box-timeout",
+            2_600,
+            "companion.flow.node",
+            "timeout",
+            "box.owner_verification",
+        ),
+    ]
+
+    activities = mission_control_service._project_runtime_activities(
+        [],
+        [],
+        events,
+        observed_at=base + timedelta(minutes=1),
+    )
+
+    assert len(activities) == 1
+    activity = activities[0]
+    assert activity.activity_id == "presence:flow-presence-fragment"
+    assert activity.status == "timeout"
+    assert activity.outcome == "failure"
+    assert activity.finished_at == base + timedelta(milliseconds=2_600)
+    assert not any(item.status == "running" for item in activities)
+
+
+def test_rootless_running_presence_fragment_expires_without_terminal() -> None:
+    base = datetime(2026, 7, 29, 15, 32, 41, tzinfo=UTC)
+    node = mission_control_service.RuntimeEvent(
+        event_id="atk-running",
+        ts=base,
+        source="hub",
+        type="companion.flow.node",
+        trace_id="flow-presence-fragment",
+        owner_id="owner-a",
+        companion_id="companion-a",
+        device_id="atk",
+        summary="ATK armed",
+        payload={
+            "stage": "atk.owner_watch",
+            "status": "running",
+            "label": "ATK armed, awaiting owner",
+        },
+    )
+
+    fresh = mission_control_service._project_runtime_activities(
+        [],
+        [],
+        [node],
+        observed_at=base + timedelta(seconds=14),
+    )
+    expired = mission_control_service._project_runtime_activities(
+        [],
+        [],
+        [node],
+        observed_at=base + timedelta(seconds=16),
+    )
+
+    assert fresh[0].status == "running"
+    assert expired[0].status == "timeout"
+    assert expired[0].finished_at == base + timedelta(seconds=15)
+
+
+def test_orphan_running_device_event_cannot_remain_active_forever() -> None:
+    base = datetime(2026, 7, 29, 15, 32, 41, tzinfo=UTC)
+    event = mission_control_service.RuntimeEvent(
+        event_id="orphan-running",
+        ts=base,
+        source="hub",
+        type="device.operation.progress",
+        owner_id="owner-a",
+        companion_id="companion-a",
+        device_id="device-a",
+        summary="Device operation",
+        payload={"status": "running"},
+    )
+
+    activity = mission_control_service._event_activity(
+        event,
+        observed_at=base + timedelta(seconds=31),
+    )
+
+    assert activity is not None
+    assert activity.status == "timeout"
+    assert activity.outcome == "failure"
+    assert activity.current_hop_id is None
+    assert activity.finished_at == base + timedelta(seconds=30)
+    assert all(hop.status == "done" for hop in activity.route)
+
+
 def test_guard_activity_drives_observer_state_without_voice_turn() -> None:
     guard = mission_control_service.RuntimeActivity(
         activity_id="guard:running",
