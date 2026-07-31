@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from eidolon_sdk.memory import (
+from eidolon_memory_contracts import (
     MemoryActorContext,
     build_memory_actor_context,
     derive_memory_space_id,

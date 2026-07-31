@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 import yaml
-from eidolon_sdk.memory import MEMORY_MCP_PORT_SPAN
+from eidolon_memory_contracts import MEMORY_MCP_PORT_SPAN
 
 from eidolon_admin_server.app.ports import (
     _MAX_LIST_INDEX,

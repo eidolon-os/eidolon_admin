@@ -13,6 +13,8 @@ dependencies = [
     "pyserial>=3.5",
     "eidolon-sdk",
     "eidolon-data",
+    # Protocol for the memory service; not the service itself.
+    "eidolon-memory-contracts",
     "supervisor>=4.2.5",
     "psutil>=6.0",
     "mcp>=1.2.0",
@@ -66,6 +68,7 @@ find-links = ["https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html
 [tool.uv.sources]
 eidolon-sdk = { path = "../eidolon_sdk", editable = true }
 eidolon-data = { path = "../eidolon_data", editable = true }
+eidolon-memory-contracts = { path = "../eidolon_memory/contracts", editable = true }
 
 [build-system]
 requires = ["setuptools>=68"]

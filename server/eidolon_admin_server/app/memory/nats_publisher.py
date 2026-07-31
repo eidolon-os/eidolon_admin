@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import nats
-from eidolon_sdk.memory import (
+from eidolon_memory_contracts import (
     ConversationTurnPayload,
     MemoryActorContext,
     conversation_turn_subject,

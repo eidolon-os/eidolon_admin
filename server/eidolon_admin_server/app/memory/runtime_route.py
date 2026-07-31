@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from eidolon_sdk.memory import (
+from eidolon_memory_contracts import (
     DEFAULT_MEMORY_MCP_BASE_PORT,
     DEFAULT_MEMORY_MCP_HOST,
     DEFAULT_MEMORY_MCP_PATH,

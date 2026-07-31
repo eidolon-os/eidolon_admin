@@ -11,7 +11,7 @@ tool call → typed response.
 """
 from __future__ import annotations
 
-from eidolon_sdk.memory import conversation_turn_subject
+from eidolon_memory_contracts import conversation_turn_subject
 from fastapi import APIRouter, HTTPException, Request, status
 
 from ..mcp_client import call_tool

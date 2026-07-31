@@ -16,7 +16,7 @@ from eidolon_admin_server.app.settings import (
     GatewayConfig,
     Settings,
 )
-from eidolon_sdk.memory import memory_space_storage_name
+from eidolon_memory_contracts import memory_space_storage_name
 
 pytestmark = pytest.mark.asyncio
 

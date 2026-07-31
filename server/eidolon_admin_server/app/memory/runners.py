@@ -23,7 +23,7 @@ from typing import Any
 import psutil
 import yaml
 from eidolon_data import load_settings
-from eidolon_sdk.memory import memory_space_storage_name
+from eidolon_memory_contracts import memory_space_storage_name
 
 from ..settings import default_eidolon_root
 from .runtime_route import MemoryRuntimeRoute, default_mcp_base_port, route_for_realm
