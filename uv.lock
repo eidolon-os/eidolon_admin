@@ -508,6 +508,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "addict" },
+    { name = "cryptography" },
     { name = "datasets" },
     { name = "eidolon-data" },
     { name = "eidolon-memory-contracts" },
@@ -547,6 +548,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "addict", specifier = ">=2.4" },
+    { name = "cryptography", specifier = ">=43" },
     { name = "datasets", specifier = ">=4.0" },
     { name = "eidolon-data", editable = "../eidolon_data" },
     { name = "eidolon-memory-contracts", editable = "../eidolon_memory/contracts" },

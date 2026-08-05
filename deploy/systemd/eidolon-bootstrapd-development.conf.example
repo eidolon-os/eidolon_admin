@@ -1,0 +1,5 @@
+[Service]
+# Development-only drop-in. Install as:
+#   /etc/systemd/system/eidolon-bootstrapd.service.d/development.conf
+# Never include this file in a product image.
+Environment=EIDOLON_BOOTSTRAP_MODE=development

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/bootstrap/v1/system-state.schema.json",
+  "title": "Eidolon Bootstrap System State V1",
+  "type": "object",
+  "required": [
+    "reset_epoch",
+    "claim_state",
+    "network_state",
+    "workspace_state",
+    "recovery_state",
+    "updated_at"
+  ],
+  "properties": {
+    "reset_epoch": { "type": "integer", "minimum": 0 },
+    "claim_state": { "enum": ["unclaimed", "claimed"] },
+    "network_state": {
+      "enum": [
+        "unconfigured",
+        "staging",
+        "connected",
+        "degraded",
+        "rolling_back"
+      ]
+    },
+    "workspace_state": {
+      "enum": ["absent", "provisioning", "ready", "degraded"]
+    },
+    "recovery_state": {
+      "enum": [
+        "normal",
+        "physically_armed",
+        "controller_recovery",
+        "factory_reset_pending"
+      ]
+    },
+    "updated_at": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": false
+}

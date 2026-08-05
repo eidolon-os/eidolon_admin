@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/bootstrap/v1/error.schema.json",
+  "title": "Eidolon Bootstrap Error V1",
+  "type": "object",
+  "required": ["code", "message", "retryable"],
+  "properties": {
+    "code": {
+      "enum": [
+        "bootstrap_unavailable",
+        "development_operation_disabled",
+        "invalid_request",
+        "identity_not_provisioned",
+        "operation_conflict",
+        "operation_expired",
+        "unauthorized",
+        "internal_error"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "retryable": { "type": "boolean" },
+    "operation_id": { "type": ["string", "null"], "format": "uuid" }
+  },
+  "additionalProperties": false
+}

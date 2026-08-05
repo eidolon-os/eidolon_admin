@@ -30,6 +30,10 @@ dependencies = [
     "scikit-learn>=1.3.2",
     "pillow>=11.0",
     "python-multipart>=0.0.20",
+    # Bootstrap host identity and signed commissioning descriptors. The
+    # bootstrap process imports this directly, so keep it an explicit runtime
+    # dependency instead of relying on a transitive device extra.
+    "cryptography>=43",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +65,10 @@ dev = [
 
 [project.scripts]
 eidolon-admin = "eidolon_admin_server.app.cli:main"
+eidolon-bootstrapd = "eidolon_admin_server.bootstrap.daemon:main"
+eidolon-bootstrapctl = "eidolon_admin_server.bootstrap.cli:main"
+eidolon-bootstrap-preflight = "eidolon_admin_server.bootstrap.pi_preflight:main"
+eidolon-local-api = "eidolon_admin_server.local_api.cli:main"
 
 [tool.uv]
 find-links = ["https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html"]

@@ -120,6 +120,47 @@ web/                          # Vue 3 SPA (Vite)
 
 ## Getting started
 
+### Host bootstrap development
+
+The headless Host bootstrap and Mobile-facing Local API live in this codebase
+but are separate processes from the operator Admin API. Development mode must
+be explicit:
+
+```bash
+EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapd
+```
+
+In another terminal, inspect the process or issue a short-lived, single-use
+development commissioning descriptor:
+
+```bash
+EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapctl health
+EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapctl dev issue --ttl 1800
+```
+
+The descriptor secret is returned once and only its SHA-256 hash is persisted.
+Do not place it in source control. Start the read-only Phase 0 Local API with:
+
+```bash
+EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-local-api
+```
+
+Before a Raspberry Pi Phase 1 session, collect a read-only capability report:
+
+```bash
+.venv/bin/eidolon-bootstrap-preflight --pretty
+```
+
+The preflight does not change networking or Bluetooth state. Active legacy
+`hostapd`/`dnsmasq` services are reported as evidence, not stopped.
+
+Product lifecycle is different: systemd starts bootstrap before the application
+stack, forces production mode, restarts every exit, and monitors an event-loop
+watchdog. Production refuses to start without a manufacturing-provisioned Host
+Identity. See
+[`docs/architecture/eidolon-os-local-bootstrap-plan.md`](docs/architecture/eidolon-os-local-bootstrap-plan.md)
+and [`ADR-0001`](docs/architecture/adr-0001-host-control-process-boundaries.md).
+
 ### One-shot (supervisord-managed stack)
 
 This wrapper owns three things:
