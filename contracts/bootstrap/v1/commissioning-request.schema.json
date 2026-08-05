@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/bootstrap/v1/commissioning-request.schema.json",
+  "title": "Eidolon Commissioning Request Envelope V1",
+  "type": "object",
+  "required": ["contract_version", "request_id", "operation", "payload"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "request_id": { "type": "string", "format": "uuid" },
+    "operation": {
+      "enum": ["session.authenticate", "controller.challenge", "controller.authenticate", "setup.status", "wifi.scan", "wifi.configure", "wifi.confirm", "wifi.rollback", "claim.complete"]
+    },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

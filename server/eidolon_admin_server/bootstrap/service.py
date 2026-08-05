@@ -14,7 +14,9 @@ from typing import Any
 
 from .config import BootstrapMode, BootstrapSettings
 from .identity import HostIdentityManager
+from .domain import NetworkState
 from .ports import BootstrapStateStore
+from .tls_identity import CommissioningTlsIdentityManager
 
 
 logger = logging.getLogger("eidolon.bootstrap.service")
@@ -41,18 +43,35 @@ class BootstrapService:
         settings: BootstrapSettings,
         store: BootstrapStateStore,
         identity_manager: HostIdentityManager,
+        tls_identity_manager: CommissioningTlsIdentityManager | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
         self._identity_manager = identity_manager
+        self._tls_identity_manager = (
+            tls_identity_manager
+            or CommissioningTlsIdentityManager(settings.commissioning_tls_pem_path)
+        )
         self._run_id: str | None = None
         self._started_at: str | None = None
+        self._commissioning_status = (
+            "disabled"
+            if settings.commissioning_adapter.value == "disabled"
+            else "starting"
+        )
 
     def initialize(self) -> None:
         now = _timestamp(_now())
         self._store.open()
         self._store.initialize(now)
-        self._identity_manager.load()
+        host_identity = self._identity_manager.load()
+        self._tls_identity_manager.load(host_identity.host_id)
+        interrupted = self._store.fail_interrupted_operations(now=now)
+        if interrupted:
+            logger.warning(
+                "marked %s interrupted bootstrap operation(s) failed",
+                interrupted,
+            )
         self._run_id = str(uuid.uuid4())
         self._started_at = now
         logger.info(
@@ -88,9 +107,26 @@ class BootstrapService:
             "pid": os.getpid(),
             "run_id": self._run_id,
             "started_at": self._started_at,
+            "commissioning": {
+                "adapter": self._settings.commissioning_adapter.value,
+                "status": self._commissioning_status,
+            },
             "descriptor": self.public_descriptor(),
             "state": self._store.get_state().to_dict(),
         }
+
+    def set_commissioning_status(self, status: str) -> None:
+        if status not in {"disabled", "starting", "ready", "degraded", "stopping"}:
+            raise ValueError("unknown commissioning runtime status")
+        self._commissioning_status = status
+
+    def reconcile_network_state(self, network_state: NetworkState) -> None:
+        """Publish the system adapter's post-recovery state as Bootstrap truth."""
+
+        self._store.reconcile_network_state(
+            network_state=network_state,
+            now=_timestamp(_now()),
+        )
 
     def prove_host(self, challenge: str) -> dict[str, Any]:
         """Prove possession of the Host key for a caller-provided nonce.
@@ -132,6 +168,19 @@ class BootstrapService:
             **unsigned,
             "signature": self._identity_manager.sign_mapping(unsigned),
         }
+
+    def commissioning_endpoint(self) -> dict[str, Any]:
+        """Signed dynamic endpoint data readable before the pinned TLS handshake."""
+
+        unsigned = {
+            "contract_version": "1",
+            "purpose": "eidolon-ble-commissioning-endpoint-v1",
+            "host_id": self._identity_manager.identity.host_id,
+            "reset_epoch": self._store.get_state().reset_epoch,
+            "ble_service_uuid": self._settings.ble_service_uuid,
+            "tls_spki_fingerprint": self._tls_identity_manager.identity.spki_fingerprint,
+        }
+        return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
 
     def issue_development_descriptor(
         self, ttl_seconds: int | None = None

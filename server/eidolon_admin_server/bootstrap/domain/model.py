@@ -1,8 +1,8 @@
 """Stable host-bootstrap facts.
 
 Owner, Companion, external Device admission, and Kernel Mount deliberately do
-not appear as mutable entities here. Bootstrap only stores an eventual stable
-Owner reference in Controller grants, which will be introduced with auth.
+not appear as mutable entities here. Bootstrap owns only Host commissioning,
+Controller grants, network operations, and their reset-epoch boundary.
 """
 
 from __future__ import annotations
@@ -37,6 +37,24 @@ class RecoveryState(StrEnum):
     PHYSICALLY_ARMED = "physically_armed"
     CONTROLLER_RECOVERY = "controller_recovery"
     FACTORY_RESET_PENDING = "factory_reset_pending"
+
+
+class ControllerRole(StrEnum):
+    HOST_ADMIN = "host_admin"
+
+
+class BootstrapOperationType(StrEnum):
+    INITIAL_NETWORK = "initial_network"
+    CHANGE_NETWORK = "change_network"
+
+
+class BootstrapOperationState(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    WAITING_CONFIRMATION = "waiting_confirmation"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    COMPENSATING = "compensating"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,4 +99,54 @@ class CommissioningSessionMetadata:
             "expires_at": self.expires_at,
             "consumed_at": self.consumed_at,
             "revoked_at": self.revoked_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ControllerGrant:
+    controller_id: str
+    public_key: str
+    public_key_fingerprint: str
+    role: ControllerRole
+    display_name: str
+    platform: str
+    reset_epoch: int
+    created_at: str
+    revoked_at: str | None = None
+
+    def to_dict(self) -> dict[str, str | int | None]:
+        return {
+            "controller_id": self.controller_id,
+            "public_key": self.public_key,
+            "public_key_fingerprint": self.public_key_fingerprint,
+            "role": self.role.value,
+            "display_name": self.display_name,
+            "platform": self.platform,
+            "reset_epoch": self.reset_epoch,
+            "created_at": self.created_at,
+            "revoked_at": self.revoked_at,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapOperation:
+    operation_id: str
+    operation_type: BootstrapOperationType
+    state: BootstrapOperationState
+    target: str
+    reset_epoch: int
+    created_at: str
+    updated_at: str
+    error_code: str | None = None
+
+    def to_dict(self) -> dict[str, str | int | None]:
+        return {
+            "operation_id": self.operation_id,
+            "operation_type": self.operation_type.value,
+            "state": self.state.value,
+            "target": self.target,
+            "reset_epoch": self.reset_epoch,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "error_code": self.error_code,
         }

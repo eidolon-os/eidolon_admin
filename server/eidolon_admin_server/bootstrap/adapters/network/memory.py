@@ -7,13 +7,19 @@ from ...ports import (
     NetworkChangeRequest,
     NetworkProvisioningError,
     NetworkProvisioningSnapshot,
+    WifiAccessPoint,
 )
 
 
 class InMemoryNetworkProvisioning:
     """Simulates stage/confirm/rollback without claiming hardware behavior."""
 
-    def __init__(self, *, current_ssid: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        current_ssid: str | None = None,
+        access_points: list[WifiAccessPoint] | None = None,
+    ) -> None:
         self._current_ssid = current_ssid
         self._previous_ssid: str | None = None
         self._staged_ssid: str | None = None
@@ -23,6 +29,21 @@ class InMemoryNetworkProvisioning:
             if current_ssid is not None
             else NetworkState.UNCONFIGURED
         )
+        self._access_points = list(access_points or [])
+
+    async def recover_interrupted(self) -> NetworkProvisioningSnapshot:
+        if self._active_operation_id is not None:
+            self._current_ssid = self._previous_ssid
+            self._clear_operation()
+            self._state = (
+                NetworkState.CONNECTED
+                if self._current_ssid is not None
+                else NetworkState.UNCONFIGURED
+            )
+        return self._snapshot()
+
+    async def scan(self) -> list[WifiAccessPoint]:
+        return list(self._access_points)
 
     async def get_state(self) -> NetworkProvisioningSnapshot:
         return self._snapshot()

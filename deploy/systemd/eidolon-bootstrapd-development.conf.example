@@ -3,3 +3,5 @@
 #   /etc/systemd/system/eidolon-bootstrapd.service.d/development.conf
 # Never include this file in a product image.
 Environment=EIDOLON_BOOTSTRAP_MODE=development
+Environment=EIDOLON_BOOTSTRAP_COMMISSIONING_ADAPTER=bluez
+Environment=EIDOLON_BOOTSTRAP_NETWORK_ADAPTER=networkmanager

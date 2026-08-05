@@ -12,16 +12,80 @@ import logging
 import signal
 from contextlib import suppress
 
+from .adapters.commissioning import BlueZCommissioningListener
+from .adapters.network import InMemoryNetworkProvisioning, NetworkManagerProvisioning
 from .adapters.persistence import SQLiteBootstrapStateStore
-from .config import BootstrapSettings, load_bootstrap_settings
+from .commissioning_protocol import CommissioningProtocolSession
+from .commissioning_service import CommissioningService
+from .config import (
+    BootstrapSettings,
+    CommissioningAdapter,
+    NetworkAdapter,
+    load_bootstrap_settings,
+)
 from .control import BootstrapControlServer
 from .identity import HostIdentityManager
 from .instance_lock import BootstrapInstanceLock
 from .service import BootstrapService
 from .systemd_notify import SystemdNotifier
+from .tls_session import CommissioningTlsSession, run_commissioning_tls_session
 
 
 logger = logging.getLogger("eidolon.bootstrap")
+
+
+async def _wait_or_stop(stop_event: asyncio.Event, seconds: float) -> None:
+    with suppress(TimeoutError):
+        await asyncio.wait_for(stop_event.wait(), timeout=seconds)
+
+
+async def _run_bluez_commissioning(
+    *,
+    settings: BootstrapSettings,
+    service: BootstrapService,
+    commissioning: CommissioningService,
+    stop_event: asyncio.Event,
+) -> None:
+    context = CommissioningTlsSession.server_context(
+        str(settings.commissioning_tls_pem_path)
+    )
+    sessions: set[asyncio.Task[None]] = set()
+    while not stop_event.is_set():
+        service.set_commissioning_status("starting")
+        listener = BlueZCommissioningListener(
+            service_uuid=settings.ble_service_uuid,
+            host_id=service.public_descriptor()["host_id"],
+            endpoint_provider=service.commissioning_endpoint,
+        )
+        try:
+            await listener.start()
+            service.set_commissioning_status("ready")
+            logger.info("BLE commissioning listener is ready")
+            while not stop_event.is_set():
+                link = await listener.accept()
+                task = asyncio.create_task(
+                    run_commissioning_tls_session(
+                        link,
+                        context,
+                        CommissioningProtocolSession(commissioning),
+                    ),
+                    name=f"bootstrap-commissioning-{link.link_id}",
+                )
+                sessions.add(task)
+                task.add_done_callback(sessions.discard)
+        except Exception:
+            if not stop_event.is_set():
+                service.set_commissioning_status("degraded")
+                logger.exception("BLE commissioning listener failed; retrying")
+        finally:
+            await listener.stop()
+        if not stop_event.is_set():
+            await _wait_or_stop(stop_event, 5)
+    for task in sessions:
+        task.cancel()
+    if sessions:
+        await asyncio.gather(*sessions, return_exceptions=True)
+    service.set_commissioning_status("stopping")
 
 
 async def run_daemon(
@@ -45,10 +109,26 @@ async def run_daemon(
     notifier = SystemdNotifier.from_environ()
     event = stop_event or asyncio.Event()
     watchdog_task: asyncio.Task[None] | None = None
+    commissioning_task: asyncio.Task[None] | None = None
     instance_lock = BootstrapInstanceLock(settings.instance_lock_path)
     instance_lock.acquire()
     try:
         service.initialize()
+        network = (
+            NetworkManagerProvisioning()
+            if settings.network_adapter is NetworkAdapter.NETWORK_MANAGER
+            else InMemoryNetworkProvisioning()
+        )
+        try:
+            recovered_network = await network.recover_interrupted()
+            logger.info(
+                "network provisioning recovery complete state=%s",
+                recovered_network.state.value,
+            )
+            service.reconcile_network_state(recovered_network.state)
+        except Exception:
+            logger.exception("network provisioning recovery failed closed")
+        commissioning = CommissioningService(store=store, network=network)
         await control.start()
         logger.info(
             "bootstrapd ready host_id=%s mode=%s socket=%s",
@@ -65,6 +145,16 @@ async def run_daemon(
                 notifier.run_watchdog(event),
                 name="bootstrap-systemd-watchdog",
             )
+        if settings.commissioning_adapter is CommissioningAdapter.BLUEZ:
+            commissioning_task = asyncio.create_task(
+                _run_bluez_commissioning(
+                    settings=settings,
+                    service=service,
+                    commissioning=commissioning,
+                    stop_event=event,
+                ),
+                name="bootstrap-bluez-supervisor",
+            )
         if stop_event is None:
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGTERM, signal.SIGINT):
@@ -77,6 +167,10 @@ async def run_daemon(
             watchdog_task.cancel()
             with suppress(asyncio.CancelledError):
                 await watchdog_task
+        if commissioning_task is not None:
+            commissioning_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await commissioning_task
         try:
             await control.close()
         finally:

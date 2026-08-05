@@ -15,14 +15,22 @@ The product image/provisioner must create:
   control-socket access;
 - manufacturing-provisioned `/var/lib/eidolon-bootstrap/host_identity.ed25519`
   with owner `eidolon-bootstrap:eidolon-bootstrap` and mode `0600`;
-- narrowly scoped BlueZ/NetworkManager policy after the Phase 1 D-Bus calls are
-  proven on Raspberry Pi 5.
+- install `deploy/polkit/60-eidolon-bootstrap-network.rules` under
+  `/etc/polkit-1/rules.d/`; it grants only the NetworkManager actions used by
+  the dedicated bootstrap process;
+- verify the target image's BlueZ system-bus policy permits the dedicated user
+  to register the tracked GATT application. Do not add root or Linux
+  capabilities as a workaround without recording the exact denied D-Bus call.
 
 Development uses an explicit drop-in that sets
 `EIDOLON_BOOTSTRAP_MODE=development`; the tracked product unit always forces
 `production` after reading its optional environment file. The tracked
 `eidolon-bootstrapd-development.conf.example` is a template only and must not
 be copied into product images.
+
+The development Pi drop-in also selects the real `bluez` and `networkmanager`
+adapters. Desktop/unit tests intentionally default to `disabled` + `memory`;
+production settings fail closed unless both real adapters are selected.
 
 Do not grant the existing Admin API process system privileges. Factory reset is
 not implemented by these units and will use a separate root oneshot after every

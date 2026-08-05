@@ -1,6 +1,6 @@
 # ADR-0002：Bootstrap 使用窄 Port，并分离权威状态与运行日志
 
-- 状态：Accepted
+- 状态：Accepted；具体 BlueZ/NetworkManager 实现由 ADR-0003 续订
 - 日期：2026-08-05
 
 ## Context
@@ -18,18 +18,19 @@ profile 或 checkpoint 写入应用层，会把尚未验证的实现假设固化
 Bootstrap application service 只依赖三个窄 Port：
 
 1. `BootstrapStateStore`：保存恢复所需的最小权威状态。
-2. `CommissioningChannel`：传递带 session ID 的不透明 packet，并管理通道生命周期。
+2. `CommissioningListener/CommissioningLink`：接受附近连接并传递可靠有序字节流。
 3. `NetworkProvisioning`：提供产品语义上的 stage、confirm、rollback 和状态读取。
 
 Port 不包含 BlueZ、GATT、NetworkManager、SoftAP 或具体存储 API。当前提供：
 
 - `SQLiteBootstrapStateStore`：产品默认 durable adapter；
 - `InMemoryBootstrapStateStore`：非持久化测试 adapter；
-- `InMemoryCommissioningChannel`：packet 流程测试 adapter；
+- `InMemoryCommissioningLink`：TLS/应用协议互操作测试 adapter；
 - `InMemoryNetworkProvisioning`：stage/confirm/rollback 状态测试 adapter。
 
-在完成 Pi 实机 PoC 前，不实现 BlueZ、NetworkManager 或 SoftAP adapter，也不建立为
-未知未来实现准备的插件注册框架。出现真实的第二种实现后，再从实际差异提取共性。
+该决策建立 Port 时尚未实现 BlueZ、NetworkManager 或 SoftAP。后续用户要求继续完成
+无网链路后，ADR-0003 在不改变这些 Port/权威边界的前提下增加了 BlueZ、pinned TLS
+和 NetworkManager concrete adapter；SoftAP 仍未引入。真实硬件结论继续等待 Pi PoC。
 
 SQLite 不是领域前提，也不是外部数据库服务。它只是当前默认的单文件 adapter，负责
 事务、唯一约束和断电恢复。SQLite schema v2 删除 `daemon_runs`；daemon 生命周期、

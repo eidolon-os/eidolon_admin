@@ -9,10 +9,21 @@
       "enum": [
         "bootstrap_unavailable",
         "development_operation_disabled",
+        "unsupported_contract",
+        "unknown_operation",
         "invalid_request",
         "identity_not_provisioned",
         "operation_conflict",
         "operation_expired",
+        "commissioning_denied",
+        "controller_denied",
+        "already_claimed",
+        "invalid_controller_key",
+        "invalid_network",
+        "network_stage_failed",
+        "network_confirm_failed",
+        "network_rollback_failed",
+        "operation_not_found",
         "unauthorized",
         "internal_error"
       ]

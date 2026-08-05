@@ -1,25 +1,28 @@
 """Narrow capability ports owned by the Bootstrap application layer."""
 
-from .commissioning_channel import (
-    CommissioningChannel,
-    CommissioningChannelClosed,
-    CommissioningPacket,
+from .commissioning_stream import (
+    CommissioningLink,
+    CommissioningLinkClosed,
+    CommissioningListener,
 )
 from .network_provisioning import (
     NetworkChangeRequest,
     NetworkProvisioning,
     NetworkProvisioningError,
     NetworkProvisioningSnapshot,
+    WifiAccessPoint,
 )
-from .state_store import BootstrapStateStore
+from .state_store import BootstrapStateConflict, BootstrapStateStore
 
 __all__ = [
     "BootstrapStateStore",
-    "CommissioningChannel",
-    "CommissioningChannelClosed",
-    "CommissioningPacket",
+    "BootstrapStateConflict",
+    "CommissioningLink",
+    "CommissioningLinkClosed",
+    "CommissioningListener",
     "NetworkChangeRequest",
     "NetworkProvisioning",
     "NetworkProvisioningError",
     "NetworkProvisioningSnapshot",
+    "WifiAccessPoint",
 ]

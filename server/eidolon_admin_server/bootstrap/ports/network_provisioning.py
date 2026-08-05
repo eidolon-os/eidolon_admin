@@ -21,6 +21,13 @@ class NetworkChangeRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class WifiAccessPoint:
+    ssid: str
+    signal: int
+    secured: bool
+
+
+@dataclass(frozen=True, slots=True)
 class NetworkProvisioningSnapshot:
     state: NetworkState
     active_operation_id: str | None
@@ -30,6 +37,10 @@ class NetworkProvisioningSnapshot:
 
 @runtime_checkable
 class NetworkProvisioning(Protocol):
+    async def recover_interrupted(self) -> NetworkProvisioningSnapshot: ...
+
+    async def scan(self) -> list[WifiAccessPoint]: ...
+
     async def get_state(self) -> NetworkProvisioningSnapshot: ...
 
     async def begin_change(

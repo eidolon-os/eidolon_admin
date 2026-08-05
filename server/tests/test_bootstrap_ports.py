@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-import asyncio
+import base64
+import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from eidolon_admin_server.bootstrap.adapters.commissioning import (
-    InMemoryCommissioningChannel,
-)
 from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
@@ -17,16 +19,21 @@ from eidolon_admin_server.bootstrap.adapters.persistence import (
     SQLiteBootstrapStateStore,
 )
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
+from eidolon_admin_server.bootstrap.commissioning_service import (
+    CommissioningRequestRejected,
+    CommissioningService,
+)
+from eidolon_admin_server.bootstrap.commissioning_protocol import (
+    CommissioningProtocolSession,
+)
 from eidolon_admin_server.bootstrap.domain import NetworkState
 from eidolon_admin_server.bootstrap.identity import HostIdentityManager
 from eidolon_admin_server.bootstrap.ports import (
     BootstrapStateStore,
-    CommissioningChannel,
-    CommissioningChannelClosed,
-    CommissioningPacket,
     NetworkChangeRequest,
     NetworkProvisioning,
     NetworkProvisioningError,
+    WifiAccessPoint,
 )
 from eidolon_admin_server.bootstrap.service import BootstrapService
 
@@ -62,28 +69,6 @@ def test_service_runs_against_state_store_port_without_sqlite(tmp_path: Path) ->
         assert service.health()["state"]["claim_state"] == "unclaimed"
     finally:
         service.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_in_memory_commissioning_channel_implements_packet_port() -> None:
-    channel = InMemoryCommissioningChannel()
-    assert isinstance(channel, CommissioningChannel)
-    await channel.start()
-
-    incoming = CommissioningPacket("session-1", b"request")
-    await channel.inject_received(incoming)
-    assert await channel.receive() == incoming
-
-    outgoing = CommissioningPacket("session-1", b"response")
-    await channel.send(outgoing)
-    assert await channel.next_sent() == outgoing
-
-    waiting = asyncio.create_task(channel.receive())
-    await channel.stop()
-    with pytest.raises(CommissioningChannelClosed):
-        await waiting
-    with pytest.raises(CommissioningChannelClosed):
-        await channel.send(outgoing)
 
 
 @pytest.mark.asyncio
@@ -131,7 +116,7 @@ async def test_network_adapter_rejects_overlapping_or_wrong_operation() -> None:
         await network.confirm("network-op-2")
 
 
-def test_sqlite_v2_keeps_authority_and_drops_v1_daemon_diagnostics(
+def test_sqlite_v3_keeps_authority_and_drops_v1_daemon_diagnostics(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "bootstrap.sqlite3"
@@ -189,7 +174,7 @@ def test_sqlite_v2_keeps_authority_and_drops_v1_daemon_diagnostics(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 2
+        assert version == 3
         assert "daemon_runs" not in tables
         assert store.get_state().reset_epoch == 7
         assert store.latest_commissioning_session().session_id == "session-1"
@@ -208,6 +193,290 @@ def test_fresh_sqlite_contains_only_durable_authority_tables(tmp_path: Path) -> 
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        assert tables == {"bootstrap_state", "commissioning_sessions"}
+        assert tables == {
+            "bootstrap_state",
+            "commissioning_sessions",
+            "controller_grants",
+            "bootstrap_operations",
+        }
     finally:
         store.close()
+
+
+def _controller_public_key() -> str:
+    public_der = (
+        ec.generate_private_key(ec.SECP256R1())
+        .public_key()
+        .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    )
+    return base64.urlsafe_b64encode(public_der).rstrip(b"=").decode("ascii")
+
+
+def _protocol_request(operation: str, payload: dict, suffix: int) -> dict:
+    return {
+        "contract_version": "1",
+        "request_id": f"00000000-0000-4000-8000-{suffix:012d}",
+        "operation": operation,
+        "payload": payload,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+async def test_commissioning_service_completes_network_then_atomic_claim(
+    tmp_path: Path,
+    store_kind: str,
+) -> None:
+    settings = _settings(tmp_path)
+    store = (
+        InMemoryBootstrapStateStore()
+        if store_kind == "memory"
+        else SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
+    )
+    bootstrap = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(
+            settings.identity_key_path,
+            settings.mode,
+        ),
+    )
+    bootstrap.initialize()
+    descriptor = bootstrap.issue_development_descriptor(300)
+    network = InMemoryNetworkProvisioning(
+        access_points=[
+            WifiAccessPoint("Home", 58, True),
+            WifiAccessPoint("Cafe", 34, False),
+            WifiAccessPoint("Home", 81, True),
+        ]
+    )
+    commissioning = CommissioningService(store=store, network=network)
+    try:
+        authorization = commissioning.authorize(
+            session_id=descriptor["commissioning_id"],
+            secret=descriptor["commissioning_secret"],
+        )
+        scanned = await commissioning.scan_networks(authorization)
+        assert scanned["networks"] == [
+            {"ssid": "Home", "signal": 81, "secured": True},
+            {"ssid": "Cafe", "signal": 34, "secured": False},
+        ]
+
+        operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+        staged = await commissioning.configure_network(
+            authorization,
+            {
+                "operation_id": operation_id,
+                "ssid": "Home",
+                "passphrase": "correct horse battery staple",
+            },
+        )
+        assert staged["operation"]["state"] == "waiting_confirmation"
+
+        controller_payload = {
+            "public_key": _controller_public_key(),
+            "display_name": "Manson 的手机",
+            "platform": "android",
+        }
+
+        with pytest.raises(CommissioningRequestRejected, match="network must"):
+            # Store enforces the same ordering even if a caller skips confirm.
+            commissioning.claim_controller(authorization, controller_payload)
+
+        confirmed = await commissioning.confirm_network(authorization, operation_id)
+        assert confirmed["operation"]["state"] == "succeeded"
+        claimed = commissioning.claim_controller(authorization, controller_payload)
+        assert claimed["state"]["claim_state"] == "claimed"
+        assert claimed["controller"]["role"] == "host_admin"
+        assert len(store.list_controllers()) == 1
+
+        retried = commissioning.claim_controller(authorization, controller_payload)
+        assert retried["controller"] == claimed["controller"]
+
+        with pytest.raises(
+            CommissioningRequestRejected, match="Commissioning session is unavailable"
+        ):
+            commissioning.status(authorization)
+
+        if store_kind == "sqlite":
+            dump = "\n".join(store.connection.iterdump())
+            assert "correct horse battery staple" not in dump
+    finally:
+        bootstrap.shutdown()
+
+
+def test_commissioning_rejects_wrong_secret_without_changing_state(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    store = InMemoryBootstrapStateStore()
+    bootstrap = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+    )
+    bootstrap.initialize()
+    try:
+        descriptor = bootstrap.issue_development_descriptor(300)
+        commissioning = CommissioningService(
+            store=store,
+            network=InMemoryNetworkProvisioning(),
+        )
+        with pytest.raises(
+            CommissioningRequestRejected, match="Commissioning session is unavailable"
+        ):
+            commissioning.authorize(
+                session_id=descriptor["commissioning_id"],
+                secret="x" * 32,
+            )
+        assert store.get_state().claim_state.value == "unclaimed"
+        assert store.list_controllers() == []
+    finally:
+        bootstrap.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_claimed_controller_authenticates_and_changes_network(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    store = InMemoryBootstrapStateStore()
+    bootstrap = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+    )
+    bootstrap.initialize()
+    network = InMemoryNetworkProvisioning(
+        access_points=[WifiAccessPoint("New Home", 90, True)]
+    )
+    commissioning = CommissioningService(store=store, network=network)
+    descriptor = bootstrap.issue_development_descriptor(300)
+    initial = commissioning.authorize(
+        session_id=descriptor["commissioning_id"],
+        secret=descriptor["commissioning_secret"],
+    )
+    first_operation = "c74b0000-5edc-4af7-af70-aefc7531d862"
+    await commissioning.configure_network(
+        initial,
+        {"operation_id": first_operation, "ssid": "First Home"},
+    )
+    await commissioning.confirm_network(initial, first_operation)
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_der = private_key.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+    )
+    encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
+    digest = hashlib.sha256(public_der).hexdigest()
+    controller_id = f"ectrl-{digest[:20]}"
+    commissioning.claim_controller(
+        initial,
+        {
+            "controller_id": controller_id,
+            "public_key": encoded_public,
+            "display_name": "Primary phone",
+            "platform": "android",
+        },
+    )
+
+    protocol = CommissioningProtocolSession(commissioning)
+    challenge_response = await protocol.handle(
+        _protocol_request("controller.challenge", {"controller_id": controller_id}, 10)
+    )
+    assert challenge_response["ok"] is True
+    challenge = challenge_response["result"]
+    canonical = json.dumps(
+        challenge,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    signature = private_key.sign(canonical, ec.ECDSA(hashes.SHA256()))
+    authenticated = await protocol.handle(
+        _protocol_request(
+            "controller.authenticate",
+            {
+                **challenge,
+                "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode(),
+            },
+            11,
+        )
+    )
+    assert authenticated["ok"] is True
+
+    scanned = await protocol.handle(_protocol_request("wifi.scan", {}, 12))
+    assert scanned["result"]["networks"][0]["ssid"] == "New Home"
+    changed = await protocol.handle(
+        _protocol_request(
+            "wifi.configure",
+            {
+                "operation_id": "86c70054-f13e-4e21-aa75-e63157154302",
+                "ssid": "New Home",
+                "passphrase": "new-network-secret",
+            },
+            13,
+        )
+    )
+    assert changed["result"]["operation"]["operation_type"] == "change_network"
+    bootstrap.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    store = InMemoryBootstrapStateStore()
+    bootstrap = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+    )
+    bootstrap.initialize()
+    descriptor = bootstrap.issue_development_descriptor(300)
+    commissioning = CommissioningService(
+        store=store,
+        network=InMemoryNetworkProvisioning(),
+    )
+    authorization = commissioning.authorize(
+        session_id=descriptor["commissioning_id"],
+        secret=descriptor["commissioning_secret"],
+    )
+    interrupted_id = "11d8113d-1792-4c31-bfbb-da413232e942"
+    await commissioning.configure_network(
+        authorization,
+        {"operation_id": interrupted_id, "ssid": "First attempt"},
+    )
+    bootstrap.shutdown()
+
+    restarted = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+    )
+    restarted.initialize()
+    try:
+        interrupted = store.get_operation(interrupted_id)
+        assert interrupted is not None
+        assert interrupted.state.value == "failed"
+        assert interrupted.error_code == "daemon_restarted"
+        assert store.get_state().network_state is NetworkState.DEGRADED
+
+        restarted.reconcile_network_state(NetworkState.UNCONFIGURED)
+        assert store.get_state().network_state is NetworkState.UNCONFIGURED
+
+        authorization = commissioning.authorize(
+            session_id=descriptor["commissioning_id"],
+            secret=descriptor["commissioning_secret"],
+        )
+        replacement_network = InMemoryNetworkProvisioning()
+        replacement = CommissioningService(store=store, network=replacement_network)
+        retried = await replacement.configure_network(
+            authorization,
+            {
+                "operation_id": "179af39c-fccb-476d-9bf6-d7367eed0427",
+                "ssid": "Second attempt",
+            },
+        )
+        assert retried["operation"]["state"] == "waiting_confirmation"
+    finally:
+        restarted.shutdown()

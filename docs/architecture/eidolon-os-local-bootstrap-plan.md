@@ -7,25 +7,27 @@
 
 ## 0. 当前实施状态
 
-截至 2026-08-05，Phase 0 的进程与信任基座已经落地：
+截至 2026-08-05，Phase 0 基座和无硬件的 Phase 1/2 开发实现已经落地：
 
 - `eidolon-bootstrapd`、`eidolon-bootstrapctl`、`eidolon-local-api` 独立 entrypoint。
 - Bootstrap 通过 `BootstrapStateStore` Port 保存必要权威状态；当前默认 adapter 是独占 SQLite，也有不持久化的 In-memory 测试实现。
-- `CommissioningChannel` 和 `NetworkProvisioning` 已形成窄 Port；当前只有 In-memory adapter，未引入 BlueZ、NetworkManager 或 SoftAP 实现。
+- Commissioning 传输与安全分层为 `CommissioningListener/Link`、pinned TLS 和应用协议；BlueZ GATT adapter 与 In-memory link 都已实现。
+- `NetworkProvisioning` 保持 scan/stage/confirm/rollback 窄 Port；NetworkManager D-Bus 与 In-memory adapter 都已实现，未引入 SoftAP。
 - daemon 启停和异常属于 systemd/journald 诊断日志，不再写入 Bootstrap authority store。
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
 - Local API 当前只有只读 descriptor/state/host snapshot 和无状态 Host proof 路由，未接入 Admin 高权限面或产品 mutation。
-- Mobile M2 已接通 Setup Trust：Debug App 验证 `dev issue` 的 Ed25519 签名、有效期和 Host 公钥派生身份，匹配 `GET /api/local/v1/host` 快照，再用随机 challenge 验证当前 Bootstrap 确实持有对应 Host 私钥。临时 secret 只保留在内存。
-- 当前闭环的完成语义只是“带外身份已验证，并且当前 Bootstrap Local API 已完成 Host 私钥持有证明”，不等价于 Controller 已认领、网络已配置或 Workspace 已初始化；Audio/Hub/其他子项目不参与。
-- 当前 M2 仍要求开发环境先提供一个 Mobile 可达的 Local API 地址；无网络开箱接入要等 commissioning channel 实现，不能把本阶段描述成已经解决无网发现与配网。
+- Mobile 无网向导已实现：验证 Dev Descriptor、按 Host marker 过滤附近广播、验证 signed endpoint、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。临时 secret 和 Wi-Fi 密码只保留在内存。
+- Controller Grant、operation journal、session 单次消费与 claim 权威迁移已落地；已认领换网使用 Controller challenge，不复用开箱 secret。
+- Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 仍是后续子项目，因此 Host commissioning 完成不等价于 Workspace ready。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝 Dev Descriptor。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
-- Phase 1 只读 Pi preflight 已准备，可采集 NetworkManager、Wi-Fi、BlueZ 与旧 RaspAP 服务事实，且不读取 Wi-Fi profile 内容。
-- 根据当前实施范围，树莓派实机采集暂缓。因此尚未形成 Pi 网络/蓝牙能力结论，也不据此实现 D-Bus adapter。
+- Phase 1 只读 Pi preflight 已准备；代码侧也已实现候选 D-Bus adapter、polkit 规则和 systemd wiring。
+- 树莓派/Android 实机仍按用户要求暂缓。因此当前只证明架构、状态机、TLS 内存互操作、Flutter UI 与 Android 编译，不能把 BlueZ/NM/GATT 硬件行为描述成已验收。
 
-尚未开始并且不能宣称完成：BlueZ GATT、NetworkManager D-Bus、Controller
-认证、Owner 初始化 saga、Pi systemd 实机安装与故障注入。这些属于 Phase 1/2。
+尚未完成并且不能宣称完成：Pi/Android 真机互操作、产品二维码制造流程、物理
+recovery GPIO/按键、Owner/Workspace 初始化 saga、Factory Reset manifests、iOS、
+Pi systemd 实机安装与故障注入。
 
 ## 1. 背景与目标
 
@@ -60,7 +62,8 @@ Host: bootstrapd 常驻
   -> Mobile 发起随机 challenge，bootstrapd 返回带域隔离的 Host key 签名
   -> Mobile 验证 Host proof，防止把可重放的公开元数据误当成身份认证
   -> Host access setup 完成
-  -> [下一阶段] commissioning channel + Controller claim + network
+  -> BLE signed endpoint + pinned TLS commissioning
+  -> NetworkManager stage/confirm + Controller claim
   -> [后续子项目] Owner / Companion / Workspace onboarding
   -> [最后迁移] conversation / Audio Channel
 ```
@@ -160,8 +163,8 @@ eidolon_admin/
       ports/                      # state、commissioning channel、network capability
       adapters/
         persistence/              # SQLite 默认实现 + In-memory 测试实现
-        commissioning/            # 当前仅 In-memory；BlueZ adapter 后续实测再加
-        network/                  # 当前仅 In-memory；NM adapter 后续实测再加
+        commissioning/            # BlueZ GATT + In-memory reliable link
+        network/                  # NetworkManager D-Bus + In-memory adapter
       daemon.py                   # bootstrapd entrypoint
       control.py                  # rootless Unix socket API
     local_api/
@@ -273,7 +276,8 @@ eidolon-bootstrapctl dev issue --ttl 30m
 
 App Debug 页面当前只支持完整 JSON 粘贴，并执行签名、有效期、公钥派生身份、Local API Host metadata 匹配和随机 Host proof 验证。没有实现固定 pairing code、adb 注入、Dev URI 或扫码入口，不把计划中的便利形式描述成已有能力。
 
-Descriptor 默认 30 分钟过期。重新签发会撤销尚未 consumed/revoked 的旧 session；真正的单次消费要由下一阶段 commissioning 协议落地，当前只读 Local API 闭环不能宣称已经消费 descriptor。
+Descriptor 默认 30 分钟过期。重新签发会撤销尚未 consumed/revoked 的旧 session；
+认领成功时 session 消费、Controller Grant 和 claim 状态在一个 store 事务完成。
 
 #### D2：接近产品的集成测试
 
@@ -307,21 +311,24 @@ Descriptor 默认 30 分钟过期。重新签发会撤销尚未 consumed/revoked
 
 | 通道 | 使用阶段 | 决策 |
 |---|---|---|
-| BLE GATT | 首次接入、换网控制、Controller recovery | 候选首选 adapter；实机 PoC 前不固化 GATT 细节 |
+| BLE GATT | 首次接入、换网控制、Controller recovery | BlueZ/Android adapter 已实现；具体 MTU 与稳定性等待实机固化 |
 | LAN HTTPS | 初始化后、日常管理、语音使用 | 主业务通道；Host Identity pinning |
 | SoftAP | BLE 不可用或恢复失败 | 后续 fallback；实机验证后再纳入 |
 | mDNS | LAN 地址发现 | 仅提示；不能作为身份依据 |
 | 固定 IP/固定网段 | 无 | 禁止 |
 
-应用层当前只依赖 `CommissioningChannel` 的 packet 收发与生命周期，不知道 BlueZ、
-GATT characteristic、MTU 或 notification。网络流程只依赖 `NetworkProvisioning` 的
-stage/confirm/rollback，不知道 NetworkManager profile 或 D-Bus object path。当前用
-In-memory adapter 验证状态边界；真实 adapter 等 Pi PoC 后增加，不预建通用插件系统。
+应用层依赖 `CommissioningListener/Link` 的可靠有序字节流，不知道 BlueZ object path、
+characteristic callback 或 MTU 分片；pinned TLS 层也独立于 Setup JSON use case。网络
+流程只依赖 `NetworkProvisioning` 的 scan/stage/confirm/rollback，不知道 profile 或
+D-Bus object path。BlueZ、NetworkManager 与 In-memory adapter 都位于实现层；详见
+ADR-0003。真实硬件行为仍以 Pi/Android PoC 为准。
 
 ### 7.2 安全原则
 
-- BLE payload 必须有应用层身份认证、加密、抗重放和 transcript binding。
-- 不自行发明密码协议。最终从有维护的成熟实现中选择，并完成 threat model 和互操作 PoC 后再写 ADR。
+- BLE payload 使用平台 TLS 1.2+ 加密；Host Ed25519 签名动态 endpoint，Mobile pin
+  endpoint 中的 P-256 TLS SPKI。安全决策和 threat model 见 ADR-0003。
+- 不自行发明密码协议。Noise 候选库因维护/审计/跨语言证据不足未采用；当前使用
+  Python OpenSSL 和 Android `SSLEngine`，并保留真机互操作验收门槛。
 - QR/Dev Descriptor 只提供初始信任，不是长期 Controller credential。
 - App 为 Controller 生成独立密钥；Android 使用 Keystore，iOS 使用 Keychain/Secure Enclave 可用能力。
 - Local HTTPS pin Host public key 或 Host CA，不要求用户手工安装 Caddy 根 CA。
@@ -357,22 +364,26 @@ operation_state:
 
 首次初始化拆成三个有独立完成语义的阶段，不能用一个 Mobile 本地布尔值代替。
 
-**A. Host access setup（当前已实现）**
+**A. 带外凭据与附近 Host 选择（当前已实现）**
 
 1. `bootstrapd` 在无网络情况下常驻，并持有 Host Identity。
 2. App 导入通过开发者 SSH 取得的 Dev Descriptor；产品阶段替换为制造带外凭据。
 3. App 验证 descriptor 签名、有效期以及 Host ID/指纹是否由公钥正确派生。
-4. App 连接开发阶段已知的 Local API 地址并读取单快照 `/api/local/v1/host`。
-5. App 先匹配公开 metadata，再发送 32-byte 随机 challenge。
-6. Local API 通过权限隔离的 Unix socket 请求 `bootstrapd` 生成 `eidolon-local-api-host-proof-v1` 签名；App 验签且 nonce 必须完全一致。
-7. 完成条件是 descriptor 有效、snapshot 匹配、Host proof 有效。公开 metadata 匹配本身不算身份认证。
+4. App 按 BLE Service UUID 扫描；广播 Host marker/RSSI 只过滤和排序候选，不认证身份。
+5. App 读取候选的公开 Info characteristic，验证 Host Ed25519 对 endpoint 的签名、
+   Host ID、reset epoch、Service UUID 和 TLS SPKI fingerprint。
+6. Android 与该 endpoint 建立 TLS 1.2+，并 pin 已签名的 SPKI。
+7. 旧的 LAN Local API Host proof 路径保留给网络可达后的诊断/接入测试，但不再是
+   无网首次开箱的前置条件。
 
-**B. Host commissioning（下一阶段，尚未实现）**
+**B. Host commissioning（代码完成，真机验收待执行）**
 
-8. Commissioning channel adapter 可用后，双方建立认证加密会话；App 提交独立 Controller public key。
-9. App 让用户确认 WLAN country、SSID 和凭据；Bootstrap 只通过 `NetworkProvisioning` Port staging 新网络。
+8. App 在 TLS 内提交短期 commissioning ID/secret，Bootstrap 只校验已保存的 hash。
+9. App 展示 Host 扫描到的 SSID；Bootstrap 只通过 `NetworkProvisioning` Port staging 新网络。
 10. 验证 association、IP/DHCP 和本地链路；远程/互联网连通性不作为当前成功条件。失败或超时则 rollback，设备保持可接入。
-11. 网络成功后 App 切换到 pinned LAN HTTPS；Bootstrap 创建可撤销 Controller Grant 并使 commissioning secret 失效。
+11. NetworkManager 激活后 App 通过 BLE 确认 operation；Bootstrap 创建 Controller
+    Grant，并在同一事务消费 commissioning session、迁移 claim 状态。LAN Local API
+    handoff 是下一步，不阻塞 Host commissioning 的本地完成语义。
 12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`、`recovery_state=normal`；`workspace_state` 不阻塞 Host commissioning。
 
 **C. Workspace onboarding（后续子项目接入，尚未实现）**
@@ -387,8 +398,9 @@ Admin 当前 `/onboarding/initialize` 具有部分 repair 行为，但计划中�
 
 1. 已授权 Controller 创建 `change-network` operation。
 2. Commissioning channel 保持控制能力；LAN 连接可能中断。
-3. `NetworkProvisioning` adapter staging 新配置；真实 NetworkManager adapter 是否使用 checkpoint 由 PoC 固化。
-4. 验证新网络的 association、DHCP、App 到 Local API 的本地可达性。
+3. `NetworkProvisioning` adapter 使用 NetworkManager checkpoint staging 新配置。
+4. 当前 adapter 验证 Wi-Fi device activation；DHCP/Local API handoff 的目标镜像行为
+   仍列入真机验收。
 5. App 通过 commissioning channel 或新 LAN session 确认后提交变更。
 6. 超时自动 rollback，Owner、Controller 和所有 Eidolon 数据保持不变。
 

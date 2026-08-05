@@ -34,6 +34,9 @@ dependencies = [
     # bootstrap process imports this directly, so keep it an explicit runtime
     # dependency instead of relying on a transitive device extra.
     "cryptography>=43",
+    # Async system-bus client used only by the concrete BlueZ and
+    # NetworkManager adapters selected by eidolon-bootstrapd on Linux.
+    "dbus-next>=0.2.3",
 ]
 
 [project.optional-dependencies]

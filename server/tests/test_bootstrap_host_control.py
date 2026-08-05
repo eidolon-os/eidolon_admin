@@ -20,6 +20,8 @@ from eidolon_admin_server.bootstrap.config import (
     BootstrapConfigurationError,
     BootstrapMode,
     BootstrapSettings,
+    CommissioningAdapter,
+    NetworkAdapter,
     load_bootstrap_settings,
 )
 from eidolon_admin_server.bootstrap.control import (
@@ -90,6 +92,26 @@ def test_bootstrap_settings_default_to_fail_closed_production() -> None:
     settings = load_bootstrap_settings({})
 
     assert settings.mode is BootstrapMode.PRODUCTION
+    assert settings.commissioning_adapter is CommissioningAdapter.BLUEZ
+    assert settings.network_adapter is NetworkAdapter.NETWORK_MANAGER
+
+
+def test_development_defaults_to_hardware_free_adapters() -> None:
+    settings = load_bootstrap_settings({"EIDOLON_BOOTSTRAP_MODE": "development"})
+
+    assert settings.commissioning_adapter is CommissioningAdapter.DISABLED
+    assert settings.network_adapter is NetworkAdapter.MEMORY
+
+
+def test_production_rejects_test_adapters() -> None:
+    with pytest.raises(BootstrapConfigurationError, match="requires bluez"):
+        load_bootstrap_settings(
+            {
+                "EIDOLON_BOOTSTRAP_MODE": "production",
+                "EIDOLON_BOOTSTRAP_COMMISSIONING_ADAPTER": "disabled",
+                "EIDOLON_BOOTSTRAP_NETWORK_ADAPTER": "memory",
+            }
+        )
 
 
 @pytest.mark.parametrize("mode", ["", "debug", "prod"])
@@ -174,16 +196,16 @@ def test_development_descriptor_is_signed_and_secret_is_not_persisted(
         assert len(descriptor["commissioning_secret"]) >= 32
         assert len(descriptor["signature"]) >= 80
 
-        unsigned = {key: value for key, value in descriptor.items() if key != "signature"}
+        unsigned = {
+            key: value for key, value in descriptor.items() if key != "signature"
+        }
         canonical = json.dumps(
             unsigned,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
-        public_key = base64.urlsafe_b64decode(
-            descriptor["host_public_key"] + "="
-        )
+        public_key = base64.urlsafe_b64decode(descriptor["host_public_key"] + "=")
         signature = base64.urlsafe_b64decode(descriptor["signature"] + "==")
         Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical)
 
@@ -370,9 +392,7 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
         proof_public_key = base64.urlsafe_b64decode(
             descriptor.json()["host_public_key"] + "="
         )
-        proof_signature = base64.urlsafe_b64decode(
-            proof_document["signature"] + "=="
-        )
+        proof_signature = base64.urlsafe_b64decode(proof_document["signature"] + "==")
         Ed25519PublicKey.from_public_bytes(proof_public_key).verify(
             proof_signature,
             proof_canonical,
@@ -389,11 +409,13 @@ def test_bootstrap_contracts_are_valid_json() -> None:
 
     documents = [json.loads(path.read_text()) for path in contracts.glob("*.json")]
 
-    assert len(documents) == 4
+    assert len(documents) == 7
     assert all(document["$schema"].endswith("2020-12/schema") for document in documents)
 
     local_api_contract = json.loads(
-        (root / "contracts" / "local-api" / "v1" / "host-overview.schema.json").read_text()
+        (
+            root / "contracts" / "local-api" / "v1" / "host-overview.schema.json"
+        ).read_text()
     )
     assert local_api_contract["properties"]["descriptor"]["$ref"].endswith(
         "public-descriptor.schema.json"
@@ -436,17 +458,10 @@ def test_dev_descriptor_example_is_a_valid_cross_language_vector() -> None:
 
     proof = json.loads(
         (
-            root
-            / "contracts"
-            / "local-api"
-            / "v1"
-            / "examples"
-            / "host-proof.json"
+            root / "contracts" / "local-api" / "v1" / "examples" / "host-proof.json"
         ).read_text()
     )
-    proof_unsigned = {
-        key: value for key, value in proof.items() if key != "signature"
-    }
+    proof_unsigned = {key: value for key, value in proof.items() if key != "signature"}
     proof_canonical = json.dumps(
         proof_unsigned,
         ensure_ascii=False,

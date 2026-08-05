@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/bootstrap/v1/commissioning-endpoint.schema.json",
+  "title": "Eidolon BLE Commissioning Endpoint V1",
+  "type": "object",
+  "required": ["contract_version", "purpose", "host_id", "reset_epoch", "ble_service_uuid", "tls_spki_fingerprint", "signature"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "purpose": { "const": "eidolon-ble-commissioning-endpoint-v1" },
+    "host_id": { "type": "string", "pattern": "^ehost-[0-9a-f]{20}$" },
+    "reset_epoch": { "type": "integer", "minimum": 0 },
+    "ble_service_uuid": { "type": "string", "format": "uuid" },
+    "tls_spki_fingerprint": { "type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$" },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+  },
+  "additionalProperties": false
+}

@@ -15,6 +15,16 @@ class BootstrapMode(StrEnum):
     PRODUCTION = "production"
 
 
+class CommissioningAdapter(StrEnum):
+    DISABLED = "disabled"
+    BLUEZ = "bluez"
+
+
+class NetworkAdapter(StrEnum):
+    MEMORY = "memory"
+    NETWORK_MANAGER = "networkmanager"
+
+
 class BootstrapConfigurationError(ValueError):
     """Raised when bootstrap configuration would weaken a trust boundary."""
 
@@ -32,6 +42,8 @@ class BootstrapSettings:
     control_socket: Path
     ble_service_uuid: str
     dev_descriptor_ttl_seconds: int = 1800
+    commissioning_adapter: CommissioningAdapter = CommissioningAdapter.DISABLED
+    network_adapter: NetworkAdapter = NetworkAdapter.MEMORY
 
     @property
     def database_path(self) -> Path:
@@ -40,6 +52,10 @@ class BootstrapSettings:
     @property
     def identity_key_path(self) -> Path:
         return self.state_dir / "host_identity.ed25519"
+
+    @property
+    def commissioning_tls_pem_path(self) -> Path:
+        return self.state_dir / "commissioning_tls.pem"
 
     @property
     def instance_lock_path(self) -> Path:
@@ -57,6 +73,44 @@ def load_bootstrap_settings(
         raise BootstrapConfigurationError(
             "EIDOLON_BOOTSTRAP_MODE must be development or production"
         ) from exc
+
+    default_commissioning = (
+        CommissioningAdapter.BLUEZ.value
+        if mode is BootstrapMode.PRODUCTION
+        else CommissioningAdapter.DISABLED.value
+    )
+    try:
+        commissioning_adapter = CommissioningAdapter(
+            env.get("EIDOLON_BOOTSTRAP_COMMISSIONING_ADAPTER", default_commissioning)
+            .strip()
+            .lower()
+        )
+    except ValueError as exc:
+        raise BootstrapConfigurationError(
+            "EIDOLON_BOOTSTRAP_COMMISSIONING_ADAPTER must be disabled or bluez"
+        ) from exc
+    default_network = (
+        NetworkAdapter.NETWORK_MANAGER.value
+        if mode is BootstrapMode.PRODUCTION
+        else NetworkAdapter.MEMORY.value
+    )
+    try:
+        network_adapter = NetworkAdapter(
+            env.get("EIDOLON_BOOTSTRAP_NETWORK_ADAPTER", default_network)
+            .strip()
+            .lower()
+        )
+    except ValueError as exc:
+        raise BootstrapConfigurationError(
+            "EIDOLON_BOOTSTRAP_NETWORK_ADAPTER must be memory or networkmanager"
+        ) from exc
+    if mode is BootstrapMode.PRODUCTION and (
+        commissioning_adapter is not CommissioningAdapter.BLUEZ
+        or network_adapter is not NetworkAdapter.NETWORK_MANAGER
+    ):
+        raise BootstrapConfigurationError(
+            "production bootstrap requires bluez and networkmanager adapters"
+        )
 
     if "EIDOLON_BOOTSTRAP_STATE_DIR" in env:
         state_dir = Path(env["EIDOLON_BOOTSTRAP_STATE_DIR"]).expanduser()
@@ -117,4 +171,6 @@ def load_bootstrap_settings(
         control_socket=control_socket,
         ble_service_uuid=ble_service_uuid,
         dev_descriptor_ttl_seconds=ttl,
+        commissioning_adapter=commissioning_adapter,
+        network_adapter=network_adapter,
     )
