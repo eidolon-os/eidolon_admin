@@ -103,6 +103,8 @@ class BootstrapControlServer:
             return self._service.health()
         if operation == "descriptor":
             return self._service.public_descriptor()
+        if operation == "host.prove":
+            return self._service.prove_host(request.get("challenge"))
         if operation == "dev.issue":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)

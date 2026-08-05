@@ -1,0 +1,7 @@
+{
+  "contract_version": "1",
+  "purpose": "eidolon-local-api-host-proof-v1",
+  "host_id": "ehost-56475aa75463474c0285",
+  "challenge": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "signature": "rF3KrfUegMPsqmrjfbBpDy-2xhay3RdqRFslSH_oEDepS3vabevWP9haxt5w1xdW5QeSVKek2HCMwiaasj8yCQ"
+}

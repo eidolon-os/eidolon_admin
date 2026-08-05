@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/host-proof.schema.json",
+  "title": "Eidolon Local API Host Proof V1",
+  "type": "object",
+  "required": ["contract_version", "purpose", "host_id", "challenge", "signature"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "purpose": { "const": "eidolon-local-api-host-proof-v1" },
+    "host_id": { "type": "string", "pattern": "^ehost-[0-9a-f]{20}$" },
+    "challenge": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+  },
+  "additionalProperties": false
+}

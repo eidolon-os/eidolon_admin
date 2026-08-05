@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/host-proof-request.schema.json",
+  "title": "Eidolon Local API Host Proof Request V1",
+  "type": "object",
+  "required": ["contract_version", "challenge"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "challenge": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$",
+      "description": "32 random bytes encoded as unpadded base64url"
+    }
+  },
+  "additionalProperties": false
+}

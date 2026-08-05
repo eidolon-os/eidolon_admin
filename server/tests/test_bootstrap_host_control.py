@@ -251,6 +251,16 @@ async def test_control_socket_exposes_read_state_and_dev_issuance(
         descriptor = await client.request("dev.issue", ttl_seconds=300)
         assert descriptor["mode"] == "development"
 
+        challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+        proof = await client.request("host.prove", challenge=challenge)
+        assert proof["challenge"] == challenge
+        assert proof["host_id"] == health["descriptor"]["host_id"]
+
+        with pytest.raises(BootstrapControlError, match="32 unpadded"):
+            await client.request("host.prove", challenge="too-short")
+        with pytest.raises(BootstrapControlError, match="canonical base64url"):
+            await client.request("host.prove", challenge=challenge[:-1] + "9")
+
         with pytest.raises(BootstrapControlError, match="unknown control operation"):
             await client.request("not.allowed")
     finally:
@@ -302,7 +312,7 @@ async def test_daemon_startup_failure_releases_single_instance_lock(
 
 
 @pytest.mark.asyncio
-async def test_local_api_is_a_separate_read_only_projection(
+async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
     tmp_path: Path,
     short_runtime_dir: Path,
 ) -> None:
@@ -324,6 +334,13 @@ async def test_local_api_is_a_separate_read_only_projection(
             descriptor = await client.get("/api/local/v1/descriptor")
             host = await client.get("/api/local/v1/host")
             state = await client.get("/api/local/v1/system/state")
+            proof = await client.post(
+                "/api/local/v1/host/proof",
+                json={
+                    "contract_version": "1",
+                    "challenge": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+                },
+            )
             mutation = await client.post("/api/local/v1/setup/initialize")
 
         assert descriptor.status_code == 200
@@ -338,6 +355,28 @@ async def test_local_api_is_a_separate_read_only_projection(
         }
         assert state.status_code == 200
         assert state.json()["state"]["claim_state"] == "unclaimed"
+        assert proof.status_code == 200
+        proof_document = proof.json()
+        assert proof_document["purpose"] == "eidolon-local-api-host-proof-v1"
+        proof_unsigned = {
+            key: value for key, value in proof_document.items() if key != "signature"
+        }
+        proof_canonical = json.dumps(
+            proof_unsigned,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        proof_public_key = base64.urlsafe_b64decode(
+            descriptor.json()["host_public_key"] + "="
+        )
+        proof_signature = base64.urlsafe_b64decode(
+            proof_document["signature"] + "=="
+        )
+        Ed25519PublicKey.from_public_bytes(proof_public_key).verify(
+            proof_signature,
+            proof_canonical,
+        )
         assert mutation.status_code == 404
     finally:
         stop.set()
@@ -358,6 +397,66 @@ def test_bootstrap_contracts_are_valid_json() -> None:
     )
     assert local_api_contract["properties"]["descriptor"]["$ref"].endswith(
         "public-descriptor.schema.json"
+    )
+    local_api_documents = [
+        json.loads(path.read_text())
+        for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
+    ]
+    assert len(local_api_documents) == 3
+    assert all(
+        document["$schema"].endswith("2020-12/schema")
+        for document in local_api_documents
+    )
+
+
+def test_dev_descriptor_example_is_a_valid_cross_language_vector() -> None:
+    root = Path(__file__).resolve().parents[2]
+    example = json.loads(
+        (
+            root
+            / "contracts"
+            / "bootstrap"
+            / "v1"
+            / "examples"
+            / "dev-commissioning-descriptor.json"
+        ).read_text()
+    )
+
+    unsigned = {key: value for key, value in example.items() if key != "signature"}
+    canonical = json.dumps(
+        unsigned,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    public_key = base64.urlsafe_b64decode(example["host_public_key"] + "=")
+    signature = base64.urlsafe_b64decode(example["signature"] + "==")
+
+    Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical)
+
+    proof = json.loads(
+        (
+            root
+            / "contracts"
+            / "local-api"
+            / "v1"
+            / "examples"
+            / "host-proof.json"
+        ).read_text()
+    )
+    proof_unsigned = {
+        key: value for key, value in proof.items() if key != "signature"
+    }
+    proof_canonical = json.dumps(
+        proof_unsigned,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    proof_signature = base64.urlsafe_b64decode(proof["signature"] + "==")
+    Ed25519PublicKey.from_public_bytes(public_key).verify(
+        proof_signature,
+        proof_canonical,
     )
 
 

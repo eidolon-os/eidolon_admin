@@ -15,8 +15,10 @@
 - daemon 启停和异常属于 systemd/journald 诊断日志，不再写入 Bootstrap authority store。
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
-- Local API 当前只有只读 descriptor/state 路由，未接入 Admin 高权限面。
-- Admin-only Mobile M1 已定义单快照 `GET /api/local/v1/host` 契约；Mobile 默认 Host Setup 只读取该端点，Audio/Hub/其他子项目不参与。
+- Local API 当前只有只读 descriptor/state/host snapshot 和无状态 Host proof 路由，未接入 Admin 高权限面或产品 mutation。
+- Mobile M2 已接通 Setup Trust：Debug App 验证 `dev issue` 的 Ed25519 签名、有效期和 Host 公钥派生身份，匹配 `GET /api/local/v1/host` 快照，再用随机 challenge 验证当前 Bootstrap 确实持有对应 Host 私钥。临时 secret 只保留在内存。
+- 当前闭环的完成语义只是“带外身份已验证，并且当前 Bootstrap Local API 已完成 Host 私钥持有证明”，不等价于 Controller 已认领、网络已配置或 Workspace 已初始化；Audio/Hub/其他子项目不参与。
+- 当前 M2 仍要求开发环境先提供一个 Mobile 可达的 Local API 地址；无网络开箱接入要等 commissioning channel 实现，不能把本阶段描述成已经解决无网发现与配网。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝 Dev Descriptor。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
 - Phase 1 只读 Pi preflight 已准备，可采集 NetworkManager、Wi-Fi、BlueZ 与旧 RaspAP 服务事实，且不读取 Wi-Fi profile 内容。
@@ -37,6 +39,33 @@ Eidolon OS 运行在无屏树莓派主机上。最终用户不能依赖 SSH、HD
 
 `eidolon_client_mobile` 继续作为 Mobile codebase。树莓派侧能力放入
 `eidolon_admin` codebase，但不能直接并入现有 Admin FastAPI 进程。
+
+### 1.1 术语与逻辑边界
+
+- **Setup**：Mobile 面向用户的引导与编排。它读取 Host 权威状态并投影步骤进度，不保存第二份可写的“setup 已完成”状态。
+- **Bootstrap**：树莓派上永远常驻、自动重启的最小控制平面。它拥有 Host Identity、reset epoch、commissioning session 和后续 Controller/network/recovery 状态迁移。
+- **Commissioning**：Bootstrap 提供的一段限时、认证控制会话，用于建立 Controller 和配置网络；它不是整个 Setup UI，也不是日常业务 API。
+- **Local API**：网络可达后 Mobile 的本地产品入口。地址或 mDNS 只解决可达性；Descriptor 选定目标身份，nonce-bound Host proof 才把当前连接绑定到该身份。
+- **Claim**：Bootstrap 接受一个 Controller 身份并形成可撤销授权的权威迁移；不能由 Mobile 本地标记代替。
+- **Workspace onboarding**：Owner/Companion/Workspace 的业务初始化，权威在 Data/Admin，不属于 Bootstrap 自己的数据模型。
+
+因此当前开发闭环严格按以下顺序推进：
+
+```text
+Host: bootstrapd 常驻
+  -> 开发者签发短期 Dev Descriptor
+  -> Mobile 验签并建立带外 Host 信任
+  -> Mobile 读取 Local API host snapshot
+  -> Mobile 匹配 Host ID / public key / fingerprint / BLE UUID / mode
+  -> Mobile 发起随机 challenge，bootstrapd 返回带域隔离的 Host key 签名
+  -> Mobile 验证 Host proof，防止把可重放的公开元数据误当成身份认证
+  -> Host access setup 完成
+  -> [下一阶段] commissioning channel + Controller claim + network
+  -> [后续子项目] Owner / Companion / Workspace onboarding
+  -> [最后迁移] conversation / Audio Channel
+```
+
+`Host access setup`、`Host commissioning` 和 `Workspace onboarding` 是三个连续但不同的完成点。当前 Mobile 不会因为读到了 `workspace_state=absent` 就修改 Bootstrap 状态，也不会把只读连接误报为整机开箱初始化完成。
 
 ## 2. 本次复盘后的决策变化
 
@@ -213,11 +242,11 @@ App 端可以提供固定输入和手动录入，但要区分“固定开发入�
 
 #### D0：纯 App/UI 模拟
 
-- Flutter Debug flavor 内置 deterministic fake descriptor 和 fake transport。
-- 用于 setup 页面、状态机、失败提示和恢复 UI 测试。
-- 不连接真实 Pi，不作为安全联调结果。
+- 当前自动化测试使用 deterministic、跨 Python/Dart 的签名向量和 Mock Local API。
+- 用于 descriptor canonical JSON、篡改/过期、错误 Host、nonce 和 Setup UI 测试。
+- 当前没有在运行时 App 内置 fake transport；自动化测试不连接真实 Pi，也不作为实机安全联调结果。
 
-这个阶段允许固定输入，例如固定 Host ID 和 `000000`，因为它只存在于 fake adapter，不能进入真实 BLE adapter。
+这个阶段允许固定测试 Host ID、签名和 nonce，因为它们只存在于 `test/` 与 contract example，不能进入真实 commissioning adapter。
 
 #### D1：真实 Pi + 开发者有 SSH
 
@@ -227,14 +256,13 @@ Pi 以显式开发模式启动：
 EIDOLON_BOOTSTRAP_MODE=development
 ```
 
-第一次启动时生成独立 Host key 和随机、短期、单次使用的 Dev Descriptor。开发者执行：
+第一次启动时生成独立 Host key；开发者按需签发随机、短期的 Dev Descriptor：
 
 ```text
 eidolon-bootstrapctl dev issue --ttl 30m
-eidolon-bootstrapctl dev show
 ```
 
-输出为可粘贴 JSON 或 `eidolon-dev://commission?...` URI，包含：
+`dev issue` 当前输出可粘贴 JSON，包含：
 
 - contract version
 - host ID
@@ -243,14 +271,9 @@ eidolon-bootstrapctl dev show
 - BLE service UUID
 - expiry
 
-App Debug 页面支持：
+App Debug 页面当前只支持完整 JSON 粘贴，并执行签名、有效期、公钥派生身份、Local API Host metadata 匹配和随机 Host proof 验证。没有实现固定 pairing code、adb 注入、Dev URI 或扫码入口，不把计划中的便利形式描述成已有能力。
 
-1. 粘贴 Descriptor。
-2. 手动输入 Host ID + pairing code。
-3. 从开发电脑通过 adb 注入临时配置。
-4. 开发电脑把 Descriptor 渲染成临时二维码后再扫码；这只是便利形式，不要求设备出厂二维码。
-
-Descriptor 默认 30 分钟过期且单次使用。重新签发会撤销未使用的旧 descriptor。
+Descriptor 默认 30 分钟过期。重新签发会撤销尚未 consumed/revoked 的旧 session；真正的单次消费要由下一阶段 commissioning 协议落地，当前只读 Local API 闭环不能宣称已经消费 descriptor。
 
 #### D2：接近产品的集成测试
 
@@ -269,18 +292,14 @@ Descriptor 默认 30 分钟过期且单次使用。重新签发会撤销未使�
 
 ### 6.3 Debug 通道防止进入产品
 
-必须同时设置四道门：
+当前状态和产品化门槛如下：
 
-1. Flutter `debug` flavor 才编译 Dev Pairing 页面；release route 表中不存在该页面。
-2. Pi 产品镜像固定 `EIDOLON_BOOTSTRAP_MODE=production`，启动时拒绝 dev descriptor。
-3. 开发 credential 从运行时注入，不写进 Dart/Python 源码或 Git。
-4. CI 对 Android release artifact 和 Pi product config 做负向检查：不得出现 dev URI scheme、固定 pairing code、dev issuer 或 development mode。
+1. **已实现**：Flutter 仅在 `kDebugMode` 显示 Dev Descriptor 输入；release UI 不显示。
+2. **已实现**：Bootstrap production 模式缺少制造身份时 fail closed，并拒绝签发 Dev Descriptor。
+3. **已实现**：运行时 commissioning secret 随机生成；源码与 Git 中只有明确标记的 test vector。
+4. **待实现**：独立 dev/product flavor，以及对 Android release artifact 和 Pi product config 的 CI 负向检查。
 
-如果早期为了单机打通必须使用固定 pairing code，只允许作为 D0 或临时 D1 feature flag：
-
-- 只在 Debug App 和 development Pi 两端同时开启时生效。
-- 绑定指定 Host public-key fingerprint，不能匹配任意设备。
-- 记录明确删除里程碑；进入 D2 前必须移除。
+当前真实 D1 链路不使用固定 pairing code，因此不预留万能码 feature flag。
 
 ## 7. 通道与信任协议
 
@@ -336,17 +355,31 @@ operation_state:
 
 ### 9.1 首次初始化
 
-1. `bootstrapd` 在无网络情况下启动，等待 commissioning channel adapter 可用。
-2. App 导入 Dev Descriptor 或扫描产品二维码，发现匹配的 Host。
-3. 双方完成认证加密会话；App 提交 Controller public key。
-4. App 让用户确认 WLAN country、SSID 和凭据。
-5. Bootstrap 通过 `NetworkProvisioning` Port staging 新网络；具体 rollback 机制由后续实机 adapter 决定。
-6. 验证 association、IP/DHCP 和本地链路；远程/互联网连通性不作为当前成功条件。
-7. 失败或超时则通过 Port rollback；commissioning channel 返回结构化错误，设备继续可接入。
-8. 成功后启动或等待完整 Eidolon stack，App 切换到 pinned LAN HTTPS。
-9. Local API 以内部服务身份调用 Admin onboarding，使用同一个 `operation_id` 创建/修复 Owner、主 Companion 和 Workspace。
-10. Bootstrap 把临时 Controller 提升为 Host Admin，绑定返回的 `owner_id`，commissioning secret 失效。
-11. 状态变为 claimed + connected + ready。
+首次初始化拆成三个有独立完成语义的阶段，不能用一个 Mobile 本地布尔值代替。
+
+**A. Host access setup（当前已实现）**
+
+1. `bootstrapd` 在无网络情况下常驻，并持有 Host Identity。
+2. App 导入通过开发者 SSH 取得的 Dev Descriptor；产品阶段替换为制造带外凭据。
+3. App 验证 descriptor 签名、有效期以及 Host ID/指纹是否由公钥正确派生。
+4. App 连接开发阶段已知的 Local API 地址并读取单快照 `/api/local/v1/host`。
+5. App 先匹配公开 metadata，再发送 32-byte 随机 challenge。
+6. Local API 通过权限隔离的 Unix socket 请求 `bootstrapd` 生成 `eidolon-local-api-host-proof-v1` 签名；App 验签且 nonce 必须完全一致。
+7. 完成条件是 descriptor 有效、snapshot 匹配、Host proof 有效。公开 metadata 匹配本身不算身份认证。
+
+**B. Host commissioning（下一阶段，尚未实现）**
+
+8. Commissioning channel adapter 可用后，双方建立认证加密会话；App 提交独立 Controller public key。
+9. App 让用户确认 WLAN country、SSID 和凭据；Bootstrap 只通过 `NetworkProvisioning` Port staging 新网络。
+10. 验证 association、IP/DHCP 和本地链路；远程/互联网连通性不作为当前成功条件。失败或超时则 rollback，设备保持可接入。
+11. 网络成功后 App 切换到 pinned LAN HTTPS；Bootstrap 创建可撤销 Controller Grant 并使 commissioning secret 失效。
+12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`、`recovery_state=normal`；`workspace_state` 不阻塞 Host commissioning。
+
+**C. Workspace onboarding（后续子项目接入，尚未实现）**
+
+13. Local API 以内部服务身份调用 Admin onboarding，使用同一个 `operation_id` 创建/修复 Owner、主 Companion 和 Workspace。
+14. Bootstrap 只保存稳定的 Owner 引用，不拥有 Owner/Companion/Workspace 数据。
+15. 该阶段完成条件才包含 `workspace_state=ready`；之后再开放 conversation / Audio Channel。
 
 Admin 当前 `/onboarding/initialize` 具有部分 repair 行为，但计划中必须补充显式 `operation_id`/Idempotency-Key、fingerprint 和可查询的结果，不能仅依赖“重复调用大概率没问题”。
 
@@ -409,11 +442,20 @@ V1 规则：
 
 第一阶段只提供最小 allowlist，不做通用 Admin proxy：
 
+当前已实现：
+
 ```text
 GET  /api/local/v1/descriptor
+GET  /api/local/v1/host
+POST /api/local/v1/host/proof
+GET  /api/local/v1/system/state
+```
+
+下一阶段计划；在 Controller contract 和 mutation tests 落地前不算已有 API：
+
+```text
 POST /api/local/v1/auth/challenges
 POST /api/local/v1/auth/sessions
-GET  /api/local/v1/system/state
 POST /api/local/v1/setup/network-operations
 GET  /api/local/v1/operations/{operation_id}
 POST /api/local/v1/setup/initialize
@@ -457,7 +499,7 @@ lib/
 1. 先新增 App shell 与 bootstrap feature，不立即重写语音实现。
 2. 把现有语音入口迁到 `conversation/`，只在 Host ready 后启用。
 3. 拆分平台桥：`BleCommissioningBridge`、`ControllerKeyBridge`、`LocalNetworkBridge`、`MobileBodyKeyBridge`。
-4. Debug flavor 提供 Dev Descriptor 导入；Release flavor 不包含。
+4. 当前用 Flutter `kDebugMode` 显示 Dev Descriptor 导入；release UI 不显示。独立 flavor 和 release artifact 负向检查仍是产品化待办。
 5. 旧 `/api/device/register` HubClient 不参与 Host bootstrap。后续作为 Mobile Body 迁移到当前 Hub Enrollment/Handoff contract。
 6. App 只访问 Local API；日常管理不直接访问 Admin/Hub/Kernel public port。
 

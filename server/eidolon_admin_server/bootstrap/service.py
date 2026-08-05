@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import logging
 import os
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -16,6 +18,8 @@ from .ports import BootstrapStateStore
 
 
 logger = logging.getLogger("eidolon.bootstrap.service")
+_HOST_PROOF_PURPOSE = "eidolon-local-api-host-proof-v1"
+_BASE64URL_32_BYTES = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 class BootstrapOperationRejected(RuntimeError):
@@ -86,6 +90,47 @@ class BootstrapService:
             "started_at": self._started_at,
             "descriptor": self.public_descriptor(),
             "state": self._store.get_state().to_dict(),
+        }
+
+    def prove_host(self, challenge: str) -> dict[str, Any]:
+        """Prove possession of the Host key for a caller-provided nonce.
+
+        The purpose field domain-separates this proof from descriptors and any
+        future authentication signatures. The random challenge supplies replay
+        protection, so this operation does not create durable state.
+        """
+
+        if not isinstance(challenge, str) or not _BASE64URL_32_BYTES.fullmatch(
+            challenge
+        ):
+            raise BootstrapOperationRejected(
+                "host proof challenge must be 32 unpadded base64url bytes"
+            )
+        try:
+            decoded = base64.urlsafe_b64decode(challenge + "=")
+        except ValueError as exc:
+            raise BootstrapOperationRejected(
+                "host proof challenge is not valid base64url"
+            ) from exc
+        if len(decoded) != 32:
+            raise BootstrapOperationRejected(
+                "host proof challenge must decode to 32 bytes"
+            )
+        canonical_challenge = base64.urlsafe_b64encode(decoded).rstrip(b"=").decode()
+        if canonical_challenge != challenge:
+            raise BootstrapOperationRejected(
+                "host proof challenge must use canonical base64url encoding"
+            )
+
+        unsigned = {
+            "contract_version": "1",
+            "purpose": _HOST_PROOF_PURPOSE,
+            "host_id": self._identity_manager.identity.host_id,
+            "challenge": challenge,
+        }
+        return {
+            **unsigned,
+            "signature": self._identity_manager.sign_mapping(unsigned),
         }
 
     def issue_development_descriptor(
