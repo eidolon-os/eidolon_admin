@@ -1,5 +1,10 @@
-"""Bootstrap-owned persistence adapter."""
+"""Bootstrap-owned state-store adapters."""
 
-from .sqlite import BootstrapStore, BootstrapStoreError
+from .memory import InMemoryBootstrapStateStore
+from .sqlite import SQLiteBootstrapStateStore, SQLiteBootstrapStoreError
 
-__all__ = ["BootstrapStore", "BootstrapStoreError"]
+__all__ = [
+    "InMemoryBootstrapStateStore",
+    "SQLiteBootstrapStateStore",
+    "SQLiteBootstrapStoreError",
+]

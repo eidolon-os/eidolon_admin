@@ -13,7 +13,9 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from eidolon_admin_server.bootstrap.adapters.persistence import BootstrapStore
+from eidolon_admin_server.bootstrap.adapters.persistence import (
+    SQLiteBootstrapStateStore,
+)
 from eidolon_admin_server.bootstrap.config import (
     BootstrapConfigurationError,
     BootstrapMode,
@@ -76,7 +78,7 @@ def short_runtime_dir() -> Path:
 def _service(settings: BootstrapSettings) -> BootstrapService:
     return BootstrapService(
         settings=settings,
-        store=BootstrapStore(settings.database_path),
+        store=SQLiteBootstrapStateStore(settings.database_path),
         identity_manager=HostIdentityManager(
             settings.identity_key_path,
             settings.mode,
@@ -221,11 +223,11 @@ def test_store_rejects_unknown_schema_version(tmp_path: Path) -> None:
     connection = sqlite3.connect(settings.database_path)
     connection.execute("PRAGMA user_version = 99")
     connection.close()
-    store = BootstrapStore(settings.database_path)
+    store = SQLiteBootstrapStateStore(settings.database_path)
     store.open()
     try:
         with pytest.raises(RuntimeError, match="unsupported bootstrap schema"):
-            store.initialize_schema("2026-08-05T00:00:00Z")
+            store.initialize("2026-08-05T00:00:00Z")
     finally:
         store.close()
 

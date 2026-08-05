@@ -64,3 +64,21 @@ class BootstrapState:
             recovery_state=self.recovery_state.value,
         )
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class CommissioningSessionMetadata:
+    session_id: str
+    created_at: str
+    expires_at: str
+    consumed_at: str | None = None
+    revoked_at: str | None = None
+
+    def to_dict(self) -> dict[str, str | bool | None]:
+        return {
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "consumed_at": self.consumed_at,
+            "revoked_at": self.revoked_at,
+        }

@@ -157,9 +157,13 @@ The preflight does not change networking or Bluetooth state. Active legacy
 Product lifecycle is different: systemd starts bootstrap before the application
 stack, forces production mode, restarts every exit, and monitors an event-loop
 watchdog. Production refuses to start without a manufacturing-provisioned Host
-Identity. See
+Identity. Bootstrap application logic depends on narrow state/channel/network
+Ports; current channel and network adapters are in-memory test implementations,
+not BlueZ or NetworkManager claims. SQLite is the default durable state adapter,
+while daemon diagnostics go to journald. See
 [`docs/architecture/eidolon-os-local-bootstrap-plan.md`](docs/architecture/eidolon-os-local-bootstrap-plan.md)
-and [`ADR-0001`](docs/architecture/adr-0001-host-control-process-boundaries.md).
+and [`ADR-0001`](docs/architecture/adr-0001-host-control-process-boundaries.md),
+[`ADR-0002`](docs/architecture/adr-0002-bootstrap-ports-and-state-store.md).
 
 ### One-shot (supervisord-managed stack)
 

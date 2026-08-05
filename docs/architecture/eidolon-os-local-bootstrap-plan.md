@@ -10,7 +10,9 @@
 截至 2026-08-05，Phase 0 的进程与信任基座已经落地：
 
 - `eidolon-bootstrapd`、`eidolon-bootstrapctl`、`eidolon-local-api` 独立 entrypoint。
-- Bootstrap 独占 SQLite、开发 Host Identity、签名 Dev Descriptor、Unix socket 控制面。
+- Bootstrap 通过 `BootstrapStateStore` Port 保存必要权威状态；当前默认 adapter 是独占 SQLite，也有不持久化的 In-memory 测试实现。
+- `CommissioningChannel` 和 `NetworkProvisioning` 已形成窄 Port；当前只有 In-memory adapter，未引入 BlueZ、NetworkManager 或 SoftAP 实现。
+- daemon 启停和异常属于 systemd/journald 诊断日志，不再写入 Bootstrap authority store。
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
 - Local API 当前只有只读 descriptor/state 路由，未接入 Admin 高权限面。
@@ -125,14 +127,13 @@ eidolon_admin/
   server/eidolon_admin_server/
     bootstrap/
       domain/                     # Host、ControllerGrant、Operation、ResetEpoch
-      application/                # commission、change-network、recover、reset
+      ports/                      # state、commissioning channel、network capability
       adapters/
-        persistence/              # bootstrap 独占 SQLite
-        bluez/                    # BLE GATT adapter
-        network_manager/          # NetworkManager D-Bus adapter
-        reset/                    # 只发起受限 root helper
+        persistence/              # SQLite 默认实现 + In-memory 测试实现
+        commissioning/            # 当前仅 In-memory；BlueZ adapter 后续实测再加
+        network/                  # 当前仅 In-memory；NM adapter 后续实测再加
       daemon.py                   # bootstrapd entrypoint
-      control_socket.py           # rootless Unix socket API
+      control.py                  # rootless Unix socket API
     local_api/
       app.py                      # 独立 FastAPI factory
       auth/                       # Controller challenge/session/request auth
@@ -164,7 +165,8 @@ eidolon-admin
 |---|---|---|
 | Host ID、制造身份、reset epoch | Bootstrap | 是 |
 | Controller public key、角色、允许的 Owner scope、撤销状态 | Bootstrap | 是 |
-| Commissioning operation 与恢复日志 | Bootstrap | 是 |
+| Commissioning session、未完成 operation | Bootstrap | 是；属于恢复所需权威状态 |
+| daemon 启停、异常和一般诊断日志 | systemd/journald | 否 |
 | Wi-Fi connection profile 和密码 | NetworkManager | 否；Bootstrap 只保存 profile 标识和非敏感状态 |
 | Owner、Companion、Persona、Workspace | `eidolon_data` | 否，只保存稳定 `owner_id` 引用 |
 | 外部 Device admission、approved/revoked | Hub | 否 |
@@ -172,14 +174,26 @@ eidolon-admin
 | Admin 运维配置、Supervisor 状态 | Admin | 否 |
 | Mobile Body 设备私钥 | Mobile Keystore | 否 |
 
-Bootstrap SQLite 必须独占，不与 Admin/Data 共用连接或 schema。建议至少记录：
+Bootstrap 必须有可跨重启恢复的 durable state，但领域和应用层只能依赖
+`BootstrapStateStore`，不能依赖 SQLite API 或 schema。当前 SQLite 是默认 adapter，
+它是单进程本地文件而不是额外数据库服务，并且不得与 Admin/Data 共用连接或 schema。
+如果以后改成原子 snapshot 或其他 store，只替换 adapter。
 
-- `host_identity`
-- `controller_grants`
+当前只持久化：
+
+- `bootstrap_state`
 - `commissioning_sessions`
+
+按实际功能落地后才增加：
+
+- `controller_grants`
 - `bootstrap_operations`
 - `reset_state`
-- `audit_events`
+
+Host private key 始终是独立权限文件。daemon lifecycle、异常栈和一般 audit 信息进入
+journald；普通日志文件不能作为 claim、Controller 或 operation 的恢复权威。如果某个
+日志需要 replay 才能恢复状态，它就是一种 journal store，也必须通过同一 Port 实现
+断电截断、fsync、schema migration、去重和原子提交，不能由业务层直接追加文本。
 
 所有 mutation 使用稳定 `operation_id`、canonical fingerprint 和 `reset_epoch`。旧 epoch 的 session、operation 和 Controller token 全部失效。
 
@@ -273,13 +287,16 @@ Descriptor 默认 30 分钟过期且单次使用。重新签发会撤销未使�
 
 | 通道 | 使用阶段 | 决策 |
 |---|---|---|
-| BLE GATT | 首次接入、换网控制、Controller recovery | 首选；只承载小型控制与状态消息 |
+| BLE GATT | 首次接入、换网控制、Controller recovery | 候选首选 adapter；实机 PoC 前不固化 GATT 细节 |
 | LAN HTTPS | 初始化后、日常管理、语音使用 | 主业务通道；Host Identity pinning |
 | SoftAP | BLE 不可用或恢复失败 | 后续 fallback；实机验证后再纳入 |
 | mDNS | LAN 地址发现 | 仅提示；不能作为身份依据 |
 | 固定 IP/固定网段 | 无 | 禁止 |
 
-Pi 5、BlueZ、Android 和 iOS 都具备 BLE/GATT 基础能力，但“硬件支持”不等于“产品可靠”。必须通过 Pi 5 + 真机 PoC 验证 BlueZ 广播重启、手机后台行为、MTU/分包、错误恢复和 Wi-Fi 切换期间的连接稳定性。
+应用层当前只依赖 `CommissioningChannel` 的 packet 收发与生命周期，不知道 BlueZ、
+GATT characteristic、MTU 或 notification。网络流程只依赖 `NetworkProvisioning` 的
+stage/confirm/rollback，不知道 NetworkManager profile 或 D-Bus object path。当前用
+In-memory adapter 验证状态边界；真实 adapter 等 Pi PoC 后增加，不预建通用插件系统。
 
 ### 7.2 安全原则
 
@@ -318,13 +335,13 @@ operation_state:
 
 ### 9.1 首次初始化
 
-1. `bootstrapd` 在无网络情况下启动，发布 unclaimed BLE advertisement。
+1. `bootstrapd` 在无网络情况下启动，等待 commissioning channel adapter 可用。
 2. App 导入 Dev Descriptor 或扫描产品二维码，发现匹配的 Host。
 3. 双方完成认证加密会话；App 提交 Controller public key。
 4. App 让用户确认 WLAN country、SSID 和凭据。
-5. Bootstrap 通过 NetworkManager D-Bus 创建 staged profile 和带超时 checkpoint。
+5. Bootstrap 通过 `NetworkProvisioning` Port staging 新网络；具体 rollback 机制由后续实机 adapter 决定。
 6. 验证 association、IP/DHCP 和本地链路；远程/互联网连通性不作为当前成功条件。
-7. 失败或超时则 rollback；BLE 返回结构化错误，设备继续可发现。
+7. 失败或超时则通过 Port rollback；commissioning channel 返回结构化错误，设备继续可接入。
 8. 成功后启动或等待完整 Eidolon stack，App 切换到 pinned LAN HTTPS。
 9. Local API 以内部服务身份调用 Admin onboarding，使用同一个 `operation_id` 创建/修复 Owner、主 Companion 和 Workspace。
 10. Bootstrap 把临时 Controller 提升为 Host Admin，绑定返回的 `owner_id`，commissioning secret 失效。
@@ -335,10 +352,10 @@ Admin 当前 `/onboarding/initialize` 具有部分 repair 行为，但计划中�
 ### 9.2 换网
 
 1. 已授权 Controller 创建 `change-network` operation。
-2. BLE 保持控制通道；LAN 连接可能中断。
-3. NetworkManager 创建 checkpoint，staging 新 profile 并激活。
+2. Commissioning channel 保持控制能力；LAN 连接可能中断。
+3. `NetworkProvisioning` adapter staging 新配置；真实 NetworkManager adapter 是否使用 checkpoint 由 PoC 固化。
 4. 验证新网络的 association、DHCP、App 到 Local API 的本地可达性。
-5. App 通过 BLE 或新 LAN session 确认后销毁 checkpoint。
+5. App 通过 commissioning channel 或新 LAN session 确认后提交变更。
 6. 超时自动 rollback，Owner、Controller 和所有 Eidolon 数据保持不变。
 
 不要求互联网可用。Guest isolation 导致 App 无法访问 Pi 时，必须给出明确诊断并允许 rollback 或进入 fallback，而不能误报 Wi-Fi 密码错误。

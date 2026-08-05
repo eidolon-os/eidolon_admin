@@ -12,7 +12,7 @@ import logging
 import signal
 from contextlib import suppress
 
-from .adapters.persistence import BootstrapStore
+from .adapters.persistence import SQLiteBootstrapStateStore
 from .config import BootstrapSettings, load_bootstrap_settings
 from .control import BootstrapControlServer
 from .identity import HostIdentityManager
@@ -34,7 +34,7 @@ async def run_daemon(
     settings.state_dir.chmod(0o700)
     settings.runtime_dir.chmod(0o750)
 
-    store = BootstrapStore(settings.database_path)
+    store = SQLiteBootstrapStateStore(settings.database_path)
     identity_manager = HostIdentityManager(settings.identity_key_path, settings.mode)
     service = BootstrapService(
         settings=settings,

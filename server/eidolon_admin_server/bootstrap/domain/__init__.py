@@ -3,6 +3,7 @@
 from .model import (
     BootstrapState,
     ClaimState,
+    CommissioningSessionMetadata,
     HostIdentity,
     NetworkState,
     RecoveryState,
@@ -12,6 +13,7 @@ from .model import (
 __all__ = [
     "BootstrapState",
     "ClaimState",
+    "CommissioningSessionMetadata",
     "HostIdentity",
     "NetworkState",
     "RecoveryState",

@@ -30,7 +30,7 @@ Bootstrap 与 Local API 放在 `eidolon_admin` codebase，形成三个独立运�
 - systemd 是唯一 restart authority；进程不实现自拉起或双重 supervisor。
 - unit 使用 `Restart=always`、无限重试窗口和固定退避。
 - unit 使用 systemd watchdog；事件循环失去响应时也会被重启。
-- 正常 `systemctl stop`/机器关机时处理 SIGTERM，关闭 Unix socket 并提交停止记录。
+- 正常 `systemctl stop`/机器关机时处理 SIGTERM，关闭 Unix socket；启停记录进入 journald。
 - 开发环境可由命令行启动，但产品环境不能把它放入 supervisord application stack。
 
 ## 逻辑与权限边界
@@ -54,7 +54,7 @@ Bootstrap 与 Local API 放在 `eidolon_admin` codebase，形成三个独立运�
 - Admin/Data/Hub/Kernel 故障：Bootstrap 保持运行；Local API 对依赖功能返回 degraded。
 - Bootstrap 异常退出：systemd 退避后重启。
 - Bootstrap 卡死：systemd watchdog 重启。
-- Host Identity/SQLite 不合法：生产模式 fail closed 并进入可观测 restart 状态，不能
+- Host Identity/durable state store 不合法：生产模式 fail closed 并进入可观测 restart 状态，不能
   临时生成新的产品身份绕过制造信任。
 - Local API 故障：不影响 BLE/recovery authority；systemd 独立重启 Local API。
 

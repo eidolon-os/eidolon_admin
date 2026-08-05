@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .adapters.persistence import BootstrapStore
 from .config import BootstrapMode, BootstrapSettings
 from .identity import HostIdentityManager
+from .ports import BootstrapStateStore
+
+
+logger = logging.getLogger("eidolon.bootstrap.service")
 
 
 class BootstrapOperationRejected(RuntimeError):
@@ -31,7 +35,7 @@ class BootstrapService:
         self,
         *,
         settings: BootstrapSettings,
-        store: BootstrapStore,
+        store: BootstrapStateStore,
         identity_manager: HostIdentityManager,
     ) -> None:
         self._settings = settings
@@ -43,26 +47,25 @@ class BootstrapService:
     def initialize(self) -> None:
         now = _timestamp(_now())
         self._store.open()
-        self._store.initialize_schema(now)
+        self._store.initialize(now)
         self._identity_manager.load()
         self._run_id = str(uuid.uuid4())
         self._started_at = now
-        self._store.record_daemon_start(
-            run_id=self._run_id,
-            pid=os.getpid(),
-            started_at=now,
+        logger.info(
+            "bootstrap service initialized run_id=%s pid=%s",
+            self._run_id,
+            os.getpid(),
         )
 
     def shutdown(self) -> None:
-        try:
-            if self._run_id is not None:
-                self._store.record_daemon_stop(
-                    run_id=self._run_id,
-                    stopped_at=_timestamp(_now()),
-                )
-        finally:
-            self._store.close()
-            self._run_id = None
+        if self._run_id is not None:
+            logger.info(
+                "bootstrap service stopping run_id=%s pid=%s",
+                self._run_id,
+                os.getpid(),
+            )
+        self._store.close()
+        self._run_id = None
 
     def public_descriptor(self) -> dict[str, Any]:
         identity = self._identity_manager.identity

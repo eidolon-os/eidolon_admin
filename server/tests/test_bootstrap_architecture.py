@@ -38,6 +38,15 @@ def test_bootstrap_never_imports_full_stack_or_operator_app() -> None:
     assert violations == []
 
 
+def test_application_service_depends_on_ports_not_concrete_adapters() -> None:
+    service = (_BOOTSTRAP_ROOT / "service.py").read_text()
+    state_port = (_BOOTSTRAP_ROOT / "ports" / "state_store.py").read_text()
+
+    assert "from .ports import BootstrapStateStore" in service
+    assert "adapters.persistence" not in service
+    assert "sqlite" not in state_port.lower()
+
+
 def test_bootstrap_systemd_unit_is_always_on_and_pre_network_stack() -> None:
     unit_path = _PROJECT_ROOT / "deploy" / "systemd" / "eidolon-bootstrapd.service"
     unit = unit_path.read_text()
