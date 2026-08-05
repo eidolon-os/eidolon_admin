@@ -16,6 +16,7 @@
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
 - Local API 当前只有只读 descriptor/state 路由，未接入 Admin 高权限面。
+- Admin-only Mobile M1 已定义单快照 `GET /api/local/v1/host` 契约；Mobile 默认 Host Setup 只读取该端点，Audio/Hub/其他子项目不参与。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝 Dev Descriptor。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
 - Phase 1 只读 Pi preflight 已准备，可采集 NetworkManager、Wi-Fi、BlueZ 与旧 RaspAP 服务事实，且不读取 Wi-Fi profile 内容。

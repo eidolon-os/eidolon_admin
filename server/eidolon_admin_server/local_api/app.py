@@ -40,6 +40,17 @@ def create_app(settings: LocalApiSettings | None = None) -> FastAPI:
     async def descriptor() -> dict:
         return await request_bootstrap("descriptor")
 
+    @app.get("/api/local/v1/host")
+    async def host_overview() -> dict:
+        result = await request_bootstrap("health")
+        return {
+            "contract_version": "1",
+            "status": result["status"],
+            "mode": result["mode"],
+            "descriptor": result["descriptor"],
+            "state": result["state"],
+        }
+
     @app.get("/api/local/v1/system/state")
     async def system_state() -> dict:
         result = await request_bootstrap("health")

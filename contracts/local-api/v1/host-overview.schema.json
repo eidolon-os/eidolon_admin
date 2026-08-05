@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/host-overview.schema.json",
+  "title": "Eidolon Local API Host Overview V1",
+  "type": "object",
+  "required": ["contract_version", "status", "mode", "descriptor", "state"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "status": { "const": "running" },
+    "mode": { "enum": ["development", "production"] },
+    "descriptor": {
+      "$ref": "../../bootstrap/v1/public-descriptor.schema.json"
+    },
+    "state": {
+      "$ref": "../../bootstrap/v1/system-state.schema.json"
+    }
+  },
+  "additionalProperties": false
+}

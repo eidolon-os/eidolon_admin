@@ -322,11 +322,20 @@ async def test_local_api_is_a_separate_read_only_projection(
             base_url="http://local.test",
         ) as client:
             descriptor = await client.get("/api/local/v1/descriptor")
+            host = await client.get("/api/local/v1/host")
             state = await client.get("/api/local/v1/system/state")
             mutation = await client.post("/api/local/v1/setup/initialize")
 
         assert descriptor.status_code == 200
         assert descriptor.json()["host_id"].startswith("ehost-")
+        assert host.status_code == 200
+        assert host.json() == {
+            "contract_version": "1",
+            "status": "running",
+            "mode": "development",
+            "descriptor": descriptor.json(),
+            "state": state.json()["state"],
+        }
         assert state.status_code == 200
         assert state.json()["state"]["claim_state"] == "unclaimed"
         assert mutation.status_code == 404
@@ -343,6 +352,13 @@ def test_bootstrap_contracts_are_valid_json() -> None:
 
     assert len(documents) == 4
     assert all(document["$schema"].endswith("2020-12/schema") for document in documents)
+
+    local_api_contract = json.loads(
+        (root / "contracts" / "local-api" / "v1" / "host-overview.schema.json").read_text()
+    )
+    assert local_api_contract["properties"]["descriptor"]["$ref"].endswith(
+        "public-descriptor.schema.json"
+    )
 
 
 def test_systemd_watchdog_uses_half_interval_and_main_pid() -> None:

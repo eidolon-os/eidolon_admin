@@ -145,6 +145,10 @@ Do not place it in source control. Start the read-only Phase 0 Local API with:
 EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-local-api
 ```
 
+The first Mobile/Admin integration reads one consistent Bootstrap snapshot from
+`GET /api/local/v1/host`. It contains only Host identity and host-control state;
+it does not initialize Owner/Data, register a Hub Device, or start Audio.
+
 Before a Raspberry Pi Phase 1 session, collect a read-only capability report:
 
 ```bash
