@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -12,7 +13,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     SQLiteBootstrapStateStore,
@@ -508,6 +512,127 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
         await asyncio.wait_for(daemon_task, timeout=2)
 
 
+@pytest.mark.asyncio
+async def test_local_api_controller_session_is_one_time_and_reset_bound(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    settings = _settings(tmp_path, runtime_dir=short_runtime_dir)
+    store = SQLiteBootstrapStateStore(settings.database_path)
+    network = InMemoryNetworkProvisioning()
+    bootstrap_service = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(
+            settings.identity_key_path,
+            settings.mode,
+        ),
+        network=network,
+    )
+    bootstrap_service.initialize()
+    commissioning = CommissioningService(store=store, network=network)
+    setup = bootstrap_service.issue_development_setup_code(300)
+    initial = commissioning.authorize(
+        session_id=setup["commissioning_id"],
+        secret=setup["setup_code"],
+    )
+    operation_id = "9a6bc772-86f7-4ace-a022-ecb9cb8df114"
+    await commissioning.configure_network(
+        initial,
+        {"operation_id": operation_id, "ssid": "Existing Home"},
+    )
+    await commissioning.confirm_network(initial, operation_id)
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_der = private_key.public_key().public_bytes(
+        Encoding.DER,
+        PublicFormat.SubjectPublicKeyInfo,
+    )
+    encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
+    controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+    commissioning.claim_controller(
+        initial,
+        {
+            "controller_id": controller_id,
+            "public_key": encoded_public,
+            "display_name": "Primary phone",
+            "platform": "android",
+        },
+    )
+    bootstrap_service.shutdown()
+
+    stop = asyncio.Event()
+    daemon_task = asyncio.create_task(run_daemon(settings, stop_event=stop))
+    try:
+        for _ in range(100):
+            if settings.control_socket.exists():
+                break
+            await asyncio.sleep(0.01)
+
+        app = create_app(LocalApiSettings(bootstrap=settings))
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="https://local.test",
+        ) as client:
+            challenge_response = await client.post(
+                "/api/local/v1/auth/challenges",
+                json={
+                    "contract_version": "1",
+                    "controller_id": controller_id,
+                },
+            )
+            assert challenge_response.status_code == 200
+            challenge = challenge_response.json()
+            assert challenge["purpose"] == "eidolon-controller-local-auth-v1"
+            canonical = json.dumps(
+                challenge,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            signature = private_key.sign(canonical, ec.ECDSA(hashes.SHA256()))
+            proof = {
+                **challenge,
+                "signature": base64.urlsafe_b64encode(signature)
+                .rstrip(b"=")
+                .decode(),
+            }
+            session_response = await client.post(
+                "/api/local/v1/auth/sessions",
+                json=proof,
+            )
+            assert session_response.status_code == 200
+            session = session_response.json()
+            assert session["token_type"] == "Bearer"
+            assert session["controller"]["controller_id"] == controller_id
+            token = session["access_token"]
+            assert len(token) == 43
+
+            replay = await client.post(
+                "/api/local/v1/auth/sessions",
+                json=proof,
+            )
+            assert replay.status_code == 401
+            missing = await client.get("/api/local/v1/auth/session")
+            assert missing.status_code == 401
+            current = await client.get(
+                "/api/local/v1/auth/session",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert current.status_code == 200
+            assert current.json()["controller"]["reset_epoch"] == 0
+
+            control = BootstrapControlClient(settings.control_socket)
+            await control.request("dev.reset")
+            invalidated = await client.get(
+                "/api/local/v1/auth/session",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert invalidated.status_code == 401
+    finally:
+        stop.set()
+        await asyncio.wait_for(daemon_task, timeout=2)
+
+
 def test_bootstrap_contracts_are_valid_json() -> None:
     root = Path(__file__).resolve().parents[2]
     contracts = root / "contracts" / "bootstrap" / "v1"
@@ -529,7 +654,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
         json.loads(path.read_text())
         for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
     ]
-    assert len(local_api_documents) == 3
+    assert len(local_api_documents) == 9
     assert all(
         document["$schema"].endswith("2020-12/schema")
         for document in local_api_documents

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/controller-principal.schema.json",
+  "title": "Eidolon Local API Controller Principal V1",
+  "type": "object",
+  "required": ["contract_version", "controller_id", "role", "display_name", "platform", "reset_epoch"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "controller_id": { "type": "string", "pattern": "^ectrl-[0-9a-f]{20}$" },
+    "role": { "const": "host_admin" },
+    "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "platform": { "enum": ["android", "ios"] },
+    "reset_epoch": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

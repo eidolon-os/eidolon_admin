@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/controller-session.schema.json",
+  "title": "Eidolon Local API Controller Session V1",
+  "type": "object",
+  "required": ["contract_version", "token_type", "access_token", "expires_at", "controller"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "token_type": { "const": "Bearer" },
+    "access_token": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "controller": { "$ref": "controller-principal.schema.json" }
+  },
+  "additionalProperties": false
+}

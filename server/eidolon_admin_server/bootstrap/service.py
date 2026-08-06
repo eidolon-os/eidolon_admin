@@ -8,13 +8,19 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .config import BootstrapMode, BootstrapSettings
 from .identity import HostIdentityManager
-from .domain import NetworkState
+from .controller_auth import (
+    LOCAL_API_CONTROLLER_AUTH_PURPOSE,
+    ControllerSignatureError,
+    verify_controller_signature,
+)
+from .domain import ControllerGrant, ControllerRole, NetworkState
 from .ports import (
     BootstrapStateStore,
     NetworkProvisioning,
@@ -30,6 +36,10 @@ _BASE64URL_32_BYTES = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 class BootstrapOperationRejected(RuntimeError):
     """The requested operation is not allowed in the current trust mode."""
+
+
+class ControllerAuthenticationRejected(BootstrapOperationRejected):
+    """A LAN caller did not prove an active Host Controller grant."""
 
 
 def _now() -> datetime:
@@ -65,6 +75,7 @@ class BootstrapService:
             if settings.commissioning_adapter.value == "disabled"
             else "starting"
         )
+        self._controller_challenges: dict[str, tuple[str, int, float]] = {}
 
     def initialize(self) -> None:
         now = _timestamp(_now())
@@ -94,6 +105,7 @@ class BootstrapService:
                 os.getpid(),
             )
         self._store.close()
+        self._controller_challenges.clear()
         self._run_id = None
 
     def public_descriptor(self) -> dict[str, Any]:
@@ -174,6 +186,124 @@ class BootstrapService:
             **unsigned,
             "signature": self._identity_manager.sign_mapping(unsigned),
         }
+
+    def issue_controller_challenge(self, controller_id: str) -> dict[str, Any]:
+        """Issue a bounded, one-time LAN authentication challenge."""
+
+        grant = self._active_controller(controller_id)
+        now = time.monotonic()
+        self._purge_controller_challenges(now)
+        if len(self._controller_challenges) >= 256:
+            oldest = min(
+                self._controller_challenges,
+                key=lambda value: self._controller_challenges[value][2],
+            )
+            self._controller_challenges.pop(oldest, None)
+        challenge = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(
+            b"="
+        ).decode("ascii")
+        self._controller_challenges[challenge] = (
+            grant.controller_id,
+            grant.reset_epoch,
+            now + 60,
+        )
+        return {
+            "contract_version": "1",
+            "purpose": LOCAL_API_CONTROLLER_AUTH_PURPOSE,
+            "controller_id": grant.controller_id,
+            "challenge": challenge,
+            "reset_epoch": grant.reset_epoch,
+        }
+
+    def authenticate_controller(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Consume a LAN challenge and return a secret-free Controller principal."""
+
+        if not isinstance(payload, dict):
+            raise ControllerAuthenticationRejected("Controller proof is invalid")
+        challenge = payload.get("challenge")
+        if not isinstance(challenge, str):
+            raise ControllerAuthenticationRejected("Controller proof is invalid")
+        now = time.monotonic()
+        self._purge_controller_challenges(now)
+        record = self._controller_challenges.pop(challenge, None)
+        if record is None or record[2] <= now:
+            raise ControllerAuthenticationRejected(
+                "Controller challenge is missing or expired"
+            )
+        controller_id, reset_epoch, _ = record
+        if (
+            payload.get("contract_version") != "1"
+            or payload.get("purpose") != LOCAL_API_CONTROLLER_AUTH_PURPOSE
+            or payload.get("controller_id") != controller_id
+            or payload.get("reset_epoch") != reset_epoch
+        ):
+            raise ControllerAuthenticationRejected("Controller challenge does not match")
+        grant = self._active_controller(controller_id)
+        try:
+            verify_controller_signature(
+                grant,
+                challenge=challenge,
+                purpose=LOCAL_API_CONTROLLER_AUTH_PURPOSE,
+                reset_epoch=reset_epoch,
+                signature_value=payload.get("signature"),
+            )
+        except ControllerSignatureError as exc:
+            raise ControllerAuthenticationRejected(
+                "Controller signature is invalid"
+            ) from exc
+        return self._controller_principal(grant)
+
+    def validate_controller(
+        self, controller_id: str, reset_epoch: int
+    ) -> dict[str, Any]:
+        """Revalidate a Local API session against current Bootstrap authority."""
+
+        grant = self._active_controller(controller_id)
+        if not isinstance(reset_epoch, int) or grant.reset_epoch != reset_epoch:
+            raise ControllerAuthenticationRejected(
+                "Controller session is no longer authorized"
+            )
+        return self._controller_principal(grant)
+
+    def _active_controller(self, controller_id: str) -> ControllerGrant:
+        if not isinstance(controller_id, str) or not re.fullmatch(
+            r"ectrl-[0-9a-f]{20}", controller_id
+        ):
+            raise ControllerAuthenticationRejected(
+                "Controller is not authorized for this Host"
+            )
+        grant = self._store.get_controller(controller_id)
+        state = self._store.get_state()
+        if (
+            grant is None
+            or grant.revoked_at is not None
+            or grant.reset_epoch != state.reset_epoch
+            or grant.role is not ControllerRole.HOST_ADMIN
+        ):
+            raise ControllerAuthenticationRejected(
+                "Controller is not authorized for this Host"
+            )
+        return grant
+
+    @staticmethod
+    def _controller_principal(grant: ControllerGrant) -> dict[str, Any]:
+        return {
+            "contract_version": "1",
+            "controller_id": grant.controller_id,
+            "role": grant.role.value,
+            "display_name": grant.display_name,
+            "platform": grant.platform,
+            "reset_epoch": grant.reset_epoch,
+        }
+
+    def _purge_controller_challenges(self, now: float) -> None:
+        expired = [
+            challenge
+            for challenge, (_, _, expires_at) in self._controller_challenges.items()
+            if expires_at <= now
+        ]
+        for challenge in expired:
+            self._controller_challenges.pop(challenge, None)
 
     def commissioning_endpoint(self) -> dict[str, Any]:
         """Signed dynamic endpoint data readable before the pinned TLS handshake."""

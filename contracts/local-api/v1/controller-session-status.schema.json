@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/controller-session-status.schema.json",
+  "title": "Eidolon Local API Controller Session Status V1",
+  "type": "object",
+  "required": ["contract_version", "expires_at", "controller"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "controller": { "$ref": "controller-principal.schema.json" }
+  },
+  "additionalProperties": false
+}

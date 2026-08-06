@@ -20,6 +20,10 @@ logger = logging.getLogger("eidolon.bootstrap.control")
 class BootstrapControlError(RuntimeError):
     """A structured error returned by the local control socket."""
 
+    def __init__(self, message: str, *, code: str = "BootstrapControlError") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class BootstrapControlServer:
     def __init__(self, socket_path: Path, service: BootstrapService) -> None:
@@ -105,6 +109,16 @@ class BootstrapControlServer:
             return self._service.public_descriptor()
         if operation == "host.prove":
             return self._service.prove_host(request.get("challenge"))
+        if operation == "controller.challenge":
+            return self._service.issue_controller_challenge(
+                request.get("controller_id")
+            )
+        if operation == "controller.authenticate":
+            return self._service.authenticate_controller(request.get("proof"))
+        if operation == "controller.validate":
+            return self._service.validate_controller(
+                request.get("controller_id"), request.get("reset_epoch")
+            )
         if operation == "commissioning.endpoint":
             return self._service.commissioning_endpoint()
         if operation == "dev.code":
@@ -147,7 +161,8 @@ class BootstrapControlClient:
             if not isinstance(response, dict) or response.get("ok") is not True:
                 error = response.get("error", {}) if isinstance(response, dict) else {}
                 raise BootstrapControlError(
-                    str(error.get("message", "bootstrap control request failed"))
+                    str(error.get("message", "bootstrap control request failed")),
+                    code=str(error.get("code", "BootstrapControlError")),
                 )
             result = response.get("result")
             if not isinstance(result, dict):

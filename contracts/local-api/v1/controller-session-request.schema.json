@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/controller-session-request.schema.json",
+  "title": "Eidolon Local API Controller Session Request V1",
+  "type": "object",
+  "required": ["contract_version", "purpose", "controller_id", "challenge", "reset_epoch", "signature"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "purpose": { "const": "eidolon-controller-local-auth-v1" },
+    "controller_id": { "type": "string", "pattern": "^ectrl-[0-9a-f]{20}$" },
+    "challenge": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "reset_epoch": { "type": "integer", "minimum": 0 },
+    "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,256}$" }
+  },
+  "additionalProperties": false
+}

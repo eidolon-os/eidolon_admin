@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import secrets
 import time
 import uuid
 from typing import Any
 
-from cryptography.hazmat.primitives import hashes
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import load_der_public_key
-
 from .commissioning_service import (
     CommissioningAccess,
     CommissioningAuthorization,
     CommissioningRequestRejected,
     CommissioningService,
+)
+from .controller_auth import (
+    BLE_CONTROLLER_AUTH_PURPOSE,
+    ControllerSignatureError,
+    verify_controller_signature,
 )
 
 
@@ -86,7 +85,7 @@ class CommissioningProtocolSession:
                 )
                 result = {
                     "contract_version": "1",
-                    "purpose": "eidolon-controller-ble-auth-v1",
+                    "purpose": BLE_CONTROLLER_AUTH_PURPOSE,
                     "controller_id": controller_id,
                     "challenge": challenge,
                     "reset_epoch": reset_epoch,
@@ -178,34 +177,15 @@ class CommissioningProtocolSession:
                 "controller_denied", "Controller challenge does not match"
             )
         authorization = self._service.authorize_controller(controller_id)
-        signature_value = payload.get("signature")
-        if not isinstance(signature_value, str):
-            raise CommissioningRequestRejected(
-                "controller_denied", "Controller signature is required"
-            )
         try:
-            signature = base64.urlsafe_b64decode(
-                signature_value + "=" * (-len(signature_value) % 4)
+            verify_controller_signature(
+                authorization.grant,
+                challenge=challenge,
+                purpose=BLE_CONTROLLER_AUTH_PURPOSE,
+                reset_epoch=reset_epoch,
+                signature_value=payload.get("signature"),
             )
-            public_der = base64.urlsafe_b64decode(
-                authorization.grant.public_key
-                + "=" * (-len(authorization.grant.public_key) % 4)
-            )
-            public_key = load_der_public_key(public_der)
-            if not isinstance(public_key, ec.EllipticCurvePublicKey):
-                raise ValueError("controller key is not EC")
-            unsigned = {
-                "challenge": challenge,
-                "contract_version": "1",
-                "controller_id": controller_id,
-                "purpose": "eidolon-controller-ble-auth-v1",
-                "reset_epoch": reset_epoch,
-            }
-            canonical = json.dumps(
-                unsigned, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-            public_key.verify(signature, canonical, ec.ECDSA(hashes.SHA256()))
-        except (InvalidSignature, ValueError, TypeError) as exc:
+        except ControllerSignatureError as exc:
             raise CommissioningRequestRejected(
                 "controller_denied", "Controller signature is invalid"
             ) from exc

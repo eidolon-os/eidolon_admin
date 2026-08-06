@@ -1,13 +1,13 @@
 # Eidolon OS 本地 Bootstrap 与 Mobile 用户层实施计划
 
 - 状态：Accepted，实施中
-- 日期：2026-08-05
+- 日期：2026-08-06
 - 范围：本地首次接入、初始化、日常管理、换网、Controller 恢复、Reset、Owner 上下文
 - 暂不包含：远程访问、Cloud Relay、跨网络账户登录、OTA 商业发布体系
 
 ## 0. 当前实施状态
 
-截至 2026-08-05，Phase 0 基座和无硬件的 Phase 1/2 开发实现已经落地：
+截至 2026-08-06，Phase 0 基座和 Phase 1/2A 的开发实现已经落地：
 
 - `eidolon-bootstrapd`、`eidolon-bootstrapctl`、`eidolon-local-api` 独立 entrypoint。
 - Bootstrap 通过 `BootstrapStateStore` Port 保存必要权威状态；当前默认 adapter 是独占 SQLite，也有不持久化的 In-memory 测试实现。
@@ -16,18 +16,20 @@
 - daemon 启停和异常属于 systemd/journald 诊断日志，不再写入 Bootstrap authority store。
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
-- Local API 当前只有只读 descriptor/state/host snapshot 和无状态 Host proof 路由，未接入 Admin 高权限面或产品 mutation。
+- Local API 已实现只读 descriptor/state/host snapshot、无状态 Host proof，以及 LAN 专用 Controller challenge、短期 session 签发和 session 当前性校验；仍未接入 Admin 高权限面或产品 mutation。
+- Local API session 只在进程内保存 opaque token 的 hash，默认 15 分钟；每次使用会向 Bootstrap 重新验证 Controller Grant 和 `reset_epoch`。Local API restart 只使短期 session 失效，不改变 durable Controller Grant。
 - Mobile 无网向导已实现：发现附近广播、验证 signed endpoint、输入 6 位短期 Setup 码、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。Setup 码和 Wi-Fi 密码只保留在内存。
 - Controller Grant、operation journal、session 单次消费与 claim 权威迁移已落地；已认领换网使用 Controller challenge，不复用开箱 secret。
 - Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 仍是后续子项目，因此 Host commissioning 完成不等价于 Workspace ready。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝签发开发 Setup 码。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
-- Phase 1 只读 Pi preflight 已准备；代码侧也已实现候选 D-Bus adapter、polkit 规则和 systemd wiring。
-- 树莓派/Android 实机仍按用户要求暂缓。因此当前只证明架构、状态机、TLS 内存互操作、Flutter UI 与 Android 编译，不能把 BlueZ/NM/GATT 硬件行为描述成已验收。
+- 开发树莓派上已经安装并由 systemd 常驻运行 `eidolon-bootstrapd`；Android 平板已完成一次真实 Host commissioning 闭环，包括 BLE 发现、signed endpoint、pinned TLS、NetworkManager 配网确认、Controller Grant 和 claim。
+- 该实机结果只覆盖当前开发 Pi、Android 平板和当前路由器，不能外推为 2.4/5 GHz、隐藏 SSID、WPA3、DHCP 故障、guest isolation、App kill 和重启恢复矩阵均已验收。
+- 最近一次实机审计中 Host 为 `claimed/connected/normal`、`reset_epoch=2`，但 `workspace_state=absent`；`eidolon-local-api.service` 和完整 `eidolon-stack.service` 尚未运行。因此当前闭环是 Host commissioning，不是完整 Workspace 开箱完成。
 
-尚未完成并且不能宣称完成：Pi/Android 真机互操作、产品二维码制造流程、物理
-recovery GPIO/按键、Owner/Workspace 初始化 saga、Factory Reset manifests、iOS、
-Pi systemd 实机安装与故障注入。
+尚未完成并且不能宣称完成：完整 Pi/Android 路由器与故障矩阵、Controller-authenticated
+Local API 的 Pi/Android 实机部署验收、Owner/Workspace 初始化 saga、产品二维码制造流程、物理 recovery GPIO/按键、
+Factory Reset manifests、iOS、Local API/完整 stack 的产品 systemd 联动与故障注入。
 
 ## 1. 背景与目标
 
@@ -50,6 +52,7 @@ Eidolon OS 运行在无屏树莓派主机上。最终用户不能依赖 SSH、HD
 - **Local API**：网络可达后 Mobile 的本地产品入口。地址或 mDNS 只解决可达性；Descriptor 选定目标身份，nonce-bound Host proof 才把当前连接绑定到该身份。
 - **Claim**：Bootstrap 接受一个 Controller 身份并形成可撤销授权的权威迁移；不能由 Mobile 本地标记代替。
 - **Workspace onboarding**：Owner/Companion/Workspace 的业务初始化，权威在 Data/Admin，不属于 Bootstrap 自己的数据模型。
+- **Device setup**：为 ESP32 等外部 Device 配置其网络并将其准入某个 Owner 的用户流程。它由“设备本地 provisioning”和“Hub enrollment/approval/binding”两段组成，不属于 Host Bootstrap，也不使用 Host Setup 码或 Controller Identity 充当 Device Identity。
 
 因此当前开发闭环严格按以下顺序推进：
 
@@ -61,7 +64,10 @@ Host: bootstrapd 常驻
   -> Mobile 建立 pinned TLS 并提交 Setup 码
   -> Host commissioning 授权完成
   -> NetworkManager stage/confirm + Controller claim
-  -> [后续子项目] Owner / Companion / Workspace onboarding
+  -> [下一步] Controller-authenticated Local API
+  -> Owner / Companion / Workspace onboarding
+  -> Mobile 产品能力与外部 Device setup
+  -> Mission Control 只读观测
   -> [最后迁移] conversation / Audio Channel
 ```
 
@@ -96,6 +102,9 @@ Host: bootstrapd 常驻
 5. **Reset wipe list 不能靠路径猜测。** 每个数据拥有方必须发布显式 reset manifest，汇总完成前不得宣称 Factory Reset 已完成。
 6. **Owner 切换与所有权转让分开。** App 内切换 Owner context 不改变任何权威归属；整机转让走 Factory Reset；外部 Device 跨 Owner 转移当前不支持。
 7. **Android 先行。** 当前 Mobile 已有 Android 平台层；iOS 在协议稳定后补齐，不阻塞首个闭环。
+8. **Admin Web 是能力来源，不是 Mobile 容器。** Mobile 复用产品语义和服务端契约，不嵌入 Admin WebView，也不复制 Supervisor、配置、日志、烧录和串口等运维面。
+9. **Mission Control 保持只读。** Mobile 只能消费 Owner-scoped snapshot/SSE；不得借 Mission Control 页面创建、绑定、启动或控制 Device/Companion。
+10. **外部 Device commissioning 与 Host commissioning 分离。** Mobile 可以统一用户体验和操作进度模型，但不能统一 Setup secret、身份密钥、服务端 authority 或 reset 生命周期。
 
 ## 3. 为什么可以放在 eidolon_admin，但不能塞进现有进程
 
@@ -188,6 +197,50 @@ eidolon-admin
 
 开发环境可以继续由 supervisord 帮助启动 `local-api`；Pi 产品环境中
 `bootstrapd` 和 `local-api` 应由 systemd 独立管理，不能成为完整 stack 的子进程。
+
+### 4.2 Mobile 产品能力边界
+
+现有 Admin Web 已经把能力分成两组，这个边界应成为 Mobile 的输入，而不是把网页整体搬入 App：
+
+| 现有能力 | Mobile 决策 | 原因 |
+|---|---|---|
+| My Eidolon、Owner/Identity、Companions、Devices、Activity | 作为原生产品能力逐项接入 | 是 Owner 日常使用面；经 Local API 暴露最小读写契约 |
+| Mission Control snapshot/SSE | 作为原生只读观测能力后续接入 | 现有架构已定义为 observatory，不拥有运行时 mutation |
+| Supervisor、Service Config、Data Inspector、Memory/Agent Labs、Benchmark | 不进入普通 Mobile 产品面 | 属于运维、诊断或研发能力，权限和信息面过大 |
+| Firmware/Serial、ADB 工具 | 不作为 ESP32/手机 Setup 实现 | 是工程工作站工具，不是最终用户 commissioning authority |
+
+目标调用关系如下：
+
+```mermaid
+flowchart LR
+    Shell["Mobile App Shell"]
+    HostSetup["Host Setup"]
+    Product["My Eidolon / Companions / Devices"]
+    Mission["Mission Control read-only"]
+    DeviceSetup["External Device Setup"]
+    Device["ESP32 provisioning endpoint"]
+    Local["Local API allowlist"]
+    Boot["Bootstrap Controller authority"]
+    Admin["Admin product adapters"]
+    Hub["Hub enrollment / approval"]
+
+    Shell --> HostSetup
+    Shell --> Product
+    Shell --> Mission
+    Shell --> DeviceSetup
+    HostSetup --> Boot
+    Product --> Local
+    Mission --> Local
+    DeviceSetup --> Device
+    DeviceSetup --> Local
+    Local --> Boot
+    Local --> Admin
+    Local --> Hub
+```
+
+`admin_web` 继续作为桌面/支持面的实现和产品语义参考；Mobile 使用自己的导航、状态投影和交互，不通过 WebView 复用页面。服务端可以复用 application service、DTO 和内部 client，但 Local API 必须重新定义 Mobile allowlist，不能透传任意 Admin route。
+
+ESP32 的当前固件事实也必须保留在设计中：Wi-Fi provisioning 已有 Hotspot、Acoustic 和可选 ESP-BLUFI 实现；当前目标 `sdkconfig` 同时打开 Hotspot 与 ESP-BLUFI，但 Mobile 尚无相应 adapter。固件当前 Hub 接入仍使用签名的旧 config/register 流程，尚未实现 Hub 已有的 `/api/device-onboarding/v1` enrollment/handoff contract。因此 ESP32 Setup 必须先完成协议收敛，不能把“能够写入 SSID”误报成“设备已认领”。
 
 ## 5. 权威事实与数据边界
 
@@ -466,13 +519,14 @@ GET  /api/local/v1/descriptor
 GET  /api/local/v1/host
 POST /api/local/v1/host/proof
 GET  /api/local/v1/system/state
-```
-
-下一阶段计划；在 Controller contract 和 mutation tests 落地前不算已有 API：
-
-```text
 POST /api/local/v1/auth/challenges
 POST /api/local/v1/auth/sessions
+GET  /api/local/v1/auth/session
+```
+
+后续计划；每个 mutation 在对应 contract、Owner scope 和 idempotency tests 落地前都不算已有 API：
+
+```text
 POST /api/local/v1/setup/network-operations
 GET  /api/local/v1/operations/{operation_id}
 POST /api/local/v1/setup/initialize
@@ -483,6 +537,20 @@ DELETE /api/local/v1/controllers/{controller_id}
 POST /api/local/v1/recovery/factory-reset-request
 ```
 
+Owner/Workspace ready 后才增加的产品 allowlist；路径仍需在对应 contract review 中冻结：
+
+```text
+GET  /api/local/v1/me
+GET  /api/local/v1/workspace
+GET  /api/local/v1/companions
+GET  /api/local/v1/devices
+POST /api/local/v1/device-enrollments/{enrollment_id}/approval
+GET  /api/local/v1/mission-control/snapshot
+GET  /api/local/v1/mission-control/events
+```
+
+外部 Device 自己提交 enrollment/handoff；Mobile 只通过 authenticated Local API 选择 Owner、批准和展示结果。Local API 不接收由 App 自报即可生效的 `owner_id`，也不代理 Admin 的 firmware/serial jobs。
+
 约束：
 
 - 所有 mutation 都带 `Idempotency-Key`。
@@ -490,6 +558,7 @@ POST /api/local/v1/recovery/factory-reset-request
 - 下游 Admin/Hub/Kernel 使用独立 loopback service credential。
 - Local API 只返回产品需要的状态，不暴露日志路径、环境变量、Supervisor socket 或内部 token。
 - Bootstrapd 的控制接口使用 `0600/0660` Unix socket，不开放 TCP 管理端口。
+- Local API bearer token 只在 Host-authenticated TLS 内传输，不写入 Bootstrap SQLite、Mobile Host registry 或日志；Local API 进程重启后重新 challenge 即可。
 
 ## 11. Mobile 重构计划
 
@@ -504,21 +573,27 @@ lib/
     secure_storage/
     platform/
   features/
-    bootstrap/
+    host_setup/
     system/
     owners/
+    companions/
     devices/
+    device_setup/
+    mission_control/
     conversation/
 ```
 
 实施规则：
 
-1. 先新增 App shell 与 bootstrap feature，不立即重写语音实现。
-2. 把现有语音入口迁到 `conversation/`，只在 Host ready 后启用。
-3. 拆分平台桥：`BleCommissioningBridge`、`ControllerKeyBridge`、`LocalNetworkBridge`、`MobileBodyKeyBridge`。
-4. 当前用 Flutter `kDebugMode` 显示 6 位开发 Setup 码输入；release UI 不显示。独立 flavor 和 release artifact 负向检查仍是产品化待办。
-5. 旧 `/api/device/register` HubClient 不参与 Host bootstrap。后续作为 Mobile Body 迁移到当前 Hub Enrollment/Handoff contract。
-6. App 只访问 Local API；日常管理不直接访问 Admin/Hub/Kernel public port。
+1. 先新增 App shell 与 Host Setup feature，不立即重写语音实现。
+2. `ControllerKeyBridge` 从 BLE transport 中拆出，供 BLE commissioning 和 LAN Local API 鉴权共同使用；challenge purpose 必须分别校验。
+3. 外部设备使用 `DeviceProvisioningTransport` Port；Hotspot、ESP-BLUFI 等只是 adapter。它不能依赖 Host Bootstrap transport，也不能持有 Host Setup 码。
+4. 把现有语音入口迁到 `conversation/`，只在 Workspace ready 且 Mobile Body admission 完成后启用。
+5. 拆分平台桥：`BleCommissioningBridge`、`ControllerKeyBridge`、`LocalNetworkBridge`、`DeviceProvisioningBridge`、`MobileBodyKeyBridge`。
+6. 当前用 Flutter `kDebugMode` 显示 6 位开发 Setup 码输入；release UI 不显示。独立 flavor 和 release artifact 负向检查仍是产品化待办。
+7. 旧 `/api/device/register` HubClient 不参与 Host bootstrap。后续作为 Mobile Body 迁移到当前 Hub Enrollment/Handoff contract。
+8. App 只访问 Local API；日常管理不直接访问 Admin/Hub/Kernel public port。
+9. Mission Control 页面只消费 snapshot/SSE，并将 source degraded 显示为观测降级；不能把流中断解释为 Host 或业务 runtime 已停止。
 
 ## 12. Pi 部署与网络改造
 
@@ -596,13 +671,43 @@ local-fs.target
 
 ### Phase 2：可用的首次初始化 MVP
 
+#### Phase 2A：Host commissioning（开发实机主链路已完成）
+
 交付：
 
 - Bootstrap domain、SQLite authority、operation journal。
 - `bootstrapd` 与 Local API 独立进程。
-- Android setup UI：发现、认证、选网、进度、错误、Owner 初始化。
+- Android Host Setup UI：发现、认证、选网、进度和可操作错误。
+- BLE Controller claim、已认领 Controller challenge 和开发 reset 流程。
+
+剩余验收：
+
+- 补齐 2.4/5 GHz、隐藏 SSID、WPA2/WPA3、DHCP 故障、guest isolation、App kill、Pi reboot 矩阵。
+- 验证 post-claim 换网后的新 LAN endpoint handoff；不能只验证 NetworkManager 显示 activated。
+
+#### Phase 2B：Controller-authenticated Local API（代码实现中，实机部署待验收）
+
+交付：
+
+- 从 BLE commissioning transport 拆出 `ControllerKeyBridge`。（已实现）
+- 一次性 challenge、明确 local-auth purpose、短期 session、replay 拒绝和 `reset_epoch` 绑定。（已实现并通过无硬件契约测试）
+- Local API Host discovery、signed descriptor/proof、Controller Grant 验证和最小 system state。
+- Local API systemd 单元在开发 Pi 上独立启动；完整 Admin/Data 不可用时仍能返回 Host/Bootstrap 降级状态。
+
+退出标准：
+
+- 已 claim 的 Android App 在 LAN 上无需 Setup 码即可重新认证；未授权手机和旧 epoch Controller 被拒绝。
+- Local API restart 只使短期 session 失效，不改变 Controller Grant；Bootstrap restart 不开放 commissioning。
+- Mobile 不能访问 Admin/Hub/Kernel 的通用或运维路由。
+
+#### Phase 2C：Owner / Companion / Workspace onboarding
+
+交付：
+
 - Admin onboarding 加入 idempotency、fingerprint、operation result。
-- Controller Grant 提升与 Owner scope。
+- Controller Grant 绑定可信 Owner scope。
+- Android Setup 在 Host commissioning 后继续创建/修复 Owner、主 Companion 和 Workspace，并能在中断后恢复进度。
+- Admin onboarding adapter 迁移到当前 `eidolon_data` API；不得用兼容 shim 恢复已删除的 V1 `DataStore/schema.models` 依赖。
 - LAN HTTPS Host pinning。
 - Caddy/防火墙关闭 Mobile 对 Admin/Hub/Kernel 的直达访问。
 
@@ -642,11 +747,56 @@ local-fs.target
 - Owner、Memory、voiceprint、Device registry/Mount、Controller、网络和相关本地备份无残留。
 - 制造身份和可验证恢复能力仍存在。
 
-### Phase 5：Mobile 产品层与语音迁移
+### Phase 5：Mobile 产品层
+
+Phase 5 的共同进入条件是 Phase 2B/2C 已完成：Mobile 已持有 authenticated Controller session，Local API 能生成可信 Owner context，Workspace 已 ready。四个产品子阶段共享 App shell 和 Local API client，但领域状态机彼此独立。
+
+#### Phase 5A：My Eidolon 与日常产品能力
 
 交付：
 
-- System、Owner、Device、Conversation 页面。
+- 原生 System、My Eidolon、Owner、Companion、Device、Activity 页面。
+- 从 Admin Web 的 user-first 信息架构复用产品语义，不复用 Admin WebView 或 Advanced 运维路由。
+- 每个 Mobile mutation 都通过 Local API 的显式 allowlist、Controller role 和 Owner scope。
+
+退出标准：
+
+- App 能展示并修复当前 Owner Workspace，管理 Companion 和已准入 Device；Admin/Supervisor 不可达时不会暴露支持面。
+- Owner 切换只能选择 Controller Grant 已允许的 scope。
+
+#### Phase 5B：ESP32 等外部 Device Setup
+
+交付：
+
+- `DeviceSetup` 独立状态机：发现设备、设备本地配网、发现 Host/Hub、提交 enrollment、等待 Owner 批准、handoff/binding、ready。
+- `DeviceProvisioningTransport` Port 及按目标板固件配置选择的第一个 adapter；当前代码证据只支持 Hotspot 和 ESP-BLUFI 为候选，最终先做哪个由目标板 build config 与真机矩阵决定。
+- ESP32 固件从旧签名 config/register 路径迁移到 Hub 现有 enrollment/handoff contract，保留独立 Device P-256 Identity。
+- Mobile 经 Local API 批准 enrollment 和选择 Owner；Hub 继续拥有 approved/revoked，Kernel 继续拥有 Mount/binding。
+- 用户入口位于 Devices 的“添加设备”，不与“添加/管理 Host”混在同一扫描列表。
+
+退出标准：
+
+- 写入 Wi-Fi、Device enrollment、Owner approval 和 binding 分别有可恢复状态，任何一步失败都不会伪装为“设备已连接”。
+- Host Controller key、Host Setup 码和 ESP32 Device key 不互相复用。
+- Admin Firmware/Serial 工具不是产品 Setup 的运行依赖。
+
+#### Phase 5C：Mission Control Mobile
+
+交付：
+
+- Owner-scoped snapshot 与 SSE 的 Local API read adapter。
+- Mobile 原生只读活动时间线、设备在线状态和 source degradation 展示。
+- bounded reconnect、cursor/dedupe 和 App 前后台恢复；页面关闭不改变任何 runtime。
+
+退出标准：
+
+- Mobile 不能通过 Mission Control 创建、绑定、启动、打断或协调 Companion/Device/voice turn。
+- SSE 或 projection 故障只降级观测页面，不影响 Host Setup、Device Setup 和正常 runtime。
+
+#### Phase 5D：Conversation 与 Audio 迁移
+
+交付：
+
 - 现有语音 Demo 迁入 `conversation/`。
 - Mobile Body 按当前 Hub Enrollment/Handoff 和 Kernel Mount 流程接入。
 - Controller Identity 与 Mobile Body Identity 的存储和测试隔离。
@@ -675,6 +825,9 @@ local-fs.target
 - 网络切换成功、失败和 App 中途退出。
 - 已初始化但完整 stack 故障时仍能查看 bootstrap 状态和恢复网络。
 - 多 Owner scope 切换和越权拒绝。
+- ESP32 provisioning 成功但 enrollment 未批准、批准后 handoff、retrieval token 过期和 App 中途退出。
+- 同场 Host 与 ESP32 广播并存时入口、命名和身份类型不会混淆。
+- Mission Control SSE 断线、重复事件、App 前后台切换和单个 projection source 降级。
 
 ### 安全
 
@@ -683,6 +836,8 @@ local-fs.target
 - Controller request nonce/replay。
 - Debug credential、dev URI 和 development mode 不出现在 release artifact。
 - Local API 越权访问 Admin/Supervisor/任意 Owner。
+- Host Controller key 被尝试用于外部 Device enrollment，或 Device key 被尝试用于 Local API Controller auth。
+- App 自报其他 `owner_id`、重放 Device enrollment approval 或越过 pending approval 直接 handoff。
 - Factory Reset 未经物理授权不得执行。
 - 日志不得包含 Wi-Fi 密码、commissioning secret、Controller private key 或下游 service token。
 
@@ -705,6 +860,9 @@ local-fs.target
 5. Local API 的最终 TLS 终止位置：自身 TLS 或 Caddy；无论哪种都必须绑定 Host Identity。
 6. 每个现有服务的完整 reset manifest 和隐私数据清单。
 7. 一个 Host 是否允许多个 Host Admin，以及多 Owner 的产品授权 UX。
+8. 目标 ESP32 产品板最终启用 Hotspot、ESP-BLUFI 还是两者；决定必须来自实际 build config、Android adapter 成本和真机可靠性矩阵。
+9. 旧 ESP32 `/api/config` 注册路径的退役窗口，以及向 Hub enrollment/handoff contract 迁移时的固件兼容策略。
+10. Mission Control 在 Mobile 首页的产品层级；它确定是 authenticated Owner 下的只读功能，但是否默认展示仍需用户研究，不能由 Admin 的 Advanced 导航位置直接推断。
 
 ## 16. 总体验收标准
 
@@ -717,6 +875,8 @@ local-fs.target
 5. 网络 Reset、Controller Recovery、Factory Reset 的语义和数据保留范围彼此独立。
 6. 产品 artifact 中不存在 Debug commissioning 后门。
 7. 所有状态迁移幂等、可审计、带 reset epoch，跨 Owner 默认 fail closed。
+8. 外部 Device 配网与 Owner admission 是两个可观察、可恢复步骤；仅写入 SSID 不能显示为 setup 完成。
+9. Admin Web 的运维面不进入普通 Mobile；Mission Control 保持只读且观测故障不影响 runtime。
 
 ## 17. 参考依据
 
