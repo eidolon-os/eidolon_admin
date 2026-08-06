@@ -32,18 +32,40 @@ def test_bootstrap_never_imports_full_stack_or_operator_app() -> None:
             else:
                 continue
             for name in names:
-                if any(name == item or name.startswith(f"{item}.") for item in forbidden):
-                    violations.append(f"{path.relative_to(_PROJECT_ROOT)} imports {name}")
+                if any(
+                    name == item or name.startswith(f"{item}.") for item in forbidden
+                ):
+                    violations.append(
+                        f"{path.relative_to(_PROJECT_ROOT)} imports {name}"
+                    )
 
     assert violations == []
 
 
 def test_application_service_depends_on_ports_not_concrete_adapters() -> None:
-    service = (_BOOTSTRAP_ROOT / "service.py").read_text()
+    service_path = _BOOTSTRAP_ROOT / "service.py"
+    service = service_path.read_text()
+    service_tree = ast.parse(service, filename=str(service_path))
     state_port = (_BOOTSTRAP_ROOT / "ports" / "state_store.py").read_text()
 
-    assert "from .ports import BootstrapStateStore" in service
-    assert "adapters.persistence" not in service
+    port_imports = {
+        alias.name
+        for node in ast.walk(service_tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.level == 1
+        and node.module == "ports"
+        for alias in node.names
+    }
+    adapter_imports = {
+        node.module
+        for node in ast.walk(service_tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module is not None
+        and "adapters" in node.module.split(".")
+    }
+
+    assert {"BootstrapStateStore", "NetworkProvisioning"} <= port_imports
+    assert adapter_imports == set()
     assert "sqlite" not in state_port.lower()
 
 
@@ -67,7 +89,9 @@ def test_bootstrap_systemd_unit_is_always_on_and_pre_network_stack() -> None:
 def test_local_api_and_admin_have_distinct_entrypoints() -> None:
     pyproject = (_PROJECT_ROOT / "pyproject.toml").read_text()
 
-    assert 'eidolon-bootstrapd = "eidolon_admin_server.bootstrap.daemon:main"' in pyproject
+    assert (
+        'eidolon-bootstrapd = "eidolon_admin_server.bootstrap.daemon:main"' in pyproject
+    )
     assert (
         'eidolon-bootstrap-preflight = "eidolon_admin_server.bootstrap.pi_preflight:main"'
         in pyproject
@@ -80,9 +104,7 @@ def test_local_api_socket_access_is_scoped_to_its_systemd_process() -> None:
     unit = (
         _PROJECT_ROOT / "deploy" / "systemd" / "eidolon-local-api.service"
     ).read_text()
-    deployment_notes = (
-        _PROJECT_ROOT / "deploy" / "systemd" / "README.md"
-    ).read_text()
+    deployment_notes = (_PROJECT_ROOT / "deploy" / "systemd" / "README.md").read_text()
 
     assert "User=eidolon\n" in unit
     assert "SupplementaryGroups=eidolon-bootstrap\n" in unit

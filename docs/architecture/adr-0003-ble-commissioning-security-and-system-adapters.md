@@ -45,6 +45,8 @@ Setup 码；这是受控 TOFU，不替代产品制造信任。随后 Android Tru
 
 Info endpoint 是公开数据，允许被读取和重放；签名、reset epoch、公钥派生身份匹配
 和后续 TLS SPKI pin 决定是否接受。广播名称、MAC 和 RSSI 永远不作为身份认证。
+广播和 App 默认显示名统一使用 `Eidolon-<Host ID 最后 6 位>`；这 6 位仅用于用户在
+附近设备列表中辨认主机，不参与身份认证或授权。
 
 ### 3. 应用层授权
 
