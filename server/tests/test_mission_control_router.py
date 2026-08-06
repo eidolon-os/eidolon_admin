@@ -55,10 +55,88 @@ class FakeRegistry:
         return None
 
 
+class _TestMissionControlIndex:
+    """Test read model combining immutable audit and authority telemetry.
+
+    Production Mission Control reads the independent audit index. These tests
+    keep Channel telemetry outside System Data while exercising the same query
+    port used by the UI composer.
+    """
+
+    def __init__(self, store: DataStore) -> None:
+        self._events = store.events
+        self._telemetry: list[SimpleNamespace] = []
+
+    async def record_telemetry(
+        self,
+        *,
+        event_type: str,
+        owner_id: str,
+        subject_type: str,
+        subject_id: str,
+        event_id: str,
+        companion_id: str | None = None,
+        trace_id: str | None = None,
+        reason: str | None = None,
+        payload_json: dict | None = None,
+        occurred_at: datetime | None = None,
+        severity: str = "info",
+        outcome: str | None = None,
+        **_: object,
+    ) -> None:
+        payload = dict(payload_json or {})
+        if companion_id:
+            payload.setdefault("companion_id", companion_id)
+        self._telemetry.append(
+            SimpleNamespace(
+                event_id=event_id,
+                action=event_type,
+                producer="eidolon-channel",
+                owner_id=owner_id,
+                subject_type=subject_type,
+                subject_id=subject_id,
+                companion_id=companion_id,
+                trace_id=trace_id,
+                reason=reason,
+                payload=payload,
+                severity=severity,
+                outcome=outcome or ("denied" if event_type.endswith(".rejected") else "success"),
+                occurred_at=occurred_at or datetime.now(UTC),
+            )
+        )
+
+    async def list_for_owner(self, owner_id: str, *, limit: int = 200):
+        audit = await self._events.list_for_owner(owner_id, limit=limit)
+        rows = [*audit, *(row for row in self._telemetry if row.owner_id == owner_id)]
+        return sorted(
+            rows,
+            key=lambda row: mission_control_service._as_utc(row.occurred_at),
+            reverse=True,
+        )[:limit]
+
+    async def list_for_owner_since(self, owner_id: str, *, after: datetime, limit: int = 200):
+        rows = await self.list_for_owner(owner_id, limit=limit)
+        after_utc = mission_control_service._as_utc(after)
+        return [
+            row
+            for row in rows
+            if mission_control_service._as_utc(row.occurred_at) > after_utc
+        ][:limit]
+
+
 @pytest.fixture
-async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
+def audit_index(data_store: DataStore) -> _TestMissionControlIndex:
+    return _TestMissionControlIndex(data_store)
+
+
+@pytest.fixture
+async def client(
+    data_store: DataStore,
+    audit_index: _TestMissionControlIndex,
+) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
     app.state.data_store = data_store
+    app.state.audit_index = audit_index
     app.state.registry = FakeRegistry()
     app.state.http_client = httpx.AsyncClient()
     app.state.hub_device_client = None
@@ -78,12 +156,10 @@ async def test_snapshot_keeps_device_offline_when_runtime_sources_degrade(
     await data_store.owner_service.create_owner(
         owner_id="owner-mc",
         display_name="Mission Owner",
-        actor_type="test",
     )
     await data_store.workspace_provisioning.provision_workspace(
         owner_id="owner-mc",
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
     await data_store.devices.create_device(
         device_id="esp-box-3-desk",
@@ -121,12 +197,10 @@ async def test_device_role_reads_from_bound_companion_not_board_kind(
     await data_store.owner_service.create_owner(
         owner_id="owner-role",
         display_name="Role Owner",
-        actor_type="test",
     )
     workspace = await data_store.workspace_provisioning.provision_workspace(
         owner_id="owner-role",
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
     # Persona body: role comes from the persona companion it is bound to.
     await data_store.devices.create_device(
@@ -467,12 +541,10 @@ async def test_snapshot_sorts_mixed_timezone_events(
     await data_store.owner_service.create_owner(
         owner_id="owner-time",
         display_name="Mission Owner",
-        actor_type="test",
     )
     await data_store.workspace_provisioning.provision_workspace(
         owner_id="owner-time",
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
     await data_store.events.append(
         event_id="event-naive-time",
@@ -573,20 +645,18 @@ async def test_live_enrichment_never_invents_owner_for_global_hub_frame(
 
 async def test_events_tail_streams_new_db_events(data_store: DataStore) -> None:
     """P2d — the cursor tail turns owner-scoped audit rows into live RuntimeEvents."""
-    await data_store.owner_service.create_owner(owner_id="owner-tail-x", display_name="Tail", actor_type="test")
+    await data_store.owner_service.create_owner(owner_id="owner-tail-x", display_name="Tail")
     await data_store.events.record_event(
         event_type="owner.updated",
         owner_id="owner-tail-x",
         subject_type="owner",
         subject_id="owner-tail-x",
-        actor_type="admin",
     )
     await data_store.events.record_event(
         event_type="device.revoked",
         owner_id="owner-tail-x",
         subject_type="device",
         subject_id="d1",
-        actor_type="admin",
     )
 
     calls = {"n": 0}
@@ -596,7 +666,12 @@ async def test_events_tail_streams_new_db_events(data_store: DataStore) -> None:
         return calls["n"] > 1  # False on the first loop check, True after one poll
 
     request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(data_store=data_store)),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                data_store=data_store,
+                audit_index=_TestMissionControlIndex(data_store),
+            )
+        ),
         is_disconnected=_is_disconnected,
     )
     since = datetime(2020, 1, 1, tzinfo=UTC)
@@ -608,7 +683,7 @@ async def test_events_tail_streams_new_db_events(data_store: DataStore) -> None:
     by_type = {event.type: event for event in events}
     assert {"owner.created", "owner.updated", "device.revoked"} <= set(by_type)
     # classification columns flow onto the live event (not string-guessed).
-    assert by_type["device.revoked"].source == "admin"
+    assert by_type["device.revoked"].source == "data"
     assert by_type["device.revoked"].severity == "warn"
     assert by_type["device.revoked"].device_id == "d1"
 
@@ -641,7 +716,7 @@ async def test_snapshot_replay_sets_demo_mode(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
-    await data_store.owner_service.create_owner(owner_id="owner-r", display_name="R", actor_type="test")
+    await data_store.owner_service.create_owner(owner_id="owner-r", display_name="R")
     resp = await client.get("/api/mission-control/snapshot?owner_id=owner-r&mode=replay")
     assert resp.status_code == 200
     assert resp.json()["demo_mode"] == "replay"
@@ -651,9 +726,9 @@ async def test_snapshot_exposes_contract_layer(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
-    await data_store.owner_service.create_owner(owner_id="owner-cl", display_name="CL", actor_type="test")
+    await data_store.owner_service.create_owner(owner_id="owner-cl", display_name="CL")
     await data_store.workspace_provisioning.provision_workspace(
-        owner_id="owner-cl", companion_display_name="Xiaoyi", actor_type="test"
+        owner_id="owner-cl", companion_display_name="Xiaoyi"
     )
     await data_store.devices.create_device(
         device_id="cam-1",
@@ -700,16 +775,16 @@ async def test_snapshot_exposes_contract_layer(
 async def test_snapshot_projects_channel_only_rejected_turn(
     client: httpx.AsyncClient,
     data_store: DataStore,
+    audit_index: _TestMissionControlIndex,
 ) -> None:
     """A turn that never reached Agent must still exist in Mission Control."""
 
     await data_store.owner_service.create_owner(
-        owner_id="owner-channel-turn", display_name="Voice Owner", actor_type="test"
+        owner_id="owner-channel-turn", display_name="Voice Owner"
     )
     await data_store.workspace_provisioning.provision_workspace(
         owner_id="owner-channel-turn",
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
     await data_store.devices.create_device(
         device_id="box-channel-turn",
@@ -723,7 +798,7 @@ async def test_snapshot_projects_channel_only_rejected_turn(
         "room_name": "room-channel-turn",
         "device_id": "box-channel-turn",
     }
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-channel-phase-1",
         event_type="channel.turn.phase_changed",
         owner_id="owner-channel-turn",
@@ -741,7 +816,7 @@ async def test_snapshot_projects_channel_only_rejected_turn(
             "elapsed_ms": 0,
         },
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-channel-phase-2",
         event_type="channel.turn.phase_changed",
         owner_id="owner-channel-turn",
@@ -759,7 +834,7 @@ async def test_snapshot_projects_channel_only_rejected_turn(
             "elapsed_ms": 210,
         },
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-channel-terminal",
         event_type="channel.turn.rejected",
         owner_id="owner-channel-turn",
@@ -804,6 +879,7 @@ async def test_snapshot_projects_channel_only_rejected_turn(
 async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
     client: httpx.AsyncClient,
     data_store: DataStore,
+    audit_index: _TestMissionControlIndex,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One logical turn keeps Channel timing and Agent evidence without duplicates."""
@@ -811,18 +887,17 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
     owner_id = "owner-trace-merge"
     companion_id = "c_owner-trace-merge_default"
     channel_turn_id = "channel-turn-merged"
-    await data_store.owner_service.create_owner(owner_id=owner_id, display_name="Voice Owner", actor_type="test")
+    await data_store.owner_service.create_owner(owner_id=owner_id, display_name="Voice Owner")
     await data_store.workspace_provisioning.provision_workspace(
         owner_id=owner_id,
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
     base_payload = {
         "channel_turn_id": channel_turn_id,
         "room_name": "room-trace-merge",
         "device_id": "box-trace-merge",
     }
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-trace-speech",
         event_type="channel.turn.phase_changed",
         owner_id=owner_id,
@@ -839,7 +914,7 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
             "elapsed_ms": 0,
         },
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-trace-brain",
         event_type="channel.turn.milestone",
         owner_id=owner_id,
@@ -856,7 +931,7 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
             "conversation_id": "conversation-merged",
         },
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-trace-complete",
         event_type="channel.turn.completed",
         owner_id=owner_id,
@@ -922,6 +997,7 @@ async def test_snapshot_merges_channel_and_agent_turns_by_trace_id(
 async def test_snapshot_reconciles_unclosed_turn_at_authoritative_session_end(
     client: httpx.AsyncClient,
     data_store: DataStore,
+    audit_index: _TestMissionControlIndex,
 ) -> None:
     owner_id = "owner-orphan-turn"
     companion_id = "c_owner-orphan-turn_default"
@@ -930,14 +1006,12 @@ async def test_snapshot_reconciles_unclosed_turn_at_authoritative_session_end(
     await data_store.owner_service.create_owner(
         owner_id=owner_id,
         display_name="Orphan Owner",
-        actor_type="test",
     )
     await data_store.workspace_provisioning.provision_workspace(
         owner_id=owner_id,
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-orphan-committed",
         event_type="channel.turn.phase_changed",
         owner_id=owner_id,
@@ -957,7 +1031,7 @@ async def test_snapshot_reconciles_unclosed_turn_at_authoritative_session_end(
             "elapsed_ms": 100,
         },
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-orphan-first-audio",
         event_type="channel.turn.milestone",
         owner_id=owner_id,
@@ -974,7 +1048,7 @@ async def test_snapshot_reconciles_unclosed_turn_at_authoritative_session_end(
             "elapsed_ms": 200,
         },
     )
-    await data_store.events.record_event(
+    await audit_index.record_telemetry(
         event_id="evt-orphan-session-end",
         event_type="channel.session.ended",
         owner_id=owner_id,

@@ -65,12 +65,24 @@ async def claim_binding(
             status.HTTP_412_PRECONDITION_FAILED,
             "guard device must be approved in Hub before it can be claimed",
         )
+    guard_companion_id = payload.companion_id or _default_companion_id(
+        owner_id,
+        payload.device_id,
+    )
     try:
+        # Companion provisioning and Device binding are deliberately separate
+        # application operations. The Guard repository's claim command may
+        # reference an existing Companion but cannot create one or mutate Hub/
+        # Kernel Device authority as a hidden side effect.
+        await store.guard_bindings.ensure_guard_companion(
+            owner_id=owner_id,
+            companion_id=guard_companion_id,
+            display_name=payload.display_name,
+        )
         binding = await store.guard_bindings.claim(
             owner_id=owner_id,
             device_id=payload.device_id,
-            guard_companion_id=payload.companion_id
-            or _default_companion_id(owner_id, payload.device_id),
+            guard_companion_id=guard_companion_id,
             guard_display_name=payload.display_name,
             policy_id=payload.policy_id,
             config_json=dict(payload.config_json),
@@ -86,7 +98,6 @@ async def claim_binding(
         subject_type="guard_binding",
         subject_id=binding.binding_id,
         event_type="guard.binding.claimed",
-        actor_type="admin",
         payload_json={"device_id": binding.device_id, "policy_id": binding.policy_id},
     )
     return _binding(binding)
@@ -126,7 +137,6 @@ async def update_binding_config(
         subject_type="guard_binding",
         subject_id=row.binding_id,
         event_type="guard.binding.configured",
-        actor_type="admin",
         payload_json={"config_revision": row.config_revision, "policy_id": row.policy_id},
     )
     return _binding(row)
@@ -169,7 +179,6 @@ async def update_binding_runtime_config(
         subject_type="guard_binding",
         subject_id=row.binding_id,
         event_type="guard.runtime.configured",
-        actor_type="admin",
         payload_json={"runtime_revision": row.runtime_revision},
     )
     return _binding(row)
@@ -202,7 +211,6 @@ async def create_owner_face_profile_draft(
         subject_type="owner_face_profile",
         subject_id=row.profile_id,
         event_type="guard.owner_face_profile.draft_created",
-        actor_type="admin",
         data_classification="sensitive",
         payload_json={
             "profile_revision": row.revision,
@@ -269,7 +277,6 @@ async def add_owner_face_reference(
         subject_type="owner_face_profile",
         subject_id=profile.profile_id,
         event_type="guard.owner_face_profile.reference_added",
-        actor_type="admin",
         data_classification="sensitive",
         payload_json={
             "profile_revision": profile.revision,
@@ -307,7 +314,6 @@ async def activate_owner_face_profile(
         subject_type="owner_face_profile",
         subject_id=row.profile_id,
         event_type="guard.owner_face_profile.desired",
-        actor_type="admin",
         data_classification="sensitive",
         payload_json={
             "profile_revision": row.revision,
@@ -340,7 +346,6 @@ async def clear_owner_face_profile(owner_id: str, request: Request) -> OwnerFace
         subject_type="owner_face_profile",
         subject_id=row.profile_id,
         event_type="guard.owner_face_profile.cleared",
-        actor_type="admin",
         data_classification="sensitive",
         payload_json={"profile_revision": row.revision, **cleanup},
     )
@@ -405,7 +410,6 @@ async def _transition_binding(
         subject_type="guard_binding",
         subject_id=row.binding_id,
         event_type="guard.binding.revoked" if revoke else "guard.binding.disabled",
-        actor_type="admin",
     )
     await store.events.record_event(
         event_id=f"evt-{uuid4().hex}",
@@ -413,7 +417,6 @@ async def _transition_binding(
         subject_type="guard_binding",
         subject_id=row.binding_id,
         event_type="guard.runtime.desired_state_changed",
-        actor_type="admin",
         payload_json={
             "desired_runtime_state": row.desired_runtime_state,
             "runtime_revision": row.runtime_revision,

@@ -96,7 +96,7 @@ export interface TurnSummary {
   memory_realm_id: string | null
   genome_id: string | null
   trigger: string
-  caller_kind: string | null
+  input_modality: string | null
   device_id: string | null
   started_at: string
   finished_at: string | null

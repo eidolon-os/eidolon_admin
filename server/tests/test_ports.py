@@ -31,7 +31,7 @@ def test_apply_ports_exports_eidolon_data_path(monkeypatch) -> None:
     apply_ports_to_environ()
     assert os.environ.get("EIDOLON_ADMIN_API_URL") == "http://127.0.0.1:9000"
     shared = os.environ.get("EIDOLON_DATA_SQLITE_PATH", "")
-    assert shared.endswith("eidolon/data/eidolon.sqlite3")
+    assert shared.endswith("eidolon/data/eidolon-system.sqlite3")
     assert os.environ.get("EIDOLON_REGISTRY_DB_PATH") is None
 
 

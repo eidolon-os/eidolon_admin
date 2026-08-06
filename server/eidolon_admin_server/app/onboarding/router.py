@@ -39,7 +39,6 @@ MISSING_OWNER = "owner"
 MISSING_MASTER = "master_companion"
 MISSING_GENOME = "current_genome"
 MISSING_MEMORY_REALM = "memory_realm"
-MISSING_WEB_DEVICE = "web_device"
 SAFE_ID_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
 
 
@@ -191,8 +190,6 @@ async def initialize_onboarding(
                 kind="person",
                 profile_json=payload.owner_profile_json,
                 settings_json=payload.owner_settings_json,
-                actor_type="admin",
-                actor_id="onboarding",
             )
             owner = result.owner
         except OwnerWorkspaceError as exc:
@@ -224,8 +221,6 @@ async def initialize_onboarding(
                 genome_source_json={"source_type": "owner_onboarding", "owner_id": owner.owner_id},
                 genome_json=_genome_json(payload),
                 realm_id=ids["realm_id"],
-                actor_type="admin",
-                actor_id="onboarding",
                 is_master=True,
             )
             master = result.companion
@@ -233,8 +228,6 @@ async def initialize_onboarding(
             master = await store.workspace_provisioning.promote_to_master(
                 owner_id=owner.owner_id,
                 companion_id=companions[0].companion_id,
-                actor_type="admin",
-                actor_id="onboarding",
             )
         else:
             await _ensure_master_ready(store, owner_id=owner.owner_id, master=master, payload=payload)
@@ -278,8 +271,6 @@ async def create_onboarding_companion(
             genome_source_json={"source_type": "owner_onboarding", "owner_id": owner.owner_id},
             genome_json=_genome_json(payload),
             realm_id=ids["realm_id"],
-            actor_type="admin",
-            actor_id="onboarding",
             is_master=False,
         )
         launch_identity = None
@@ -357,10 +348,11 @@ async def _build_state(store: DataStore, *, owner_id: str | None = None) -> Onbo
             missing.append(MISSING_GENOME)
         if not await _has_active_memory_realm(store, master):
             missing.append(MISSING_MEMORY_REALM)
+        # A Companion identity is ready without a physical or virtual Device.
+        # A web body is an explicit launch choice and cannot gate sovereign
+        # Owner/Companion/Persona/Realm initialization.
         web_device = await _web_device(store, master.companion_id)
-        if web_device is None:
-            missing.append(MISSING_WEB_DEVICE)
-        else:
+        if web_device is not None:
             launch_identity = _launch_identity(owner.owner_id, master.companion_id, web_device.device_id)
 
     master_ready = not missing
@@ -402,10 +394,6 @@ async def _ensure_master_ready(
             owner_id=owner_id,
             companion_id=master.companion_id,
         )
-    await store.workspace_provisioning.ensure_web_body(
-        owner_id=owner_id,
-        companion_id=master.companion_id,
-    )
 
 
 async def _select_owner(

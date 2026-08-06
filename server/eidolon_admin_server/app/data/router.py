@@ -32,6 +32,7 @@ from .companion_avatar_images import (
     CompanionAvatarImageError,
     normalize_companion_avatar_image,
 )
+from .agent_runtime_client import AgentRuntimeUnavailable
 from .idle_generation import run_idle_generation
 from .hub_client import HubRuntimeUnavailable
 from .owner_backup import create_owner_backup
@@ -192,7 +193,6 @@ async def create_owner(payload: OwnerCreateRequest, request: Request) -> OwnerVi
             kind=payload.kind,
             profile_json=payload.profile_json,
             settings_json=payload.settings_json,
-            actor_type="admin",
         )
     except OwnerWorkspaceError as exc:
         status_code = status.HTTP_409_CONFLICT if "already exists" in str(exc) else status.HTTP_400_BAD_REQUEST
@@ -228,7 +228,6 @@ async def update_owner(owner_id: str, payload: OwnerUpdateRequest, request: Requ
         subject_type="owner",
         subject_id=owner_id,
         event_type="owner.updated",
-        actor_type="admin",
         payload_json=payload.model_dump(exclude_none=True),
     )
     return _owner(row)
@@ -248,7 +247,6 @@ async def archive_owner(owner_id: str, request: Request) -> OwnerView:
         subject_type="owner",
         subject_id=owner_id,
         event_type="owner.archived",
-        actor_type="admin",
     )
     return _owner(row)
 
@@ -266,9 +264,7 @@ async def delete_owner(
         description="Also stop memory workers and trash memory palaces for removed realms.",
     ),
 ) -> OwnerDeleteResponse:
-    """Hard-delete an owner and all owner-scoped data after explicit
-    confirmation. This removes the owner row, companions, devices, memories,
-    runtime rows, conversations, jobs, events, and persona genomes."""
+    """Delete one owner across Agent, System Data, and Memory authorities."""
     if confirm_owner_id != owner_id:
         raise HTTPException(
             status.HTTP_412_PRECONDITION_FAILED,
@@ -315,12 +311,30 @@ async def delete_owner(
             {"job_id": job["job_id"]},
         )
     )
+    agent_runtime_client = _agent_runtime_client(request)
+    try:
+        runtime_result = await agent_runtime_client.delete_owner_runtime(owner_id)
+    except AgentRuntimeUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"Agent runtime deletion pending in journal: {exc}",
+        ) from exc
+    job = journal.mark_agent_runtime_deleted(job, runtime_result)
+    progress.append(
+        _delete_progress(
+            "agent_runtime",
+            "删除 Agent 会话、消息和任务",
+            "completed",
+            58,
+            runtime_result,
+        )
+    )
     result = await store.dev_maintenance.delete_owner_tree(owner_id)
     if not result.deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "owner not found")
     job = journal.mark_db_deleted(job, result)
     progress.append(
-        _delete_progress("database", "删除 owner 数据库关系树", "completed", 70)
+        _delete_progress("system_data", "删除系统目录关系树", "completed", 72)
     )
 
     memory: dict[str, Any] = {
@@ -332,6 +346,7 @@ async def delete_owner(
         memory = await finalize_owner_delete_jobs(
             store,
             getattr(request.app.state, "memory_supervisor_client", None),
+            agent_runtime_client,
             journal=journal,
             only_owner_id=owner_id,
         )
@@ -359,7 +374,7 @@ async def delete_owner(
     return OwnerDeleteResponse(
         owner_id=owner_id,
         deleted=True,
-        counts=owner_cleanup_counts(result),
+        counts=dict(job.get("counts") or owner_cleanup_counts(result)),
         realm_ids=job.get("realm_ids", result.realm_ids),
         backup=backup,
         progress=progress,
@@ -373,15 +388,24 @@ async def delete_owner(
 async def get_owner_overview(owner_id: str, request: Request) -> OwnerOverviewResponse:
     store = _store(request)
     owner = await _require_owner(store, owner_id)
-    companions = await store.companions.list_for_owner(owner_id)
+    agent_runtime = _agent_runtime_client(request)
+    audit_index = _audit_index(request)
+    companions, devices, memory_realms, conversations_raw, jobs_raw, audit_events = (
+        await asyncio.gather(
+            store.companions.list_for_owner(owner_id),
+            store.devices.list_devices_for_owner(owner_id),
+            store.memory_repo.list_realms_for_owner(owner_id),
+            _agent_result(agent_runtime.list_conversations(owner_id, limit=20)),
+            _agent_result(agent_runtime.list_jobs(owner_id, limit=20)),
+            audit_index.list_for_owner(owner_id, limit=20),
+        )
+    )
     persona_genomes = await store.persona_repo.list_for_companions(
         [row.companion_id for row in companions]
     )
-    devices = await store.devices.list_devices_for_owner(owner_id)
-    conversations = await store.conversations.list_for_owner(owner_id, limit=20)
-    memory_realms = await store.memory_repo.list_realms_for_owner(owner_id)
-    jobs = await store.jobs.list_for_owner(owner_id, limit=20)
-    events = await store.events.list_for_owner(owner_id, limit=20)
+    conversations = [_conversation_from_agent(row) for row in conversations_raw]
+    jobs = [_job_from_agent(row) for row in jobs_raw]
+    events = [_audit_event(row) for row in audit_events]
     return OwnerOverviewResponse(
         owner=_owner(owner),
         counts=OwnerCounts(
@@ -393,13 +417,13 @@ async def get_owner_overview(owner_id: str, request: Request) -> OwnerOverviewRe
             jobs=len(jobs),
             events=len(events),
         ),
-        initialized=_master_ready(companions, persona_genomes, memory_realms, devices),
+        initialized=_master_ready(companions, persona_genomes, memory_realms),
         companions=[_companion(row) for row in companions[:10]],
         devices=[_device(row) for row in devices[:10]],
-        conversations=[_conversation(row) for row in conversations],
+        conversations=conversations,
         memory_realms=[_memory_realm(row) for row in memory_realms[:10]],
-        jobs=[_job(row) for row in jobs],
-        events=[_event(row) for row in events],
+        jobs=jobs,
+        events=events,
     )
 
 
@@ -410,8 +434,8 @@ async def initialize_owner_workspace(
     request: Request,
 ) -> WorkspaceInitializeResponse:
     store = _store(request)
-    # The owner's first companion is their master companion; it is provisioned
-    # with a host-local web body so a fresh owner is conversation-ready.
+    # The owner's first Companion is the master. Device/body attachment remains
+    # an explicit product action and is not part of Companion lifecycle.
     existing_companions = await store.companions.list_for_owner(owner_id)
     is_master = not existing_companions
     try:
@@ -430,7 +454,6 @@ async def initialize_owner_workspace(
             memory_engine=payload.memory_engine,
             memory_engine_config_json=payload.memory_engine_config_json,
             memory_policy_json=payload.memory_policy_json,
-            actor_type="admin",
             is_master=is_master,
         )
     except OwnerWorkspaceError as exc:
@@ -510,9 +533,11 @@ async def promote_companion_master(
     companion_id: str,
     request: Request,
 ) -> CompanionView:
-    """Make a companion the owner's master and ensure it is conversation-ready
-    (current genome + memory realm + host-local web body). Demotes any prior
-    master. Idempotent."""
+    """Make a Companion the owner's master and ensure Persona + Realm readiness.
+
+    Device/body attachment remains independent. Demotes any prior master and
+    is idempotent.
+    """
     store = _store(request)
     await _require_owner(store, owner_id)
     try:
@@ -553,6 +578,11 @@ async def delete_companion(
             status.HTTP_409_CONFLICT,
             "refusing to delete master companion; promote a replacement first",
         )
+    runtime_cleanup = await _agent_result(
+        _agent_runtime_client(request).delete_companion_runtime(
+            owner_id, companion_id
+        )
+    )
     try:
         result = await store.companion_deletion.delete_companion(
             owner_id=owner_id, companion_id=companion_id
@@ -577,7 +607,7 @@ async def delete_companion(
         "owner_id": owner_id,
         "companion_id": companion_id,
         "deleted": True,
-        "counts": result.counts,
+        "counts": {**result.counts, **dict(runtime_cleanup.get("counts") or {})},
         "realm_ids": result.realm_ids,
         "device_ids": result.device_ids,
         "memory": memory,
@@ -858,18 +888,23 @@ async def list_companion_persona_proposals(
     if status_filter != "all":
         rows = [row for row in rows if row.status == status_filter]
     proposals: list[PersonaProposalView] = []
+    audit_events = await _audit_index(request).list_for_owner(
+        owner_id, limit=max(limit, 500)
+    )
     for row in rows:
         if row.status not in {"proposed", "rejected", "stale"} and status_filter == "all":
             continue
-        events = await store.events.list_for_subject(
-            subject_type="persona_genome",
-            subject_id=row.genome_id,
-        )
+        events = [
+            event
+            for event in audit_events
+            if event.subject_type == "persona_genome"
+            and event.subject_id == row.genome_id
+        ]
         proposals.append(_persona_proposal(row, events))
     return PersonaProposalListResponse(
         proposals=proposals,
         timeline=await _companion_persona_timeline(
-            store,
+            request,
             owner_id=owner_id,
             companion_id=companion_id,
             limit=limit,
@@ -892,7 +927,7 @@ async def list_companion_persona_timeline(
     await _require_owner_companion(store, owner_id, companion_id)
     return EventListResponse(
         events=await _companion_persona_timeline(
-            store,
+            request,
             owner_id=owner_id,
             companion_id=companion_id,
             limit=limit,
@@ -1148,7 +1183,6 @@ async def claim_nearby_device(
         subject_type="device",
         subject_id=device_id,
         event_type="device.claimed",
-        actor_type="admin",
         payload_json={"previous_owner_id": None},
     )
     await store.events.record_event(
@@ -1157,7 +1191,6 @@ async def claim_nearby_device(
         subject_type="device",
         subject_id=device_id,
         event_type="device.bound_companion",
-        actor_type="admin",
         payload_json={
             "companion_id": payload.companion_id,
         },
@@ -1177,14 +1210,13 @@ async def approve_owner_device(owner_id: str, device_id: str, request: Request) 
     store = _store(request)
     await _require_owner(store, owner_id)
     device = await _require_owner_device(store, owner_id, device_id)
-    row = await store.devices.approve(device.device_id, actor_id="admin")
+    row = await store.devices.approve(device.device_id)
     await store.events.record_event(
         event_id=_event_id(),
         owner_id=owner_id,
         subject_type="device",
         subject_id=device_id,
         event_type="device.approved",
-        actor_type="admin",
     )
     return _device(row)
 
@@ -1225,7 +1257,6 @@ async def revoke_owner_device(owner_id: str, device_id: str, request: Request) -
         subject_type="device",
         subject_id=device_id,
         event_type="device.revoked",
-        actor_type="admin",
     )
     return _device(row)
 
@@ -1242,7 +1273,6 @@ async def release_owner_device(owner_id: str, device_id: str, request: Request) 
         subject_type="device",
         subject_id=device_id,
         event_type="device.released",
-        actor_type="admin",
     )
     return _device(row)
 
@@ -1273,7 +1303,6 @@ async def update_owner_device(
         subject_type="device",
         subject_id=device_id,
         event_type="device.updated",
-        actor_type="admin",
         payload_json={"name": payload.name, "metadata_json": payload.metadata_json or {}},
     )
     return _device(row)
@@ -1301,7 +1330,6 @@ async def bind_owner_device(
         subject_type="device",
         subject_id=device_id,
         event_type="device.bound_companion",
-        actor_type="admin",
         payload_json={"companion_id": companion_id},
     )
     return _device(row)
@@ -1320,8 +1348,12 @@ async def list_owner_conversations(
 ) -> ConversationListResponse:
     store = _store(request)
     await _require_owner(store, owner_id)
-    rows = await store.conversations.list_for_owner(owner_id, limit=limit)
-    return ConversationListResponse(conversations=[_conversation(row) for row in rows])
+    rows = await _agent_result(
+        _agent_runtime_client(request).list_conversations(owner_id, limit=limit)
+    )
+    return ConversationListResponse(
+        conversations=[_conversation_from_agent(row) for row in rows]
+    )
 
 
 @router.get("/owners/{owner_id}/memory-realms", response_model=MemoryRealmListResponse)
@@ -1346,51 +1378,30 @@ async def list_owner_jobs(
 ) -> JobListResponse:
     store = _store(request)
     await _require_owner(store, owner_id)
-    rows = await store.jobs.list_for_owner(owner_id, limit=limit)
-    return JobListResponse(jobs=[_job(row) for row in rows])
+    rows = await _agent_result(
+        _agent_runtime_client(request).list_jobs(owner_id, limit=limit)
+    )
+    return JobListResponse(jobs=[_job_from_agent(row) for row in rows])
 
 
 @router.post("/owners/{owner_id}/jobs/{job_id}/cancel", response_model=JobView)
 async def cancel_owner_job(owner_id: str, job_id: str, request: Request) -> JobView:
     store = _store(request)
     await _require_owner(store, owner_id)
-    job = await _require_owner_job(store, owner_id, job_id)
-    row = await store.jobs.update_status(
-        job.job_id,
-        status="cancelled",
-        progress_json={**(job.progress_json or {}), "cancel_requested_by": "admin"},
+    row = await _agent_result(
+        _agent_runtime_client(request).cancel_job(owner_id, job_id)
     )
-    await store.events.record_event(
-        event_id=_event_id(),
-        owner_id=owner_id,
-        subject_type="job",
-        subject_id=job_id,
-        event_type="job.cancel_requested",
-        actor_type="admin",
-    )
-    return _job(row)
+    return _job_from_agent(row)
 
 
 @router.post("/owners/{owner_id}/jobs/{job_id}/retry", response_model=JobView)
 async def retry_owner_job(owner_id: str, job_id: str, request: Request) -> JobView:
     store = _store(request)
     await _require_owner(store, owner_id)
-    job = await _require_owner_job(store, owner_id, job_id)
-    row = await store.jobs.update_status(
-        job.job_id,
-        status="pending",
-        progress_json={**(job.progress_json or {}), "retry_requested_by": "admin"},
-        error_json={},
+    row = await _agent_result(
+        _agent_runtime_client(request).retry_job(owner_id, job_id)
     )
-    await store.events.record_event(
-        event_id=_event_id(),
-        owner_id=owner_id,
-        subject_type="job",
-        subject_id=job_id,
-        event_type="job.retry_requested",
-        actor_type="admin",
-    )
-    return _job(row)
+    return _job_from_agent(row)
 
 
 @router.get("/owners/{owner_id}/events", response_model=EventListResponse)
@@ -1402,8 +1413,8 @@ async def list_owner_events(
 ) -> EventListResponse:
     store = _store(request)
     await _require_owner(store, owner_id)
-    rows = await store.events.list_for_owner(owner_id, limit=limit)
-    return EventListResponse(events=[_event(row) for row in rows])
+    rows = await _audit_index(request).list_for_owner(owner_id, limit=limit)
+    return EventListResponse(events=[_audit_event(row) for row in rows])
 
 
 def _store(request: Request) -> DataStore:
@@ -1411,6 +1422,36 @@ def _store(request: Request) -> DataStore:
     if store is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "eidolon_data unavailable")
     return store
+
+
+def _agent_runtime_client(request: Request) -> Any:
+    client = getattr(request.app.state, "agent_runtime_client", None)
+    if client is None or not bool(getattr(client, "configured", True)):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Agent runtime authority unavailable",
+        )
+    return client
+
+
+def _audit_index(request: Request) -> Any:
+    index = getattr(request.app.state, "audit_index", None)
+    if index is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "global audit index unavailable",
+        )
+    return index
+
+
+async def _agent_result(awaitable: Any) -> Any:
+    try:
+        return await awaitable
+    except AgentRuntimeUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            str(exc),
+        ) from exc
 
 
 def _hub_device_client(request: Request) -> Any | None:
@@ -1445,14 +1486,6 @@ async def _require_owner_companion(store: DataStore, owner_id: str, companion_id
     if companion.status != "active":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "companion is not active")
     return companion
-
-
-async def _require_owner_job(store: DataStore, owner_id: str, job_id: str) -> Any:
-    rows = await store.jobs.list_for_owner(owner_id, limit=500)
-    for row in rows:
-        if row.job_id == job_id:
-            return row
-    raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
 
 
 def _event_id() -> str:
@@ -1522,7 +1555,6 @@ def _master_ready(
     companions: list[Any],
     persona_genomes: list[Any],
     memory_realms: list[Any],
-    devices: list[Any],
 ) -> bool:
     active = [row for row in companions if getattr(row, "status", "") == "active"]
     master = next(
@@ -1548,13 +1580,7 @@ def _master_ready(
         and row.status == "active"
         for row in memory_realms
     )
-    has_web_device = any(
-        row.bound_companion_id == master.companion_id
-        and row.kind == "web"
-        and row.revoked_at is None
-        for row in devices
-    )
-    return has_current_genome and has_memory_realm and has_web_device
+    return has_current_genome and has_memory_realm
 
 
 def _persona_genome(row: Any) -> PersonaGenomeView:
@@ -1585,7 +1611,7 @@ def _persona_proposal(row: Any, events: list[Any]) -> PersonaProposalView:
         base_genome_hash=str(source.get("base_genome_hash") or ""),
         rationale=row.change_summary or "",
         evidence_refs=_persona_evidence_refs(source),
-        timeline=[_event(event) for event in events],
+        timeline=[_audit_event(event) for event in events],
     )
 
 
@@ -1610,20 +1636,20 @@ def _persona_evidence_refs(source_json: dict[str, Any]) -> list[PersonaEvidenceV
 
 
 async def _companion_persona_timeline(
-    store: DataStore,
+    request: Request,
     *,
     owner_id: str,
     companion_id: str,
     limit: int,
 ) -> list[EventView]:
-    rows = await store.events.list_for_owner(owner_id, limit=limit)
+    rows = await _audit_index(request).list_for_owner(owner_id, limit=limit)
     persona_rows = [
         row
         for row in rows
-        if getattr(row, "companion_id", None) == companion_id
-        and str(row.event_type).startswith("persona.")
+        if str((row.payload or {}).get("companion_id") or "") == companion_id
+        and str(row.action).startswith("persona.")
     ]
-    return [_event(row) for row in persona_rows]
+    return [_audit_event(row) for row in persona_rows]
 
 
 def _device(row: Any) -> DeviceView:
@@ -1663,20 +1689,19 @@ def _nearby_device(row: Any) -> NearbyDeviceView:
     )
 
 
-def _conversation(row: Any) -> ConversationView:
+def _conversation_from_agent(row: dict[str, Any]) -> ConversationView:
     return ConversationView(
-        conversation_id=row.conversation_id,
-        owner_id=row.owner_id,
-        companion_id=row.companion_id,
-        runtime_caller_id=row.runtime_caller_id,
-        runtime_session_id=row.runtime_session_id,
-        device_id=row.source_device_id,
-        title=row.title,
-        status=row.status,
-        started_at=row.started_at,
-        updated_at=row.updated_at,
-        ended_at=row.ended_at,
-        metadata_json=row.metadata_json or {},
+        conversation_id=str(row["conversation_id"]),
+        owner_id=str(row["owner_id"]),
+        companion_id=str(row["companion_id"]),
+        runtime_session_id=row.get("runtime_session_id"),
+        device_id=row.get("device_id"),
+        title=row.get("title"),
+        status=str(row.get("status") or "active"),
+        started_at=row["started_at"],
+        updated_at=row["updated_at"],
+        ended_at=row.get("ended_at"),
+        metadata_json=dict(row.get("metadata") or {}),
     )
 
 
@@ -1694,24 +1719,41 @@ def _memory_realm(row: Any) -> MemoryRealmView:
     )
 
 
-def _job(row: Any) -> JobView:
+def _job_from_agent(row: dict[str, Any]) -> JobView:
     return JobView(
-        job_id=row.job_id,
-        owner_id=row.owner_id,
-        companion_id=row.companion_id,
-        conversation_id=row.conversation_id,
-        turn_id=row.turn_id,
-        provider=row.provider,
-        kind=row.kind,
-        status=row.status,
-        input_json=row.input_json or {},
-        provider_ref_json=row.provider_ref_json or {},
-        progress_json=row.progress_json or {},
-        result_json=row.result_json or {},
-        error_json=row.error_json or {},
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        completed_at=row.completed_at,
+        job_id=str(row["task_id"]),
+        owner_id=str(row["owner_id"]),
+        companion_id=row.get("companion_id"),
+        conversation_id=row.get("conversation_id"),
+        turn_id=row.get("turn_id"),
+        provider=str(row.get("provider") or ""),
+        kind=str(row.get("task_type") or "other"),
+        status=str(row.get("status") or "accepted"),
+        input_json={
+            "task": row.get("task"),
+            "urgency": row.get("urgency"),
+            "expected_output": row.get("expected_output"),
+            "session_key": row.get("session_key"),
+            "task_key": row.get("task_key"),
+            "task_date": row.get("task_date"),
+        },
+        provider_ref_json={
+            "mementos_session_id": row.get("mementos_session_id"),
+            "mementos_conversation_id": row.get("mementos_conversation_id"),
+            "external_status": row.get("external_status"),
+        },
+        progress_json={"summary": row.get("progress_summary")},
+        result_json={
+            "text": row.get("result_text"),
+            "tts_summary": row.get("result_tts_summary"),
+        },
+        error_json={
+            "code": row.get("error_code"),
+            "message": row.get("error_message"),
+        },
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        completed_at=row.get("completed_at"),
     )
 
 
@@ -1728,13 +1770,34 @@ def _event(row: Any) -> EventView:
         severity=getattr(row, "severity", "info"),
         outcome=getattr(row, "outcome", "success"),
         reason=getattr(row, "reason", None),
-        actor_type=row.actor_type,
-        actor_id=row.actor_id,
         trace_id=getattr(row, "trace_id", None),
         data_classification=getattr(row, "data_classification", "safe"),
         payload_json=row.payload_json or {},
         occurred_at=getattr(row, "occurred_at", None),
         created_at=row.created_at,
+    )
+
+
+def _audit_event(row: Any) -> EventView:
+    payload = dict(getattr(row, "payload", {}) or {})
+    occurred_at = row.occurred_at
+    return EventView(
+        event_id=row.event_id,
+        owner_id=str(row.owner_id or ""),
+        companion_id=payload.get("companion_id"),
+        subject_type=row.subject_type,
+        subject_id=row.subject_id,
+        event_type=row.action,
+        event_class=row.category,
+        source=row.producer,
+        severity=row.severity,
+        outcome=row.outcome,
+        reason=row.reason,
+        trace_id=row.trace_id,
+        data_classification=row.data_classification,
+        payload_json=payload,
+        occurred_at=occurred_at,
+        created_at=occurred_at,
     )
 
 

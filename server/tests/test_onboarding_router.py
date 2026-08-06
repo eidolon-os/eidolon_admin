@@ -31,7 +31,7 @@ async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
         yield ac
 
 
-async def test_onboarding_initializes_master_and_launch_identity(
+async def test_onboarding_initializes_master_without_implicitly_creating_a_device(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
@@ -58,34 +58,29 @@ async def test_onboarding_initializes_master_and_launch_identity(
     assert state["master_companion"]["display_name"] == "Xiaoyi"
     assert state["master_companion"]["is_master"] is True
     assert state["master_companion"]["companion_type"] == "master"
-    assert state["launch_identity"]["device_id"].startswith("web-")
-    assert "owner_id=" in state["launch_identity"]["launch_url"]
+    assert state["launch_identity"] is None
+    assert state["web_device"] is None
 
     companions = await data_store.companions.list_for_owner(state["owner"]["owner_id"])
     assert len(companions) == 1
     assert companions[0].is_master is True
     assert companions[0].companion_type == "master"
     web_devices = await data_store.devices.list_devices_for_companion(companions[0].companion_id)
-    assert len(web_devices) == 1
-    assert web_devices[0].device_id == f"web-{companions[0].companion_id}"
-    assert web_devices[0].approved_by == "system:onboarding"
-    assert web_devices[0].auth_type == "admin_trust"
-    assert web_devices[0].access_policy_json["body_commands"] is False
-    assert web_devices[0].metadata_json["companion_type"] == "master"
+    assert web_devices == []
 
     launched = await client.post(
         "/api/onboarding/launch",
         json={"owner_id": state["owner"]["owner_id"]},
     )
     assert launched.status_code == 200
-    assert launched.json()["device_id"] == web_devices[0].device_id
+    assert launched.json()["device_id"] == f"web-{companions[0].companion_id}"
 
     relaunched = await client.post(
         "/api/onboarding/launch",
         json={"owner_id": state["owner"]["owner_id"]},
     )
     assert relaunched.status_code == 200
-    assert relaunched.json()["device_id"] == web_devices[0].device_id
+    assert relaunched.json()["device_id"] == launched.json()["device_id"]
     assert len(await data_store.devices.list_devices_for_companion(companions[0].companion_id)) == 1
 
 

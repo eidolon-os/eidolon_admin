@@ -18,7 +18,7 @@ from .replay import replay_events
 from .schemas import RuntimeEvent, RuntimeSnapshot
 from .service import (
     _as_utc,
-    _events_from_data,
+    _events_from_audit,
     build_snapshot,
     enrich_runtime_event,
     hub_event_to_runtime,
@@ -61,8 +61,8 @@ async def _runtime_event_stream(
     yield encode_sse_event("runtime_event", _startup_event().model_dump(mode="json"))
 
     # Merge two live sources into one SSE: the proxied Hub device stream and a
-    # cursor tail of owner-scoped audit events from the shared DB (cross-process,
-    # no bus coupling — every service writes the same events table). Each source
+    # cursor tail of owner-scoped receipts from the independent audit projection.
+    # Each source
     # runs as a task feeding one queue; both are cancelled on disconnect.
     queue: asyncio.Queue[bytes] = asyncio.Queue()
 
@@ -104,8 +104,8 @@ async def _events_tail(
     """
     app = getattr(request, "app", None)
     state = getattr(app, "state", None)
-    store = getattr(state, "data_store", None)
-    if store is None or not owner_id:
+    audit_index = getattr(state, "audit_index", None)
+    if audit_index is None or not owner_id:
         return
     # aware-UTC throughout; SQLite reads created_at back naive, so normalize before
     # comparing (SQLAlchemy strips tz when binding the query param, so SQL is fine).
@@ -113,17 +113,19 @@ async def _events_tail(
     seen: set[str] = set()
     while not await request.is_disconnected():
         try:
-            rows = await store.events.list_for_owner_since(owner_id, after=cursor, limit=200)
+            rows = await audit_index.list_for_owner_since(
+                owner_id, after=cursor, limit=200
+            )
         except Exception:  # noqa: BLE001 - a bad poll must not kill the stream
             rows = []
         for row in rows:
             if row.event_id in seen:
                 continue
             seen.add(row.event_id)
-            row_ts = _as_utc(row.created_at)
+            row_ts = _as_utc(row.occurred_at)
             if row_ts is not None and row_ts > cursor:
                 cursor = row_ts
-            for event in _events_from_data([row]):
+            for event in _events_from_audit([row]):
                 yield await enrich_runtime_event(request, event)
         if len(seen) > 2048:
             seen.clear()  # cursor advanced past all yielded rows; a re-send is client-deduped

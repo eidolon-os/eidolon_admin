@@ -235,7 +235,6 @@ class ConversationView(BaseModel):
     conversation_id: str
     owner_id: str
     companion_id: str
-    runtime_caller_id: str | None = None
     runtime_session_id: str | None = None
     device_id: str | None = None
     title: str | None = None
@@ -301,8 +300,6 @@ class EventView(BaseModel):
     severity: str = "info"
     outcome: str = "success"
     reason: str | None = None
-    actor_type: str
-    actor_id: str | None = None
     trace_id: str | None = None
     data_classification: str = "safe"
     payload_json: JsonDict = Field(default_factory=dict)

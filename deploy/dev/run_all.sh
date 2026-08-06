@@ -68,7 +68,7 @@ RUN_DIR="${HOME}/eidolon/run"
 # supervisord refuses to spawn a program if its log dir doesn't exist; pre-
 # create everything our own configs reference so the user never sees a phantom
 # "no such file" on first start.
-LOG_PROJECTS=(admin nats livekit memory hub agent channel client-web mementos admin/esp32-tools/jobs)
+LOG_PROJECTS=(admin audit nats livekit memory hub agent channel client-web mementos admin/esp32-tools/jobs)
 for _p in "${LOG_PROJECTS[@]}"; do
   mkdir -p "${LOG_DIR}/${_p}"
 done
@@ -262,6 +262,17 @@ ensure_web_deps() {
       exit 1
     fi
   fi
+}
+
+migrate_system_data() {
+  ensure_api_deps
+  local data_root="${EIDOLON_ROOT}/eidolon_data"
+  if [[ ! -f "${data_root}/alembic.ini" ]]; then
+    error "eidolon_data migration project not found: ${data_root}"
+    exit 1
+  fi
+  info "migrating eidolon-system.sqlite3 to the current Alembic head"
+  (cd "$data_root" && "${VENV}/bin/alembic" -c alembic.ini upgrade head)
 }
 
 # --- process tree helpers --------------------------------------------------
@@ -769,6 +780,7 @@ do_readiness_wait() {
 do_start() {
   collect_ports_registry
   load_ports_env
+  migrate_system_data
   # Fresh-clone bootstrap of deploy/supervisor/enabled/. No-op on the
   # second start onward (sentinel-gated), so the operator's Admin UI
   # Enable/Disable decisions are never overridden by this script.
@@ -805,6 +817,7 @@ do_core_contract_start() {
   configure_supervisor_profile core-contract
   collect_ports_registry
   load_ports_env
+  migrate_system_data
   materialize_supervisor_profile
   header "pre-flight core-contract port audit"
   do_preflight
@@ -854,6 +867,7 @@ do_status() {
 do_foreground() {
   collect_ports_registry
   load_ports_env
+  migrate_system_data
   ensure_web_deps
   cleanup() {
     [[ -n "${API_PID:-}" ]] && kill "$API_PID" 2>/dev/null || true

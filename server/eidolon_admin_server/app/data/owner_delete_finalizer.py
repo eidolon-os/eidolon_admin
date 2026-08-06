@@ -31,7 +31,6 @@ def owner_cleanup_counts(result: Any) -> dict[str, int]:
         "persona_genomes": int(getattr(result, "persona_genomes", 0) or 0),
         "memory_realms": int(getattr(result, "memory_realms", 0) or 0),
         "body_commands": int(getattr(result, "body_commands", 0) or 0),
-        "runtime_callers": int(getattr(result, "runtime_callers", 0) or 0),
         "runtime_sessions": int(getattr(result, "runtime_sessions", 0) or 0),
         "messages": int(getattr(result, "messages", 0) or 0),
         "turns": int(getattr(result, "turns", 0) or 0),
@@ -110,6 +109,7 @@ async def purge_memory_realms(
 async def finalize_owner_delete_jobs(
     store: DataStore,
     memory_supervisor_client: Any | None,
+    agent_runtime_client: Any | None,
     *,
     journal: OwnerDeleteJournal | None = None,
     only_owner_id: str | None = None,
@@ -133,6 +133,17 @@ async def finalize_owner_delete_jobs(
         job["attempts"] = int(job.get("attempts") or 0) + 1
         job["updated_at"] = _now()
         try:
+            if not bool(job.get("agent_runtime_deleted")):
+                if agent_runtime_client is None:
+                    raise RuntimeError(
+                        "Agent runtime client unavailable; system deletion is blocked"
+                    )
+                runtime_result = await agent_runtime_client.delete_owner_runtime(
+                    str(job["owner_id"])
+                )
+                job = resolved_journal.mark_agent_runtime_deleted(
+                    job, runtime_result
+                )
             if not bool(job.get("db_deleted")):
                 result = await store.dev_maintenance.delete_owner_tree(
                     str(job["owner_id"])
@@ -255,6 +266,7 @@ class OwnerDeleteJournal:
             "realm_ids": sorted({str(rid) for rid in realm_ids if rid}),
             "storage_keys": sorted({str(key) for key in storage_keys or [] if key}),
             "db_deleted": False,
+            "agent_runtime_deleted": False,
             "memory_purged": False,
             "attempts": 0,
             "created_at": _now(),
@@ -263,6 +275,23 @@ class OwnerDeleteJournal:
         }
         if backup:
             job["backup"] = backup
+        self.save(job)
+        return job
+
+    def mark_agent_runtime_deleted(
+        self,
+        job: dict[str, Any],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        job["agent_runtime_deleted"] = True
+        job["runtime_counts"] = {
+            str(key): int(value or 0)
+            for key, value in dict(result.get("counts") or {}).items()
+        }
+        job["runtime_revocation_keys_written"] = int(
+            result.get("revocation_keys_written") or 0
+        )
+        job["updated_at"] = _now()
         self.save(job)
         return job
 
@@ -289,7 +318,18 @@ class OwnerDeleteJournal:
         job["realm_ids"] = realm_ids
         job["db_deleted"] = True
         job["deleted"] = bool(getattr(result, "deleted", False))
-        job["counts"] = owner_cleanup_counts(result)
+        system_counts = owner_cleanup_counts(result)
+        runtime_counts = dict(job.get("runtime_counts") or {})
+        for key in (
+            "runtime_sessions",
+            "messages",
+            "turns",
+            "conversations",
+            "jobs",
+        ):
+            if key in runtime_counts:
+                system_counts[key] = int(runtime_counts[key] or 0)
+        job["counts"] = system_counts
         job["updated_at"] = _now()
         self.save(job)
         return job

@@ -92,7 +92,7 @@ describe('api/conversations.ts', () => {
         memory_realm_id: 'realm-1',
         genome_id: 'genome-1',
         trigger: 'user',
-        caller_kind: null,
+        input_modality: null,
         device_id: null,
         started_at: '2026-06-04T10:00:00Z',
         finished_at: '2026-06-04T10:00:01Z',

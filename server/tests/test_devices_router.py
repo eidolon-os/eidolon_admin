@@ -44,12 +44,10 @@ async def test_fleet_groups_devices_by_companion_binding(
     await data_store.owner_service.create_owner(
         owner_id="owner-fleet",
         display_name="Fleet Owner",
-        actor_type="test",
     )
     workspace = await data_store.workspace_provisioning.provision_workspace(
         owner_id="owner-fleet",
         companion_display_name="Xiaoyi",
-        actor_type="test",
     )
     # Persona body: grouped under its persona companion via bound_companion_id.
     await data_store.devices.create_device(

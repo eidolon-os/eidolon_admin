@@ -461,7 +461,7 @@ function auditTagType(row: MemoryAuditRow): 'success' | 'warning' | 'danger' | '
               <div><span class="lbl">device</span><span class="val mono">{{ detail.device_id || '—' }}</span></div>
               <div><span class="lbl">memory realm</span><span class="val mono">{{ detail.memory_realm_id || '—' }}</span></div>
               <div><span class="lbl">genome</span><span class="val mono">{{ detail.genome_id || '—' }}</span></div>
-              <div><span class="lbl">caller_kind</span><span class="val mono">{{ detail.caller_kind || '—' }}</span></div>
+              <div><span class="lbl">input modality</span><span class="val mono">{{ detail.input_modality || '—' }}</span></div>
               <div><span class="lbl">trace_id</span><span class="val mono">{{ detail.trace_id || '—' }}</span></div>
               <div v-if="detail.error_code"><span class="lbl">error_code</span><span class="val mono">{{ detail.error_code }}</span></div>
               <div class="full"><span class="lbl">conversation</span><span class="val mono">{{ detail.conversation_id }}</span></div>

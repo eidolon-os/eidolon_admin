@@ -86,31 +86,22 @@ async def build_snapshot(request: Request, owner_id: str | None = None, demo_mod
     (
         companions,
         devices,
-        conversations,
         memory_realms,
-        jobs,
-        data_events,
+        audit_events,
         guard_bindings,
     ) = await asyncio.gather(
         _safe(statuses, "data.companions", store.companions.list_for_owner(owner_id), []),
         _safe(statuses, "data.devices", store.devices.list_devices_for_owner(owner_id), []),
         _safe(
             statuses,
-            "data.conversations",
-            store.conversations.list_for_owner(owner_id, limit=20),
-            [],
-        ),
-        _safe(
-            statuses,
             "data.memory",
             store.memory_repo.list_realms_for_owner(owner_id),
             [],
         ),
-        _safe(statuses, "data.jobs", store.jobs.list_for_owner(owner_id, limit=20), []),
         _safe(
             statuses,
-            "data.events",
-            store.events.list_for_owner(owner_id, limit=240),
+            "audit.index",
+            _audit_events(request, owner_id, limit=240),
             [],
         ),
         _safe(
@@ -141,12 +132,10 @@ async def build_snapshot(request: Request, owner_id: str | None = None, demo_mod
     long_tasks = await _agent_long_tasks(request, owner_id, statuses)
     memory = await _memory_summary(request, memory_realms, turns, statuses)
 
-    runtime_jobs = [_job(row) for row in jobs]
-    runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
-    runtime_jobs = _dedupe_jobs(runtime_jobs)[:12]
+    runtime_jobs = _dedupe_jobs([_long_task_job(row) for row in long_tasks])[:12]
 
-    data_runtime_events = _enrich_event_scope(_events_from_data(data_events), runtime_devices)
-    recent_events = list(data_runtime_events)
+    indexed_events = _enrich_event_scope(_events_from_audit(audit_events), runtime_devices)
+    recent_events = list(indexed_events)
     recent_events.extend(_events_from_turns(turns[:5]))
     recent_events.extend(_events_from_jobs(runtime_jobs[:5]))
     recent_events = sorted(
@@ -156,7 +145,7 @@ async def build_snapshot(request: Request, owner_id: str | None = None, demo_mod
     )[:120]
 
     agent_runtime_turns = [_turn(row) for row in turns]
-    runtime_turns = _project_runtime_turns(data_runtime_events, agent_runtime_turns)
+    runtime_turns = _project_runtime_turns(indexed_events, agent_runtime_turns)
     primary_voice_turn = _primary_active_voice_turn(runtime_turns)
     # Activity reduction gets the wider owner ledger, not the presentation
     # slice. A bounded recent-events window may begin in the middle of a trace;
@@ -164,7 +153,7 @@ async def build_snapshot(request: Request, owner_id: str | None = None, demo_mod
     activities = _project_runtime_activities(
         runtime_turns,
         runtime_jobs,
-        data_runtime_events,
+        indexed_events,
         observed_at=generated_at,
     )
 
@@ -433,6 +422,18 @@ async def _agent_turns(
     except Exception as exc:  # noqa: BLE001
         statuses.append(SourceStatus(source="agent.turns", ok=False, detail=str(exc)))
         return []
+
+
+async def _audit_events(
+    request: Request,
+    owner_id: str,
+    *,
+    limit: int,
+) -> list[Any]:
+    index = getattr(request.app.state, "audit_index", None)
+    if index is None:
+        raise RuntimeError("global audit index unavailable")
+    return await index.list_for_owner(owner_id, limit=limit)
 
 
 async def _agent_long_tasks(
@@ -1748,36 +1749,51 @@ def _dedupe_jobs(jobs: list[RuntimeJob]) -> list[RuntimeJob]:
     return list(out.values())
 
 
-def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
+def _events_from_audit(rows: list[Any]) -> list[RuntimeEvent]:
     events = []
     for row in rows:
+        event_type = str(getattr(row, "action", None) or row.event_type)
+        raw_payload = dict(
+            getattr(row, "payload", None)
+            or getattr(row, "payload_json", None)
+            or {}
+        )
         # Prefer the persisted classification columns (Phase 1); fall back to the
         # legacy string heuristics only for rows written before they existed.
-        source = getattr(row, "source", None) or _event_source(row.event_type)
+        source = _runtime_event_source(
+            getattr(row, "producer", None)
+            or getattr(row, "source", None)
+            or _event_source(event_type),
+            event_type,
+        )
         severity = getattr(row, "severity", None) or (
-            "warn" if "revoked" in row.event_type or "cancel" in row.event_type else "info"
+            "warn" if "revoked" in event_type or "cancel" in event_type else "info"
         )
         outcome = getattr(row, "outcome", None) or "success"
-        raw_payload = row.payload_json or {}
         payload = _safe_payload(raw_payload)
         device_id = row.subject_id if row.subject_type == "device" else _str_or_none(raw_payload.get("device_id"))
         events.append(
             RuntimeEvent(
                 event_id=row.event_id,
-                ts=_as_utc(getattr(row, "occurred_at", None) or row.created_at) or datetime.now(UTC),
+                ts=_as_utc(
+                    getattr(row, "occurred_at", None)
+                    or getattr(row, "created_at", None)
+                )
+                or datetime.now(UTC),
                 source=source,
-                type=row.event_type,
+                type=event_type,
                 severity=severity,
                 outcome=outcome,
                 trace_id=getattr(row, "trace_id", None),
                 owner_id=row.owner_id,
-                companion_id=getattr(row, "companion_id", None),
+                companion_id=getattr(row, "companion_id", None)
+                or _str_or_none(raw_payload.get("companion_id")),
                 device_id=device_id,
                 conversation_id=_str_or_none(raw_payload.get("conversation_id")),
                 job_id=row.subject_id if row.subject_type == "job" else None,
                 turn_id=row.subject_id if row.subject_type == "turn" else None,
                 summary=_runtime_event_summary(
-                    row.event_type,
+                    event_type,
                     row.subject_type,
                     row.subject_id,
                     raw_payload,
@@ -1786,6 +1802,23 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
             )
         )
     return events
+
+
+def _runtime_event_source(raw_source: object, event_type: str) -> str:
+    """Map producer identities onto Mission Control's stable source contract."""
+    value = str(raw_source or "").strip().lower()
+    if value in {"hub", "channel", "agent", "memory", "data", "admin", "mission_control"}:
+        return value
+    aliases = {
+        "eidolon-hub": "hub",
+        "eidolon-channel": "channel",
+        "channel-worker": "channel",
+        "eidolon-agent": "agent",
+        "eidolon-memory": "memory",
+        "eidolon-data": "data",
+        "eidolon-admin": "admin",
+    }
+    return aliases.get(value, _event_source(event_type))
 
 
 def _events_from_turns(turns: list[dict[str, Any]]) -> list[RuntimeEvent]:

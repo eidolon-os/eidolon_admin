@@ -14,17 +14,10 @@ from eidolon_data import DataStore
 from eidolon_data.schema.models import (
     BodyCommandRow,
     CompanionRow,
-    ConversationRow,
     DeviceRow,
-    EventRow,
-    JobRow,
     MemoryRealmRow,
-    MessageRow,
     OwnerRow,
     PersonaGenomeRow,
-    RuntimeCallerRow,
-    RuntimeSessionRow,
-    TurnRow,
 )
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,7 +83,8 @@ async def create_owner_backup(store: DataStore, owner_id: str) -> dict[str, Any]
             "manifest_path": str(final_dir / "manifest.json"),
             "notes": [
                 "Created before owner hard-delete.",
-                "Contains owner-scoped DB rows and best-effort memory palace copies.",
+                "Contains System Data rows and best-effort memory palace copies.",
+                "Agent runtime is a separate authority and is not copied here.",
             ],
         }
         _write_json(partial_dir / "manifest.json", manifest)
@@ -118,13 +112,6 @@ async def _collect_owner_snapshot(
                 "memory_realms": [],
                 "devices": [],
                 "body_commands": [],
-                "runtime_callers": [],
-                "runtime_sessions": [],
-                "conversations": [],
-                "turns": [],
-                "messages": [],
-                "jobs": [],
-                "events": [],
             }
 
         companion_rows = await _rows(
@@ -137,20 +124,6 @@ async def _collect_owner_snapshot(
             select(DeviceRow).where(DeviceRow.owner_id == owner_id),
         )
         device_ids = [row.device_id for row in device_rows]
-        conversation_rows = await _rows(
-            session,
-            select(ConversationRow).where(ConversationRow.owner_id == owner_id),
-        )
-        conversation_ids = [row.conversation_id for row in conversation_rows]
-        turn_rows = (
-            await _rows(
-                session,
-                select(TurnRow).where(TurnRow.conversation_id.in_(conversation_ids)),
-            )
-            if conversation_ids
-            else []
-        )
-        turn_ids = [row.turn_id for row in turn_rows]
         body_command_filters = [BodyCommandRow.owner_id == owner_id]
         if companion_ids:
             body_command_filters.append(BodyCommandRow.companion_id.in_(companion_ids))
@@ -191,49 +164,6 @@ async def _collect_owner_snapshot(
                 for row in await _rows(
                     session,
                     select(BodyCommandRow).where(or_(*body_command_filters)),
-                )
-            ],
-            "runtime_callers": [
-                _row_to_dict(row)
-                for row in await _rows(
-                    session,
-                    select(RuntimeCallerRow).where(RuntimeCallerRow.owner_id == owner_id),
-                )
-            ],
-            "runtime_sessions": [
-                _row_to_dict(row)
-                for row in await _rows(
-                    session,
-                    select(RuntimeSessionRow).where(
-                        RuntimeSessionRow.owner_id == owner_id
-                    ),
-                )
-            ],
-            "conversations": [_row_to_dict(row) for row in conversation_rows],
-            "turns": [_row_to_dict(row) for row in turn_rows],
-            "messages": [
-                _row_to_dict(row)
-                for row in (
-                    await _rows(
-                        session,
-                        select(MessageRow).where(MessageRow.turn_id.in_(turn_ids)),
-                    )
-                    if turn_ids
-                    else []
-                )
-            ],
-            "jobs": [
-                _row_to_dict(row)
-                for row in await _rows(
-                    session,
-                    select(JobRow).where(JobRow.owner_id == owner_id),
-                )
-            ],
-            "events": [
-                _row_to_dict(row)
-                for row in await _rows(
-                    session,
-                    select(EventRow).where(EventRow.owner_id == owner_id),
                 )
             ],
         }

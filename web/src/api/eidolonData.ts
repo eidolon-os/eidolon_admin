@@ -333,8 +333,6 @@ export interface EventView {
   severity: string
   outcome: string
   reason: string | null
-  actor_type: string
-  actor_id: string | null
   trace_id: string | null
   data_classification: string
   payload_json: JsonDict

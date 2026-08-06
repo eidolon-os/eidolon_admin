@@ -24,11 +24,9 @@ def shared_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
-def _sign_device_actor_token(*, secret: str, device_id: str, **kwargs):
+def _sign_device_token(*, secret: str, device_id: str, **kwargs):
     return sign_runtime_token(
         secret=secret,
-        actor_kind="device",
-        actor_id=device_id,
         device_id=device_id,
         schema_version=kwargs.pop("schema_version", "eidolon.persona_genome"),
         genome_hash=kwargs.pop("genome_hash", "pg_contract"),
@@ -39,7 +37,7 @@ def _sign_device_actor_token(*, secret: str, device_id: str, **kwargs):
 
 @pytest.mark.asyncio
 async def test_sdk_signed_token_verifies_with_runtime_schema(shared_secret: str) -> None:
-    token, exp_returned = _sign_device_actor_token(
+    token, exp_returned = _sign_device_token(
         secret=shared_secret,
         device_id="contract-test-abc",
         owner_id="owner-a",
@@ -66,7 +64,7 @@ async def test_sdk_signed_token_verifies_with_runtime_schema(shared_secret: str)
 
 @pytest.mark.asyncio
 async def test_wrong_secret_rejected(shared_secret: str) -> None:
-    token, _ = _sign_device_actor_token(
+    token, _ = _sign_device_token(
         secret=shared_secret,
         device_id="wrong-secret-test",
         owner_id="owner-a",
@@ -82,7 +80,7 @@ async def test_wrong_secret_rejected(shared_secret: str) -> None:
 
 @pytest.mark.asyncio
 async def test_expired_token_rejected(shared_secret: str) -> None:
-    token, exp = _sign_device_actor_token(
+    token, exp = _sign_device_token(
         secret=shared_secret,
         device_id="expired-test",
         owner_id="owner-a",
@@ -101,7 +99,7 @@ async def test_expired_token_rejected(shared_secret: str) -> None:
 def test_payload_field_names_are_locked(shared_secret: str) -> None:
     import jwt
 
-    token, _ = _sign_device_actor_token(
+    token, _ = _sign_device_token(
         secret=shared_secret,
         device_id="schema-lock",
         owner_id="owner-a",
@@ -111,9 +109,8 @@ def test_payload_field_names_are_locked(shared_secret: str) -> None:
     )
     payload = jwt.decode(token, shared_secret, algorithms=["HS256"])
     required = {
+        "runtime_token_version",
         "device_id",
-        "actor_kind",
-        "actor_id",
         "owner_id",
         "companion_id",
         "memory_realm_id",
@@ -127,3 +124,6 @@ def test_payload_field_names_are_locked(shared_secret: str) -> None:
     }
     missing = required - set(payload.keys())
     assert not missing
+    assert payload["runtime_token_version"] == 4
+    assert "actor_kind" not in payload
+    assert "actor_id" not in payload

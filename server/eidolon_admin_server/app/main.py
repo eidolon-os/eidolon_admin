@@ -2,6 +2,7 @@
 # ruff: noqa: E402
 from __future__ import annotations
 
+import asyncio
 import os
 
 # Process-wide proxy scrub. The admin gateway only talks to localhost
@@ -18,6 +19,7 @@ for _proxy_var in (
     os.environ.pop(_proxy_var, None)
 
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 import httpx
 from eidolon_data import DataStore, load_settings
@@ -27,13 +29,15 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from .benchmarks import router as benchmarks_router
+from eidolon_admin_server.audit import AuditIndexStore
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .data.hub_client import HubDeviceRuntimeClient
+from .data.agent_runtime_client import AgentRuntimeAdminClient
+from .data.audit_dispatch import run_system_data_audit_dispatcher
 from .data.owner_delete_finalizer import finalize_owner_delete_jobs
 from .data.router import router as data_router
-from .data.schema_guard import ensure_eidolon_data_schema
 from .devices import router as devices_router
 from .guard.router import router as guard_router
 from .gateway.registry import ServiceRegistry
@@ -85,15 +89,26 @@ def create_app(
             )
 
         data_store = None
+        data_audit_task: asyncio.Task[None] | None = None
+        audit_index = None
+        try:
+            audit_index = AuditIndexStore.open()
+            await audit_index.init_schema()
+            app.state.audit_index = audit_index
+        except Exception:  # noqa: BLE001
+            logger.exception("audit index unavailable; audit views will return 503")
         # Owner/companion data lives in eidolon_data's sovereign DB. The older
         # tenant/user/agent registry adapters were intentionally removed from
         # eidolon_data during the owner/companion hard switch; admin must not
         # reconstruct them at startup.
         try:
             data_store = DataStore.open(load_settings())
-            await data_store.init_schema()
-            await ensure_eidolon_data_schema(data_store)
+            await data_store.validate_schema()
             app.state.data_store = data_store
+            data_audit_task = asyncio.create_task(
+                run_system_data_audit_dispatcher(data_store),
+                name="eidolon-data-audit-dispatcher",
+            )
             app.state.resolve_orchestrator = ResolveOrchestrator(
                 data_store=data_store
             )
@@ -101,6 +116,7 @@ def create_app(
                 cleanup = await finalize_owner_delete_jobs(
                     data_store,
                     app.state.memory_supervisor_client,
+                    app.state.agent_runtime_client,
                 )
                 if cleanup.get("attempted"):
                     logger.info("owner delete cleanup resumed: %s", cleanup)
@@ -116,6 +132,12 @@ def create_app(
         try:
             yield
         finally:
+            if data_audit_task is not None:
+                data_audit_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await data_audit_task
+            if audit_index is not None:
+                await audit_index.close()
             await app.state.http_client.aclose()
             if app.state.memory_publisher is not None:
                 await app.state.memory_publisher.aclose()
@@ -155,9 +177,21 @@ def create_app(
         app.state.http_client,
         hub_service.base_url if hub_service is not None else "",
     )
+    agent_service = app.state.registry.get("agent")
+    agent_runtime_base_url = ""
+    if agent_service is not None and agent_service.base_url:
+        agent_runtime_base_url = (
+            f"{agent_service.base_url.rstrip('/')}"
+            f"{agent_service.upstream_prefix.rstrip('/')}"
+        )
+    app.state.agent_runtime_client = AgentRuntimeAdminClient(
+        app.state.http_client,
+        agent_runtime_base_url,
+    )
     # NATS KV client for bus-backed features. Registry data uses SQLite.
     app.state.nats_kv = KVClient()
     app.state.data_store = None
+    app.state.audit_index = None
     app.state.resolve_orchestrator = None
     # Legacy tenant/user/agent registry orchestrators are intentionally not
     # initialized in the owner/companion model.

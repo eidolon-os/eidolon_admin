@@ -23,6 +23,7 @@ from eidolon_admin_server.app.data.owner_delete_finalizer import (
     OwnerDeleteJournal,
     finalize_owner_delete_jobs,
 )
+from eidolon_admin_server.app.data.agent_runtime_client import AgentRuntimeUnavailable
 from eidolon_admin_server.app.data.hub_client import HubRuntimeUnavailable
 from eidolon_admin_server.app.data.router import router as data_router
 from eidolon_admin_server.app.guard.router import router as guard_router
@@ -85,6 +86,102 @@ class FakeHubDeviceClient:
         return None
 
 
+class FakeAgentRuntimeClient:
+    configured = True
+
+    def __init__(self) -> None:
+        self.conversations: list[dict] = []
+        self.jobs: list[dict] = []
+        self.deleted_owners: list[str] = []
+
+    async def list_conversations(self, owner_id: str, *, limit: int = 100):
+        return [row for row in self.conversations if row["owner_id"] == owner_id][
+            :limit
+        ]
+
+    async def list_jobs(self, owner_id: str, *, limit: int = 100):
+        return [row for row in self.jobs if row["owner_id"] == owner_id][:limit]
+
+    async def delete_owner_runtime(self, owner_id: str):
+        self.deleted_owners.append(owner_id)
+        conversations = [
+            row for row in self.conversations if row["owner_id"] == owner_id
+        ]
+        jobs = [row for row in self.jobs if row["owner_id"] == owner_id]
+        self.conversations = [
+            row for row in self.conversations if row["owner_id"] != owner_id
+        ]
+        self.jobs = [row for row in self.jobs if row["owner_id"] != owner_id]
+        return {
+            "owner_id": owner_id,
+            "deleted": True,
+            "counts": {
+                "messages": 0,
+                "turns": 0,
+                "jobs": len(jobs),
+                "conversations": len(conversations),
+                "runtime_sessions": 0,
+            },
+            "revocation_keys_written": 1,
+        }
+
+    async def delete_companion_runtime(self, owner_id: str, companion_id: str):
+        conversations = [
+            row
+            for row in self.conversations
+            if row["owner_id"] == owner_id
+            and row["companion_id"] == companion_id
+        ]
+        jobs = [
+            row
+            for row in self.jobs
+            if row["owner_id"] == owner_id
+            and row.get("companion_id") == companion_id
+        ]
+        self.conversations = [
+            row for row in self.conversations if row not in conversations
+        ]
+        self.jobs = [row for row in self.jobs if row not in jobs]
+        return {
+            "owner_id": owner_id,
+            "deleted": True,
+            "counts": {
+                "messages": 0,
+                "turns": 0,
+                "jobs": len(jobs),
+                "conversations": len(conversations),
+                "runtime_sessions": 0,
+            },
+            "revocation_keys_written": 0,
+        }
+
+    async def cancel_job(self, owner_id: str, job_id: str):
+        row = self._job(owner_id, job_id)
+        row["status"] = "cancelled"
+        return row
+
+    async def retry_job(self, owner_id: str, job_id: str):
+        row = self._job(owner_id, job_id)
+        row["status"] = "accepted"
+        return row
+
+    def _job(self, owner_id: str, job_id: str) -> dict:
+        return next(
+            row
+            for row in self.jobs
+            if row["owner_id"] == owner_id and row["task_id"] == job_id
+        )
+
+
+class FakeAuditIndex:
+    def __init__(self, store: DataStore) -> None:
+        self.store = store
+
+    async def list_for_owner(self, owner_id: str, *, limit: int = 200):
+        rows = await self.store.audit_outbox.list_pending(limit=500)
+        return [row for row in rows if row.owner_id == owner_id][:limit]
+
+
 def _persona_proposal(
     *,
     owner_id: str,
@@ -130,9 +227,19 @@ async def data_store(tmp_path) -> AsyncIterator[DataStore]:
 
 
 @pytest.fixture
-async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
+def agent_runtime_client() -> FakeAgentRuntimeClient:
+    return FakeAgentRuntimeClient()
+
+
+@pytest.fixture
+async def client(
+    data_store: DataStore,
+    agent_runtime_client: FakeAgentRuntimeClient,
+) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
     app.state.data_store = data_store
+    app.state.agent_runtime_client = agent_runtime_client
+    app.state.audit_index = FakeAuditIndex(data_store)
     app.include_router(data_router, prefix="/api")
     app.include_router(guard_router, prefix="/api")
     async with httpx.AsyncClient(
@@ -145,6 +252,7 @@ async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
 async def test_owner_scoped_data_overview_and_lists(
     client: httpx.AsyncClient,
     data_store: DataStore,
+    agent_runtime_client: FakeAgentRuntimeClient,
 ) -> None:
     created = await client.post(
         "/api/owners",
@@ -189,19 +297,50 @@ async def test_owner_scoped_data_overview_and_lists(
         kind="voice_body",
         bound_companion_id="c_owner-a_default",
     )
-    await data_store.conversations.create_conversation(
-        conversation_id="conversation-a",
-        owner_id="owner-a",
-        companion_id="c_owner-a_default",
-        source_device_id="device-a",
-        title="Morning",
+    now = datetime.now(timezone.utc).isoformat()
+    agent_runtime_client.conversations.append(
+        {
+            "conversation_id": "conversation-a",
+            "owner_id": "owner-a",
+            "companion_id": "c_owner-a_default",
+            "runtime_session_id": "session-a",
+            "device_id": "device-a",
+            "title": "Morning",
+            "status": "active",
+            "started_at": now,
+            "updated_at": now,
+            "ended_at": None,
+            "metadata": {},
+        }
     )
-    await data_store.jobs.create(
-        job_id="job-a",
-        owner_id="owner-a",
-        companion_id="c_owner-a_default",
-        provider="mementos",
-        kind="daily_report",
+    agent_runtime_client.jobs.append(
+        {
+            "task_id": "job-a",
+            "owner_id": "owner-a",
+            "companion_id": "c_owner-a_default",
+            "conversation_id": "conversation-a",
+            "turn_id": "turn-a",
+            "provider": "mementos",
+            "task_type": "daily_report",
+            "status": "accepted",
+            "task": "daily report",
+            "urgency": "normal",
+            "expected_output": None,
+            "session_key": "session-a",
+            "task_key": "task-a",
+            "task_date": "2026-08-06",
+            "mementos_session_id": None,
+            "mementos_conversation_id": None,
+            "external_status": None,
+            "progress_summary": None,
+            "result_text": None,
+            "result_tts_summary": None,
+            "error_code": None,
+            "error_message": None,
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
     )
 
     overview = await client.get("/api/owners/owner-a/workspace")
@@ -212,20 +351,17 @@ async def test_owner_scoped_data_overview_and_lists(
     assert body["counts"] == {
         "companions": 1,
         "persona_genomes": 1,
-        # The master companion is provisioned with a host-local web body,
-        # so device-a is the owner's *second* device.
-        "devices": 2,
+        "devices": 1,
         "conversations": 1,
         "memory_realms": 1,
         "jobs": 1,
-        # +1 for device.web_body.provisioned.
-        "events": 6,
+        "events": 2,
     }
     assert body["companions"][0]["companion_id"] == "c_owner-a_default"
     assert body["companions"][0]["is_master"] is True
     assert body["companions"][0]["companion_type"] == "master"
     device_ids = {device["device_id"] for device in body["devices"]}
-    assert device_ids == {"web-c_owner-a_default", "device-a"}
+    assert device_ids == {"device-a"}
     assert body["conversations"][0]["conversation_id"] == "conversation-a"
     assert body["memory_realms"][0]["realm_id"] == "r_owner-a_default"
     assert body["jobs"][0]["job_id"] == "job-a"
@@ -709,6 +845,7 @@ async def test_delete_owner_requires_confirmation_and_removes_tree(
     data_store: DataStore,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    agent_runtime_client: FakeAgentRuntimeClient,
 ) -> None:
     monkeypatch.setenv(
         "EIDOLON_OWNER_DELETE_JOURNAL_DIR",
@@ -764,10 +901,12 @@ async def test_delete_owner_requires_confirmation_and_removes_tree(
         "confirmed",
         "backup",
         "journal",
-        "database",
+        "agent_runtime",
+        "system_data",
         "memory",
         "done",
     ]
+    assert agent_runtime_client.deleted_owners == ["owner-delete"]
     assert await data_store.owners.get("owner-delete") is None
     assert await data_store.companions.get(companion_id) is None
     assert await data_store.devices.get_device(f"web-{companion_id}") is None
@@ -820,6 +959,7 @@ async def test_owner_delete_finalizer_resumes_after_interruption(
     cleanup = await finalize_owner_delete_jobs(
         data_store,
         None,
+        FakeAgentRuntimeClient(),
         journal=journal,
     )
 
@@ -832,6 +972,42 @@ async def test_owner_delete_finalizer_resumes_after_interruption(
     assert data_store.object_storage.exists(storage_key) is False
     assert journal.pending() == []
     assert list((tmp_path / "owner-delete-journal" / "completed").glob("*.json"))
+
+
+async def test_owner_delete_preserves_system_data_when_agent_is_unavailable(
+    client: httpx.AsyncClient,
+    data_store: DataStore,
+    agent_runtime_client: FakeAgentRuntimeClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    journal_root = tmp_path / "owner-delete-journal"
+    monkeypatch.setenv("EIDOLON_OWNER_DELETE_JOURNAL_DIR", str(journal_root))
+    monkeypatch.setenv("EIDOLON_OWNER_BACKUP_ROOT", str(tmp_path / "backup"))
+
+    async def unavailable(_owner_id: str):
+        raise AgentRuntimeUnavailable("agent offline")
+
+    monkeypatch.setattr(agent_runtime_client, "delete_owner_runtime", unavailable)
+    created = await client.post(
+        "/api/owners",
+        json={"owner_id": "owner-agent-offline", "display_name": "Keep Me"},
+    )
+    assert created.status_code == 201
+
+    response = await client.delete(
+        "/api/owners/owner-agent-offline",
+        params={"confirm_owner_id": "owner-agent-offline"},
+    )
+
+    assert response.status_code == 503
+    assert "pending in journal" in response.json()["detail"]
+    assert await data_store.owners.get("owner-agent-offline") is not None
+    jobs = OwnerDeleteJournal(journal_root).pending()
+    assert len(jobs) == 1
+    assert jobs[0]["owner_id"] == "owner-agent-offline"
+    assert jobs[0]["agent_runtime_deleted"] is False
+    assert jobs[0]["db_deleted"] is False
 
 
 async def test_owner_nearby_devices_identify_and_add_to_owner(
@@ -1036,7 +1212,7 @@ async def test_promote_companion_to_master(client: httpx.AsyncClient) -> None:
     assert promoted.json()["is_master"] is True
 
     devices = await client.get("/api/owners/op/companions/c_two/devices")
-    assert "web" in {d["kind"] for d in devices.json()["devices"]}
+    assert devices.json()["devices"] == []
 
     companions = await client.get("/api/owners/op/companions")
     masters = [c["companion_id"] for c in companions.json()["companions"] if c["is_master"]]
