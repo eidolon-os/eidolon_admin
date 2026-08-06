@@ -15,6 +15,8 @@ def main() -> None:
         host=settings.host,
         port=settings.port,
         log_level="info",
+        ssl_certfile=str(settings.bootstrap.commissioning_tls_pem_path),
+        ssl_keyfile=str(settings.bootstrap.commissioning_tls_pem_path),
     )
 
 

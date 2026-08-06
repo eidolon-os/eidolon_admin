@@ -46,9 +46,12 @@ class CommissioningTlsIdentityManager:
             raise CommissioningTlsIdentityError(
                 "commissioning TLS identity must not be a symbolic link"
             )
-        if not stat.S_ISREG(path_stat.st_mode) or path_stat.st_mode & 0o077:
+        if (
+            not stat.S_ISREG(path_stat.st_mode)
+            or path_stat.st_mode & 0o777 != 0o640
+        ):
             raise CommissioningTlsIdentityError(
-                "commissioning TLS identity must be a regular mode 0600 file"
+                "commissioning TLS identity must be a regular mode 0640 file"
             )
         pem = self._pem_path.read_bytes()
         try:
@@ -138,7 +141,7 @@ class CommissioningTlsIdentityManager:
             dir=self._pem_path.parent,
         )
         try:
-            os.fchmod(descriptor, 0o600)
+            os.fchmod(descriptor, 0o640)
             with os.fdopen(descriptor, "wb") as output:
                 output.write(pem)
                 output.flush()

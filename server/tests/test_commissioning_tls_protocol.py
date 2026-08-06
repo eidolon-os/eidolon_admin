@@ -141,7 +141,7 @@ def test_commissioning_endpoint_binds_tls_key_to_host_signature(tmp_path: Path) 
             separators=(",", ":"),
         ).encode()
         assert len(encoded) <= 512
-        assert settings.commissioning_tls_pem_path.stat().st_mode & 0o777 == 0o600
+        assert settings.commissioning_tls_pem_path.stat().st_mode & 0o777 == 0o640
     finally:
         service.shutdown()
 

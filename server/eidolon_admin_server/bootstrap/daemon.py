@@ -93,9 +93,12 @@ async def run_daemon(
     *,
     stop_event: asyncio.Event | None = None,
 ) -> None:
-    settings.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Group execute permits the unit-scoped Local API supplementary group to
+    # traverse to commissioning_tls.pem. No group read bit means it cannot
+    # list state entries; Host identity and SQLite remain mode 0600.
+    settings.state_dir.mkdir(mode=0o710, parents=True, exist_ok=True)
     settings.runtime_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
-    settings.state_dir.chmod(0o700)
+    settings.state_dir.chmod(0o710)
     settings.runtime_dir.chmod(0o750)
 
     store = SQLiteBootstrapStateStore(settings.database_path)

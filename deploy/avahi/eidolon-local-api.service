@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">Eidolon Local API on %h</name>
+  <service protocol="ipv4">
+    <type>_eidolon-local-api._tcp</type>
+    <port>9002</port>
+    <txt-record>contract=1</txt-record>
+    <txt-record>scheme=https</txt-record>
+  </service>
+</service-group>

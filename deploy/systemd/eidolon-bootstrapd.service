@@ -22,7 +22,10 @@ RestartSec=3s
 KillSignal=SIGTERM
 TimeoutStopSec=15s
 StateDirectory=eidolon-bootstrap
-StateDirectoryMode=0700
+# The unit-scoped Local API supplementary group may traverse the state
+# directory to read only commissioning_tls.pem (0640). It cannot list the
+# directory, and Host identity/SQLite remain 0600.
+StateDirectoryMode=0710
 RuntimeDirectory=eidolon-bootstrap
 RuntimeDirectoryMode=0750
 NoNewPrivileges=yes

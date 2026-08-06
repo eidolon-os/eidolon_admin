@@ -7,7 +7,7 @@
 
 ## 0. 当前实施状态
 
-截至 2026-08-06，Phase 0 基座和 Phase 1/2A 的开发实现已经落地：
+截至 2026-08-06，Phase 0 基座、Phase 1/2A 和 Phase 2B 的当前开发闭环已经落地：
 
 - `eidolon-bootstrapd`、`eidolon-bootstrapctl`、`eidolon-local-api` 独立 entrypoint。
 - Bootstrap 通过 `BootstrapStateStore` Port 保存必要权威状态；当前默认 adapter 是独占 SQLite，也有不持久化的 In-memory 测试实现。
@@ -16,19 +16,23 @@
 - daemon 启停和异常属于 systemd/journald 诊断日志，不再写入 Bootstrap authority store。
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
-- Local API 已实现只读 descriptor/state/host snapshot、无状态 Host proof，以及 LAN 专用 Controller challenge、短期 session 签发和 session 当前性校验；仍未接入 Admin 高权限面或产品 mutation。
+- NetworkManager adapter 在启动恢复时等待 NetworkManager 自己的 `Startup=false` 再投影网络状态；等待有 30 秒上限，超时保持恢复未完成并拒绝新的换网操作，不把启动过渡态写成 `unconfigured`。
+- Local API 已实现只读 descriptor/state/host snapshot、无状态 Host proof，以及 LAN 专用 Controller challenge、短期 session 签发和 session 当前性校验；它使用 Bootstrap commissioning certificate 自行终止 HTTPS，并通过 Avahi 发布候选地址，仍未接入 Admin 高权限面或产品 mutation。
 - Local API session 只在进程内保存 opaque token 的 hash，默认 15 分钟；每次使用会向 Bootstrap 重新验证 Controller Grant 和 `reset_epoch`。Local API restart 只使短期 session 失效，不改变 durable Controller Grant。
 - Mobile 无网向导已实现：发现附近广播、验证 signed endpoint、输入 6 位短期 Setup 码、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。Setup 码和 Wi-Fi 密码只保留在内存。
+- Mobile 已实现认领后的“连接主机”入口：mDNS 只发现候选地址，pinned HTTPS 验证 BLE signed endpoint 绑定的 TLS SPKI，再核对保存的 Host 公钥并用 Controller key 建立短期 session。旧版已保存 Host 缺少 TLS 指纹时，只通过 BLE signed endpoint 更新信任，不执行 Setup、换网或重新认领。
 - Controller Grant、operation journal、session 单次消费与 claim 权威迁移已落地；已认领换网使用 Controller challenge，不复用开箱 secret。
 - Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 仍是后续子项目，因此 Host commissioning 完成不等价于 Workspace ready。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝签发开发 Setup 码。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
-- 开发树莓派上已经安装并由 systemd 常驻运行 `eidolon-bootstrapd`；Android 平板已完成一次真实 Host commissioning 闭环，包括 BLE 发现、signed endpoint、pinned TLS、NetworkManager 配网确认、Controller Grant 和 claim。
+- 开发树莓派上已经安装并由 systemd 常驻运行 `eidolon-bootstrapd` 和 `eidolon-local-api`；Avahi 仅发布与当前 IPv4 listener 一致的 `_eidolon-local-api._tcp` 地址。Android 平板已完成一次真实 Host commissioning 闭环，包括 BLE 发现、signed endpoint、pinned TLS、NetworkManager 配网确认、Controller Grant 和 claim。
+- 同一 Pi/Android 已完成 Controller-authenticated Local API 实机闭环：Mobile 经 mDNS 获取候选地址、验证保存的 TLS SPKI 和 Host identity、使用 Android Keystore Controller key 建立短期 session，并读取 Host 状态。Bootstrap 和整机分别重启后，Host identity、Controller Grant 与 `reset_epoch` 均保持，短期 session 可重新签发。
+- 整机重启实测中，Bootstrap 等待 NetworkManager boot-time autoconnect 收敛后才发布 `connected`，Local API、Avahi、BLE commissioning 均自动恢复；Mobile 新建会话读取到的网络状态为“已连接”。
 - 该实机结果只覆盖当前开发 Pi、Android 平板和当前路由器，不能外推为 2.4/5 GHz、隐藏 SSID、WPA3、DHCP 故障、guest isolation、App kill 和重启恢复矩阵均已验收。
-- 最近一次实机审计中 Host 为 `claimed/connected/normal`、`reset_epoch=2`，但 `workspace_state=absent`；`eidolon-local-api.service` 和完整 `eidolon-stack.service` 尚未运行。因此当前闭环是 Host commissioning，不是完整 Workspace 开箱完成。
+- 最近一次实机审计中 Host 为 `claimed/connected/normal`、`reset_epoch=2`，但 `workspace_state=absent`；`eidolon-local-api.service` 正在运行，完整 `eidolon-stack.service` 仍未运行。因此当前闭环是 Host commissioning 加已认证本地连接，不是完整 Workspace 开箱完成。
 
 尚未完成并且不能宣称完成：完整 Pi/Android 路由器与故障矩阵、Controller-authenticated
-Local API 的 Pi/Android 实机部署验收、Owner/Workspace 初始化 saga、产品二维码制造流程、物理 recovery GPIO/按键、
+Local API 的高权限产品 mutation、Owner/Workspace 初始化 saga、产品二维码制造流程、物理 recovery GPIO/按键、
 Factory Reset manifests、iOS、Local API/完整 stack 的产品 systemd 联动与故障注入。
 
 ## 1. 背景与目标
@@ -49,7 +53,7 @@ Eidolon OS 运行在无屏树莓派主机上。最终用户不能依赖 SSH、HD
 - **Setup**：Mobile 面向用户的引导与编排。它读取 Host 权威状态并投影步骤进度，不保存第二份可写的“setup 已完成”状态。
 - **Bootstrap**：树莓派上永远常驻、自动重启的最小控制平面。它拥有 Host Identity、reset epoch、commissioning session 和后续 Controller/network/recovery 状态迁移。
 - **Commissioning**：Bootstrap 提供的一段限时、认证控制会话，用于建立 Controller 和配置网络；它不是整个 Setup UI，也不是日常业务 API。
-- **Local API**：网络可达后 Mobile 的本地产品入口。地址或 mDNS 只解决可达性；Descriptor 选定目标身份，nonce-bound Host proof 才把当前连接绑定到该身份。
+- **Local API**：网络可达后 Mobile 的本地产品入口。地址或 mDNS 只解决可达性；Host-signed TLS SPKI pin 认证当前 HTTPS endpoint，Local API descriptor 必须再与 App 已保存的 Host ID、公钥和 BLE service 一致。Host proof 保留为无状态诊断契约，不替代 TLS pin。
 - **Claim**：Bootstrap 接受一个 Controller 身份并形成可撤销授权的权威迁移；不能由 Mobile 本地标记代替。
 - **Workspace onboarding**：Owner/Companion/Workspace 的业务初始化，权威在 Data/Admin，不属于 Bootstrap 自己的数据模型。
 - **Device setup**：为 ESP32 等外部 Device 配置其网络并将其准入某个 Owner 的用户流程。它由“设备本地 provisioning”和“Hub enrollment/approval/binding”两段组成，不属于 Host Bootstrap，也不使用 Host Setup 码或 Controller Identity 充当 Device Identity。
@@ -64,7 +68,7 @@ Host: bootstrapd 常驻
   -> Mobile 建立 pinned TLS 并提交 Setup 码
   -> Host commissioning 授权完成
   -> NetworkManager stage/confirm + Controller claim
-  -> [下一步] Controller-authenticated Local API
+  -> Controller-authenticated Local API
   -> Owner / Companion / Workspace onboarding
   -> Mobile 产品能力与外部 Device setup
   -> Mission Control 只读观测
@@ -613,10 +617,12 @@ local-fs.target
 
 - Bootstrap 使用专用 Linux 用户。
 - `eidolon` 用户不得永久加入 Bootstrap group；只有 Local API 的 systemd unit 通过进程级 `SupplementaryGroups=` 获得 Unix socket 权限，避免同用户的 Admin/supervisord 子进程继承该权限。
+- Bootstrap state 目录使用 `0710`：该补充组只能穿越已知路径且不能列目录；仅 commissioning TLS PEM 为 `0640`，Host Identity 和 SQLite authority 保持 `0600`。
 - NetworkManager/BlueZ 通过最小 D-Bus/Polkit 规则授权；具体调用集合由 PoC 后固化。
 - Factory Reset helper 是唯一 root 单元，只接受验证过的本地 request 文件/Unix socket 调用，不监听网络。
 - Admin API、Hub、Kernel 默认 bind loopback。
-- Caddy 只暴露 Local API 与确实需要的媒体端点。
+- Local API 当前自行终止 pinned HTTPS；Caddy 不再位于 Mobile 与 Local API 之间。后续媒体端点是否使用 Caddy 单独评估，不能改变 Local API 的 Host SPKI authority。
+- 当前 Local API 绑定 IPv4，因此 Avahi 也只宣告 IPv4；发现协议不得宣告服务实际没有监听的 IPv6 地址。未来切换双栈时必须同时验证 listener、mDNS 和 Android/iOS 地址选择。
 
 ### 12.3 产品部署必须移除的假设
 
@@ -685,14 +691,21 @@ local-fs.target
 - 补齐 2.4/5 GHz、隐藏 SSID、WPA2/WPA3、DHCP 故障、guest isolation、App kill、Pi reboot 矩阵。
 - 验证 post-claim 换网后的新 LAN endpoint handoff；不能只验证 NetworkManager 显示 activated。
 
-#### Phase 2B：Controller-authenticated Local API（代码实现中，实机部署待验收）
+#### Phase 2B：Controller-authenticated Local API（开发 Pi/Android 主链已验收）
 
 交付：
 
 - 从 BLE commissioning transport 拆出 `ControllerKeyBridge`。（已实现）
 - 一次性 challenge、明确 local-auth purpose、短期 session、replay 拒绝和 `reset_epoch` 绑定。（已实现并通过无硬件契约测试）
-- Local API Host discovery、signed descriptor/proof、Controller Grant 验证和最小 system state。
-- Local API systemd 单元在开发 Pi 上独立启动；完整 Admin/Data 不可用时仍能返回 Host/Bootstrap 降级状态。
+- Avahi/mDNS Local API 候选发现、Host-signed TLS SPKI pin、保存的 Host descriptor 一致性校验、Controller Grant 验证和最小 system state。（代码已实现）
+- 已认领旧 App 数据的迁移只重新读取 BLE signed endpoint 并保存 TLS 指纹，不消费 Setup code、不修改网络或 claim。（代码已实现）
+- Local API systemd 单元在开发 Pi 上独立启动；完整 `eidolon-stack` 未运行时仍能返回 Host/Bootstrap 降级状态。（实机已验证）
+
+当前实机验收：
+
+- Android 通过 IPv4 mDNS candidate、pinned HTTPS 和 Keystore Controller key 新建 Local API session，读取到精确匹配的 Host 和 `claimed/connected/normal` 状态。
+- Local API restart、Bootstrap restart 和 Pi reboot 后 durable Host/Controller authority 均未变化；Pi reboot 后 NetworkManager autoconnect 完成再投影 `connected`。
+- 未授权 Controller、challenge replay 和旧 `reset_epoch` 的拒绝由契约测试覆盖；仍需纳入更完整的实机故障矩阵。
 
 退出标准：
 
@@ -708,7 +721,6 @@ local-fs.target
 - Controller Grant 绑定可信 Owner scope。
 - Android Setup 在 Host commissioning 后继续创建/修复 Owner、主 Companion 和 Workspace，并能在中断后恢复进度。
 - Admin onboarding adapter 迁移到当前 `eidolon_data` API；不得用兼容 shim 恢复已删除的 V1 `DataStore/schema.models` 依赖。
-- LAN HTTPS Host pinning。
 - Caddy/防火墙关闭 Mobile 对 Admin/Hub/Kernel 的直达访问。
 
 退出标准：

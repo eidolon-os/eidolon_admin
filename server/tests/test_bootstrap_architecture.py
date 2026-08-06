@@ -80,10 +80,13 @@ def test_bootstrap_systemd_unit_is_always_on_and_pre_network_stack() -> None:
     assert "Before=eidolon-stack.service" in unit
     assert "network-online.target" not in unit
     assert "User=eidolon-bootstrap" in unit
+    assert "StateDirectoryMode=0710" in unit
     assert "CapabilityBoundingSet=\n" in unit
     assert unit.index("EnvironmentFile=-/etc/eidolon/bootstrap.env") < unit.index(
         "Environment=EIDOLON_BOOTSTRAP_MODE=production"
     )
+    daemon = (_BOOTSTRAP_ROOT / "daemon.py").read_text()
+    assert "settings.state_dir.chmod(0o710)" in daemon
 
 
 def test_local_api_and_admin_have_distinct_entrypoints() -> None:
@@ -108,7 +111,21 @@ def test_local_api_socket_access_is_scoped_to_its_systemd_process() -> None:
 
     assert "User=eidolon\n" in unit
     assert "SupplementaryGroups=eidolon-bootstrap\n" in unit
+    assert "Environment=EIDOLON_LOCAL_API_HOST=0.0.0.0\n" in unit
+    assert "ReadOnlyPaths=/var/lib/eidolon-bootstrap/commissioning_tls.pem\n" in unit
     assert "no persistent membership" in deployment_notes
+    assert "cannot list" in deployment_notes
+
+
+def test_local_api_is_discoverable_only_as_a_pinned_https_candidate() -> None:
+    service = (
+        _PROJECT_ROOT / "deploy" / "avahi" / "eidolon-local-api.service"
+    ).read_text()
+
+    assert "<type>_eidolon-local-api._tcp</type>" in service
+    assert "<port>9002</port>" in service
+    assert '<service protocol="ipv4">' in service
+    assert "<txt-record>scheme=https</txt-record>" in service
 
 
 def test_bootstrap_help_does_not_initialize_full_stack() -> None:

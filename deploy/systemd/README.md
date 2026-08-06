@@ -22,6 +22,12 @@ The product image/provisioner must create:
 - verify the target image's BlueZ system-bus policy permits the dedicated user
   to register the tracked GATT application. Do not add root or Linux
   capabilities as a workaround without recording the exact denied D-Bus call.
+- install `deploy/avahi/eidolon-local-api.service` under
+  `/etc/avahi/services/`; mDNS only discovers candidate addresses. Mobile still
+  matches the Host ID and pins the Host-signed TLS SPKI before sending a
+  Controller proof or bearer token. The current Uvicorn listener binds IPv4,
+  so the Avahi service advertises `protocol="ipv4"`; do not advertise IPv6
+  until Local API has a validated dual-stack listener.
 
 Development uses an explicit drop-in that sets
 `EIDOLON_BOOTSTRAP_MODE=development`; the tracked product unit always forces
@@ -52,6 +58,19 @@ sessions, and returns the Host to `unclaimed` while preserving its current
 network. `--forget-wifi` additionally deletes all NetworkManager Wi-Fi profiles
 and disconnects the Host, so the invoking SSH connection is expected to drop.
 Both commands fail closed in production.
+
+The commissioning TLS key is mode `0640`, owned by
+`eidolon-bootstrap:eidolon-bootstrap`. The Local API receives that group only
+through `SupplementaryGroups=` and terminates pinned HTTPS itself; the ordinary
+Admin/supervisord processes do not inherit key access. The Bootstrap state
+directory is mode `0710`: the group can traverse a known path but cannot list
+the directory. The Host Ed25519 key and SQLite authority remain mode `0600` and
+are never shared with Local API.
+
+The runtime environment referenced by `eidolon-local-api.service` must include
+the project's tested FastAPI and Uvicorn dependencies. A Bootstrap-only
+development venv is not sufficient; validate imports as the `eidolon` service
+user before enabling the unit.
 
 Do not grant the existing Admin API process system privileges. Factory reset is
 not implemented by these units and will use a separate root oneshot after every
