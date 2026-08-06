@@ -84,6 +84,12 @@ class InMemoryNetworkProvisioning:
         )
         return self._snapshot()
 
+    async def forget_all_wifi_profiles(self) -> NetworkProvisioningSnapshot:
+        self._current_ssid = None
+        self._clear_operation()
+        self._state = NetworkState.UNCONFIGURED
+        return self._snapshot()
+
     def _require_operation(self, operation_id: str) -> None:
         if not operation_id or operation_id != self._active_operation_id:
             raise NetworkProvisioningError("network operation does not match")

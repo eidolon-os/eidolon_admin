@@ -63,7 +63,7 @@ class BootstrapControlServer:
             request = json.loads(raw)
             if not isinstance(request, dict):
                 raise BootstrapControlError("control request must be a JSON object")
-            response = {"ok": True, "result": self._dispatch(request)}
+            response = {"ok": True, "result": await self._dispatch(request)}
         except (
             BootstrapControlError,
             BootstrapOperationRejected,
@@ -97,7 +97,7 @@ class BootstrapControlServer:
         writer.close()
         await writer.wait_closed()
 
-    def _dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def _dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
         operation = request.get("op")
         if operation == "health":
             return self._service.health()
@@ -113,6 +113,15 @@ class BootstrapControlServer:
             return self._service.issue_development_setup_code(ttl)
         if operation == "dev.show":
             return self._service.development_setup_status()
+        if operation == "dev.reset":
+            forget_wifi_profiles = request.get("forget_wifi_profiles", False)
+            if not isinstance(forget_wifi_profiles, bool):
+                raise BootstrapControlError(
+                    "forget_wifi_profiles must be a boolean"
+                )
+            return await self._service.reset_development_state(
+                forget_wifi_profiles=forget_wifi_profiles,
+            )
         raise BootstrapControlError(f"unknown control operation: {operation!r}")
 
 

@@ -100,10 +100,16 @@ async def run_daemon(
 
     store = SQLiteBootstrapStateStore(settings.database_path)
     identity_manager = HostIdentityManager(settings.identity_key_path, settings.mode)
+    network = (
+        NetworkManagerProvisioning()
+        if settings.network_adapter is NetworkAdapter.NETWORK_MANAGER
+        else InMemoryNetworkProvisioning()
+    )
     service = BootstrapService(
         settings=settings,
         store=store,
         identity_manager=identity_manager,
+        network=network,
     )
     control = BootstrapControlServer(settings.control_socket, service)
     notifier = SystemdNotifier.from_environ()
@@ -114,11 +120,6 @@ async def run_daemon(
     instance_lock.acquire()
     try:
         service.initialize()
-        network = (
-            NetworkManagerProvisioning()
-            if settings.network_adapter is NetworkAdapter.NETWORK_MANAGER
-            else InMemoryNetworkProvisioning()
-        )
         try:
             recovered_network = await network.recover_interrupted()
             logger.info(

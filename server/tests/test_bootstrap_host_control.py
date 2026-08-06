@@ -35,6 +35,7 @@ from eidolon_admin_server.bootstrap.control import (
     BootstrapControlServer,
 )
 from eidolon_admin_server.bootstrap.daemon import run_daemon
+from eidolon_admin_server.bootstrap.domain import NetworkState
 from eidolon_admin_server.bootstrap.identity import (
     HostIdentityError,
     HostIdentityManager,
@@ -82,7 +83,11 @@ def short_runtime_dir() -> Path:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _service(settings: BootstrapSettings) -> BootstrapService:
+def _service(
+    settings: BootstrapSettings,
+    *,
+    network: InMemoryNetworkProvisioning | None = None,
+) -> BootstrapService:
     return BootstrapService(
         settings=settings,
         store=SQLiteBootstrapStateStore(settings.database_path),
@@ -90,6 +95,7 @@ def _service(settings: BootstrapSettings) -> BootstrapService:
             settings.identity_key_path,
             settings.mode,
         ),
+        network=network,
     )
 
 
@@ -293,6 +299,23 @@ def test_production_rejects_development_setup_code_issuance(tmp_path: Path) -> N
         service.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_production_rejects_development_reset(tmp_path: Path) -> None:
+    development = _settings(tmp_path)
+    HostIdentityManager(
+        development.identity_key_path,
+        development.mode,
+    ).load()
+    production = _settings(tmp_path, BootstrapMode.PRODUCTION)
+    service = _service(production, network=InMemoryNetworkProvisioning())
+    service.initialize()
+    try:
+        with pytest.raises(BootstrapOperationRejected, match="disabled"):
+            await service.reset_development_state(forget_wifi_profiles=False)
+    finally:
+        service.shutdown()
+
+
 def test_store_rejects_unknown_schema_version(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     settings.state_dir.mkdir(parents=True)
@@ -339,6 +362,34 @@ async def test_control_socket_exposes_read_state_and_dev_issuance(
 
         with pytest.raises(BootstrapControlError, match="unknown control operation"):
             await client.request("not.allowed")
+    finally:
+        await server.close()
+        service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_control_socket_development_reset_can_forget_wifi(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    settings = replace(
+        _settings(tmp_path, runtime_dir=short_runtime_dir),
+        dev_setup_code="246810",
+    )
+    network = InMemoryNetworkProvisioning(current_ssid="Development Wi-Fi")
+    service = _service(settings, network=network)
+    service.initialize()
+    service.reconcile_network_state(NetworkState.CONNECTED)
+    server = BootstrapControlServer(settings.control_socket, service)
+    await server.start()
+    client = BootstrapControlClient(settings.control_socket)
+    try:
+        reset = await client.request("dev.reset", forget_wifi_profiles=True)
+        assert reset["before"]["network_state"] == "connected"
+        assert reset["after"]["claim_state"] == "unclaimed"
+        assert reset["after"]["network_state"] == "unconfigured"
+        assert reset["after"]["reset_epoch"] == 1
+        assert reset["development_setup"] is not None
     finally:
         await server.close()
         service.shutdown()

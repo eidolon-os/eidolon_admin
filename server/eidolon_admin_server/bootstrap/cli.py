@@ -23,6 +23,12 @@ def _parser() -> argparse.ArgumentParser:
     code = dev_subparsers.add_parser("code")
     code.add_argument("--ttl", type=int, default=None)
     dev_subparsers.add_parser("show")
+    reset = dev_subparsers.add_parser("reset")
+    reset.add_argument(
+        "--forget-wifi",
+        action="store_true",
+        help="delete every saved Wi-Fi profile and disconnect the Host",
+    )
     return parser
 
 
@@ -38,6 +44,11 @@ async def _execute(args: argparse.Namespace) -> dict[str, Any]:
         return await client.request("dev.code", **parameters)
     if args.command == "dev" and args.dev_command == "show":
         return await client.request("dev.show")
+    if args.command == "dev" and args.dev_command == "reset":
+        return await client.request(
+            "dev.reset",
+            forget_wifi_profiles=args.forget_wifi,
+        )
     raise AssertionError("argparse accepted an unknown bootstrap command")
 
 

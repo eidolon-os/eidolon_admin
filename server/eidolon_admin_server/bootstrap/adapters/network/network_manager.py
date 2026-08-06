@@ -22,6 +22,9 @@ from ...ports import (
 _NM_NAME = "org.freedesktop.NetworkManager"
 _NM_PATH = "/org/freedesktop/NetworkManager"
 _NM_IFACE = "org.freedesktop.NetworkManager"
+_SETTINGS_PATH = "/org/freedesktop/NetworkManager/Settings"
+_SETTINGS_IFACE = "org.freedesktop.NetworkManager.Settings"
+_SETTINGS_CONNECTION_IFACE = "org.freedesktop.NetworkManager.Settings.Connection"
 _DEVICE_IFACE = "org.freedesktop.NetworkManager.Device"
 _WIFI_IFACE = "org.freedesktop.NetworkManager.Device.Wireless"
 _AP_IFACE = "org.freedesktop.NetworkManager.AccessPoint"
@@ -201,6 +204,65 @@ class NetworkManagerProvisioning:
             ) from exc
         self._active = None
         return await self.get_state()
+
+    async def forget_all_wifi_profiles(self) -> NetworkProvisioningSnapshot:
+        """Delete every saved Wi-Fi profile to reproduce a factory-like network state."""
+
+        if self._active is not None:
+            await self.rollback(self._active.operation_id)
+        bus = await self._connect()
+        try:
+            _, _, device_path = await self._interfaces()
+            introspection = await bus.introspect(_NM_NAME, _SETTINGS_PATH)
+            proxy = bus.get_proxy_object(_NM_NAME, _SETTINGS_PATH, introspection)
+            settings = proxy.get_interface(_SETTINGS_IFACE)
+            for path in await settings.call_list_connections():
+                connection_introspection = await bus.introspect(_NM_NAME, path)
+                connection_proxy = bus.get_proxy_object(
+                    _NM_NAME,
+                    path,
+                    connection_introspection,
+                )
+                connection = connection_proxy.get_interface(
+                    _SETTINGS_CONNECTION_IFACE
+                )
+                values = await connection.call_get_settings()
+                connection_group = values.get("connection", {})
+                connection_type = connection_group.get("type")
+                if (
+                    connection_type is not None
+                    and connection_type.value == "802-11-wireless"
+                ):
+                    await connection.call_delete()
+            if await self._current_ssid() is not None:
+                device_introspection = await bus.introspect(_NM_NAME, device_path)
+                device_proxy = bus.get_proxy_object(
+                    _NM_NAME,
+                    device_path,
+                    device_introspection,
+                )
+                await device_proxy.get_interface(_DEVICE_IFACE).call_disconnect()
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + 5
+            while await self._current_ssid() is not None:
+                if loop.time() >= deadline:
+                    raise NetworkProvisioningError(
+                        "Wi-Fi remained connected after profile reset"
+                    )
+                await asyncio.sleep(0.1)
+        except Exception as exc:
+            if isinstance(exc, NetworkProvisioningError):
+                raise
+            raise NetworkProvisioningError(
+                "NetworkManager could not forget saved Wi-Fi profiles"
+            ) from exc
+        self._active = None
+        return NetworkProvisioningSnapshot(
+            state=NetworkState.UNCONFIGURED,
+            active_operation_id=None,
+            current_ssid=None,
+            staged_ssid=None,
+        )
 
     def _require_active(self, operation_id: str) -> _ActiveNetworkChange:
         if self._active is None or self._active.operation_id != operation_id:

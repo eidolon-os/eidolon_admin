@@ -92,4 +92,11 @@ class BootstrapStateStore(Protocol):
         now: str,
     ) -> None: ...
 
+    def reset_authority(
+        self,
+        *,
+        network_state: NetworkState,
+        now: str,
+    ) -> BootstrapState: ...
+
     def close(self) -> None: ...

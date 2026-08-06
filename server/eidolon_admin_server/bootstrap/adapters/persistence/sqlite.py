@@ -526,6 +526,66 @@ class SQLiteBootstrapStateStore:
                 (network_state.value, now),
             )
 
+    def reset_authority(
+        self,
+        *,
+        network_state: NetworkState,
+        now: str,
+    ) -> BootstrapState:
+        active_states = (
+            BootstrapOperationState.PENDING.value,
+            BootstrapOperationState.RUNNING.value,
+            BootstrapOperationState.WAITING_CONFIRMATION.value,
+            BootstrapOperationState.COMPENSATING.value,
+        )
+        state = self.get_state()
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE commissioning_sessions
+                   SET revoked_at = ?
+                 WHERE consumed_at IS NULL AND revoked_at IS NULL
+                """,
+                (now,),
+            )
+            self.connection.execute(
+                """
+                UPDATE controller_grants
+                   SET revoked_at = ?
+                 WHERE revoked_at IS NULL
+                """,
+                (now,),
+            )
+            self.connection.execute(
+                """
+                UPDATE bootstrap_operations
+                   SET state = ?, updated_at = ?, error_code = ?
+                 WHERE state IN (?, ?, ?, ?)
+                """,
+                (
+                    BootstrapOperationState.FAILED.value,
+                    now,
+                    "authority_reset",
+                    *active_states,
+                ),
+            )
+            self.connection.execute(
+                """
+                UPDATE bootstrap_state
+                   SET reset_epoch = ?, claim_state = ?, network_state = ?,
+                       recovery_state = ?, updated_at = ?
+                 WHERE singleton = 1
+                """,
+                (
+                    state.reset_epoch + 1,
+                    ClaimState.UNCLAIMED.value,
+                    network_state.value,
+                    RecoveryState.NORMAL.value,
+                    now,
+                ),
+            )
+        return self.get_state()
+
     @staticmethod
     def _controller_from_row(row: sqlite3.Row) -> ControllerGrant:
         try:

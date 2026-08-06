@@ -100,6 +100,10 @@ async def test_in_memory_network_adapter_stages_confirms_and_rolls_back() -> Non
     assert confirmed.current_ssid == "new-network"
     assert confirmed.active_operation_id is None
 
+    cleared = await network.forget_all_wifi_profiles()
+    assert cleared.state is NetworkState.UNCONFIGURED
+    assert cleared.current_ssid is None
+
 
 @pytest.mark.asyncio
 async def test_network_adapter_rejects_overlapping_or_wrong_operation() -> None:
@@ -234,6 +238,14 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         if store_kind == "memory"
         else SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
     )
+    network = InMemoryNetworkProvisioning(
+        current_ssid="Existing",
+        access_points=[
+            WifiAccessPoint("Home", 58, True),
+            WifiAccessPoint("Cafe", 34, False),
+            WifiAccessPoint("Home", 81, True),
+        ],
+    )
     bootstrap = BootstrapService(
         settings=settings,
         store=store,
@@ -241,17 +253,10 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
             settings.identity_key_path,
             settings.mode,
         ),
+        network=network,
     )
     bootstrap.initialize()
     descriptor = bootstrap.issue_development_setup_code(300)
-    network = InMemoryNetworkProvisioning(
-        current_ssid="Existing",
-        access_points=[
-            WifiAccessPoint("Home", 58, True),
-            WifiAccessPoint("Cafe", 34, False),
-            WifiAccessPoint("Home", 81, True),
-        ]
-    )
     bootstrap.reconcile_network_state(NetworkState.CONNECTED)
     commissioning = CommissioningService(store=store, network=network)
     try:
@@ -308,6 +313,18 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         if store_kind == "sqlite":
             dump = "\n".join(store.connection.iterdump())
             assert "correct horse battery staple" not in dump
+
+        reset = await bootstrap.reset_development_state(
+            forget_wifi_profiles=True,
+        )
+        assert reset["before"]["claim_state"] == "claimed"
+        assert reset["after"]["claim_state"] == "unclaimed"
+        assert reset["after"]["network_state"] == "unconfigured"
+        assert reset["after"]["reset_epoch"] == 1
+        assert reset["forgot_wifi_profiles"] is True
+        assert store.list_controllers()[0].revoked_at is not None
+        with pytest.raises(CommissioningRequestRejected, match="unavailable"):
+            commissioning.status(authorization)
     finally:
         bootstrap.shutdown()
 

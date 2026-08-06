@@ -15,7 +15,11 @@ from typing import Any
 from .config import BootstrapMode, BootstrapSettings
 from .identity import HostIdentityManager
 from .domain import NetworkState
-from .ports import BootstrapStateStore
+from .ports import (
+    BootstrapStateStore,
+    NetworkProvisioning,
+    NetworkProvisioningError,
+)
 from .tls_identity import CommissioningTlsIdentityManager
 
 
@@ -44,6 +48,7 @@ class BootstrapService:
         store: BootstrapStateStore,
         identity_manager: HostIdentityManager,
         tls_identity_manager: CommissioningTlsIdentityManager | None = None,
+        network: NetworkProvisioning | None = None,
     ) -> None:
         self._settings = settings
         self._store = store
@@ -52,6 +57,7 @@ class BootstrapService:
             tls_identity_manager
             or CommissioningTlsIdentityManager(settings.commissioning_tls_pem_path)
         )
+        self._network = network
         self._run_id: str | None = None
         self._started_at: str | None = None
         self._commissioning_status = (
@@ -253,3 +259,59 @@ class BootstrapService:
             )
         session = self._store.latest_commissioning_session()
         return {"current": None if session is None else session.to_dict()}
+
+    async def reset_development_state(
+        self,
+        *,
+        forget_wifi_profiles: bool,
+    ) -> dict[str, Any]:
+        """Reset commissioning authority without replacing the stable Host identity."""
+
+        if self._settings.mode is not BootstrapMode.DEVELOPMENT:
+            raise BootstrapOperationRejected(
+                "development reset is disabled in production"
+            )
+        if self._network is None:
+            raise BootstrapOperationRejected(
+                "development reset requires a network provisioning adapter"
+            )
+        try:
+            network = await self._network.get_state()
+        except NetworkProvisioningError as exc:
+            raise BootstrapOperationRejected(
+                "development reset could not read the current network state"
+            ) from exc
+
+        before = self._store.get_state()
+        after = self._store.reset_authority(
+            network_state=network.state,
+            now=_timestamp(_now()),
+        )
+        if forget_wifi_profiles:
+            try:
+                network = await self._network.forget_all_wifi_profiles()
+            except NetworkProvisioningError as exc:
+                try:
+                    current = await self._network.get_state()
+                    self.reconcile_network_state(current.state)
+                except NetworkProvisioningError:
+                    pass
+                raise BootstrapOperationRejected(
+                    "claim reset completed, but saved Wi-Fi profiles could not be cleared"
+                ) from exc
+            self.reconcile_network_state(network.state)
+            after = self._store.get_state()
+
+        setup = self._active_development_setup()
+        logger.warning(
+            "development authority reset reset_epoch=%s forget_wifi_profiles=%s",
+            after.reset_epoch,
+            forget_wifi_profiles,
+        )
+        return {
+            "host_id": self._identity_manager.identity.host_id,
+            "before": before.to_dict(),
+            "after": after.to_dict(),
+            "forgot_wifi_profiles": forget_wifi_profiles,
+            "development_setup": setup,
+        }

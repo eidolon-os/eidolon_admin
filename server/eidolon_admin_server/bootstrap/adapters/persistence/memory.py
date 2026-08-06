@@ -296,5 +296,59 @@ class InMemoryBootstrapStateStore:
             updated_at=now,
         )
 
+    def reset_authority(
+        self,
+        *,
+        network_state: NetworkState,
+        now: str,
+    ) -> BootstrapState:
+        self._require_open()
+        self._sessions = [
+            (
+                replace(metadata, revoked_at=now)
+                if metadata.consumed_at is None and metadata.revoked_at is None
+                else metadata,
+                stored_hash,
+            )
+            for metadata, stored_hash in self._sessions
+        ]
+        self._controllers = {
+            controller_id: (
+                replace(grant, revoked_at=now)
+                if grant.revoked_at is None
+                else grant
+            )
+            for controller_id, grant in self._controllers.items()
+        }
+        active_states = {
+            BootstrapOperationState.PENDING,
+            BootstrapOperationState.RUNNING,
+            BootstrapOperationState.WAITING_CONFIRMATION,
+            BootstrapOperationState.COMPENSATING,
+        }
+        self._operations = {
+            operation_id: (
+                replace(
+                    operation,
+                    state=BootstrapOperationState.FAILED,
+                    updated_at=now,
+                    error_code="authority_reset",
+                )
+                if operation.state in active_states
+                else operation
+            )
+            for operation_id, operation in self._operations.items()
+        }
+        state = self.get_state()
+        self._state = replace(
+            state,
+            reset_epoch=state.reset_epoch + 1,
+            claim_state=ClaimState.UNCLAIMED,
+            network_state=network_state,
+            recovery_state=RecoveryState.NORMAL,
+            updated_at=now,
+        )
+        return self._state
+
     def close(self) -> None:
         self._opened = False

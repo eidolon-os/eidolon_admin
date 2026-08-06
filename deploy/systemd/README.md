@@ -38,6 +38,20 @@ creating short-lived commissioning sessions for that code while the Host is
 unclaimed. The setting is rejected in production mode and must never be placed
 in the tracked systemd drop-in or a product image.
 
+To repeat commissioning tests without deleting the Host identity, development
+mode also exposes:
+
+```text
+eidolon-bootstrapctl dev reset
+eidolon-bootstrapctl dev reset --forget-wifi
+```
+
+The first command increments `reset_epoch`, revokes Controller grants and Setup
+sessions, and returns the Host to `unclaimed` while preserving its current
+network. `--forget-wifi` additionally deletes all NetworkManager Wi-Fi profiles
+and disconnects the Host, so the invoking SSH connection is expected to drop.
+Both commands fail closed in production.
+
 Do not grant the existing Admin API process system privileges. Factory reset is
 not implemented by these units and will use a separate root oneshot after every
 service has supplied a reset manifest.
