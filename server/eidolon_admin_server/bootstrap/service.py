@@ -193,7 +193,16 @@ class BootstrapService:
             or session.revoked_at is not None
             or session.expires_at <= now
         ):
-            return None
+            fixed_code = self._settings.dev_setup_code
+            state = self._store.get_state()
+            if fixed_code is None or state.claim_state.value != "unclaimed":
+                return None
+            self._issue_development_setup_code(
+                fixed_code,
+                self._settings.dev_setup_code_ttl_seconds,
+            )
+            session = self._store.latest_commissioning_session()
+            assert session is not None
         return {
             "commissioning_id": session.session_id,
             "expires_at": session.expires_at,
@@ -210,15 +219,24 @@ class BootstrapService:
         if not 60 <= ttl <= 86400:
             raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
 
+        setup_code = self._settings.dev_setup_code or (
+            f"{secrets.randbelow(1_000_000):06d}"
+        )
+        return self._issue_development_setup_code(setup_code, ttl)
+
+    def _issue_development_setup_code(
+        self,
+        setup_code: str,
+        ttl_seconds: int,
+    ) -> dict[str, Any]:
         now = _now()
         session_id = str(uuid.uuid4())
-        setup_code = f"{secrets.randbelow(1_000_000):06d}"
         result = {
             "host_id": self._identity_manager.identity.host_id,
             "commissioning_id": session_id,
             "setup_code": setup_code,
             "issued_at": _timestamp(now),
-            "expires_at": _timestamp(now + timedelta(seconds=ttl)),
+            "expires_at": _timestamp(now + timedelta(seconds=ttl_seconds)),
         }
         self._store.issue_commissioning_session(
             session_id=session_id,

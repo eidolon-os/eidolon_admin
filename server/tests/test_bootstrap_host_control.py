@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     SQLiteBootstrapStateStore,
 )
+from eidolon_admin_server.bootstrap.adapters.network import (
+    InMemoryNetworkProvisioning,
+)
+from eidolon_admin_server.bootstrap.commissioning_service import CommissioningService
 from eidolon_admin_server.bootstrap.config import (
     BootstrapConfigurationError,
     BootstrapMode,
@@ -101,6 +106,36 @@ def test_development_defaults_to_hardware_free_adapters() -> None:
 
     assert settings.commissioning_adapter is CommissioningAdapter.DISABLED
     assert settings.network_adapter is NetworkAdapter.MEMORY
+    assert settings.dev_setup_code is None
+
+
+def test_fixed_setup_code_is_accepted_only_in_development() -> None:
+    settings = load_bootstrap_settings(
+        {
+            "EIDOLON_BOOTSTRAP_MODE": "development",
+            "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "246810",
+        }
+    )
+    assert settings.dev_setup_code == "246810"
+
+    with pytest.raises(BootstrapConfigurationError, match="development-only"):
+        load_bootstrap_settings(
+            {
+                "EIDOLON_BOOTSTRAP_MODE": "production",
+                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "246810",
+            }
+        )
+
+
+@pytest.mark.parametrize("code", ["12345", "1234567", "abcdef", "12 456"])
+def test_fixed_development_setup_code_requires_six_digits(code: str) -> None:
+    with pytest.raises(BootstrapConfigurationError, match="exactly 6 digits"):
+        load_bootstrap_settings(
+            {
+                "EIDOLON_BOOTSTRAP_MODE": "development",
+                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": code,
+            }
+        )
 
 
 def test_production_rejects_test_adapters() -> None:
@@ -205,6 +240,39 @@ def test_development_setup_code_is_short_lived_and_not_persisted(
         status = service.development_setup_status()["current"]
         assert status["session_id"] == replacement["commissioning_id"]
         assert "setup_code" not in status
+    finally:
+        service.shutdown()
+
+
+def test_fixed_development_setup_code_is_automatically_available(
+    tmp_path: Path,
+) -> None:
+    settings = replace(_settings(tmp_path), dev_setup_code="246810")
+    service = _service(settings)
+    service.initialize()
+    try:
+        endpoint = service.commissioning_endpoint()
+        development_setup = endpoint["development_setup"]
+        assert development_setup is not None
+
+        commissioning = CommissioningService(
+            store=service._store,  # noqa: SLF001 - test application boundary
+            network=InMemoryNetworkProvisioning(),
+        )
+        authorization = commissioning.authorize(
+            session_id=development_setup["commissioning_id"],
+            secret="246810",
+        )
+        assert authorization.session_id == development_setup["commissioning_id"]
+
+        replacement = service.issue_development_setup_code(300)
+        assert replacement["setup_code"] == "246810"
+        assert replacement["commissioning_id"] != development_setup["commissioning_id"]
+
+        database_dump = "\n".join(
+            service._store.connection.iterdump()  # noqa: SLF001
+        )
+        assert "246810" not in database_dump
     finally:
         service.shutdown()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
@@ -42,6 +43,7 @@ class BootstrapSettings:
     control_socket: Path
     ble_service_uuid: str
     dev_setup_code_ttl_seconds: int = 600
+    dev_setup_code: str | None = None
     commissioning_adapter: CommissioningAdapter = CommissioningAdapter.DISABLED
     network_adapter: NetworkAdapter = NetworkAdapter.MEMORY
 
@@ -142,6 +144,22 @@ def load_bootstrap_settings(
             "development Setup code TTL must be between 60 and 86400 seconds"
         )
 
+    raw_dev_setup_code = env.get("EIDOLON_BOOTSTRAP_DEV_SETUP_CODE")
+    dev_setup_code = (
+        None if raw_dev_setup_code is None else raw_dev_setup_code.strip()
+    )
+    if dev_setup_code == "":
+        dev_setup_code = None
+    if dev_setup_code is not None:
+        if mode is not BootstrapMode.DEVELOPMENT:
+            raise BootstrapConfigurationError(
+                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE is development-only"
+            )
+        if re.fullmatch(r"[0-9]{6}", dev_setup_code) is None:
+            raise BootstrapConfigurationError(
+                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE must contain exactly 6 digits"
+            )
+
     ble_service_uuid = env.get(
         "EIDOLON_BOOTSTRAP_BLE_SERVICE_UUID", _DEFAULT_BLE_SERVICE_UUID
     ).strip()
@@ -171,6 +189,7 @@ def load_bootstrap_settings(
         control_socket=control_socket,
         ble_service_uuid=ble_service_uuid,
         dev_setup_code_ttl_seconds=ttl,
+        dev_setup_code=dev_setup_code,
         commissioning_adapter=commissioning_adapter,
         network_adapter=network_adapter,
     )

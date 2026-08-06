@@ -234,9 +234,11 @@ journald；普通日志文件不能作为 claim、Controller 或 operation 的�
 App 端可以提供固定输入和手动录入，但要区分“固定开发入口”和“固定安全秘密”：
 
 - 可以固定：BLE Service UUID、Dev 菜单入口、默认 Host 名称、模拟数据、开发环境地址。
-- 不建议固定：所有树莓派共用的 commissioning secret、Host private key、产品可接受的万能配对码。
+- 开发阶段可显式固定：受控实验室 Pi 共用的 6 位 Setup 码，但必须由 development-only
+  配置开关启用，不能成为产品可接受的万能配对码。
+- 永远不能固定：Host private key、产品 commissioning secret。
 
-真实 Pi 联调使用每台设备临时生成的 6 位 Setup 码。App 先通过固定 BLE Service UUID 发现 Host，再读取 Host 签名的动态 endpoint，最后在 pinned TLS 内提交 Setup 码。开发者不需要复制 JSON；产品二维码仍是独立的制造带外信任入口。
+真实 Pi 联调可以使用显式配置的固定开发码，也可以按需生成临时码。App 先通过固定 BLE Service UUID 发现 Host，再读取 Host 签名的动态 endpoint，最后在 pinned TLS 内提交 Setup 码。开发者不需要复制 JSON；产品二维码仍是独立的制造带外信任入口。
 
 ### 6.2 分层开发模式
 
@@ -256,7 +258,15 @@ Pi 以显式开发模式启动：
 EIDOLON_BOOTSTRAP_MODE=development
 ```
 
-第一次启动时生成独立 Host key；开发者按需签发随机、短期的 6 位 Setup 码：
+第一次启动时生成独立 Host key。日常联调可在 root-owned、`0600` 的
+`/etc/eidolon/bootstrap.env` 设置固定开发码：
+
+```text
+EIDOLON_BOOTSTRAP_DEV_SETUP_CODE=<six-digit-development-code>
+```
+
+固定的是码值，不是授权 session：Bootstrap 会为未认领 Host 自动续建短期 session，
+DB 仍只保存 hash。也可以不配置固定码，继续按需签发随机、短期的 6 位 Setup 码：
 
 ```text
 eidolon-bootstrapctl dev code --ttl 600
@@ -270,8 +280,9 @@ eidolon-bootstrapctl dev code --ttl 600
 
 App Debug 页面先扫描附近 Host，选择后显示 6 位数字输入。Host 公钥、commissioning ID、有效期和 TLS pin 从签名 endpoint 获取；Host ID/身份指纹由公钥派生，不要求用户录入。此开发路径属于受控 TOFU；产品仍必须使用二维码、NFC 或其他制造带外因子绑定真实 Host 身份。
 
-Setup 码默认 10 分钟过期，连续 5 次失败会自动撤销。重新签发会撤销尚未 consumed/revoked 的旧 session；
-认领成功时 session 消费、Controller Grant 和 claim 状态在一个 store 事务完成。
+Setup session 默认 10 分钟过期，连续 5 次失败会自动撤销。固定开发码模式会为未认领
+Host 自动建立新 session；随机码模式需要重新签发。认领成功时 session 消费、
+Controller Grant 和 claim 状态在一个 store 事务完成。
 
 #### D2：接近产品的集成测试
 
@@ -294,10 +305,11 @@ Setup 码默认 10 分钟过期，连续 5 次失败会自动撤销。重新签�
 
 1. **已实现**：Flutter 仅在 `kDebugMode` 显示开发 Setup 码入口；release UI 不显示。
 2. **已实现**：Bootstrap production 模式缺少制造身份时 fail closed，并拒绝签发开发 Setup 码。
-3. **已实现**：开发 Setup 码运行时随机生成、只持久化 hash，并限制失败次数；源码与 Git 中没有万能码。
+3. **已实现**：开发 Setup 码支持随机短期码或显式固定六位码；两者都只持久化 hash。
+   固定码配置在 production 模式会 fail closed，源码与 Git 中不保存实际部署码。
 4. **待实现**：独立 dev/product flavor，以及对 Android release artifact 和 Pi product config 的 CI 负向检查。
 
-当前真实 D1 链路固定的是 6 位格式，不是固定码值，因此不预留万能码 feature flag。
+开发固定码只降低 D1 联调摩擦，不属于产品信任协议。产品必须使用每台设备唯一的制造凭据。
 
 ## 7. 通道与信任协议
 

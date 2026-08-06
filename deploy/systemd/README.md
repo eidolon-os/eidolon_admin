@@ -32,6 +32,12 @@ The development Pi drop-in also selects the real `bluez` and `networkmanager`
 adapters. Desktop/unit tests intentionally default to `disabled` + `memory`;
 production settings fail closed unless both real adapters are selected.
 
+Development may set `EIDOLON_BOOTSTRAP_DEV_SETUP_CODE` to one fixed six-digit
+code in root-owned `/etc/eidolon/bootstrap.env` (mode `0600`). Bootstrap keeps
+creating short-lived commissioning sessions for that code while the Host is
+unclaimed. The setting is rejected in production mode and must never be placed
+in the tracked systemd drop-in or a product image.
+
 Do not grant the existing Admin API process system privileges. Factory reset is
 not implemented by these units and will use a separate root oneshot after every
 service has supplied a reset manifest.

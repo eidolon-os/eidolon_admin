@@ -5,3 +5,6 @@
 Environment=EIDOLON_BOOTSTRAP_MODE=development
 Environment=EIDOLON_BOOTSTRAP_COMMISSIONING_ADAPTER=bluez
 Environment=EIDOLON_BOOTSTRAP_NETWORK_ADAPTER=networkmanager
+# Optional fixed six-digit code belongs in the root-owned 0600
+# /etc/eidolon/bootstrap.env, never in this tracked drop-in:
+# EIDOLON_BOOTSTRAP_DEV_SETUP_CODE=<six-digits>
