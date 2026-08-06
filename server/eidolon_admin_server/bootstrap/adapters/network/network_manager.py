@@ -153,6 +153,11 @@ class NetworkManagerProvisioning:
             checkpoint_path = await manager.call_checkpoint_create(
                 [device_path], self._rollback_timeout_seconds, 0
             )
+        except Exception as exc:
+            raise NetworkProvisioningError(
+                "NetworkManager checkpoint creation failed"
+            ) from exc
+        try:
             settings = self._connection_settings(request)
             await manager.call_add_and_activate_connection2(
                 settings,

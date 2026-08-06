@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from .ports import (
 
 
 _CONTROLLER_ID = re.compile(r"^ectrl-[0-9a-f]{20}$")
+logger = logging.getLogger("eidolon.bootstrap.commissioning")
 
 
 class CommissioningRequestRejected(RuntimeError):
@@ -296,6 +298,12 @@ class CommissioningService:
                 updated_at=_timestamp(self._clock()),
             )
         except (BootstrapStateConflict, NetworkProvisioningError) as exc:
+            logger.warning(
+                "Wi-Fi staging failed operation_id=%s ssid=%r reason=%s",
+                operation_id,
+                ssid,
+                exc,
+            )
             if operation_created:
                 fallback = (
                     NetworkState.CONNECTED

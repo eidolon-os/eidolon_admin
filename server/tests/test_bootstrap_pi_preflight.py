@@ -99,3 +99,17 @@ def test_pi_preflight_warns_but_does_not_fail_for_existing_raspap_services(
         if check["name"].startswith("legacy-network-service")
     ]
     assert all(check["blocking"] is False and check["ok"] is False for check in warnings)
+
+
+def test_polkit_rule_grants_only_required_networkmanager_actions() -> None:
+    repository = Path(__file__).resolve().parents[2]
+    rule = (
+        repository / "deploy/polkit/60-eidolon-bootstrap-network.rules"
+    ).read_text()
+
+    assert 'subject.user !== "eidolon-bootstrap"' in rule
+    assert "org.freedesktop.NetworkManager.checkpoint-rollback" in rule
+    assert "org.freedesktop.NetworkManager.network-control" in rule
+    assert "org.freedesktop.NetworkManager.settings.modify.system" in rule
+    assert "org.freedesktop.NetworkManager.wifi.scan" in rule
+    assert "org.freedesktop.NetworkManager.enable-disable-network" not in rule

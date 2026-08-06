@@ -17,7 +17,8 @@ The product image/provisioner must create:
   with owner `eidolon-bootstrap:eidolon-bootstrap` and mode `0600`;
 - install `deploy/polkit/60-eidolon-bootstrap-network.rules` under
   `/etc/polkit-1/rules.d/`; it grants only the NetworkManager actions used by
-  the dedicated bootstrap process;
+  the dedicated bootstrap process, including checkpoint/rollback for staged
+  Wi-Fi changes;
 - verify the target image's BlueZ system-bus policy permits the dedicated user
   to register the tracked GATT application. Do not add root or Linux
   capabilities as a workaround without recording the exact denied D-Bus call.

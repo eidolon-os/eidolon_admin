@@ -65,6 +65,9 @@ Controller key 与现有 Mobile Body/Hub device key 使用不同 alias 和 ID �
 `NetworkManagerProvisioning` 通过系统 D-Bus 实现 scan、AddAndActivateConnection2、
 CheckpointCreate/Rollback/Destroy。Wi-Fi profile/密码的唯一权威仍是 NetworkManager；
 Bootstrap store 只记录 operation、目标 SSID、状态、error code 和 reset epoch。
+专用 Polkit 规则只授予 `eidolon-bootstrap` 扫描、network control、system profile
+修改和 `checkpoint-rollback`；真机 PoC 已确认缺少最后一项会在提交
+Wi-Fi profile 之前 fail closed。
 
 `controller_grants`、`bootstrap_operations`、claim/session 消费是跨重启权威状态，继续
 使用 `BootstrapStateStore` 的 SQLite adapter；一般日志仍由 journald 持有。
