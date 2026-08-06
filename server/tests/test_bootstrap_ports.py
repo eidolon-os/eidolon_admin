@@ -63,8 +63,8 @@ def test_service_runs_against_state_store_port_without_sqlite(tmp_path: Path) ->
     )
     service.initialize()
     try:
-        descriptor = service.issue_development_descriptor(300)
-        assert descriptor["host_id"].startswith("ehost-")
+        credential = service.issue_development_setup_code(300)
+        assert credential["host_id"].startswith("ehost-")
         assert store.latest_commissioning_session() is not None
         assert service.health()["state"]["claim_state"] == "unclaimed"
     finally:
@@ -116,7 +116,7 @@ async def test_network_adapter_rejects_overlapping_or_wrong_operation() -> None:
         await network.confirm("network-op-2")
 
 
-def test_sqlite_v3_keeps_authority_and_drops_v1_daemon_diagnostics(
+def test_sqlite_v4_keeps_authority_and_drops_v1_daemon_diagnostics(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "bootstrap.sqlite3"
@@ -174,10 +174,11 @@ def test_sqlite_v3_keeps_authority_and_drops_v1_daemon_diagnostics(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 3
+        assert version == 4
         assert "daemon_runs" not in tables
         assert store.get_state().reset_epoch == 7
         assert store.latest_commissioning_session().session_id == "session-1"
+        assert store.latest_commissioning_session().failed_attempts == 0
     finally:
         store.close()
 
@@ -242,7 +243,7 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         ),
     )
     bootstrap.initialize()
-    descriptor = bootstrap.issue_development_descriptor(300)
+    descriptor = bootstrap.issue_development_setup_code(300)
     network = InMemoryNetworkProvisioning(
         access_points=[
             WifiAccessPoint("Home", 58, True),
@@ -254,7 +255,7 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
     try:
         authorization = commissioning.authorize(
             session_id=descriptor["commissioning_id"],
-            secret=descriptor["commissioning_secret"],
+            secret=descriptor["setup_code"],
         )
         scanned = await commissioning.scan_networks(authorization)
         assert scanned["networks"] == [
@@ -305,11 +306,17 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         bootstrap.shutdown()
 
 
-def test_commissioning_rejects_wrong_secret_without_changing_state(
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_commissioning_revokes_setup_code_after_five_wrong_attempts(
     tmp_path: Path,
+    store_kind: str,
 ) -> None:
     settings = _settings(tmp_path)
-    store = InMemoryBootstrapStateStore()
+    store = (
+        InMemoryBootstrapStateStore()
+        if store_kind == "memory"
+        else SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
+    )
     bootstrap = BootstrapService(
         settings=settings,
         store=store,
@@ -317,17 +324,27 @@ def test_commissioning_rejects_wrong_secret_without_changing_state(
     )
     bootstrap.initialize()
     try:
-        descriptor = bootstrap.issue_development_descriptor(300)
+        descriptor = bootstrap.issue_development_setup_code(300)
         commissioning = CommissioningService(
             store=store,
             network=InMemoryNetworkProvisioning(),
         )
-        with pytest.raises(
-            CommissioningRequestRejected, match="Commissioning session is unavailable"
-        ):
+        wrong_code = "000000" if descriptor["setup_code"] != "000000" else "000001"
+        for attempt in range(5):
+            with pytest.raises(
+                CommissioningRequestRejected,
+                match="Commissioning session is unavailable",
+            ):
+                commissioning.authorize(
+                    session_id=descriptor["commissioning_id"],
+                    secret=wrong_code,
+                )
+            assert store.latest_commissioning_session().failed_attempts == attempt + 1
+        assert store.latest_commissioning_session().revoked_at is not None
+        with pytest.raises(CommissioningRequestRejected):
             commissioning.authorize(
                 session_id=descriptor["commissioning_id"],
-                secret="x" * 32,
+                secret=descriptor["setup_code"],
             )
         assert store.get_state().claim_state.value == "unclaimed"
         assert store.list_controllers() == []
@@ -351,10 +368,10 @@ async def test_claimed_controller_authenticates_and_changes_network(
         access_points=[WifiAccessPoint("New Home", 90, True)]
     )
     commissioning = CommissioningService(store=store, network=network)
-    descriptor = bootstrap.issue_development_descriptor(300)
+    descriptor = bootstrap.issue_development_setup_code(300)
     initial = commissioning.authorize(
         session_id=descriptor["commissioning_id"],
-        secret=descriptor["commissioning_secret"],
+        secret=descriptor["setup_code"],
     )
     first_operation = "c74b0000-5edc-4af7-af70-aefc7531d862"
     await commissioning.configure_network(
@@ -432,14 +449,14 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
         identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
     )
     bootstrap.initialize()
-    descriptor = bootstrap.issue_development_descriptor(300)
+    descriptor = bootstrap.issue_development_setup_code(300)
     commissioning = CommissioningService(
         store=store,
         network=InMemoryNetworkProvisioning(),
     )
     authorization = commissioning.authorize(
         session_id=descriptor["commissioning_id"],
-        secret=descriptor["commissioning_secret"],
+        secret=descriptor["setup_code"],
     )
     interrupted_id = "11d8113d-1792-4c31-bfbb-da413232e942"
     await commissioning.configure_network(
@@ -466,7 +483,7 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
 
         authorization = commissioning.authorize(
             session_id=descriptor["commissioning_id"],
-            secret=descriptor["commissioning_secret"],
+            secret=descriptor["setup_code"],
         )
         replacement_network = InMemoryNetworkProvisioning()
         replacement = CommissioningService(store=store, network=replacement_network)

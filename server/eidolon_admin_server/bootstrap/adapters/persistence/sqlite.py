@@ -20,10 +20,13 @@ from ...domain import (
     RecoveryState,
     WorkspaceState,
 )
-from ...ports.state_store import BootstrapStateConflict
+from ...ports.state_store import (
+    MAX_COMMISSIONING_FAILED_ATTEMPTS,
+    BootstrapStateConflict,
+)
 
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 
 class SQLiteBootstrapStoreError(RuntimeError):
@@ -55,7 +58,7 @@ class SQLiteBootstrapStateStore:
 
     def initialize(self, now: str) -> None:
         version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, 1, 2, _SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, _SCHEMA_VERSION):
             raise SQLiteBootstrapStoreError(
                 f"unsupported bootstrap schema version {version}; expected {_SCHEMA_VERSION}"
             )
@@ -79,7 +82,9 @@ class SQLiteBootstrapStateStore:
                     expires_at TEXT NOT NULL,
                     consumed_at TEXT,
                     revoked_at TEXT,
-                    claimed_controller_id TEXT
+                    claimed_controller_id TEXT,
+                    failed_attempts INTEGER NOT NULL DEFAULT 0
+                        CHECK (failed_attempts >= 0)
                 );
 
                 CREATE TABLE controller_grants (
@@ -132,10 +137,16 @@ class SQLiteBootstrapStateStore:
             # only that diagnostic table and preserves all durable product state.
             self.connection.execute("DROP TABLE IF EXISTS daemon_runs")
             self._migrate_v2_to_v3()
+            self._migrate_v3_to_v4()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
         elif version == 2:
             self._migrate_v2_to_v3()
+            self._migrate_v3_to_v4()
+            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+            self.connection.commit()
+        elif version == 3:
+            self._migrate_v3_to_v4()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
 
@@ -167,6 +178,15 @@ class SQLiteBootstrapStateStore:
                 updated_at TEXT NOT NULL,
                 error_code TEXT
             );
+            """
+        )
+
+    def _migrate_v3_to_v4(self) -> None:
+        self.connection.execute(
+            """
+            ALTER TABLE commissioning_sessions
+                ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0
+                    CHECK (failed_attempts >= 0)
             """
         )
 
@@ -221,7 +241,8 @@ class SQLiteBootstrapStateStore:
     ) -> CommissioningSessionMetadata | None:
         row = self.connection.execute(
             """
-            SELECT session_id, created_at, expires_at, consumed_at, revoked_at
+            SELECT session_id, created_at, expires_at, consumed_at, revoked_at,
+                   failed_attempts
               FROM commissioning_sessions
              ORDER BY created_at DESC, session_id DESC
              LIMIT 1
@@ -235,6 +256,7 @@ class SQLiteBootstrapStateStore:
             expires_at=row["expires_at"],
             consumed_at=row["consumed_at"],
             revoked_at=row["revoked_at"],
+            failed_attempts=int(row["failed_attempts"]),
         )
 
     def authorize_commissioning_session(
@@ -253,8 +275,22 @@ class SQLiteBootstrapStateStore:
             or row["consumed_at"] is not None
             or row["revoked_at"] is not None
             or row["expires_at"] <= now
-            or not hmac.compare_digest(row["secret_hash"], secret_hash)
         ):
+            raise BootstrapStateConflict("commissioning session is unavailable")
+        if not hmac.compare_digest(row["secret_hash"], secret_hash):
+            failed_attempts = int(row["failed_attempts"]) + 1
+            revoked_at = (
+                now if failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS else None
+            )
+            with self.connection:
+                self.connection.execute(
+                    """
+                    UPDATE commissioning_sessions
+                       SET failed_attempts = ?, revoked_at = ?
+                     WHERE session_id = ?
+                    """,
+                    (failed_attempts, revoked_at, session_id),
+                )
             raise BootstrapStateConflict("commissioning session is unavailable")
         return CommissioningSessionMetadata(
             session_id=row["session_id"],
@@ -262,6 +298,7 @@ class SQLiteBootstrapStateStore:
             expires_at=row["expires_at"],
             consumed_at=row["consumed_at"],
             revoked_at=row["revoked_at"],
+            failed_attempts=int(row["failed_attempts"]),
         )
 
     def claim_controller(

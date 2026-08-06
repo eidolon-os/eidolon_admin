@@ -107,12 +107,12 @@ class BootstrapControlServer:
             return self._service.prove_host(request.get("challenge"))
         if operation == "commissioning.endpoint":
             return self._service.commissioning_endpoint()
-        if operation == "dev.issue":
+        if operation == "dev.code":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)
-            return self._service.issue_development_descriptor(ttl)
+            return self._service.issue_development_setup_code(ttl)
         if operation == "dev.show":
-            return self._service.development_descriptor_status()
+            return self._service.development_setup_status()
         raise BootstrapControlError(f"unknown control operation: {operation!r}")
 
 

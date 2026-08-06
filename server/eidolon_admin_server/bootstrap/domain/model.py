@@ -91,14 +91,16 @@ class CommissioningSessionMetadata:
     expires_at: str
     consumed_at: str | None = None
     revoked_at: str | None = None
+    failed_attempts: int = 0
 
-    def to_dict(self) -> dict[str, str | bool | None]:
+    def to_dict(self) -> dict[str, str | int | None]:
         return {
             "session_id": self.session_id,
             "created_at": self.created_at,
             "expires_at": self.expires_at,
             "consumed_at": self.consumed_at,
             "revoked_at": self.revoked_at,
+            "failed_attempts": self.failed_attempts,
         }
 
 

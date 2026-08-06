@@ -62,7 +62,7 @@ class CommissioningProtocolSession:
                     )
                 self._authorization = self._service.authorize(
                     session_id=payload.get("commissioning_id"),
-                    secret=payload.get("commissioning_secret"),
+                    secret=payload.get("setup_code"),
                 )
                 result = self._service.status(self._authorization)
             elif operation == "controller.challenge":

@@ -173,50 +173,64 @@ class BootstrapService:
         """Signed dynamic endpoint data readable before the pinned TLS handshake."""
 
         unsigned = {
-            "contract_version": "1",
+            **self.public_descriptor(),
             "purpose": "eidolon-ble-commissioning-endpoint-v1",
-            "host_id": self._identity_manager.identity.host_id,
             "reset_epoch": self._store.get_state().reset_epoch,
-            "ble_service_uuid": self._settings.ble_service_uuid,
             "tls_spki_fingerprint": self._tls_identity_manager.identity.spki_fingerprint,
+            "development_setup": self._active_development_setup(),
         }
         return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
 
-    def issue_development_descriptor(
+    def _active_development_setup(self) -> dict[str, str] | None:
+        if self._settings.mode is not BootstrapMode.DEVELOPMENT:
+            return None
+        session = self._store.latest_commissioning_session()
+        now = _timestamp(_now())
+        if (
+            session is None
+            or session.consumed_at is not None
+            or session.revoked_at is not None
+            or session.expires_at <= now
+        ):
+            return None
+        return {
+            "commissioning_id": session.session_id,
+            "expires_at": session.expires_at,
+        }
+
+    def issue_development_setup_code(
         self, ttl_seconds: int | None = None
     ) -> dict[str, Any]:
         if self._settings.mode is not BootstrapMode.DEVELOPMENT:
             raise BootstrapOperationRejected(
-                "development descriptor issuance is disabled in production"
+                "development Setup code issuance is disabled in production"
             )
-        ttl = ttl_seconds or self._settings.dev_descriptor_ttl_seconds
+        ttl = ttl_seconds or self._settings.dev_setup_code_ttl_seconds
         if not 60 <= ttl <= 86400:
             raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
 
         now = _now()
         session_id = str(uuid.uuid4())
-        secret = secrets.token_urlsafe(24)
-        unsigned = {
-            **self.public_descriptor(),
-            "mode": BootstrapMode.DEVELOPMENT.value,
+        setup_code = f"{secrets.randbelow(1_000_000):06d}"
+        result = {
+            "host_id": self._identity_manager.identity.host_id,
             "commissioning_id": session_id,
-            "commissioning_secret": secret,
+            "setup_code": setup_code,
             "issued_at": _timestamp(now),
             "expires_at": _timestamp(now + timedelta(seconds=ttl)),
         }
-        signature = self._identity_manager.sign_mapping(unsigned)
         self._store.issue_commissioning_session(
             session_id=session_id,
-            secret_hash=hashlib.sha256(secret.encode("utf-8")).hexdigest(),
-            created_at=unsigned["issued_at"],
-            expires_at=unsigned["expires_at"],
+            secret_hash=hashlib.sha256(setup_code.encode("utf-8")).hexdigest(),
+            created_at=result["issued_at"],
+            expires_at=result["expires_at"],
         )
-        return {**unsigned, "signature": signature}
+        return result
 
-    def development_descriptor_status(self) -> dict[str, Any]:
+    def development_setup_status(self) -> dict[str, Any]:
         if self._settings.mode is not BootstrapMode.DEVELOPMENT:
             raise BootstrapOperationRejected(
-                "development descriptor status is disabled in production"
+                "development Setup status is disabled in production"
             )
         session = self._store.latest_commissioning_session()
         return {"current": None if session is None else session.to_dict()}

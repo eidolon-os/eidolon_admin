@@ -41,7 +41,7 @@ class BootstrapSettings:
     runtime_dir: Path
     control_socket: Path
     ble_service_uuid: str
-    dev_descriptor_ttl_seconds: int = 1800
+    dev_setup_code_ttl_seconds: int = 600
     commissioning_adapter: CommissioningAdapter = CommissioningAdapter.DISABLED
     network_adapter: NetworkAdapter = NetworkAdapter.MEMORY
 
@@ -130,16 +130,16 @@ def load_bootstrap_settings(
         env.get("EIDOLON_BOOTSTRAP_CONTROL_SOCKET", str(runtime_dir / "control.sock"))
     ).expanduser()
 
-    raw_ttl = env.get("EIDOLON_BOOTSTRAP_DEV_DESCRIPTOR_TTL_SECONDS", "1800")
+    raw_ttl = env.get("EIDOLON_BOOTSTRAP_DEV_SETUP_CODE_TTL_SECONDS", "600")
     try:
         ttl = int(raw_ttl)
     except ValueError as exc:
         raise BootstrapConfigurationError(
-            "EIDOLON_BOOTSTRAP_DEV_DESCRIPTOR_TTL_SECONDS must be an integer"
+            "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE_TTL_SECONDS must be an integer"
         ) from exc
     if not 60 <= ttl <= 86400:
         raise BootstrapConfigurationError(
-            "development descriptor TTL must be between 60 and 86400 seconds"
+            "development Setup code TTL must be between 60 and 86400 seconds"
         )
 
     ble_service_uuid = env.get(
@@ -170,7 +170,7 @@ def load_bootstrap_settings(
         runtime_dir=runtime_dir,
         control_socket=control_socket,
         ble_service_uuid=ble_service_uuid,
-        dev_descriptor_ttl_seconds=ttl,
+        dev_setup_code_ttl_seconds=ttl,
         commissioning_adapter=commissioning_adapter,
         network_adapter=network_adapter,
     )

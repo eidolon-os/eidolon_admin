@@ -108,6 +108,7 @@ def test_commissioning_endpoint_binds_tls_key_to_host_signature(tmp_path: Path) 
     )
     service.initialize()
     try:
+        credential = service.issue_development_setup_code(300)
         endpoint = service.commissioning_endpoint()
         signature = base64.urlsafe_b64decode(endpoint.pop("signature") + "==")
         public_key = base64.urlsafe_b64decode(
@@ -121,6 +122,14 @@ def test_commissioning_endpoint_binds_tls_key_to_host_signature(tmp_path: Path) 
         ).encode()
         Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical)
         assert endpoint["purpose"] == "eidolon-ble-commissioning-endpoint-v1"
+        assert (
+            endpoint["host_public_key"]
+            == service.public_descriptor()["host_public_key"]
+        )
+        assert (
+            endpoint["development_setup"]["commissioning_id"]
+            == credential["commissioning_id"]
+        )
         assert endpoint["tls_spki_fingerprint"].startswith("sha256:")
         assert settings.commissioning_tls_pem_path.stat().st_mode & 0o777 == 0o600
     finally:
@@ -137,7 +146,7 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
         identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
     )
     bootstrap.initialize()
-    descriptor = bootstrap.issue_development_descriptor(300)
+    descriptor = bootstrap.issue_development_setup_code(300)
     network = InMemoryNetworkProvisioning(
         access_points=[WifiAccessPoint("Home", 77, True)]
     )
@@ -172,7 +181,7 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
                 "session.authenticate",
                 {
                     "commissioning_id": descriptor["commissioning_id"],
-                    "commissioning_secret": descriptor["commissioning_secret"],
+                    "setup_code": descriptor["setup_code"],
                 },
                 1,
             )
@@ -187,7 +196,7 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
                 "session.authenticate",
                 {
                     "commissioning_id": descriptor["commissioning_id"],
-                    "commissioning_secret": "wrong" * 8,
+                    "setup_code": "000000",
                 },
                 3,
             )

@@ -3,14 +3,30 @@
   "$id": "https://eidolon.local/contracts/bootstrap/v1/commissioning-endpoint.schema.json",
   "title": "Eidolon BLE Commissioning Endpoint V1",
   "type": "object",
-  "required": ["contract_version", "purpose", "host_id", "reset_epoch", "ble_service_uuid", "tls_spki_fingerprint", "signature"],
+  "required": ["contract_version", "purpose", "host_id", "host_public_key", "host_public_key_fingerprint", "reset_epoch", "ble_service_uuid", "tls_spki_fingerprint", "development_setup", "signature"],
   "properties": {
     "contract_version": { "const": "1" },
     "purpose": { "const": "eidolon-ble-commissioning-endpoint-v1" },
     "host_id": { "type": "string", "pattern": "^ehost-[0-9a-f]{20}$" },
+    "host_public_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+    "host_public_key_fingerprint": { "type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$" },
     "reset_epoch": { "type": "integer", "minimum": 0 },
     "ble_service_uuid": { "type": "string", "format": "uuid" },
     "tls_spki_fingerprint": { "type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$" },
+    "development_setup": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["commissioning_id", "expires_at"],
+          "properties": {
+            "commissioning_id": { "type": "string", "format": "uuid" },
+            "expires_at": { "type": "string", "format": "date-time" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
   },
   "additionalProperties": false

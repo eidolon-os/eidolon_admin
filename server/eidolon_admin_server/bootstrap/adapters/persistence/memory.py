@@ -16,7 +16,10 @@ from ...domain import (
     RecoveryState,
     WorkspaceState,
 )
-from ...ports.state_store import BootstrapStateConflict
+from ...ports.state_store import (
+    MAX_COMMISSIONING_FAILED_ATTEMPTS,
+    BootstrapStateConflict,
+)
 
 
 class InMemoryBootstrapStateStore:
@@ -100,16 +103,30 @@ class InMemoryBootstrapStateStore:
         now: str,
     ) -> CommissioningSessionMetadata:
         self._require_open()
-        for metadata, stored_hash in self._sessions:
+        for index, (metadata, stored_hash) in enumerate(self._sessions):
             if metadata.session_id != session_id:
                 continue
             if (
-                metadata.consumed_at is None
-                and metadata.revoked_at is None
-                and metadata.expires_at > now
-                and hmac.compare_digest(stored_hash, secret_hash)
+                metadata.consumed_at is not None
+                or metadata.revoked_at is not None
+                or metadata.expires_at <= now
             ):
+                break
+            if hmac.compare_digest(stored_hash, secret_hash):
                 return metadata
+            failed_attempts = metadata.failed_attempts + 1
+            self._sessions[index] = (
+                replace(
+                    metadata,
+                    failed_attempts=failed_attempts,
+                    revoked_at=(
+                        now
+                        if failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS
+                        else None
+                    ),
+                ),
+                stored_hash,
+            )
             break
         raise BootstrapStateConflict("commissioning session is unavailable")
 

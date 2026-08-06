@@ -156,7 +156,7 @@ class CommissioningService:
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
             )
-        if not isinstance(secret, str) or len(secret) < 32:
+        if not isinstance(secret, str) or not re.fullmatch(r"[0-9]{6}", secret):
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
             )

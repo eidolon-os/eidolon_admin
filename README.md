@@ -131,15 +131,16 @@ EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapd
 ```
 
 In another terminal, inspect the process or issue a short-lived, single-use
-development commissioning descriptor:
+six-digit development Setup code:
 
 ```bash
 EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapctl health
-EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapctl dev issue --ttl 1800
+EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapctl dev code --ttl 600
 ```
 
-The descriptor secret is returned once and only its SHA-256 hash is persisted.
-Do not place it in source control. Start the read-only Phase 0 Local API with:
+Only the code's SHA-256 hash is persisted. A replacement revokes the previous
+code, and five failed attempts revoke the active code. Start the read-only
+Phase 0 Local API with:
 
 ```bash
 EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-local-api

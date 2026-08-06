@@ -62,7 +62,7 @@ def _settings(
         runtime_dir=resolved_runtime_dir,
         control_socket=resolved_runtime_dir / "control.sock",
         ble_service_uuid="179e2e95-b1ee-5aa5-8dcf-7519b6c7ac52",
-        dev_descriptor_ttl_seconds=1800,
+        dev_setup_code_ttl_seconds=600,
     )
 
 
@@ -182,48 +182,34 @@ def test_bootstrap_instance_lock_prevents_two_host_authorities(
     second.release()
 
 
-def test_development_descriptor_is_signed_and_secret_is_not_persisted(
+def test_development_setup_code_is_short_lived_and_not_persisted(
     tmp_path: Path,
 ) -> None:
     settings = _settings(tmp_path)
     service = _service(settings)
     service.initialize()
     try:
-        descriptor = service.issue_development_descriptor(300)
+        credential = service.issue_development_setup_code(300)
         assert settings.database_path.stat().st_mode & 0o777 == 0o600
-        assert descriptor["mode"] == "development"
-        assert descriptor["host_id"].startswith("ehost-")
-        assert len(descriptor["commissioning_secret"]) >= 32
-        assert len(descriptor["signature"]) >= 80
-
-        unsigned = {
-            key: value for key, value in descriptor.items() if key != "signature"
-        }
-        canonical = json.dumps(
-            unsigned,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        public_key = base64.urlsafe_b64decode(descriptor["host_public_key"] + "=")
-        signature = base64.urlsafe_b64decode(descriptor["signature"] + "==")
-        Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical)
+        assert credential["host_id"].startswith("ehost-")
+        assert credential["setup_code"].isdigit()
+        assert len(credential["setup_code"]) == 6
 
         database_dump = "\n".join(
             service._store.connection.iterdump()  # noqa: SLF001 - persistence invariant
         )
-        assert descriptor["commissioning_secret"] not in database_dump
+        assert credential["setup_code"] not in database_dump
 
-        replacement = service.issue_development_descriptor(300)
-        assert replacement["commissioning_id"] != descriptor["commissioning_id"]
-        status = service.development_descriptor_status()["current"]
+        replacement = service.issue_development_setup_code(300)
+        assert replacement["commissioning_id"] != credential["commissioning_id"]
+        status = service.development_setup_status()["current"]
         assert status["session_id"] == replacement["commissioning_id"]
-        assert "commissioning_secret" not in status
+        assert "setup_code" not in status
     finally:
         service.shutdown()
 
 
-def test_production_rejects_development_descriptor_issuance(tmp_path: Path) -> None:
+def test_production_rejects_development_setup_code_issuance(tmp_path: Path) -> None:
     development = _settings(tmp_path)
     HostIdentityManager(
         development.identity_key_path,
@@ -234,7 +220,7 @@ def test_production_rejects_development_descriptor_issuance(tmp_path: Path) -> N
     service.initialize()
     try:
         with pytest.raises(BootstrapOperationRejected):
-            service.issue_development_descriptor()
+            service.issue_development_setup_code()
     finally:
         service.shutdown()
 
@@ -270,8 +256,8 @@ async def test_control_socket_exposes_read_state_and_dev_issuance(
         assert health["status"] == "running"
         assert health["state"]["claim_state"] == "unclaimed"
 
-        descriptor = await client.request("dev.issue", ttl_seconds=300)
-        assert descriptor["mode"] == "development"
+        credential = await client.request("dev.code", ttl_seconds=300)
+        assert len(credential["setup_code"]) == 6
 
         challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
         proof = await client.request("host.prove", challenge=challenge)
@@ -409,7 +395,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
 
     documents = [json.loads(path.read_text()) for path in contracts.glob("*.json")]
 
-    assert len(documents) == 7
+    assert len(documents) == 6
     assert all(document["$schema"].endswith("2020-12/schema") for document in documents)
 
     local_api_contract = json.loads(
@@ -431,31 +417,11 @@ def test_bootstrap_contracts_are_valid_json() -> None:
     )
 
 
-def test_dev_descriptor_example_is_a_valid_cross_language_vector() -> None:
+def test_host_proof_example_is_a_valid_cross_language_vector() -> None:
     root = Path(__file__).resolve().parents[2]
-    example = json.loads(
-        (
-            root
-            / "contracts"
-            / "bootstrap"
-            / "v1"
-            / "examples"
-            / "dev-commissioning-descriptor.json"
-        ).read_text()
+    public_key = base64.urlsafe_b64decode(
+        "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg="
     )
-
-    unsigned = {key: value for key, value in example.items() if key != "signature"}
-    canonical = json.dumps(
-        unsigned,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    public_key = base64.urlsafe_b64decode(example["host_public_key"] + "=")
-    signature = base64.urlsafe_b64decode(example["signature"] + "==")
-
-    Ed25519PublicKey.from_public_bytes(public_key).verify(signature, canonical)
-
     proof = json.loads(
         (
             root / "contracts" / "local-api" / "v1" / "examples" / "host-proof.json"

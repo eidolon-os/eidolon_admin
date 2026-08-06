@@ -17,10 +17,10 @@
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
 - Local API 当前只有只读 descriptor/state/host snapshot 和无状态 Host proof 路由，未接入 Admin 高权限面或产品 mutation。
-- Mobile 无网向导已实现：验证 Dev Descriptor、按 Host marker 过滤附近广播、验证 signed endpoint、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。临时 secret 和 Wi-Fi 密码只保留在内存。
+- Mobile 无网向导已实现：发现附近广播、验证 signed endpoint、输入 6 位短期 Setup 码、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。Setup 码和 Wi-Fi 密码只保留在内存。
 - Controller Grant、operation journal、session 单次消费与 claim 权威迁移已落地；已认领换网使用 Controller challenge，不复用开箱 secret。
 - Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 仍是后续子项目，因此 Host commissioning 完成不等价于 Workspace ready。
-- Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝 Dev Descriptor。
+- Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝签发开发 Setup 码。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
 - Phase 1 只读 Pi preflight 已准备；代码侧也已实现候选 D-Bus adapter、polkit 规则和 systemd wiring。
 - 树莓派/Android 实机仍按用户要求暂缓。因此当前只证明架构、状态机、TLS 内存互操作、Flutter UI 与 Android 编译，不能把 BlueZ/NM/GATT 硬件行为描述成已验收。
@@ -55,14 +55,11 @@ Eidolon OS 运行在无屏树莓派主机上。最终用户不能依赖 SSH、HD
 
 ```text
 Host: bootstrapd 常驻
-  -> 开发者签发短期 Dev Descriptor
-  -> Mobile 验签并建立带外 Host 信任
-  -> Mobile 读取 Local API host snapshot
-  -> Mobile 匹配 Host ID / public key / fingerprint / BLE UUID / mode
-  -> Mobile 发起随机 challenge，bootstrapd 返回带域隔离的 Host key 签名
-  -> Mobile 验证 Host proof，防止把可重放的公开元数据误当成身份认证
-  -> Host access setup 完成
-  -> BLE signed endpoint + pinned TLS commissioning
+  -> 开发者签发短期 6 位 Setup 码
+  -> Mobile 通过固定 Service UUID 发现附近 Host
+  -> Mobile 验证 BLE signed endpoint 的身份自洽性
+  -> Mobile 建立 pinned TLS 并提交 Setup 码
+  -> Host commissioning 授权完成
   -> NetworkManager stage/confirm + Controller claim
   -> [后续子项目] Owner / Companion / Workspace onboarding
   -> [最后迁移] conversation / Audio Channel
@@ -92,7 +89,7 @@ Host: bootstrapd 常驻
 
 ### 2.2 对上一版其他内容的修订
 
-1. **二维码不能被当作开发前置条件。** 开发阶段使用每台 Pi 临时生成的 Dev Descriptor；产品阶段才进入制造身份和二维码/等价带外凭据流程。
+1. **二维码不能被当作开发前置条件。** 开发阶段使用每台 Pi 临时生成的 6 位 Setup 码；产品阶段才进入制造身份和二维码/等价带外凭据流程。
 2. **固定输入只允许做 Debug 入口，不作为固定秘密。** App 可以固定 BLE Service UUID、开发模式入口和默认字段，但真实 Pi 联调不应让所有设备共用一个硬编码 commissioning secret。
 3. **SoftAP 不进入第一个 MVP。** 先验证 BLE + NetworkManager 是否能形成稳定闭环；SoftAP 是验证后的 fallback，不能预先假设单 Wi-Fi 芯片 AP/STA 并发可靠。
 4. **Local API 先做最小面。** 第一阶段只覆盖 setup、system status、network 和 controller，不立即代理整个 Admin。
@@ -239,17 +236,17 @@ App 端可以提供固定输入和手动录入，但要区分“固定开发入�
 - 可以固定：BLE Service UUID、Dev 菜单入口、默认 Host 名称、模拟数据、开发环境地址。
 - 不建议固定：所有树莓派共用的 commissioning secret、Host private key、产品可接受的万能配对码。
 
-真实 Pi 联调建议使用每台设备临时生成的 `Dev Commissioning Descriptor`，由开发者通过现有 SSH 通道取得，再粘贴或导入 App。这样不依赖实体二维码，又使用与产品相同的身份绑定和加密流程。
+真实 Pi 联调使用每台设备临时生成的 6 位 Setup 码。App 先通过固定 BLE Service UUID 发现 Host，再读取 Host 签名的动态 endpoint，最后在 pinned TLS 内提交 Setup 码。开发者不需要复制 JSON；产品二维码仍是独立的制造带外信任入口。
 
 ### 6.2 分层开发模式
 
 #### D0：纯 App/UI 模拟
 
-- 当前自动化测试使用 deterministic、跨 Python/Dart 的签名向量和 Mock Local API。
-- 用于 descriptor canonical JSON、篡改/过期、错误 Host、nonce 和 Setup UI 测试。
+- 当前自动化测试使用 deterministic Host endpoint、Setup 码和 Mock commissioning transport。
+- 用于 endpoint 签名、错误 Host、TLS pin、数字码授权和 Setup UI 测试。
 - 当前没有在运行时 App 内置 fake transport；自动化测试不连接真实 Pi，也不作为实机安全联调结果。
 
-这个阶段允许固定测试 Host ID、签名和 nonce，因为它们只存在于 `test/` 与 contract example，不能进入真实 commissioning adapter。
+这个阶段允许固定测试 Host ID、签名、数字码和 nonce，因为它们只存在于 `test/`，不能进入真实 commissioning adapter。
 
 #### D1：真实 Pi + 开发者有 SSH
 
@@ -259,24 +256,21 @@ Pi 以显式开发模式启动：
 EIDOLON_BOOTSTRAP_MODE=development
 ```
 
-第一次启动时生成独立 Host key；开发者按需签发随机、短期的 Dev Descriptor：
+第一次启动时生成独立 Host key；开发者按需签发随机、短期的 6 位 Setup 码：
 
 ```text
-eidolon-bootstrapctl dev issue --ttl 30m
+eidolon-bootstrapctl dev code --ttl 600
 ```
 
-`dev issue` 当前输出可粘贴 JSON，包含：
+命令只向开发者显示：
 
-- contract version
 - host ID
-- host public-key fingerprint
-- 临时 commissioning secret
-- BLE service UUID
-- expiry
+- 6 位 Setup 码
+- 失效时间
 
-App Debug 页面当前只支持完整 JSON 粘贴，并执行签名、有效期、公钥派生身份、Local API Host metadata 匹配和随机 Host proof 验证。没有实现固定 pairing code、adb 注入、Dev URI 或扫码入口，不把计划中的便利形式描述成已有能力。
+App Debug 页面先扫描附近 Host，选择后显示 6 位数字输入。Host 公钥、身份指纹、commissioning ID、有效期和 TLS pin 均从签名 endpoint 获取，不要求用户录入。此开发路径属于受控 TOFU；产品仍必须使用二维码、NFC 或其他制造带外因子绑定真实 Host 身份。
 
-Descriptor 默认 30 分钟过期。重新签发会撤销尚未 consumed/revoked 的旧 session；
+Setup 码默认 10 分钟过期，连续 5 次失败会自动撤销。重新签发会撤销尚未 consumed/revoked 的旧 session；
 认领成功时 session 消费、Controller Grant 和 claim 状态在一个 store 事务完成。
 
 #### D2：接近产品的集成测试
@@ -298,12 +292,12 @@ Descriptor 默认 30 分钟过期。重新签发会撤销尚未 consumed/revoked
 
 当前状态和产品化门槛如下：
 
-1. **已实现**：Flutter 仅在 `kDebugMode` 显示 Dev Descriptor 输入；release UI 不显示。
-2. **已实现**：Bootstrap production 模式缺少制造身份时 fail closed，并拒绝签发 Dev Descriptor。
-3. **已实现**：运行时 commissioning secret 随机生成；源码与 Git 中只有明确标记的 test vector。
+1. **已实现**：Flutter 仅在 `kDebugMode` 显示开发 Setup 码入口；release UI 不显示。
+2. **已实现**：Bootstrap production 模式缺少制造身份时 fail closed，并拒绝签发开发 Setup 码。
+3. **已实现**：开发 Setup 码运行时随机生成、只持久化 hash，并限制失败次数；源码与 Git 中没有万能码。
 4. **待实现**：独立 dev/product flavor，以及对 Android release artifact 和 Pi product config 的 CI 负向检查。
 
-当前真实 D1 链路不使用固定 pairing code，因此不预留万能码 feature flag。
+当前真实 D1 链路固定的是 6 位格式，不是固定码值，因此不预留万能码 feature flag。
 
 ## 7. 通道与信任协议
 
@@ -329,7 +323,7 @@ ADR-0003。真实硬件行为仍以 Pi/Android PoC 为准。
   endpoint 中的 P-256 TLS SPKI。安全决策和 threat model 见 ADR-0003。
 - 不自行发明密码协议。Noise 候选库因维护/审计/跨语言证据不足未采用；当前使用
   Python OpenSSL 和 Android `SSLEngine`，并保留真机互操作验收门槛。
-- QR/Dev Descriptor 只提供初始信任，不是长期 Controller credential。
+- 产品 QR 提供制造带外信任；开发 Setup 码只提供受控开发授权。两者都不是长期 Controller credential。
 - App 为 Controller 生成独立密钥；Android 使用 Keystore，iOS 使用 Keychain/Secure Enclave 可用能力。
 - Local HTTPS pin Host public key 或 Host CA，不要求用户手工安装 Caddy 根 CA。
 - Controller session 短期有效，可撤销，并包含 `reset_epoch`。
@@ -364,21 +358,20 @@ operation_state:
 
 首次初始化拆成三个有独立完成语义的阶段，不能用一个 Mobile 本地布尔值代替。
 
-**A. 带外凭据与附近 Host 选择（当前已实现）**
+**A. 附近 Host 选择与开发授权（当前已实现）**
 
 1. `bootstrapd` 在无网络情况下常驻，并持有 Host Identity。
-2. App 导入通过开发者 SSH 取得的 Dev Descriptor；产品阶段替换为制造带外凭据。
-3. App 验证 descriptor 签名、有效期以及 Host ID/指纹是否由公钥正确派生。
-4. App 按 BLE Service UUID 扫描；广播 Host marker/RSSI 只过滤和排序候选，不认证身份。
-5. App 读取候选的公开 Info characteristic，验证 Host Ed25519 对 endpoint 的签名、
-   Host ID、reset epoch、Service UUID 和 TLS SPKI fingerprint。
+2. App 按固定 BLE Service UUID 扫描；广播 Host marker/RSSI 只用于展示和排序候选。
+3. App 读取候选的公开 Info characteristic，验证 Host 公钥可派生出 Host ID/指纹，并验证 Host 对 endpoint 的签名。
+4. 开发路径从 endpoint 取得短期 commissioning ID/expiry，并要求用户输入 SSH 生成的 6 位码；产品路径后续由制造二维码预先绑定预期 Host 身份。
+5. App 同时验证 endpoint 的 reset epoch、Service UUID 和 TLS SPKI fingerprint。
 6. Android 与该 endpoint 建立 TLS 1.2+，并 pin 已签名的 SPKI。
 7. 旧的 LAN Local API Host proof 路径保留给网络可达后的诊断/接入测试，但不再是
    无网首次开箱的前置条件。
 
 **B. Host commissioning（代码完成，真机验收待执行）**
 
-8. App 在 TLS 内提交短期 commissioning ID/secret，Bootstrap 只校验已保存的 hash。
+8. App 在 TLS 内提交短期 commissioning ID/Setup 码，Bootstrap 只校验已保存的 hash，并在 5 次失败后撤销 session。
 9. App 展示 Host 扫描到的 SSID；Bootstrap 只通过 `NetworkProvisioning` Port staging 新网络。
 10. 验证 association、IP/DHCP 和本地链路；远程/互联网连通性不作为当前成功条件。失败或超时则 rollback，设备保持可接入。
 11. NetworkManager 激活后 App 通过 BLE 确认 operation；Bootstrap 创建 Controller
@@ -511,7 +504,7 @@ lib/
 1. 先新增 App shell 与 bootstrap feature，不立即重写语音实现。
 2. 把现有语音入口迁到 `conversation/`，只在 Host ready 后启用。
 3. 拆分平台桥：`BleCommissioningBridge`、`ControllerKeyBridge`、`LocalNetworkBridge`、`MobileBodyKeyBridge`。
-4. 当前用 Flutter `kDebugMode` 显示 Dev Descriptor 导入；release UI 不显示。独立 flavor 和 release artifact 负向检查仍是产品化待办。
+4. 当前用 Flutter `kDebugMode` 显示 6 位开发 Setup 码输入；release UI 不显示。独立 flavor 和 release artifact 负向检查仍是产品化待办。
 5. 旧 `/api/device/register` HubClient 不参与 Host bootstrap。后续作为 Mobile Body 迁移到当前 Hub Enrollment/Handoff contract。
 6. App 只访问 Local API；日常管理不直接访问 Admin/Hub/Kernel public port。
 
@@ -563,7 +556,7 @@ local-fs.target
 退出标准：
 
 - `eidolon-bootstrapd --help` 在不 import Admin main、Data、NATS、torch、Supervisor 的环境中可运行。
-- Release 构建无法启用 development descriptor issuer。
+- Release 构建无法启用 development Setup code issuer。
 
 ### Phase 1：Pi 5 + Android 技术 PoC
 
@@ -577,7 +570,7 @@ local-fs.target
 交付：
 
 - BlueZ GATT advertisement、连接、分包、通知和重连 PoC。
-- Android Debug App 的 Dev Descriptor 导入、Host 匹配和 Controller key 生成。
+- Android Debug App 的附近 Host 发现、6 位 Setup 码输入和 Controller key 生成。
 - NetworkManager D-Bus scan/stage/activate/checkpoint/rollback PoC。
 - 真实路由器测试矩阵：2.4/5 GHz、隐藏 SSID、错误密码、DHCP 失败、guest isolation。
 - Wi-Fi 切换期间 BLE 存活与错误恢复报告。
@@ -603,7 +596,7 @@ local-fs.target
 
 退出标准：
 
-- 全新开发镜像在无屏、无预配置 Wi-Fi情况下，仅靠 App + Dev Descriptor 完成初始化。
+- 全新开发镜像在无屏、无预配置 Wi-Fi 情况下，仅靠 App + 6 位短期 Setup 码完成初始化。
 - 在 setup 每个持久化步骤 kill/reboot 后不会创建重复 Owner/Companion/Workspace。
 - 未授权附近手机不能配置网络或初始化 Owner。
 

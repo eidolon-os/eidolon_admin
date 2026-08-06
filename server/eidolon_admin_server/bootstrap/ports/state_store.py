@@ -18,6 +18,9 @@ class BootstrapStateConflict(RuntimeError):
     """A durable authority mutation conflicts with current Bootstrap state."""
 
 
+MAX_COMMISSIONING_FAILED_ATTEMPTS = 5
+
+
 @runtime_checkable
 class BootstrapStateStore(Protocol):
     """The minimal state that must survive daemon and host restarts.

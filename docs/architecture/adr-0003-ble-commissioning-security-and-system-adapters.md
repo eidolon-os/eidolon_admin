@@ -36,8 +36,10 @@ Bootstrap 为 commissioning TLS 生成独立 P-256 key/certificate，私钥保�
 `0600` 文件。Host Ed25519 identity 对 Host ID、reset epoch、BLE Service UUID、TLS
 SPKI SHA-256 fingerprint、固定 purpose 和 contract version 做 canonical JSON 签名。
 
-Mobile 先用二维码或 Dev Descriptor 中的 Host Ed25519 public key 验 endpoint 签名，
-再让 Android TrustManager pin SPKI。自签名证书不进入系统 CA，也不要求用户装 CA。
+产品 Mobile 用二维码中的 Host Ed25519 public key 验 endpoint 签名。开发模式允许从
+endpoint 读取 public key，派生并核对 Host ID/指纹、验证自签名 endpoint 后输入短期
+Setup 码；这是受控 TOFU，不替代产品制造信任。随后 Android TrustManager pin SPKI。
+自签名证书不进入系统 CA，也不要求用户装 CA。
 
 Info endpoint 是公开数据，允许被读取和重放；签名、reset epoch、Host ID 匹配和后续
 TLS SPKI pin 决定是否接受。广播名称、MAC 和 RSSI 永远不作为身份认证。
@@ -46,8 +48,8 @@ TLS SPKI pin 决定是否接受。广播名称、MAC 和 RSSI 永远不作为身
 
 TLS 成功只证明 Host 并提供加密，不自动授权 mutation：
 
-- 首次开箱：App 在 TLS 内提交短期、每 Host 唯一的 commissioning ID/secret；
-  Bootstrap 只保存 secret hash；
+- 开发开箱：App 在 TLS 内提交短期 commissioning ID 和 6 位 Setup 码；Bootstrap
+  只保存 hash，并在连续 5 次失败后撤销；
 - 认领：Controller 使用独立 Android Keystore P-256 key；Grant 创建、session 消费和
   `claim_state=claimed` 在一个 store 事务完成；
 - 已认领换网：Host 返回随机 challenge，Controller 对带 purpose、ID 和 reset epoch
