@@ -199,6 +199,7 @@ class CommissioningService:
 
     async def scan_networks(self, authorization: CommissioningAccess) -> dict[str, Any]:
         self._require_authorized(authorization)
+        current = await self._network.get_state()
         access_points = await self._network.scan()
         unique = {}
         for item in access_points:
@@ -207,6 +208,10 @@ class CommissioningService:
                 unique[item.ssid] = item
         ordered = sorted(unique.values(), key=lambda item: (-item.signal, item.ssid))
         return {
+            "current_network": {
+                "state": current.state.value,
+                "ssid": current.current_ssid,
+            },
             "networks": [
                 {"ssid": item.ssid, "signal": item.signal, "secured": item.secured}
                 for item in ordered

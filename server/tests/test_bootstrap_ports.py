@@ -245,12 +245,14 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
     bootstrap.initialize()
     descriptor = bootstrap.issue_development_setup_code(300)
     network = InMemoryNetworkProvisioning(
+        current_ssid="Existing",
         access_points=[
             WifiAccessPoint("Home", 58, True),
             WifiAccessPoint("Cafe", 34, False),
             WifiAccessPoint("Home", 81, True),
         ]
     )
+    bootstrap.reconcile_network_state(NetworkState.CONNECTED)
     commissioning = CommissioningService(store=store, network=network)
     try:
         authorization = commissioning.authorize(
@@ -258,6 +260,10 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
             secret=descriptor["setup_code"],
         )
         scanned = await commissioning.scan_networks(authorization)
+        assert scanned["current_network"] == {
+            "state": "connected",
+            "ssid": "Existing",
+        }
         assert scanned["networks"] == [
             {"ssid": "Home", "signal": 81, "secured": True},
             {"ssid": "Cafe", "signal": 34, "secured": False},

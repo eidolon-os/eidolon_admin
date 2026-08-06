@@ -198,6 +198,10 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
         )
         assert authenticated["ok"] is True
         scanned = await client.request(_request("wifi.scan", {}, 2))
+        assert scanned["result"]["current_network"] == {
+            "state": "unconfigured",
+            "ssid": None,
+        }
         assert scanned["result"]["networks"] == [
             {"ssid": "Home", "signal": 77, "secured": True}
         ]
