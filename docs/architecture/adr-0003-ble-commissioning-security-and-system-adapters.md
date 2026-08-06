@@ -33,16 +33,18 @@ GATT 之上使用 TLS 1.2+：Host 是 Python/OpenSSL `SSLObject + MemoryBIO`，A
 ### 2. Host 身份绑定
 
 Bootstrap 为 commissioning TLS 生成独立 P-256 key/certificate，私钥保存为 mode
-`0600` 文件。Host Ed25519 identity 对 Host ID、reset epoch、BLE Service UUID、TLS
-SPKI SHA-256 fingerprint、固定 purpose 和 contract version 做 canonical JSON 签名。
+`0600` 文件。Host Ed25519 identity 对 public key、reset epoch、TLS SPKI SHA-256
+fingerprint、开发 session metadata、固定 purpose 和 contract version 做 canonical
+JSON 签名。Host ID/指纹由 public key 派生；Service UUID 由已连接的 GATT service
+确定，不在 512-byte Info characteristic 中重复传输。
 
 产品 Mobile 用二维码中的 Host Ed25519 public key 验 endpoint 签名。开发模式允许从
 endpoint 读取 public key，派生并核对 Host ID/指纹、验证自签名 endpoint 后输入短期
 Setup 码；这是受控 TOFU，不替代产品制造信任。随后 Android TrustManager pin SPKI。
 自签名证书不进入系统 CA，也不要求用户装 CA。
 
-Info endpoint 是公开数据，允许被读取和重放；签名、reset epoch、Host ID 匹配和后续
-TLS SPKI pin 决定是否接受。广播名称、MAC 和 RSSI 永远不作为身份认证。
+Info endpoint 是公开数据，允许被读取和重放；签名、reset epoch、公钥派生身份匹配
+和后续 TLS SPKI pin 决定是否接受。广播名称、MAC 和 RSSI 永远不作为身份认证。
 
 ### 3. 应用层授权
 

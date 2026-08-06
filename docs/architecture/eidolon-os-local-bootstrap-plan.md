@@ -268,7 +268,7 @@ eidolon-bootstrapctl dev code --ttl 600
 - 6 位 Setup 码
 - 失效时间
 
-App Debug 页面先扫描附近 Host，选择后显示 6 位数字输入。Host 公钥、身份指纹、commissioning ID、有效期和 TLS pin 均从签名 endpoint 获取，不要求用户录入。此开发路径属于受控 TOFU；产品仍必须使用二维码、NFC 或其他制造带外因子绑定真实 Host 身份。
+App Debug 页面先扫描附近 Host，选择后显示 6 位数字输入。Host 公钥、commissioning ID、有效期和 TLS pin 从签名 endpoint 获取；Host ID/身份指纹由公钥派生，不要求用户录入。此开发路径属于受控 TOFU；产品仍必须使用二维码、NFC 或其他制造带外因子绑定真实 Host 身份。
 
 Setup 码默认 10 分钟过期，连续 5 次失败会自动撤销。重新签发会撤销尚未 consumed/revoked 的旧 session；
 认领成功时 session 消费、Controller Grant 和 claim 状态在一个 store 事务完成。
@@ -364,7 +364,7 @@ operation_state:
 2. App 按固定 BLE Service UUID 扫描；广播 Host marker/RSSI 只用于展示和排序候选。
 3. App 读取候选的公开 Info characteristic，验证 Host 公钥可派生出 Host ID/指纹，并验证 Host 对 endpoint 的签名。
 4. 开发路径从 endpoint 取得短期 commissioning ID/expiry，并要求用户输入 SSH 生成的 6 位码；产品路径后续由制造二维码预先绑定预期 Host 身份。
-5. App 同时验证 endpoint 的 reset epoch、Service UUID 和 TLS SPKI fingerprint。
+5. App 同时验证 endpoint 的 reset epoch 和 TLS SPKI fingerprint；Service UUID 由已连接的固定 GATT service 确定，避免公开 Info characteristic 超过 512-byte 上限。
 6. Android 与该 endpoint 建立 TLS 1.2+，并 pin 已签名的 SPKI。
 7. 旧的 LAN Local API Host proof 路径保留给网络可达后的诊断/接入测试，但不再是
    无网首次开箱的前置条件。

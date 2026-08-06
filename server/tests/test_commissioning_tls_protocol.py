@@ -131,6 +131,16 @@ def test_commissioning_endpoint_binds_tls_key_to_host_signature(tmp_path: Path) 
             == credential["commissioning_id"]
         )
         assert endpoint["tls_spki_fingerprint"].startswith("sha256:")
+        encoded = json.dumps(
+            {
+                **endpoint,
+                "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode(),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        assert len(encoded) <= 512
         assert settings.commissioning_tls_pem_path.stat().st_mode & 0o777 == 0o600
     finally:
         service.shutdown()

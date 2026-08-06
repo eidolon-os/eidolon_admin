@@ -173,8 +173,9 @@ class BootstrapService:
         """Signed dynamic endpoint data readable before the pinned TLS handshake."""
 
         unsigned = {
-            **self.public_descriptor(),
+            "contract_version": "1",
             "purpose": "eidolon-ble-commissioning-endpoint-v1",
+            "host_public_key": self._identity_manager.identity.public_key,
             "reset_epoch": self._store.get_state().reset_epoch,
             "tls_spki_fingerprint": self._tls_identity_manager.identity.spki_fingerprint,
             "development_setup": self._active_development_setup(),
