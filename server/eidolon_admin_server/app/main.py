@@ -29,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from .benchmarks import router as benchmarks_router
-from eidolon_admin_server.audit import AuditIndexStore
+from eidolon_admin_server.audit import AuditIndexSettings, AuditIndexStore
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
@@ -92,8 +92,8 @@ def create_app(
         data_audit_task: asyncio.Task[None] | None = None
         audit_index = None
         try:
-            audit_index = AuditIndexStore.open()
-            await audit_index.init_schema()
+            audit_index = AuditIndexStore.open(AuditIndexSettings(read_only=True))
+            await audit_index.validate_schema()
             app.state.audit_index = audit_index
         except Exception:  # noqa: BLE001
             logger.exception("audit index unavailable; audit views will return 503")

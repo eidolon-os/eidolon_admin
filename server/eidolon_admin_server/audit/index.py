@@ -58,6 +58,7 @@ class AuditIndexSettings:
     sqlite_path: str = str(Path.home() / "eidolon" / "data" / "audit-index.sqlite3")
     busy_timeout_ms: int = 5_000
     wal_autocheckpoint_pages: int = 1_000
+    read_only: bool = False
 
 
 class AuditIndexStore:
@@ -65,17 +66,26 @@ class AuditIndexStore:
         self,
         engine: AsyncEngine,
         session_factory: async_sessionmaker,
+        *,
+        read_only: bool,
     ) -> None:
         self.engine = engine
         self._session_factory = session_factory
+        self.read_only = read_only
 
     @classmethod
     def open(cls, settings: AuditIndexSettings | None = None) -> AuditIndexStore:
         resolved = settings or AuditIndexSettings()
         path = Path(resolved.sqlite_path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not resolved.read_only:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        database_url = (
+            f"sqlite+aiosqlite:///file:{path}?mode=ro&uri=true"
+            if resolved.read_only
+            else f"sqlite+aiosqlite:///{path}"
+        )
         engine = create_async_engine(
-            f"sqlite+aiosqlite:///{path}",
+            database_url,
             connect_args={"timeout": resolved.busy_timeout_ms / 1_000},
             pool_size=1,
             max_overflow=0,
@@ -85,26 +95,55 @@ class AuditIndexStore:
         def _configure(connection, _record) -> None:  # type: ignore[no-untyped-def]
             cursor = connection.cursor()
             try:
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.execute("PRAGMA synchronous=NORMAL")
                 cursor.execute(f"PRAGMA busy_timeout={resolved.busy_timeout_ms}")
-                cursor.execute(
-                    "PRAGMA wal_autocheckpoint="
-                    f"{resolved.wal_autocheckpoint_pages}"
-                )
+                if resolved.read_only:
+                    cursor.execute("PRAGMA query_only=ON")
+                else:
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.execute("PRAGMA synchronous=NORMAL")
+                    cursor.execute(
+                        "PRAGMA wal_autocheckpoint="
+                        f"{resolved.wal_autocheckpoint_pages}"
+                    )
             finally:
                 cursor.close()
 
-        return cls(engine, async_sessionmaker(engine, expire_on_commit=False))
+        return cls(
+            engine,
+            async_sessionmaker(engine, expire_on_commit=False),
+            read_only=resolved.read_only,
+        )
 
     async def init_schema(self) -> None:
+        if self.read_only:
+            raise RuntimeError("read-only audit index clients cannot initialize schema")
         async with self.engine.begin() as connection:
             await connection.run_sync(_AuditIndexBase.metadata.create_all)
+
+    async def validate_schema(self) -> None:
+        """Verify the projection exists and read clients are technically read-only."""
+        async with self.engine.connect() as connection:
+            table = await connection.scalar(
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='audit_events'"
+                )
+            )
+            if table != "audit_events":
+                raise RuntimeError("audit index schema is unavailable")
+            if self.read_only:
+                query_only = int(
+                    (await connection.execute(text("PRAGMA query_only"))).scalar_one()
+                )
+                if query_only != 1:
+                    raise RuntimeError("audit index reader is not query-only")
 
     async def close(self) -> None:
         await self.engine.dispose()
 
     async def ingest(self, events: list[AuditEnvelope]) -> int:
+        if self.read_only:
+            raise RuntimeError("read-only audit index clients cannot ingest")
         if not events:
             return 0
         values = [

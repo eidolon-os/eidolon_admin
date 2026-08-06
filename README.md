@@ -25,7 +25,7 @@ Each sub-project is integrated via one of four modes (declared in
   deleted; this gateway provides all of Users / Memories / Search / Recall /
   KG / Graph / Hierarchy / MCP Tools natively via MCP HTTP + NATS JetStream +
   Eidolon Data + memory reconcile. Admin-owned tenant and user records live
-  in `~/eidolon/data/eidolon.sqlite3`, not NATS KV. Per-user **agent** and
+  in `~/eidolon/data/eidolon-system.sqlite3`, not NATS KV. Per-user **agent** and
   opt-in **consolidator** workers are both children of `memory-supervisor`
   (not separate supervisord programs); Admin edits the Eidolon Data owner row
   and surfaces PIDs/logs on Runners & Workers / Users pages.
