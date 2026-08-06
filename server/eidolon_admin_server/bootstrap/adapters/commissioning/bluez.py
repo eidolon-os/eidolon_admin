@@ -34,6 +34,7 @@ _RX_PATH = f"{_SERVICE_PATH}/rx"
 _TX_PATH = f"{_SERVICE_PATH}/tx"
 _ADVERTISEMENT_PATH = "/live/eidolon/bootstrap/advertisement0"
 _CLOSED = object()
+_MAX_GATT_VALUE_BYTES = 512
 
 
 class BlueZCommissioningError(RuntimeError):
@@ -63,7 +64,7 @@ class _BlueZCommissioningLink:
     async def send(self, data: bytes) -> None:
         if self._closed:
             raise CommissioningLinkClosed("BLE commissioning link is closed")
-        maximum = max(20, self.mtu - 3)
+        maximum = min(_MAX_GATT_VALUE_BYTES, max(20, self.mtu - 3))
         for offset in range(0, len(data), maximum):
             await self._tx.indicate(data[offset : offset + maximum])
 
