@@ -52,10 +52,14 @@ class NetworkManagerProvisioning:
         scan_settle_seconds: float = 2.0,
         activation_timeout_seconds: float = 35.0,
         rollback_timeout_seconds: int = 90,
+        manager_startup_timeout_seconds: float = 30.0,
+        manager_startup_poll_seconds: float = 0.25,
     ) -> None:
         self._scan_settle_seconds = scan_settle_seconds
         self._activation_timeout_seconds = activation_timeout_seconds
         self._rollback_timeout_seconds = rollback_timeout_seconds
+        self._manager_startup_timeout_seconds = manager_startup_timeout_seconds
+        self._manager_startup_poll_seconds = manager_startup_poll_seconds
         self._bus: MessageBus | None = None
         self._manager: Any = None
         self._device_path: str | None = None
@@ -77,6 +81,13 @@ class NetworkManagerProvisioning:
                     continue
                 await manager.call_checkpoint_rollback(checkpoint_path)
                 await manager.call_checkpoint_destroy(checkpoint_path)
+            # NetworkManager.service becomes active before its boot-time
+            # autoconnect policy has settled. Reading ActiveAccessPoint during
+            # that window incorrectly projects a saved network as
+            # ``unconfigured``. NetworkManager owns this lifecycle signal, so
+            # keep the wait inside this concrete adapter instead of coupling
+            # Bootstrap to network-online.target.
+            await self._wait_until_manager_startup_complete(manager_properties)
             self._active = None
             self._recovery_complete = True
             return await self.get_state()
@@ -338,6 +349,17 @@ class NetworkManagerProvisioning:
                 raise NetworkProvisioningError("Wi-Fi activation failed")
             await asyncio.sleep(0.5)
         raise NetworkProvisioningError("Wi-Fi activation timed out")
+
+    async def _wait_until_manager_startup_complete(self, properties: Any) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._manager_startup_timeout_seconds
+        while bool((await properties.call_get(_NM_IFACE, "Startup")).value):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise NetworkProvisioningError(
+                    "NetworkManager startup did not complete in time"
+                )
+            await asyncio.sleep(min(self._manager_startup_poll_seconds, remaining))
 
     async def _best_effort_rollback(self, manager: Any, checkpoint_path: str) -> None:
         try:
