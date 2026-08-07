@@ -180,7 +180,7 @@ class DataWorkspaceAuthorityClient:
                 retryable=False,
             )
         endpoint = await self._directory.resolve(
-            service_id="data",
+            service_id="data-workspace",
             endpoint_id="workspace-authority.http",
             required_contract=DATA_WORKSPACE_CONTRACT,
         )

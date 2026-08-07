@@ -59,7 +59,7 @@ def directory() -> StaticDirectory:
                 "http://data.test",
                 DATA_CONTRACT,
             ),
-            ("data", "workspace-authority.http"): (
+            ("data-workspace", "workspace-authority.http"): (
                 "http://workspace.test",
                 DATA_WORKSPACE_CONTRACT,
             ),

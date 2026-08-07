@@ -21,6 +21,7 @@ def test_apply_ports_exports_authority_and_directory_ports(monkeypatch) -> None:
     for name in (
         "EIDOLON_HUB_API_PORT",
         "EIDOLON_DATA_API_PORT",
+        "EIDOLON_DATA_WORKSPACE_API_PORT",
         "EIDOLON_KERNEL_API_PORT",
         "EIDOLON_SYSTEM_API_PORT",
     ):
@@ -28,6 +29,7 @@ def test_apply_ports_exports_authority_and_directory_ports(monkeypatch) -> None:
     apply_ports_to_environ()
     assert os.environ.get("EIDOLON_HUB_API_PORT") == "8082"
     assert os.environ.get("EIDOLON_DATA_API_PORT") == "8084"
+    assert os.environ.get("EIDOLON_DATA_WORKSPACE_API_PORT") == "8085"
     assert os.environ.get("EIDOLON_KERNEL_API_PORT") == "8083"
     assert os.environ.get("EIDOLON_SYSTEM_API_PORT") == "8090"
 
@@ -63,6 +65,7 @@ def test_ports_registry_has_expected_sections() -> None:
     ports = load_ports()
     assert ports["hub"]["api"]["port"] == 8082
     assert ports["data"]["api"]["port"] == 8084
+    assert ports["data"]["workspace_api"]["port"] == 8085
     assert ports["kernel"]["api"]["port"] == 8083
     assert ports["eidolond"]["api"]["port"] == 8090
     assert ports["livekit"]["port"] == 7880
@@ -119,6 +122,7 @@ def test_collect_ports_from_agent_settings(tmp_path: Path, monkeypatch) -> None:
     assert ports["agent"]["grpc"]["port"] == 46000
     assert ports["nats"]["port"] == 4333
     assert ports["data"]["api"]["port"] == 8084
+    assert ports["data"]["workspace_api"]["port"] == 8085
     assert ports["kernel"]["api"]["port"] == 8083
     assert ports["eidolond"]["api"]["port"] == 8090
 

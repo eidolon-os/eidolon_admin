@@ -28,6 +28,10 @@ from typing import Mapping
 import yaml
 
 DATA_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
+DATA_WORKSPACE_CONTRACT = (
+    "https://eidolon.live/contracts/system-data/workspace/"
+    "onboarding-operation-v1.schema.json"
+)
 HUB_CONTRACT = "eidolon.hub.device-directory.v1"
 KERNEL_CONTRACT = "eidolon.kernel.device-mount.v1"
 
@@ -39,6 +43,14 @@ _EXPECTED_ENDPOINTS = {
         "contract": DATA_CONTRACT,
         "health_url": "http://127.0.0.1:8084/health",
         "supervisord": "data:data-api",
+    },
+    "data-workspace": {
+        "endpoint_id": "workspace-authority.http",
+        "protocol": "http",
+        "address": "http://127.0.0.1:8085",
+        "contract": DATA_WORKSPACE_CONTRACT,
+        "health_url": "http://127.0.0.1:8085/health",
+        "supervisord": "data:data-workspace-api",
     },
     "hub": {
         "endpoint_id": "device-authority.http",
@@ -156,6 +168,8 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
 
     existing = _read_existing_secrets(layout)
     data_token = existing.get("data_token") or secrets.token_urlsafe(32)
+    workspace_token = existing.get("workspace_token") or secrets.token_urlsafe(32)
+    local_api_token = existing.get("local_api_token") or secrets.token_urlsafe(32)
     hub_reader_token = existing.get("hub_reader_token") or secrets.token_urlsafe(32)
     hub_jwt_secret = existing.get("hub_jwt_secret") or secrets.token_urlsafe(48)
     hub_provider_token = existing.get("hub_provider_token") or secrets.token_urlsafe(32)
@@ -163,6 +177,7 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
     env_documents = {
         "data.env": {
             "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN": data_token,
+            "EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN": workspace_token,
             "EIDOLON_DATA_SQLITE_PATH": str(layout.data_database),
             "EIDOLON_DATA_DATABASE_URL": (
                 f"sqlite+aiosqlite:///{layout.data_database}"
@@ -182,8 +197,14 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
         },
         "admin.env": {
             "EIDOLON_ADMIN_DATA_AUTHORITY_TOKEN": data_token,
+            "EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN": workspace_token,
+            "EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN": local_api_token,
             "EIDOLON_ADMIN_SYSTEM_DIRECTORY_URL": "http://127.0.0.1:8090",
             "EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS": str(layout.system_socket),
+        },
+        "local-api.env": {
+            "EIDOLON_LOCAL_API_ADMIN_BASE_URL": "http://127.0.0.1:9000",
+            "EIDOLON_LOCAL_API_ADMIN_SERVICE_TOKEN": local_api_token,
         },
         "eidolond.env": {
             "EIDOLON_SYSTEM_SETTINGS_YAML": str(layout.config_dir / "eidolond.yaml"),
@@ -440,8 +461,11 @@ def _validate_runtime_files(layout: RuntimeLayout) -> None:
     hub = _parse_env(layout.env_dir / "hub.env")
     kernel = _parse_env(layout.env_dir / "kernel.env")
     admin = _parse_env(layout.env_dir / "admin.env")
+    local_api = _parse_env(layout.env_dir / "local-api.env")
     if len(data.get("EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN", "")) < 24:
         raise ControlPlanePreparationError("Data companion authority token is invalid")
+    if len(data.get("EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN", "")) < 24:
+        raise ControlPlanePreparationError("Data workspace authority token is invalid")
     if len(hub.get("EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN", "").encode()) < 32:
         raise ControlPlanePreparationError("Hub reader token is invalid")
     if len(hub.get("EIDOLON_HUB_MANAGEMENT_JWT_SECRET", "").encode()) < 32:
@@ -453,6 +477,14 @@ def _validate_runtime_files(layout: RuntimeLayout) -> None:
         raise ControlPlanePreparationError("Kernel/Data companion credential mismatch")
     if admin.get("EIDOLON_ADMIN_DATA_AUTHORITY_TOKEN") != data_token:
         raise ControlPlanePreparationError("Admin/Data companion credential mismatch")
+    workspace_token = data["EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN"]
+    if admin.get("EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN") != workspace_token:
+        raise ControlPlanePreparationError("Admin/Data workspace credential mismatch")
+    local_api_token = admin.get("EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN", "")
+    if len(local_api_token) < 24:
+        raise ControlPlanePreparationError("Admin Local API credential is invalid")
+    if local_api.get("EIDOLON_LOCAL_API_ADMIN_SERVICE_TOKEN") != local_api_token:
+        raise ControlPlanePreparationError("Local API/Admin credential mismatch")
     if (
         kernel.get("EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN")
         != hub["EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN"]
@@ -536,6 +568,14 @@ def _read_existing_secrets(layout: RuntimeLayout) -> dict[str, str]:
     values: dict[str, str] = {}
     mappings = {
         "data_token": ("data.env", "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN"),
+        "workspace_token": (
+            "data.env",
+            "EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN",
+        ),
+        "local_api_token": (
+            "admin.env",
+            "EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN",
+        ),
         "hub_reader_token": ("hub.env", "EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN"),
         "hub_jwt_secret": ("hub.env", "EIDOLON_HUB_MANAGEMENT_JWT_SECRET"),
         "hub_provider_token": ("hub.env", "EIDOLON_HUB_CHANNEL_PROVIDER_TOKEN"),

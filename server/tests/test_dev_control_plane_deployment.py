@@ -15,6 +15,7 @@ import yaml
 
 from deploy.dev.control_plane import (
     DATA_CONTRACT,
+    DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
     KERNEL_CONTRACT,
     ControlPlanePreparationError,
@@ -44,6 +45,22 @@ def _manifest() -> dict[str, object]:
                         "address": "http://127.0.0.1:8084",
                         "contract": DATA_CONTRACT,
                         "health_url": "http://127.0.0.1:8084/health",
+                    }
+                ],
+            },
+            {
+                "service_id": "data-workspace",
+                "required": True,
+                "enabled_by_default": True,
+                "dependencies": ["data"],
+                "host_targets": {"supervisord": "data:data-workspace-api"},
+                "endpoints": [
+                    {
+                        "endpoint_id": "workspace-authority.http",
+                        "protocol": "http",
+                        "address": "http://127.0.0.1:8085",
+                        "contract": DATA_WORKSPACE_CONTRACT,
+                        "health_url": "http://127.0.0.1:8085/health",
                     }
                 ],
             },
@@ -151,6 +168,7 @@ def test_prepare_materializes_isolated_config_and_preserves_secrets(
     first_hub = _read_env(layout.env_dir / "hub.env")
     first_kernel = _read_env(layout.env_dir / "kernel.env")
     first_admin = _read_env(layout.env_dir / "admin.env")
+    first_local_api = _read_env(layout.env_dir / "local-api.env")
     assert first_data["EIDOLON_DATA_SQLITE_PATH"] == str(layout.data_database)
     assert (
         str(Path.home() / "eidolon/data") not in first_data["EIDOLON_DATA_SQLITE_PATH"]
@@ -164,11 +182,21 @@ def test_prepare_materializes_isolated_config_and_preserves_secrets(
         first_hub["EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN"]
         == first_kernel["EIDOLON_KERNEL_HUB_MANAGEMENT_TOKEN"]
     )
+    assert (
+        first_data["EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN"]
+        == first_admin["EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN"]
+    )
+    assert (
+        first_admin["EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN"]
+        == first_local_api["EIDOLON_LOCAL_API_ADMIN_SERVICE_TOKEN"]
+    )
     assert (layout.env_dir / "data.env").stat().st_mode & 0o777 == 0o600
 
     prepare(layout, migrate=False)
     assert _read_env(layout.env_dir / "data.env") == first_data
     assert _read_env(layout.env_dir / "hub.env") == first_hub
+    assert _read_env(layout.env_dir / "admin.env") == first_admin
+    assert _read_env(layout.env_dir / "local-api.env") == first_local_api
 
 
 @pytest.mark.unit
@@ -300,11 +328,13 @@ def test_supervisor_targets_match_the_published_manifest() -> None:
     }
     assert targets == {
         "data": "data:data-api",
+        "data-workspace": "data:data-workspace-api",
         "hub": "hub:hub-api",
         "kernel": "kernel:kernel-api",
     }
     for filename, target in (
         ("data.conf", "[program:data-api]"),
+        ("data.conf", "[program:data-workspace-api]"),
         ("hub-os-control-plane.conf", "[program:hub-api]"),
         ("kernel.conf", "[program:kernel-api]"),
     ):
