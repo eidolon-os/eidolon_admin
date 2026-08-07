@@ -26,7 +26,8 @@ from ...ports.state_store import (
 )
 
 
-_SCHEMA_VERSION = 5
+BOOTSTRAP_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = BOOTSTRAP_SCHEMA_VERSION
 
 
 class SQLiteBootstrapStoreError(RuntimeError):
