@@ -227,7 +227,7 @@ configure_supervisor_profile() {
       SV_PID="${VAR_DIR}/supervisord-${profile}.pid"
       SV_SOCK="${VAR_DIR}/supervisor-${profile}.sock"
       SUPERVISOR_PROFILE_ENABLED_DIR="${VAR_DIR}/supervisor-profiles/${profile}/enabled"
-      PREFLIGHT_SERVICE_IDS="admin,eidolond,data,hub,kernel"
+      PREFLIGHT_SERVICE_IDS="admin,eidolond,data,data-workspace,hub,kernel"
       export EIDOLON_SUPERVISOR_PROFILE="$profile"
       export EIDOLON_SUPERVISOR_PID="$SV_PID"
       export EIDOLON_SUPERVISOR_SOCKET="$SV_SOCK"

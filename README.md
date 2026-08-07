@@ -21,6 +21,7 @@ Web / CLI
 - `GET /api/control-plane/v1/companions/{companion_id}`：通过 Data V2 的只读 Companion Authority 查询。
 - `GET /api/control-plane/v1/owners/{owner_id}/inventory`：并发聚合 Hub Device Directory 与 Kernel Mount 的瞬时读模型；每个来源保留独立状态和延迟。
 - `POST /api/control-plane/v1/workflows/device-admission`：按 `Hub approval -> Kernel Mount -> optional Companion Attachment` 编排。
+- `GET/PUT /api/control-plane/v1/workspace-onboarding/operations/{operation_id}`：仅供 Local API 使用的 Workspace onboarding 内部边界；以独立写凭证调用 Data Workspace Authority。
 
 设备接纳 workflow 要求调用方提供稳定 `request_id`。Admin 派生确定性的子 request ID，并把 CAS revision 传给 Kernel。它不是分布式事务：可重试的部分成功返回 HTTP 202、最后已提交阶段和 `retry-forward-same-request-id`；非重试冲突返回 `blocked/operator-action-required`。Admin 重启后由 Hub/Kernel 自有幂等记录恢复，不在本地复制权威状态。
 
@@ -40,8 +41,9 @@ EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-bootstrapctl dev code --ttl
 EIDOLON_BOOTSTRAP_MODE=development .venv/bin/eidolon-local-api
 ```
 
-Local API 的 `GET /api/local/v1/host` 只返回 Host identity 与 host-control
-状态；它不初始化 Owner/Data、不注册 Hub Device，也不启动 Audio。Bootstrap
+Local API 的 `GET /api/local/v1/host` 返回 Host identity 与 host-control 状态；
+Controller-authenticated `GET/PUT /api/local/v1/setup/workspace` 负责创建或恢复
+首个 Owner/Companion/Workspace operation。它不注册 Hub Device，也不启动 Audio。Bootstrap
 自有 SQLite 只保存 commissioning/claim 状态，不读取或复制 Data、Kernel、Hub
 的权威数据。
 
@@ -66,6 +68,8 @@ Local API 的 `GET /api/local/v1/host` 只返回 Host identity 与 host-control
 | `EIDOLON_ADMIN_SYSTEM_DIRECTORY_URL` | `http://127.0.0.1:8090` | eidolond HTTP endpoint directory |
 | `EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS` | 空 | 可选 eidolond Unix socket；配置时优先使用 |
 | `EIDOLON_ADMIN_DATA_AUTHORITY_TOKEN` | 空 | Admin 自有 Data service credential；不会复用 Kernel 变量 |
+| `EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN` | 空 | Admin 调用 Data Workspace Authority 的独立写凭证 |
+| `EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN` | 空 | Local API 调用 Admin 精确内部路由的 loopback 凭证 |
 | `EIDOLON_ADMIN_DIRECTORY_TIMEOUT_SECONDS` | `2` | 服务目录调用超时 |
 | `EIDOLON_ADMIN_AUTHORITY_TIMEOUT_SECONDS` | `3` | Data/Hub/Kernel 调用超时 |
 | `EIDOLON_ADMIN_SERVICES_FILE` | `config/services.yaml` | 通用服务代理和运维目录 |
@@ -75,6 +79,7 @@ Data、Hub、Kernel 的 URL 不在 Admin 静态配置中复制；必须由 eidol
 | service / endpoint | contract |
 | --- | --- |
 | `data / companion-authority.http` | `https://eidolon.dev/data/contracts/v1/companion/identity.schema.json` |
+| `data-workspace / workspace-authority.http` | `https://eidolon.live/contracts/system-data/workspace/onboarding-operation-v1.schema.json` |
 | `hub / device-authority.http` | `eidolon.hub.device-directory.v1` |
 | `kernel / device-mount.http` | `eidolon.kernel.device-mount.v1` |
 
@@ -109,13 +114,13 @@ pnpm --dir web dev
 ./deploy/dev/run_all.sh os-control-plane stop
 ```
 
-不要把该 sandbox JWT 或 `var/os-control-plane/env/` 复制到产品环境。Data 当前只接受一个 opaque authority token，所以隔离 profile 的 Admin 与 Kernel 暂时共享同一个 producer token；产品环境需要 Data 支持按 consumer 区分、可独立轮换的 service credential。
+不要把该 sandbox JWT 或 `var/os-control-plane/env/` 复制到产品环境。隔离 profile 会分别生成 Data Companion read、Data Workspace write 和 Local API→Admin 三组凭证；它们只共享给各自需要的进程，并在重复 prepare 时保持不变。
 
 现有默认 `start`/`core-contract` profile 保持不变；Agent 也不属于 `os-control-plane` profile。
 
 ## 树莓派部署方向
 
-Kernel 当前已有 Raspberry Pi/Linux systemd units、eidolond systemd manifest，以及只切换 Kernel/Data/SDK 的原子 release 激活器。本集成分支已保留 Bootstrap 与 Controller-authenticated Local API systemd units，并按 ADR 继续与 Admin operator app 分离；Hub、Admin operator API、Admin Web/ingress 仍未进入同一 release。因此目前不能诚实地称为完整 Eidolon OS 一键部署。
+Kernel 当前的 Raspberry Pi/Linux V2 release 已固定包含 Kernel、Data、Hub、Admin、Bootstrap 与 Local API 资产，并由 `eidolond` 管理 Data read、Data Workspace write、Hub 和 Kernel 四个系统服务。Admin operator app、Bootstrap 与 Local API 仍按 ADR 保持独立进程；产品镜像首次制备、全部 secret 注入和本次 Workspace 链路的真机验收仍是“一键开箱”宣称前的门槛。
 
 统一方式会复用现有的“非 root 准备/传输 + root 离线 dry-run/activate + 自动 rollback”边界，而不是另写一套会在线执行任意脚本的安装器。分阶段方案和缺口见 [Raspberry Pi 统一部署路线](docs/deployment/raspberry-pi-unified-deployment.md)。
 

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/workspace-setup-request.schema.json",
+  "title": "Eidolon Local API Workspace Setup Request V1",
+  "type": "object",
+  "required": ["owner_display_name"],
+  "properties": {
+    "owner_display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "companion_display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "default": "Eidolon"
+    }
+  },
+  "additionalProperties": false
+}

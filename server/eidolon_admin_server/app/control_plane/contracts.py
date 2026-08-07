@@ -28,6 +28,36 @@ class CompanionIdentity(StrictModel):
     lifecycle_state: Literal["active", "inactive"]
 
 
+class WorkspaceInitializeRequest(StrictModel):
+    owner_display_name: str = Field(min_length=1, max_length=128)
+    companion_display_name: str = Field(default="Eidolon", min_length=1, max_length=128)
+
+
+class WorkspaceOwner(StrictModel):
+    owner_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=128)
+    lifecycle_state: Literal["active"]
+
+
+class WorkspaceResources(StrictModel):
+    state: Literal["ready"]
+    primary_companion_id: str = Field(min_length=1, max_length=64)
+    persona_genome_id: str = Field(min_length=1, max_length=64)
+    memory_realm_id: str = Field(min_length=1, max_length=64)
+
+
+class WorkspaceOperation(StrictModel):
+    contract_version: Literal["1"]
+    operation: Literal["owner-workspace.initialize"]
+    operation_id: str = Field(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
+    request_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    status: Literal["succeeded"]
+    owner: WorkspaceOwner
+    workspace: WorkspaceResources
+
+
 class HubPropertyAffordance(StrictModel):
     name: str = Field(min_length=1, max_length=128)
     schema_: dict[str, Any] = Field(alias="schema")

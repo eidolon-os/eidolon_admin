@@ -35,7 +35,10 @@ from eidolon_admin_server.bootstrap.ports import (
     NetworkProvisioningError,
     WifiAccessPoint,
 )
-from eidolon_admin_server.bootstrap.service import BootstrapService
+from eidolon_admin_server.bootstrap.service import (
+    BootstrapOperationRejected,
+    BootstrapService,
+)
 
 
 def _settings(tmp_path: Path) -> BootstrapSettings:
@@ -120,7 +123,7 @@ async def test_network_adapter_rejects_overlapping_or_wrong_operation() -> None:
         await network.confirm("network-op-2")
 
 
-def test_sqlite_v4_keeps_authority_and_drops_v1_daemon_diagnostics(
+def test_sqlite_v5_keeps_authority_and_drops_v1_daemon_diagnostics(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "bootstrap.sqlite3"
@@ -178,7 +181,7 @@ def test_sqlite_v4_keeps_authority_and_drops_v1_daemon_diagnostics(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 4
+        assert version == 5
         assert "daemon_runs" not in tables
         assert store.get_state().reset_epoch == 7
         assert store.latest_commissioning_session().session_id == "session-1"
@@ -206,6 +209,55 @@ def test_fresh_sqlite_contains_only_durable_authority_tables(tmp_path: Path) -> 
         }
     finally:
         store.close()
+
+
+def test_sqlite_v4_host_state_migrates_with_unbound_owner(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bootstrap.sqlite3"
+    store = SQLiteBootstrapStateStore(path)
+    store.open()
+    try:
+        store.initialize("2026-08-05T00:00:00Z")
+        store.connection.execute(
+            """
+            INSERT INTO controller_grants (
+                controller_id, public_key, public_key_fingerprint, role,
+                display_name, platform, reset_epoch, created_at, revoked_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "ectrl-v4-controller",
+                _controller_public_key(),
+                "v4-fingerprint",
+                "host_admin",
+                "Existing controller",
+                "android",
+                0,
+                "2026-08-05T00:00:00Z",
+                None,
+            ),
+        )
+        store.connection.commit()
+    finally:
+        store.close()
+
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE bootstrap_state DROP COLUMN owner_id")
+    connection.execute("PRAGMA user_version = 4")
+    connection.commit()
+    connection.close()
+
+    migrated = SQLiteBootstrapStateStore(path)
+    migrated.open()
+    try:
+        migrated.initialize("2026-08-05T01:00:00Z")
+        controller = migrated.get_controller("ectrl-v4-controller")
+        assert controller is not None
+        assert migrated.get_state().owner_id is None
+        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 5
+    finally:
+        migrated.close()
 
 
 def _controller_public_key() -> str:
@@ -302,6 +354,29 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         assert claimed["controller"]["role"] == "host_admin"
         assert len(store.list_controllers()) == 1
 
+        bound = bootstrap.bind_controller_owner(
+            controller_id=claimed["controller"]["controller_id"],
+            reset_epoch=0,
+            owner_id="owner_onboarding_result",
+        )
+        assert bound["owner_id"] == "owner_onboarding_result"
+        assert store.get_state().workspace_state.value == "ready"
+        assert store.get_state().owner_id == "owner_onboarding_result"
+        assert (
+            bootstrap.bind_controller_owner(
+                controller_id=claimed["controller"]["controller_id"],
+                reset_epoch=0,
+                owner_id="owner_onboarding_result",
+            )
+            == bound
+        )
+        with pytest.raises(BootstrapOperationRejected, match="another Owner"):
+            bootstrap.bind_controller_owner(
+                controller_id=claimed["controller"]["controller_id"],
+                reset_epoch=0,
+                owner_id="owner_conflict",
+            )
+
         retried = commissioning.claim_controller(authorization, controller_payload)
         assert retried["controller"] == claimed["controller"]
 
@@ -322,6 +397,10 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         assert reset["after"]["network_state"] == "unconfigured"
         assert reset["after"]["reset_epoch"] == 1
         assert reset["forgot_wifi_profiles"] is True
+        # Claim reset revokes Controllers but does not silently delete or switch
+        # the Host's existing Data workspace authority.
+        assert store.get_state().workspace_state.value == "ready"
+        assert store.get_state().owner_id == "owner_onboarding_result"
         assert store.list_controllers()[0].revoked_at is not None
         with pytest.raises(CommissioningRequestRejected, match="unavailable"):
             commissioning.status(authorization)

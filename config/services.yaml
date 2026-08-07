@@ -86,6 +86,21 @@ services:
       declared: [$EIDOLON_DATA_API_PORT]
     features: []
 
+  - id: data-workspace
+    name: Eidolon Data Workspace Authority
+    integration: infra
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    health: http://127.0.0.1:$EIDOLON_DATA_WORKSPACE_API_PORT/health
+    supervisor:
+      config_file: deploy/supervisor/available/data.conf
+      group: data
+      programs: [data-workspace-api]
+    ports:
+      declared: [$EIDOLON_DATA_WORKSPACE_API_PORT]
+    features: []
+
   - id: kernel
     name: Eidolon Kernel
     integration: infra

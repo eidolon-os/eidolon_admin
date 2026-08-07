@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hmac
+from uuid import UUID
+
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
 from .contracts import (
@@ -10,6 +13,8 @@ from .contracts import (
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
     OwnerInventory,
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
 )
 from .errors import AuthorityFailure
 from .service import ControlPlaneService
@@ -27,6 +32,19 @@ def _raise(exc: AuthorityFailure) -> None:
     ) from exc
 
 
+def _authorize_local_api(request: Request, authorization: str | None) -> None:
+    expected = request.app.state.settings.local_api_service_token.strip()
+    if not expected:
+        raise HTTPException(503, "Local API service credential is not configured")
+    scheme, separator, token = (authorization or "").partition(" ")
+    if (
+        separator != " "
+        or scheme.lower() != "bearer"
+        or not hmac.compare_digest(token, expected)
+    ):
+        raise HTTPException(401, "Local API service authentication failed")
+
+
 @router.get("/capabilities", response_model=BoundaryCapabilities)
 async def capabilities(request: Request) -> BoundaryCapabilities:
     return _service(request).capabilities()
@@ -36,6 +54,42 @@ async def capabilities(request: Request) -> BoundaryCapabilities:
 async def get_companion(companion_id: str, request: Request) -> CompanionIdentity:
     try:
         return await _service(request).data.get_companion(companion_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.put(
+    "/workspace-onboarding/operations/{operation_id}",
+    response_model=WorkspaceOperation,
+)
+async def initialize_workspace(
+    operation_id: UUID,
+    payload: WorkspaceInitializeRequest,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> WorkspaceOperation:
+    _authorize_local_api(request, authorization)
+    try:
+        return await _service(request).initialize_workspace(
+            operation_id=str(operation_id),
+            payload=payload,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
+    "/workspace-onboarding/operations/{operation_id}",
+    response_model=WorkspaceOperation,
+)
+async def get_workspace_operation(
+    operation_id: UUID,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> WorkspaceOperation:
+    _authorize_local_api(request, authorization)
+    try:
+        return await _service(request).get_workspace_operation(str(operation_id))
     except AuthorityFailure as exc:
         _raise(exc)
 

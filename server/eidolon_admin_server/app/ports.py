@@ -160,6 +160,12 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
             "host": "127.0.0.1",
             "port": int(_deep_get(ports, "data", "api", "port", default=8084)),
         },
+        "workspace_api": {
+            "host": "127.0.0.1",
+            "port": int(
+                _deep_get(ports, "data", "workspace_api", "port", default=8085)
+            ),
+        },
     }
     ports["kernel"] = {
         "api": {
@@ -325,6 +331,8 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     data = p["data"]
     put("EIDOLON_DATA_API_HOST", data["api"]["host"])
     put("EIDOLON_DATA_API_PORT", data["api"]["port"])
+    put("EIDOLON_DATA_WORKSPACE_API_HOST", data["workspace_api"]["host"])
+    put("EIDOLON_DATA_WORKSPACE_API_PORT", data["workspace_api"]["port"])
 
     kernel = p["kernel"]
     put("EIDOLON_KERNEL_API_HOST", kernel["api"]["host"])

@@ -49,6 +49,7 @@ class InMemoryBootstrapStateStore:
                 network_state=NetworkState.UNCONFIGURED,
                 workspace_state=WorkspaceState.ABSENT,
                 recovery_state=RecoveryState.NORMAL,
+                owner_id=None,
                 updated_at=now,
             )
 
@@ -193,6 +194,36 @@ class InMemoryBootstrapStateStore:
             key=lambda grant: (grant.created_at, grant.controller_id),
         )
 
+    def bind_controller_owner(
+        self,
+        *,
+        controller_id: str,
+        owner_id: str,
+        reset_epoch: int,
+        now: str,
+    ) -> ControllerGrant:
+        self._require_open()
+        grant = self._controllers.get(controller_id)
+        state = self.get_state()
+        if (
+            grant is None
+            or grant.revoked_at is not None
+            or grant.reset_epoch != reset_epoch
+            or state.reset_epoch != reset_epoch
+            or state.claim_state is not ClaimState.CLAIMED
+        ):
+            raise BootstrapStateConflict("controller is not authorized for this Host")
+        if state.owner_id is not None and state.owner_id != owner_id:
+            raise BootstrapStateConflict("Host is already bound to another Owner")
+        assert self._state is not None
+        self._state = replace(
+            self._state,
+            workspace_state=WorkspaceState.READY,
+            owner_id=owner_id,
+            updated_at=now,
+        )
+        return grant
+
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation:
         self._require_open()
         current = self._operations.get(operation.operation_id)
@@ -314,9 +345,7 @@ class InMemoryBootstrapStateStore:
         ]
         self._controllers = {
             controller_id: (
-                replace(grant, revoked_at=now)
-                if grant.revoked_at is None
-                else grant
+                replace(grant, revoked_at=now) if grant.revoked_at is None else grant
             )
             for controller_id, grant in self._controllers.items()
         }

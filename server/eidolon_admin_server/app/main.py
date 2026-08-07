@@ -49,6 +49,7 @@ def create_app(
     )
     app.state.registry = ServiceRegistry(cfg)
     app.state.gateway_config = cfg
+    app.state.settings = settings
     app.state.http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(settings.authority_timeout_seconds),
         trust_env=False,

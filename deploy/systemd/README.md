@@ -78,6 +78,14 @@ the project's tested FastAPI and Uvicorn dependencies. A Bootstrap-only
 development venv is not sufficient; validate imports as the `eidolon` service
 user before enabling the unit.
 
+The product provisioner must also create root-owned `admin.env` and
+`local-api.env` files with mode `0600`. `EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN`
+and `EIDOLON_LOCAL_API_ADMIN_SERVICE_TOKEN` contain the same randomly generated
+loopback credential. `admin.env` separately contains
+`EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN`, matching only Data's
+`EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN`; neither credential is a Controller
+session token or a Data read token.
+
 Do not grant the existing Admin API process system privileges. Factory reset is
 not implemented by these units and will use a separate root oneshot after every
 service has supplied a reset manifest.

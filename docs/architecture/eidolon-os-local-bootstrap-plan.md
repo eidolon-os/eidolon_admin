@@ -1,7 +1,7 @@
 # Eidolon OS 本地 Bootstrap 与 Mobile 用户层实施计划
 
 - 状态：Accepted，实施中
-- 日期：2026-08-06
+- 日期：2026-08-07
 - 范围：本地首次接入、初始化、日常管理、换网、Controller 恢复、Reset、Owner 上下文
 - 暂不包含：远程访问、Cloud Relay、跨网络账户登录、OTA 商业发布体系
 
@@ -17,22 +17,22 @@
 - 单实例 authority lock 防止两个 bootstrapd 同时运行；身份文件拒绝软链接和错误权限。
 - systemd `Restart=always`、无限重试窗口和 watchdog；不依赖 `network-online.target`。
 - NetworkManager adapter 在启动恢复时等待 NetworkManager 自己的 `Startup=false` 再投影网络状态；等待有 30 秒上限，超时保持恢复未完成并拒绝新的换网操作，不把启动过渡态写成 `unconfigured`。
-- Local API 已实现只读 descriptor/state/host snapshot、无状态 Host proof，以及 LAN 专用 Controller challenge、短期 session 签发和 session 当前性校验；它使用 Bootstrap commissioning certificate 自行终止 HTTPS，并通过 Avahi 发布候选地址，仍未接入 Admin 高权限面或产品 mutation。
+- Local API 已实现只读 descriptor/state/host snapshot、无状态 Host proof，以及 LAN 专用 Controller challenge、短期 session 签发和 session 当前性校验；它使用 Bootstrap commissioning certificate 自行终止 HTTPS，并通过 Avahi 发布候选地址。Workspace GET/PUT 是当前唯一接入的产品 mutation，并通过精确的 Admin 内部路由调用 Data Workspace Authority，不开放 Admin 高权限面。
 - Local API session 只在进程内保存 opaque token 的 hash，默认 15 分钟；每次使用会向 Bootstrap 重新验证 Controller Grant 和 `reset_epoch`。Local API restart 只使短期 session 失效，不改变 durable Controller Grant。
 - Mobile 无网向导已实现：发现附近广播、验证 signed endpoint、输入 6 位短期 Setup 码、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。Setup 码和 Wi-Fi 密码只保留在内存。
 - Mobile 已实现认领后的“连接主机”入口：mDNS 只发现候选地址，pinned HTTPS 验证 BLE signed endpoint 绑定的 TLS SPKI，再核对保存的 Host 公钥并用 Controller key 建立短期 session。旧版已保存 Host 缺少 TLS 指纹时，只通过 BLE signed endpoint 更新信任，不执行 Setup、换网或重新认领。
 - Controller Grant、operation journal、session 单次消费与 claim 权威迁移已落地；已认领换网使用 Controller challenge，不复用开箱 secret。
-- Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 仍是后续子项目，因此 Host commissioning 完成不等价于 Workspace ready。
+- Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 的 Host 端链路已经实现，Mobile 后半段尚未接入，因此 Host commissioning 完成仍不等价于 Workspace ready。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝签发开发 Setup 码。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
 - 开发树莓派上已经安装并由 systemd 常驻运行 `eidolon-bootstrapd` 和 `eidolon-local-api`；Avahi 仅发布与当前 IPv4 listener 一致的 `_eidolon-local-api._tcp` 地址。Android 平板已完成一次真实 Host commissioning 闭环，包括 BLE 发现、signed endpoint、pinned TLS、NetworkManager 配网确认、Controller Grant 和 claim。
 - 同一 Pi/Android 已完成 Controller-authenticated Local API 实机闭环：Mobile 经 mDNS 获取候选地址、验证保存的 TLS SPKI 和 Host identity、使用 Android Keystore Controller key 建立短期 session，并读取 Host 状态。Bootstrap 和整机分别重启后，Host identity、Controller Grant 与 `reset_epoch` 均保持，短期 session 可重新签发。
 - 整机重启实测中，Bootstrap 等待 NetworkManager boot-time autoconnect 收敛后才发布 `connected`，Local API、Avahi、BLE commissioning 均自动恢复；Mobile 新建会话读取到的网络状态为“已连接”。
 - 该实机结果只覆盖当前开发 Pi、Android 平板和当前路由器，不能外推为 2.4/5 GHz、隐藏 SSID、WPA3、DHCP 故障、guest isolation、App kill 和重启恢复矩阵均已验收。
-- 最近一次实机审计中 Host 为 `claimed/connected/normal`、`reset_epoch=2`，但 `workspace_state=absent`；`eidolon-local-api.service` 正在运行，完整 `eidolon-stack.service` 仍未运行。因此当前闭环是 Host commissioning 加已认证本地连接，不是完整 Workspace 开箱完成。
+- 最近一次实机审计中 Host 为 `claimed/connected/normal`、`reset_epoch=2`，但 `workspace_state=absent`；该记录早于 Workspace Host 端链路落地，尚未重新做 Pi/Android 端到端验收，因此不能据此宣称完整 Workspace 开箱完成。
 
 尚未完成并且不能宣称完成：完整 Pi/Android 路由器与故障矩阵、Controller-authenticated
-Local API 的高权限产品 mutation、Owner/Workspace 初始化 saga、产品二维码制造流程、物理 recovery GPIO/按键、
+Workspace 的 Mobile 后半段与 Pi/Android 端到端验收、产品二维码制造流程、物理 recovery GPIO/按键、
 Factory Reset manifests、iOS、Local API/完整 stack 的产品 systemd 联动与故障注入。
 
 ## 1. 背景与目标
@@ -251,7 +251,7 @@ ESP32 的当前固件事实也必须保留在设计中：Wi-Fi provisioning 已�
 | 事实 | 唯一权威 | Bootstrap 是否保存 |
 |---|---|---|
 | Host ID、制造身份、reset epoch | Bootstrap | 是 |
-| Controller public key、角色、允许的 Owner scope、撤销状态 | Bootstrap | 是 |
+| Controller public key、角色、撤销状态；Host primary Owner binding | Bootstrap | 是 |
 | Commissioning session、未完成 operation | Bootstrap | 是；属于恢复所需权威状态 |
 | daemon 启停、异常和一般诊断日志 | systemd/journald | 否 |
 | Wi-Fi connection profile 和密码 | NetworkManager | 否；Bootstrap 只保存 profile 标识和非敏感状态 |
@@ -448,13 +448,16 @@ operation_state:
     handoff 是下一步，不阻塞 Host commissioning 的本地完成语义。
 12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`、`recovery_state=normal`；`workspace_state` 不阻塞 Host commissioning。
 
-**C. Workspace onboarding（后续子项目接入，尚未实现）**
+**C. Workspace onboarding（Host 端已实现，Mobile 待接入）**
 
-13. Local API 以内部服务身份调用 Admin onboarding，使用同一个 `operation_id` 创建/修复 Owner、主 Companion 和 Workspace。
+13. Local API 从稳定 Host ID 派生确定性的 `operation_id`，以独立内部服务身份调用 Admin；Admin 再用独立写令牌调用 Data Workspace Authority，创建或重放同一 Owner、主 Companion 和 Workspace operation。
 14. Bootstrap 只保存稳定的 Owner 引用，不拥有 Owner/Companion/Workspace 数据。
 15. 该阶段完成条件才包含 `workspace_state=ready`；之后再开放 conversation / Audio Channel。
 
-Admin 当前 `/onboarding/initialize` 具有部分 repair 行为，但计划中必须补充显式 `operation_id`/Idempotency-Key、fingerprint 和可查询的结果，不能仅依赖“重复调用大概率没问题”。
+当前精确契约为 Local API `GET/PUT /api/local/v1/setup/workspace`、Admin
+`GET/PUT /api/control-plane/v1/workspace-onboarding/operations/{operation_id}` 和
+Data `GET/PUT /api/workspace-authority/v1/operations/{operation_id}`。Data 持久化
+request fingerprint 与 operation result；相同 operation 可重放，不同 payload 冲突会显式拒绝。
 
 ### 9.2 换网
 
@@ -506,9 +509,9 @@ Factory Reset 由独立 root oneshot 执行：
 
 V1 规则：
 
-1. 一个 Controller Grant 可被授权访问一个或多个 Owner ID。
-2. App 切换 Owner 只是选择已授权 scope；Local API 从 Grant 生成可信 Owner context，不能信任 App 自报的任意 `owner_id`。
-3. 创建额外 Owner 需要 Host Admin 权限，并通过 Data/Admin authority 完成。
+1. V1 Host 只绑定一个 primary Owner；Controller Grant 继承该 Host Owner scope，不各自保存可写 Owner 列表。
+2. App 不能自报或切换任意 `owner_id`；Local API 只接受 Bootstrap 返回的 Host Owner binding。
+3. 多 Owner context 与 Owner 切换推迟到独立契约评审，不在首次开箱链路中预留隐式行为。
 4. 整机转让走 Factory Reset。
 5. Hub 当前不允许替换 approved Device 的 Owner，Kernel remount 也不能转移 Owner；V1 不实现外部 Device 跨 Owner 转移。
 
@@ -526,6 +529,8 @@ GET  /api/local/v1/system/state
 POST /api/local/v1/auth/challenges
 POST /api/local/v1/auth/sessions
 GET  /api/local/v1/auth/session
+GET  /api/local/v1/setup/workspace
+PUT  /api/local/v1/setup/workspace
 ```
 
 后续计划；每个 mutation 在对应 contract、Owner scope 和 idempotency tests 落地前都不算已有 API：
@@ -533,7 +538,6 @@ GET  /api/local/v1/auth/session
 ```text
 POST /api/local/v1/setup/network-operations
 GET  /api/local/v1/operations/{operation_id}
-POST /api/local/v1/setup/initialize
 POST /api/local/v1/network/change-operations
 GET  /api/local/v1/controllers
 POST /api/local/v1/controllers
@@ -545,7 +549,6 @@ Owner/Workspace ready 后才增加的产品 allowlist；路径仍需在对应 co
 
 ```text
 GET  /api/local/v1/me
-GET  /api/local/v1/workspace
 GET  /api/local/v1/companions
 GET  /api/local/v1/devices
 POST /api/local/v1/device-enrollments/{enrollment_id}/approval
@@ -715,13 +718,18 @@ local-fs.target
 
 #### Phase 2C：Owner / Companion / Workspace onboarding
 
-交付：
+Host 端已交付：
 
-- Admin onboarding 加入 idempotency、fingerprint、operation result。
-- Controller Grant 绑定可信 Owner scope。
-- Android Setup 在 Host commissioning 后继续创建/修复 Owner、主 Companion 和 Workspace，并能在中断后恢复进度。
-- Admin onboarding adapter 迁移到当前 `eidolon_data` API；不得用兼容 shim 恢复已删除的 V1 `DataStore/schema.models` 依赖。
-- Caddy/防火墙关闭 Mobile 对 Admin/Hub/Kernel 的直达访问。
+- Data Workspace Authority 提供 operation idempotency、fingerprint 和可查询 result。
+- Local API 通过确定性的 Host operation 调用 Admin，并在成功后把 primary Owner 绑定回 Bootstrap。
+- Admin/Data Workspace 与 Local API/Admin 使用两组独立服务凭证；Data read authority 不获得 Workspace 写令牌。
+- Admin adapter 使用当前 `eidolon_data` V2 API，没有恢复已删除的 V1 `DataStore/schema.models` 依赖。
+
+待交付：
+
+- Android Setup 在 Host commissioning 后建立 LAN Controller session，创建/恢复 Owner、主 Companion 和 Workspace，并在中断后恢复进度。
+- Pi/Android 真实进程、重启、Data outage 与重复提交的端到端验收。
+- 产品镜像防火墙确认 Mobile 不能直达 Admin/Hub/Kernel。
 
 退出标准：
 
