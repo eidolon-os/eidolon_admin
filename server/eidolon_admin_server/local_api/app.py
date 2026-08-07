@@ -23,6 +23,7 @@ from .workspace import (
     WorkspaceSetupError,
     WorkspaceSetupRequest,
     host_workspace_operation_id,
+    resolve_workspace_setup,
     workspace_status,
 )
 
@@ -229,9 +230,11 @@ def create_app(
         principal, _session = await authenticated_controller(authorization)
         operation_id = await operation_id_for_host()
         try:
-            result = await workspace.initialize(
+            result = await resolve_workspace_setup(
+                workspace,
                 operation_id=operation_id,
                 payload=payload.to_admin(),
+                bound_owner_id=principal.get("owner_id"),
             )
         except WorkspaceSetupError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc

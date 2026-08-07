@@ -60,6 +60,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
 )
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
+from eidolon_admin_server.local_api.workspace import WorkspaceSetupError
 
 
 def _settings(
@@ -146,7 +147,11 @@ class _WorkspaceClient:
         return result
 
     async def get(self, operation_id: str) -> WorkspaceOperation:
-        assert self.result is not None
+        if self.result is None:
+            raise WorkspaceSetupError(
+                "Workspace operation does not exist",
+                status_code=404,
+            )
         assert self.result.operation_id == operation_id
         return self.result
 
@@ -708,11 +713,7 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert replay.status_code == 200
             assert replay.json() == initialized.json()
-            assert len(workspace_client.initialize_calls) == 2
-            assert (
-                workspace_client.initialize_calls[0][0]
-                == workspace_client.initialize_calls[1][0]
-            )
+            assert len(workspace_client.initialize_calls) == 1
 
             ready = await client.get(
                 "/api/local/v1/setup/workspace",

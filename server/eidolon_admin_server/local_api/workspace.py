@@ -46,6 +46,33 @@ class AdminWorkspacePort(Protocol):
     async def close(self) -> None: ...
 
 
+async def resolve_workspace_setup(
+    workspace: AdminWorkspacePort,
+    *,
+    operation_id: str,
+    payload: WorkspaceInitializeRequest,
+    bound_owner_id: str | None,
+) -> WorkspaceOperation:
+    """Resume a Host-scoped operation before attempting first initialization."""
+    try:
+        existing = await workspace.get(operation_id)
+    except WorkspaceSetupError as exc:
+        if exc.status_code != 404:
+            raise
+        if bound_owner_id is not None:
+            raise WorkspaceSetupError(
+                "Host Owner binding has no Data workspace operation"
+            ) from exc
+    else:
+        if bound_owner_id is not None and existing.owner.owner_id != bound_owner_id:
+            raise WorkspaceSetupError(
+                "Host Owner scope does not match its Data workspace",
+                status_code=409,
+            )
+        return existing
+    return await workspace.initialize(operation_id=operation_id, payload=payload)
+
+
 class AdminWorkspaceClient:
     def __init__(
         self,
@@ -121,6 +148,11 @@ class AdminWorkspaceClient:
             raise WorkspaceSetupError(
                 "Workspace setup input was rejected",
                 status_code=422,
+            )
+        if response.status_code == 404:
+            raise WorkspaceSetupError(
+                "Workspace operation does not exist",
+                status_code=404,
             )
         if response.status_code != 200:
             raise WorkspaceSetupError("Admin workspace control plane is unavailable")

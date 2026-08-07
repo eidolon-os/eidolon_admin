@@ -6,7 +6,10 @@ from uuid import UUID
 import httpx
 import pytest
 
-from eidolon_admin_server.app.control_plane.contracts import WorkspaceInitializeRequest
+from eidolon_admin_server.app.control_plane.contracts import (
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
+)
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.local_api.config import (
     LocalApiSettings,
@@ -16,6 +19,7 @@ from eidolon_admin_server.local_api.workspace import (
     AdminWorkspaceClient,
     WorkspaceSetupError,
     host_workspace_operation_id,
+    resolve_workspace_setup,
 )
 
 
@@ -119,6 +123,55 @@ async def test_admin_workspace_client_does_not_downgrade_conflict() -> None:
     finally:
         await http_client.aclose()
     assert caught.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_admin_workspace_client_reports_an_absent_operation() -> None:
+    http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(404))
+    )
+    subject = AdminWorkspaceClient(
+        base_url="http://127.0.0.1:9000",
+        service_token="local-service-token",
+        timeout_seconds=1,
+        client=http_client,
+    )
+    try:
+        with pytest.raises(WorkspaceSetupError) as caught:
+            await subject.get(host_workspace_operation_id("ehost-56475aa75463474c0285"))
+    finally:
+        await http_client.aclose()
+    assert caught.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_setup_resumes_a_completed_operation_before_owner_binding() -> None:
+    operation_id = host_workspace_operation_id("ehost-56475aa75463474c0285")
+    result = WorkspaceOperation.model_validate(_workspace_response(operation_id))
+
+    class ExistingWorkspace:
+        initialize_calls = 0
+
+        async def get(self, requested_operation_id: str) -> WorkspaceOperation:
+            assert requested_operation_id == operation_id
+            return result
+
+        async def initialize(self, **_kwargs) -> WorkspaceOperation:
+            self.initialize_calls += 1
+            raise AssertionError("existing operation must be resumed")
+
+        async def close(self) -> None:
+            return None
+
+    workspace = ExistingWorkspace()
+    resumed = await resolve_workspace_setup(
+        workspace,  # type: ignore[arg-type]
+        operation_id=operation_id,
+        payload=WorkspaceInitializeRequest(owner_display_name="Changed after restart"),
+        bound_owner_id=None,
+    )
+    assert resumed == result
+    assert workspace.initialize_calls == 0
 
 
 def test_local_api_settings_keep_admin_transport_separate(tmp_path) -> None:
