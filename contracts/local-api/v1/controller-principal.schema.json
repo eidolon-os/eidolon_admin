@@ -3,14 +3,20 @@
   "$id": "https://eidolon.local/contracts/local-api/v1/controller-principal.schema.json",
   "title": "Eidolon Local API Controller Principal V1",
   "type": "object",
-  "required": ["contract_version", "controller_id", "role", "display_name", "platform", "reset_epoch"],
+  "required": ["contract_version", "controller_id", "role", "display_name", "platform", "reset_epoch", "owner_id"],
   "properties": {
     "contract_version": { "const": "1" },
     "controller_id": { "type": "string", "pattern": "^ectrl-[0-9a-f]{20}$" },
     "role": { "const": "host_admin" },
     "display_name": { "type": "string", "minLength": 1, "maxLength": 80 },
     "platform": { "enum": ["android", "ios"] },
-    "reset_epoch": { "type": "integer", "minimum": 0 }
+    "reset_epoch": { "type": "integer", "minimum": 0 },
+    "owner_id": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+    }
   },
   "additionalProperties": false
 }

@@ -26,7 +26,7 @@ from ...ports.state_store import (
 )
 
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 
 class SQLiteBootstrapStoreError(RuntimeError):
@@ -58,7 +58,7 @@ class SQLiteBootstrapStateStore:
 
     def initialize(self, now: str) -> None:
         version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, 1, 2, 3, _SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, 4, _SCHEMA_VERSION):
             raise SQLiteBootstrapStoreError(
                 f"unsupported bootstrap schema version {version}; expected {_SCHEMA_VERSION}"
             )
@@ -72,6 +72,7 @@ class SQLiteBootstrapStateStore:
                     network_state TEXT NOT NULL,
                     workspace_state TEXT NOT NULL,
                     recovery_state TEXT NOT NULL,
+                    owner_id TEXT,
                     updated_at TEXT NOT NULL
                 );
 
@@ -118,8 +119,8 @@ class SQLiteBootstrapStateStore:
                 """
                 INSERT INTO bootstrap_state (
                     singleton, reset_epoch, claim_state, network_state,
-                    workspace_state, recovery_state, updated_at
-                ) VALUES (1, 0, ?, ?, ?, ?, ?)
+                    workspace_state, recovery_state, owner_id, updated_at
+                ) VALUES (1, 0, ?, ?, ?, ?, NULL, ?)
                 """,
                 (
                     ClaimState.UNCLAIMED.value,
@@ -138,15 +139,22 @@ class SQLiteBootstrapStateStore:
             self.connection.execute("DROP TABLE IF EXISTS daemon_runs")
             self._migrate_v2_to_v3()
             self._migrate_v3_to_v4()
+            self._migrate_v4_to_v5()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
         elif version == 2:
             self._migrate_v2_to_v3()
             self._migrate_v3_to_v4()
+            self._migrate_v4_to_v5()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
         elif version == 3:
             self._migrate_v3_to_v4()
+            self._migrate_v4_to_v5()
+            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+            self.connection.commit()
+        elif version == 4:
+            self._migrate_v4_to_v5()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
 
@@ -190,6 +198,14 @@ class SQLiteBootstrapStateStore:
             """
         )
 
+    def _migrate_v4_to_v5(self) -> None:
+        self.connection.execute(
+            """
+            ALTER TABLE bootstrap_state
+                ADD COLUMN owner_id TEXT
+            """
+        )
+
     def get_state(self) -> BootstrapState:
         row = self.connection.execute(
             "SELECT * FROM bootstrap_state WHERE singleton = 1"
@@ -203,6 +219,7 @@ class SQLiteBootstrapStateStore:
                 network_state=NetworkState(row["network_state"]),
                 workspace_state=WorkspaceState(row["workspace_state"]),
                 recovery_state=RecoveryState(row["recovery_state"]),
+                owner_id=row["owner_id"],
                 updated_at=row["updated_at"],
             )
         except ValueError as exc:
@@ -383,6 +400,46 @@ class SQLiteBootstrapStateStore:
             "SELECT * FROM controller_grants ORDER BY created_at, controller_id"
         ).fetchall()
         return [self._controller_from_row(row) for row in rows]
+
+    def bind_controller_owner(
+        self,
+        *,
+        controller_id: str,
+        owner_id: str,
+        reset_epoch: int,
+        now: str,
+    ) -> ControllerGrant:
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT * FROM controller_grants WHERE controller_id = ?",
+                (controller_id,),
+            ).fetchone()
+            state = self.get_state()
+            if (
+                row is None
+                or row["revoked_at"] is not None
+                or int(row["reset_epoch"]) != reset_epoch
+                or state.reset_epoch != reset_epoch
+                or state.claim_state is not ClaimState.CLAIMED
+            ):
+                raise BootstrapStateConflict(
+                    "controller is not authorized for this Host"
+                )
+            existing_owner_id = state.owner_id
+            if existing_owner_id is not None and existing_owner_id != owner_id:
+                raise BootstrapStateConflict("Host is already bound to another Owner")
+            self.connection.execute(
+                """
+                UPDATE bootstrap_state
+                   SET workspace_state = ?, owner_id = ?, updated_at = ?
+                 WHERE singleton = 1
+                """,
+                (WorkspaceState.READY.value, owner_id, now),
+            )
+        result = self.get_controller(controller_id)
+        if result is None:
+            raise SQLiteBootstrapStoreError("bound controller grant disappeared")
+        return result
 
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation:
         current = self.get_operation(operation.operation_id)

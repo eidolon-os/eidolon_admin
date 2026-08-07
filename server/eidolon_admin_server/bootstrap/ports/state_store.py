@@ -69,6 +69,15 @@ class BootstrapStateStore(Protocol):
 
     def list_controllers(self) -> list[ControllerGrant]: ...
 
+    def bind_controller_owner(
+        self,
+        *,
+        controller_id: str,
+        owner_id: str,
+        reset_epoch: int,
+        now: str,
+    ) -> ControllerGrant: ...
+
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation: ...
 
     def get_operation(self, operation_id: str) -> BootstrapOperation | None: ...

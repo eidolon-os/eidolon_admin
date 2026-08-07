@@ -71,10 +71,13 @@ class BootstrapState:
     network_state: NetworkState
     workspace_state: WorkspaceState
     recovery_state: RecoveryState
+    owner_id: str | None
     updated_at: str
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
+        # Owner scope is authority state, not part of the public bootstrap state.
+        result.pop("owner_id")
         result.update(
             claim_state=self.claim_state.value,
             network_state=self.network_state.value,

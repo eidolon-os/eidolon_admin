@@ -22,6 +22,7 @@ from .controller_auth import (
 )
 from .domain import ControllerGrant, ControllerRole, NetworkState
 from .ports import (
+    BootstrapStateConflict,
     BootstrapStateStore,
     NetworkProvisioning,
     NetworkProvisioningError,
@@ -32,6 +33,7 @@ from .tls_identity import CommissioningTlsIdentityManager
 logger = logging.getLogger("eidolon.bootstrap.service")
 _HOST_PROOF_PURPOSE = "eidolon-local-api-host-proof-v1"
 _BASE64URL_32_BYTES = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_OWNER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
 class BootstrapOperationRejected(RuntimeError):
@@ -199,9 +201,11 @@ class BootstrapService:
                 key=lambda value: self._controller_challenges[value][2],
             )
             self._controller_challenges.pop(oldest, None)
-        challenge = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(
-            b"="
-        ).decode("ascii")
+        challenge = (
+            base64.urlsafe_b64encode(secrets.token_bytes(32))
+            .rstrip(b"=")
+            .decode("ascii")
+        )
         self._controller_challenges[challenge] = (
             grant.controller_id,
             grant.reset_epoch,
@@ -237,7 +241,9 @@ class BootstrapService:
             or payload.get("controller_id") != controller_id
             or payload.get("reset_epoch") != reset_epoch
         ):
-            raise ControllerAuthenticationRejected("Controller challenge does not match")
+            raise ControllerAuthenticationRejected(
+                "Controller challenge does not match"
+            )
         grant = self._active_controller(controller_id)
         try:
             verify_controller_signature(
@@ -265,6 +271,33 @@ class BootstrapService:
             )
         return self._controller_principal(grant)
 
+    def bind_controller_owner(
+        self,
+        *,
+        controller_id: str,
+        reset_epoch: int,
+        owner_id: str,
+    ) -> dict[str, Any]:
+        """Bind a Data-confirmed Owner scope to one current Controller grant."""
+
+        grant = self._active_controller(controller_id)
+        if not isinstance(reset_epoch, int) or grant.reset_epoch != reset_epoch:
+            raise ControllerAuthenticationRejected(
+                "Controller session is no longer authorized"
+            )
+        if not isinstance(owner_id, str) or not _OWNER_ID.fullmatch(owner_id):
+            raise BootstrapOperationRejected("Owner scope is invalid")
+        try:
+            bound = self._store.bind_controller_owner(
+                controller_id=controller_id,
+                owner_id=owner_id,
+                reset_epoch=reset_epoch,
+                now=_timestamp(_now()),
+            )
+        except BootstrapStateConflict as exc:
+            raise BootstrapOperationRejected(str(exc)) from exc
+        return self._controller_principal(bound)
+
     def _active_controller(self, controller_id: str) -> ControllerGrant:
         if not isinstance(controller_id, str) or not re.fullmatch(
             r"ectrl-[0-9a-f]{20}", controller_id
@@ -285,8 +318,8 @@ class BootstrapService:
             )
         return grant
 
-    @staticmethod
-    def _controller_principal(grant: ControllerGrant) -> dict[str, Any]:
+    def _controller_principal(self, grant: ControllerGrant) -> dict[str, Any]:
+        state = self._store.get_state()
         return {
             "contract_version": "1",
             "controller_id": grant.controller_id,
@@ -294,6 +327,7 @@ class BootstrapService:
             "display_name": grant.display_name,
             "platform": grant.platform,
             "reset_epoch": grant.reset_epoch,
+            "owner_id": state.owner_id,
         }
 
     def _purge_controller_challenges(self, now: float) -> None:

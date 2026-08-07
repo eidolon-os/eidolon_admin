@@ -592,9 +592,7 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             signature = private_key.sign(canonical, ec.ECDSA(hashes.SHA256()))
             proof = {
                 **challenge,
-                "signature": base64.urlsafe_b64encode(signature)
-                .rstrip(b"=")
-                .decode(),
+                "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode(),
             }
             session_response = await client.post(
                 "/api/local/v1/auth/sessions",
@@ -622,6 +620,30 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             assert current.json()["controller"]["reset_epoch"] == 0
 
             control = BootstrapControlClient(settings.control_socket)
+            bound = await control.request(
+                "controller.bind_owner",
+                controller_id=controller_id,
+                reset_epoch=0,
+                owner_id="owner_workspace_authority",
+            )
+            assert bound["owner_id"] == "owner_workspace_authority"
+            refreshed = await client.get(
+                "/api/local/v1/auth/session",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert refreshed.status_code == 200
+            assert (
+                refreshed.json()["controller"]["owner_id"]
+                == "owner_workspace_authority"
+            )
+            with pytest.raises(BootstrapControlError, match="another Owner"):
+                await control.request(
+                    "controller.bind_owner",
+                    controller_id=controller_id,
+                    reset_epoch=0,
+                    owner_id="owner_conflict",
+                )
+
             await control.request("dev.reset")
             invalidated = await client.get(
                 "/api/local/v1/auth/session",

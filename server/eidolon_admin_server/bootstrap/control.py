@@ -119,6 +119,12 @@ class BootstrapControlServer:
             return self._service.validate_controller(
                 request.get("controller_id"), request.get("reset_epoch")
             )
+        if operation == "controller.bind_owner":
+            return self._service.bind_controller_owner(
+                controller_id=request.get("controller_id"),
+                reset_epoch=request.get("reset_epoch"),
+                owner_id=request.get("owner_id"),
+            )
         if operation == "commissioning.endpoint":
             return self._service.commissioning_endpoint()
         if operation == "dev.code":
@@ -130,9 +136,7 @@ class BootstrapControlServer:
         if operation == "dev.reset":
             forget_wifi_profiles = request.get("forget_wifi_profiles", False)
             if not isinstance(forget_wifi_profiles, bool):
-                raise BootstrapControlError(
-                    "forget_wifi_profiles must be a boolean"
-                )
+                raise BootstrapControlError("forget_wifi_profiles must be a boolean")
             return await self._service.reset_development_state(
                 forget_wifi_profiles=forget_wifi_profiles,
             )
