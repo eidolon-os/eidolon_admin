@@ -1,4 +1,5 @@
 """HTTP/SSE transparent proxy to upstream sub-projects."""
+
 from __future__ import annotations
 
 import os
@@ -7,7 +8,6 @@ from collections.abc import AsyncIterator, Iterable
 from contextlib import suppress
 
 import httpx
-from eidolon_sdk.core.streaming import SSE_HEARTBEAT_BYTES
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -31,6 +31,7 @@ _REQUEST_DROP = _HOP_BY_HOP | {"authorization", "cookie"}
 # Headers we drop from upstream response before returning.
 _RESPONSE_DROP = _HOP_BY_HOP | {"content-encoding"}
 _SSE_HEARTBEAT_INTERVAL_SECONDS = 2.0
+_SSE_HEARTBEAT_BYTES = b": keepalive\n\n"
 
 
 def _filter_request_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
@@ -52,6 +53,17 @@ def _inject_upstream_auth(service: ServiceConfig, headers: dict[str, str]) -> No
         token = os.environ.get(env) if env else None
         if token:
             headers["Authorization"] = f"Bearer {token}"
+
+
+def _apply_passthrough_auth(
+    request: Request,
+    service: ServiceConfig,
+    headers: dict[str, str],
+) -> None:
+    if service.auth.type == "passthrough":
+        authorization = request.headers.get("authorization")
+        if authorization:
+            headers["Authorization"] = authorization
 
 
 def _build_target_url(service: ServiceConfig, sub_path: str, query_string: str) -> str:
@@ -81,7 +93,9 @@ async def _stream_raw(upstream_resp: httpx.Response) -> AsyncIterator[bytes]:
         await upstream_resp.aclose()
 
 
-async def _stream_sse_with_heartbeat(upstream_resp: httpx.Response) -> AsyncIterator[bytes]:
+async def _stream_sse_with_heartbeat(
+    upstream_resp: httpx.Response,
+) -> AsyncIterator[bytes]:
     queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
 
     async def _read_upstream() -> None:
@@ -102,7 +116,7 @@ async def _stream_sse_with_heartbeat(upstream_resp: httpx.Response) -> AsyncIter
                     timeout=_SSE_HEARTBEAT_INTERVAL_SECONDS,
                 )
             except TimeoutError:
-                yield SSE_HEARTBEAT_BYTES
+                yield _SSE_HEARTBEAT_BYTES
                 continue
 
             if item is None:
@@ -128,6 +142,7 @@ async def proxy_request(
     body = await request.body()
     headers = _filter_request_headers(request.headers.items())
     _inject_upstream_auth(service, headers)
+    _apply_passthrough_auth(request, service, headers)
 
     upstream_req = client.build_request(
         method=request.method,

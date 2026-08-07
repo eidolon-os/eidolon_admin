@@ -1,4 +1,5 @@
 """Gateway settings — loaded from environment + services.yaml."""
+
 from __future__ import annotations
 
 import os
@@ -12,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AuthConfig(BaseModel):
-    type: Literal["none", "bearer"] = "none"
+    type: Literal["none", "bearer", "passthrough"] = "none"
     token_env: str | None = None
 
 
@@ -21,6 +22,7 @@ class SupervisorRef(BaseModel):
 
     Lets the UI group supervisor programs under their owning service card.
     """
+
     config_file: str | None = None
     group: str | None = None
     programs: list[str] = Field(default_factory=list)
@@ -45,6 +47,7 @@ class PortsDecl(BaseModel):
     Kept optional so services with no network surface (e.g. memory
     internals that talk only over NATS) don't need to declare anything.
     """
+
     declared: list[int] = Field(default_factory=list)
 
 
@@ -55,13 +58,14 @@ class ConfigEntry(BaseModel):
     is resolved server-side from this declaration. ``path`` may contain ``~``
     and ``$VAR`` for portability between machines.
     """
+
     id: str
     label: str | None = None
     path: str
     format: Literal["yaml", "dotenv", "ini"] = "yaml"
-    reload: Literal[
-        "sighup_program", "restart_program", "restart_group", "none"
-    ] = "none"
+    reload: Literal["sighup_program", "restart_program", "restart_group", "none"] = (
+        "none"
+    )
     reload_target: str | None = None
     template: str | None = None
 
@@ -114,39 +118,8 @@ class AdminBindConfig(BaseModel):
     )
 
 
-class AvatarConfig(BaseModel):
-    """Digital-human (Ditto) service used offline at face-upload time to generate
-    a companion's looping idle clip from the configured face + silence.
-
-    Empty ``service_url`` disables idle generation entirely — the face still
-    works (web/mobile fall back to the still micro-motion / placeholder). The
-    service is self-signed, so certificate verification defaults off.
-    """
-
-    service_url: str = ""
-    idle_seconds: float = 4.0
-    width: int = 448
-    height: int = 448
-    fps: float = 25.0
-    verify_ssl: bool = False
-    request_timeout_sec: float = 120.0
-    # Amplitude (0.0–1.0) of the audio that drives the idle clip. Ditto is
-    # audio-driven, so 0.0 (pure silence) gives a closed-mouth, minimally-moving
-    # face; raising it feeds low-level noise for more facial motion — but because
-    # the model reads audio as speech, higher values tend toward mouth movement
-    # (a mumbling look) rather than richer *natural* idle. Tune on real hardware;
-    # keep small (e.g. 0.02–0.06) if used at all.
-    idle_drive_level: float = 0.0
-
-    @field_validator("service_url")
-    @classmethod
-    def _strip_trailing(cls, v: str) -> str:
-        return v.rstrip("/")
-
-
 class GatewayConfig(BaseModel):
     admin: AdminBindConfig = Field(default_factory=AdminBindConfig)
-    avatar: AvatarConfig = Field(default_factory=AvatarConfig)
     services: list[ServiceConfig] = Field(default_factory=list)
 
     def find(self, service_id: str) -> ServiceConfig | None:
@@ -159,44 +132,28 @@ class GatewayConfig(BaseModel):
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def default_voiceprint_root() -> Path:
-    """Default location for local enrollment audio and voiceprint profiles."""
-    env = os.environ.get("EIDOLON_VOICEPRINT_ROOT", "").strip()
-    if env:
-        return Path(env).expanduser()
-    return Path.home() / "eidolon" / "voiceprints"
-
-
-def default_3dspeaker_model_dir() -> Path:
-    """Default repository-managed 3D-Speaker model bundle path."""
-    env = os.environ.get("EIDOLON_3DSPEAKER_MODEL_DIR", "").strip()
-    if env:
-        return Path(env).expanduser()
-    return (
-        _REPO_ROOT.parent
-        / "eidolon_channel"
-        / "eidolon"
-        / "livekit"
-        / "plugins"
-        / "speaker_verification"
-        / "resources"
-        / "3dspeaker"
-        / "campplus_zh_16k_common"
-    )
-
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EIDOLON_ADMIN_", extra="ignore")
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
     esp32_tools_file: Path = _REPO_ROOT / "config" / "esp32_tools.yaml"
-    voiceprint_root: Path = Field(default_factory=default_voiceprint_root)
-    speaker_model_dir: Path = Field(default_factory=default_3dspeaker_model_dir)
+    system_directory_url: str = "http://127.0.0.1:8090"
+    system_directory_uds: Path | None = None
+    directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+    authority_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    # A distinct Admin service credential. The producer currently supports one
+    # opaque token only; production must not silently reuse Kernel's env var.
+    data_authority_token: str = ""
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf
     # writes when run from the project root.
     supervisor_socket: Path = _REPO_ROOT / "var" / "supervisor.sock"
     supervisor_available_dir: Path = _REPO_ROOT / "deploy" / "supervisor" / "available"
     supervisor_enabled_dir: Path = _REPO_ROOT / "deploy" / "supervisor" / "enabled"
+
+    @field_validator("system_directory_uds", mode="before")
+    @classmethod
+    def _blank_uds_is_disabled(cls, value: object) -> object:
+        return None if value is None or not str(value).strip() else value
 
 
 @lru_cache
@@ -209,6 +166,22 @@ def default_eidolon_root() -> Path:
     env = os.environ.get("EIDOLON_ROOT", "").strip()
     if env:
         return Path(env).expanduser().resolve()
+    # A linked Git worktree has a .git *file* pointing into the original
+    # repository. Resolve that location so sibling repositories do not become
+    # incorrectly relative to .codex/worktrees/<id>.
+    git_pointer = _REPO_ROOT / ".git"
+    if git_pointer.is_file():
+        lines = git_pointer.read_text(encoding="utf-8").splitlines()
+        first_line = lines[0] if lines else ""
+        prefix = "gitdir:"
+        if first_line.lower().startswith(prefix):
+            git_dir = Path(first_line[len(prefix) :].strip()).expanduser()
+            if not git_dir.is_absolute():
+                git_dir = _REPO_ROOT / git_dir
+            git_dir = git_dir.resolve()
+            for parent in git_dir.parents:
+                if parent.name == ".git":
+                    return parent.parent.parent.resolve()
     return (_REPO_ROOT.parent).resolve()
 
 

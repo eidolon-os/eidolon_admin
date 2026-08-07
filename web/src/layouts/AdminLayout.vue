@@ -1,21 +1,12 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { useOwnersStore } from '@/stores/owners'
 import { useServicesStore } from '@/stores/services'
 import { navigation, type NavGroup, type NavItem, type RouteTarget } from './navigation'
 
-const ownersStore = useOwnersStore()
 const servicesStore = useServicesStore()
 const route = useRoute()
 const router = useRouter()
-
-const MemoryRealmSelector = defineAsyncComponent(
-  () => import('@/modules/memory/components/RealmSelector.vue'),
-)
-const OwnerSelector = defineAsyncComponent(
-  () => import('@/modules/owners/OwnerSelector.vue'),
-)
 
 const commandOpen = ref(false)
 const commandQuery = ref('')
@@ -71,7 +62,6 @@ type MenuSection = {
 
 onMounted(() => {
   updateCompactLayout()
-  ownersStore.load()
   servicesStore.load()
   window.addEventListener('resize', updateCompactLayout)
   window.addEventListener('keydown', handleGlobalKeydown)
@@ -131,9 +121,6 @@ const activeMenuItem = computed(() => {
   return null
 })
 
-const isMemoryRoute = computed(() => activeMenuItem.value?.item.section === 'Memory')
-const showOwnerSelector = computed(() => !['system-firmware', 'hub-devices'].includes(String(route.name || '')))
-
 const commandItems = computed<CommandItem[]>(() =>
   menuGroups.value.flatMap((group) =>
     group.items.map((item) => ({
@@ -151,7 +138,6 @@ const commandItems = computed<CommandItem[]>(() =>
 )
 
 const currentTitle = computed(() => {
-  if (route.name === 'spaces') return 'My Eidolon / 空间管理'
   if (activeMenuItem.value) {
     const { group, item } = activeMenuItem.value
     return item.section ? `${group.label} / ${item.section} / ${item.label}` : `${group.label} / ${item.label}`
@@ -197,10 +183,6 @@ const railItems = computed(() =>
 )
 
 function isActiveRoute(item: NavItem): boolean {
-  if (item.route.name === 'home' && route.name === 'spaces') return true
-  if (item.id === 'my-eidolon' && route.name === 'identity-security') return false
-  if (item.id === 'companions' && route.name === 'companion-detail') return true
-  if (item.id === 'device-center' && route.name === 'device-detail') return true
   if (item.activeMatch === false) return false
   const target = item.activeMatch || item.route
   if (route.name !== target.name) return false
@@ -216,11 +198,11 @@ function openCommand(scope: string | null = null) {
 
 function runCommand(item: CommandItem) {
   commandOpen.value = false
-  router.push({ ...item.route, query: { owner_id: ownersStore.currentId || undefined } })
+  router.push(item.route)
 }
 
 function runMenuItem(item: MenuItem) {
-  router.push({ ...item.route, query: { owner_id: ownersStore.currentId || undefined } })
+  router.push(item.route)
 }
 
 function menuSections(group: MenuGroup): MenuSection[] {
@@ -249,7 +231,7 @@ function updateCompactLayout() {
 function handleRailClick(id: string) {
   const group = effectiveNav.value.find((entry) => entry.id === id)
   if (group?.items[0]) {
-    router.push({ ...group.items[0].route, query: { owner_id: ownersStore.currentId || undefined } })
+    router.push(group.items[0].route)
   }
 }
 
@@ -333,10 +315,6 @@ function handleGlobalKeydown(event: KeyboardEvent) {
           <span class="crumb">{{ currentTitle }}</span>
           <kbd>⌘K</kbd>
         </button>
-        <div class="header-actions">
-          <OwnerSelector v-if="showOwnerSelector" />
-          <MemoryRealmSelector v-if="isMemoryRoute" />
-        </div>
       </el-header>
       <el-main class="main">
         <RouterView />
