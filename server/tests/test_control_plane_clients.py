@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
 
 from eidolon_admin_server.app.control_plane.clients import (
     DATA_CONTRACT,
+    DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
     KERNEL_CONTRACT,
     DataAuthorityClient,
+    DataWorkspaceAuthorityClient,
     HubManagementClient,
     KernelMountClient,
 )
-from eidolon_admin_server.app.control_plane.contracts import ServiceEndpoint
+from eidolon_admin_server.app.control_plane.contracts import (
+    ServiceEndpoint,
+    WorkspaceInitializeRequest,
+)
 from eidolon_admin_server.app.control_plane.directory import SystemDirectoryClient
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 
@@ -24,13 +30,13 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
 
 class StaticDirectory:
-    def __init__(self, addresses: dict[str, tuple[str, str]]) -> None:
+    def __init__(self, addresses: dict[tuple[str, str], tuple[str, str]]) -> None:
         self.addresses = addresses
 
     async def resolve(
         self, *, service_id: str, endpoint_id: str, required_contract: str
     ):
-        address, contract = self.addresses[service_id]
+        address, contract = self.addresses[(service_id, endpoint_id)]
         assert contract == required_contract
         return ServiceEndpoint(
             operation="system.service-endpoint",
@@ -49,9 +55,19 @@ def client(handler) -> httpx.AsyncClient:
 def directory() -> StaticDirectory:
     return StaticDirectory(
         {
-            "data": ("http://data.test", DATA_CONTRACT),
-            "hub": ("http://hub.test", HUB_CONTRACT),
-            "kernel": ("http://kernel.test", KERNEL_CONTRACT),
+            ("data", "companion-authority.http"): (
+                "http://data.test",
+                DATA_CONTRACT,
+            ),
+            ("data", "workspace-authority.http"): (
+                "http://workspace.test",
+                DATA_WORKSPACE_CONTRACT,
+            ),
+            ("hub", "device-authority.http"): ("http://hub.test", HUB_CONTRACT),
+            ("kernel", "device-mount.http"): (
+                "http://kernel.test",
+                KERNEL_CONTRACT,
+            ),
         }
     )
 
@@ -102,6 +118,74 @@ async def test_data_client_requires_a_distinct_configured_credential() -> None:
         await http_client.aclose()
     assert caught.value.kind == "configuration"
     assert caught.value.authority == "data"
+
+
+async def test_workspace_client_uses_write_endpoint_and_distinct_credential() -> None:
+    operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PUT"
+        assert request.url == httpx.URL(
+            f"http://workspace.test/api/workspace-authority/v1/operations/{operation_id}"
+        )
+        assert request.headers["authorization"] == "Bearer workspace-token"
+        assert json.loads(request.content) == {
+            "owner_display_name": "Manson",
+            "companion_display_name": "Eidolon",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1",
+                "operation": "owner-workspace.initialize",
+                "operation_id": operation_id,
+                "request_fingerprint": "sha256:" + "0" * 64,
+                "status": "succeeded",
+                "owner": {
+                    "owner_id": "owner_32c421a3e0df40f98f7568745ae39d81",
+                    "display_name": "Manson",
+                    "lifecycle_state": "active",
+                },
+                "workspace": {
+                    "state": "ready",
+                    "primary_companion_id": "c_32c421a3e0df40f98f7568745ae39d81",
+                    "persona_genome_id": "g_32c421a3e0df40f98f7568745ae39d81_origin",
+                    "memory_realm_id": "r_32c421a3e0df40f98f7568745ae39d81",
+                },
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = DataWorkspaceAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token=" workspace-token ",
+            timeout_seconds=1,
+        )
+        result = await subject.initialize(
+            operation_id=operation_id,
+            payload=WorkspaceInitializeRequest(owner_display_name="Manson"),
+        )
+    finally:
+        await http_client.aclose()
+    assert result.owner.owner_id == "owner_32c421a3e0df40f98f7568745ae39d81"
+
+
+async def test_workspace_client_requires_its_own_write_credential() -> None:
+    http_client = client(lambda _request: httpx.Response(500))
+    try:
+        subject = DataWorkspaceAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="",
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as caught:
+            await subject.get("32c421a3-e0df-40f9-8f75-68745ae39d81")
+    finally:
+        await http_client.aclose()
+    assert caught.value.kind == "configuration"
 
 
 @pytest.mark.parametrize(

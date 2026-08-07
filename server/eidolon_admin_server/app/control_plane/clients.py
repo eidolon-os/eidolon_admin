@@ -14,11 +14,17 @@ from .contracts import (
     HubLifecycleStatus,
     KernelMountPage,
     KernelMutationResult,
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
 
 DATA_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
+DATA_WORKSPACE_CONTRACT = (
+    "https://eidolon.live/contracts/system-data/workspace/"
+    "onboarding-operation-v1.schema.json"
+)
 HUB_CONTRACT = "eidolon.hub.device-directory.v1"
 KERNEL_CONTRACT = "eidolon.kernel.device-mount.v1"
 
@@ -146,6 +152,83 @@ class DataAuthorityClient:
                 "data", "Data returned a different companion identity"
             )
         return identity
+
+
+class DataWorkspaceAuthorityClient:
+    """Narrow write client for first Owner workspace initialization only."""
+
+    def __init__(
+        self,
+        *,
+        directory: SystemDirectoryClient,
+        client: httpx.AsyncClient,
+        service_token: str,
+        timeout_seconds: float,
+    ) -> None:
+        self._directory = directory
+        self._client = client
+        self._token = service_token.strip()
+        self._timeout = timeout_seconds
+
+    async def _base_url(self) -> str:
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data workspace authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="workspace-authority.http",
+            required_contract=DATA_WORKSPACE_CONTRACT,
+        )
+        return endpoint.address.rstrip("/")
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._token}"}
+
+    async def initialize(
+        self,
+        *,
+        operation_id: str,
+        payload: WorkspaceInitializeRequest,
+    ) -> WorkspaceOperation:
+        response = await _request(
+            "data",
+            self._client,
+            "PUT",
+            f"{await self._base_url()}/api/workspace-authority/v1/operations/"
+            f"{quote(operation_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers,
+            json=payload.model_dump(mode="json"),
+        )
+        result = _parse("data", response, WorkspaceOperation)
+        if result.operation_id != operation_id:
+            raise _contract_violation(
+                "data", "Data returned a different workspace operation"
+            )
+        return result
+
+    async def get(self, operation_id: str) -> WorkspaceOperation:
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{await self._base_url()}/api/workspace-authority/v1/operations/"
+            f"{quote(operation_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers,
+        )
+        result = _parse("data", response, WorkspaceOperation)
+        if result.operation_id != operation_id:
+            raise _contract_violation(
+                "data", "Data returned a different workspace operation"
+            )
+        return result
 
 
 class HubManagementClient:

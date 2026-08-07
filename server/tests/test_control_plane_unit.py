@@ -48,6 +48,10 @@ class FakeData:
     pass
 
 
+class FakeWorkspace:
+    pass
+
+
 class FakeHub:
     def __init__(self) -> None:
         self.approval_ids: list[str] = []
@@ -128,6 +132,7 @@ def service(hub: FakeHub, kernel: FakeKernel) -> ControlPlaneService:
     return ControlPlaneService(
         directory=FakeDirectory(),  # type: ignore[arg-type]
         data=FakeData(),  # type: ignore[arg-type]
+        workspace=FakeWorkspace(),  # type: ignore[arg-type]
         hub=hub,  # type: ignore[arg-type]
         kernel=kernel,  # type: ignore[arg-type]
     )
@@ -297,6 +302,7 @@ async def test_close_releases_owned_directory_client() -> None:
     subject = ControlPlaneService(
         directory=directory,  # type: ignore[arg-type]
         data=FakeData(),  # type: ignore[arg-type]
+        workspace=FakeWorkspace(),  # type: ignore[arg-type]
         hub=FakeHub(),  # type: ignore[arg-type]
         kernel=FakeKernel(),  # type: ignore[arg-type]
     )

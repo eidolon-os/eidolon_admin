@@ -144,6 +144,10 @@ class Settings(BaseSettings):
     # A distinct Admin service credential. The producer currently supports one
     # opaque token only; production must not silently reuse Kernel's env var.
     data_authority_token: str = ""
+    # Separate write credential for Data's narrow workspace authority.
+    data_workspace_authority_token: str = ""
+    # Loopback ingress credential used only by eidolon-local-api.
+    local_api_service_token: str = ""
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf
     # writes when run from the project root.
     supervisor_socket: Path = _REPO_ROOT / "var" / "supervisor.sock"

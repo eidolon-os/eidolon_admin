@@ -13,6 +13,8 @@ from eidolon_admin_server.app.control_plane.contracts import (
     DeviceAdmissionResult,
     HubLifecycleStatus,
     KernelMount,
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
     WorkflowStep,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
@@ -47,6 +49,17 @@ class StubControlPlane:
 
     async def inventory(self, **_kwargs):
         raise AuthorityFailure("hub", "forbidden", "management scope denied", 403, 403)
+
+    async def initialize_workspace(
+        self,
+        *,
+        operation_id: str,
+        payload: WorkspaceInitializeRequest,
+    ) -> WorkspaceOperation:
+        return _workspace_operation(operation_id, payload.owner_display_name)
+
+    async def get_workspace_operation(self, operation_id: str) -> WorkspaceOperation:
+        return _workspace_operation(operation_id, "Manson")
 
     async def admit_device(self, payload, **_kwargs) -> DeviceAdmissionResult:
         blocked = payload.request_id == "blocked"
@@ -100,6 +113,30 @@ class StubControlPlane:
         )
 
 
+def _workspace_operation(operation_id: str, owner_name: str) -> WorkspaceOperation:
+    marker = operation_id.replace("-", "")
+    return WorkspaceOperation.model_validate(
+        {
+            "contract_version": "1",
+            "operation": "owner-workspace.initialize",
+            "operation_id": operation_id,
+            "request_fingerprint": "sha256:" + "0" * 64,
+            "status": "succeeded",
+            "owner": {
+                "owner_id": f"owner_{marker}",
+                "display_name": owner_name,
+                "lifecycle_state": "active",
+            },
+            "workspace": {
+                "state": "ready",
+                "primary_companion_id": f"c_{marker}",
+                "persona_genome_id": f"g_{marker}_origin",
+                "memory_realm_id": f"r_{marker}",
+            },
+        }
+    )
+
+
 async def request(app, method: str, path: str, **kwargs) -> httpx.Response:
     app.state.control_plane = StubControlPlane()
     async with httpx.AsyncClient(
@@ -128,6 +165,34 @@ async def test_data_not_found_is_not_rewritten_as_inactive(app) -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"]["kind"] == "not_found"
+
+
+async def test_workspace_onboarding_requires_exact_local_api_credential(app) -> None:
+    from eidolon_admin_server.app.settings import Settings
+
+    app.state.control_plane = StubControlPlane()
+    app.state.settings = Settings(local_api_service_token="local-api-secret")
+    operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    path = f"/api/control-plane/v1/workspace-onboarding/operations/{operation_id}"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        missing = await client.put(path, json={"owner_display_name": "Manson"})
+        accepted = await client.put(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+            json={"owner_display_name": "Manson"},
+        )
+        resumed = await client.get(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+        )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+    assert resumed.status_code == 200
+    assert accepted.json() == resumed.json()
+    assert accepted.json()["workspace"]["state"] == "ready"
 
 
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:

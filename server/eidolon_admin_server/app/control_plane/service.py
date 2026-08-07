@@ -8,13 +8,20 @@ import time
 import httpx
 
 from ..settings import Settings
-from .clients import DataAuthorityClient, HubManagementClient, KernelMountClient
+from .clients import (
+    DataAuthorityClient,
+    DataWorkspaceAuthorityClient,
+    HubManagementClient,
+    KernelMountClient,
+)
 from .contracts import (
     BoundaryCapabilities,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
     OwnerInventory,
     SourceStatus,
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
     WorkflowStep,
 )
 from .directory import SystemDirectoryClient
@@ -31,11 +38,13 @@ class ControlPlaneService:
         *,
         directory: SystemDirectoryClient,
         data: DataAuthorityClient,
+        workspace: DataWorkspaceAuthorityClient,
         hub: HubManagementClient,
         kernel: KernelMountClient,
     ) -> None:
         self.directory = directory
         self.data = data
+        self.workspace = workspace
         self.hub = hub
         self.kernel = kernel
 
@@ -60,6 +69,12 @@ class ControlPlaneService:
                 service_token=settings.data_authority_token,
                 timeout_seconds=settings.authority_timeout_seconds,
             ),
+            workspace=DataWorkspaceAuthorityClient(
+                directory=directory,
+                client=http_client,
+                service_token=settings.data_workspace_authority_token,
+                timeout_seconds=settings.authority_timeout_seconds,
+            ),
             hub=HubManagementClient(
                 directory=directory,
                 client=http_client,
@@ -71,6 +86,20 @@ class ControlPlaneService:
                 timeout_seconds=settings.authority_timeout_seconds,
             ),
         )
+
+    async def initialize_workspace(
+        self,
+        *,
+        operation_id: str,
+        payload: WorkspaceInitializeRequest,
+    ) -> WorkspaceOperation:
+        return await self.workspace.initialize(
+            operation_id=operation_id,
+            payload=payload,
+        )
+
+    async def get_workspace_operation(self, operation_id: str) -> WorkspaceOperation:
+        return await self.workspace.get(operation_id)
 
     async def close(self) -> None:
         await self.directory.close()
@@ -255,6 +284,7 @@ class ControlPlaneService:
         return BoundaryCapabilities(
             supported=(
                 "data.companion-identity.read",
+                "data.owner-workspace.initialize",
                 "hub.device-admission.read-write",
                 "kernel.device-mount.read-write",
                 "admin.device-admission.workflow",

@@ -54,6 +54,10 @@ from eidolon_admin_server.bootstrap.service import (
     BootstrapService,
 )
 from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
+from eidolon_admin_server.app.control_plane.contracts import (
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
+)
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
 
@@ -101,6 +105,53 @@ def _service(
         ),
         network=network,
     )
+
+
+class _WorkspaceClient:
+    def __init__(self) -> None:
+        self.result: WorkspaceOperation | None = None
+        self.initialize_calls: list[tuple[str, WorkspaceInitializeRequest]] = []
+
+    async def initialize(
+        self,
+        *,
+        operation_id: str,
+        payload: WorkspaceInitializeRequest,
+    ) -> WorkspaceOperation:
+        self.initialize_calls.append((operation_id, payload))
+        marker = operation_id.replace("-", "")
+        result = WorkspaceOperation.model_validate(
+            {
+                "contract_version": "1",
+                "operation": "owner-workspace.initialize",
+                "operation_id": operation_id,
+                "request_fingerprint": "sha256:" + "0" * 64,
+                "status": "succeeded",
+                "owner": {
+                    "owner_id": "owner_workspace_authority",
+                    "display_name": payload.owner_display_name,
+                    "lifecycle_state": "active",
+                },
+                "workspace": {
+                    "state": "ready",
+                    "primary_companion_id": f"c_{marker}",
+                    "persona_genome_id": f"g_{marker}_origin",
+                    "memory_realm_id": f"r_{marker}",
+                },
+            }
+        )
+        if self.result is not None:
+            assert result.request_fingerprint == self.result.request_fingerprint
+        self.result = result
+        return result
+
+    async def get(self, operation_id: str) -> WorkspaceOperation:
+        assert self.result is not None
+        assert self.result.operation_id == operation_id
+        return self.result
+
+    async def close(self) -> None:
+        return None
 
 
 def test_bootstrap_settings_default_to_fail_closed_production() -> None:
@@ -568,7 +619,11 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 break
             await asyncio.sleep(0.01)
 
-        app = create_app(LocalApiSettings(bootstrap=settings))
+        workspace_client = _WorkspaceClient()
+        app = create_app(
+            LocalApiSettings(bootstrap=settings),
+            workspace_client=workspace_client,
+        )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport,
@@ -618,15 +673,54 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert current.status_code == 200
             assert current.json()["controller"]["reset_epoch"] == 0
+            assert current.json()["controller"]["owner_id"] is None
+
+            workspace_headers = {"Authorization": f"Bearer {token}"}
+            absent = await client.get(
+                "/api/local/v1/setup/workspace",
+                headers=workspace_headers,
+            )
+            assert absent.status_code == 200
+            assert absent.json()["state"] == "absent"
+
+            unauthenticated = await client.put(
+                "/api/local/v1/setup/workspace",
+                json={"owner_display_name": "Manson"},
+            )
+            assert unauthenticated.status_code == 401
+            initialized = await client.put(
+                "/api/local/v1/setup/workspace",
+                headers=workspace_headers,
+                json={
+                    "owner_display_name": "Manson",
+                    "companion_display_name": "Eidolon",
+                },
+            )
+            assert initialized.status_code == 200
+            assert initialized.json()["state"] == "ready"
+            assert initialized.json()["owner"]["owner_id"] == (
+                "owner_workspace_authority"
+            )
+            replay = await client.put(
+                "/api/local/v1/setup/workspace",
+                headers=workspace_headers,
+                json={"owner_display_name": "Manson"},
+            )
+            assert replay.status_code == 200
+            assert replay.json() == initialized.json()
+            assert len(workspace_client.initialize_calls) == 2
+            assert (
+                workspace_client.initialize_calls[0][0]
+                == workspace_client.initialize_calls[1][0]
+            )
+
+            ready = await client.get(
+                "/api/local/v1/setup/workspace",
+                headers=workspace_headers,
+            )
+            assert ready.json() == initialized.json()
 
             control = BootstrapControlClient(settings.control_socket)
-            bound = await control.request(
-                "controller.bind_owner",
-                controller_id=controller_id,
-                reset_epoch=0,
-                owner_id="owner_workspace_authority",
-            )
-            assert bound["owner_id"] == "owner_workspace_authority"
             refreshed = await client.get(
                 "/api/local/v1/auth/session",
                 headers={"Authorization": f"Bearer {token}"},
@@ -676,7 +770,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
         json.loads(path.read_text())
         for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
     ]
-    assert len(local_api_documents) == 9
+    assert len(local_api_documents) == 11
     assert all(
         document["$schema"].endswith("2020-12/schema")
         for document in local_api_documents
