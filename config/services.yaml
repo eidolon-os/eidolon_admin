@@ -53,6 +53,54 @@ services:
       declared: [$EIDOLON_NATS_PORT, $EIDOLON_NATS_HTTP_PORT]
     features: []
 
+  # Operational visibility only. Admin business calls do not use these static
+  # URLs; the typed control-plane clients resolve endpoints through eidolond.
+  - id: eidolond
+    name: Eidolon System Manager
+    integration: infra
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    # The isolated/product profiles expose eidolond on UDS only. Supervisor
+    # process state is the operational probe; business clients use the typed
+    # UDS directory adapter.
+    supervisor:
+      config_file: deploy/supervisor/available/eidolond.conf
+      group: eidolond
+      programs: [eidolond]
+    ports: { declared: [] }
+    features: []
+
+  - id: data
+    name: Eidolon Data V2 Authority
+    integration: infra
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    health: http://127.0.0.1:$EIDOLON_DATA_API_PORT/health
+    supervisor:
+      config_file: deploy/supervisor/available/data.conf
+      group: data
+      programs: [data-api]
+    ports:
+      declared: [$EIDOLON_DATA_API_PORT]
+    features: []
+
+  - id: kernel
+    name: Eidolon Kernel
+    integration: infra
+    base_url: ""
+    upstream_prefix: ""
+    auth: { type: none }
+    health: http://127.0.0.1:$EIDOLON_KERNEL_API_PORT/health
+    supervisor:
+      config_file: deploy/supervisor/available/kernel.conf
+      group: kernel
+      programs: [kernel-api]
+    ports:
+      declared: [$EIDOLON_KERNEL_API_PORT]
+    features: []
+
   - id: agent
     name: Eidolon Agent
     integration: proxy

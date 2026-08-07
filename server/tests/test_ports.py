@@ -17,10 +17,19 @@ from eidolon_admin_server.app.ports import (
 from eidolon_admin_server.app.settings import Settings, load_gateway_config
 
 
-def test_apply_ports_exports_hub_port(monkeypatch) -> None:
-    monkeypatch.delenv("EIDOLON_HUB_API_PORT", raising=False)
+def test_apply_ports_exports_authority_and_directory_ports(monkeypatch) -> None:
+    for name in (
+        "EIDOLON_HUB_API_PORT",
+        "EIDOLON_DATA_API_PORT",
+        "EIDOLON_KERNEL_API_PORT",
+        "EIDOLON_SYSTEM_API_PORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
     apply_ports_to_environ()
     assert os.environ.get("EIDOLON_HUB_API_PORT") == "8082"
+    assert os.environ.get("EIDOLON_DATA_API_PORT") == "8084"
+    assert os.environ.get("EIDOLON_KERNEL_API_PORT") == "8083"
+    assert os.environ.get("EIDOLON_SYSTEM_API_PORT") == "8090"
 
 
 def test_apply_ports_does_not_export_foreign_database_paths(monkeypatch) -> None:
@@ -40,6 +49,10 @@ def test_gateway_config_uses_port_registry(monkeypatch) -> None:
     assert hub is not None
     assert hub.base_url == "http://127.0.0.1:8082"
     assert hub.ports.declared == [8082]
+    assert cfg.find("data").integration == "infra"  # type: ignore[union-attr]
+    assert cfg.find("data").base_url == ""  # type: ignore[union-attr]
+    assert cfg.find("kernel").integration == "infra"  # type: ignore[union-attr]
+    assert cfg.find("eidolond").integration == "infra"  # type: ignore[union-attr]
 
 
 def test_blank_directory_uds_does_not_override_http_directory() -> None:
@@ -49,6 +62,9 @@ def test_blank_directory_uds_does_not_override_http_directory() -> None:
 def test_ports_registry_has_expected_sections() -> None:
     ports = load_ports()
     assert ports["hub"]["api"]["port"] == 8082
+    assert ports["data"]["api"]["port"] == 8084
+    assert ports["kernel"]["api"]["port"] == 8083
+    assert ports["eidolond"]["api"]["port"] == 8090
     assert ports["livekit"]["port"] == 7880
     assert ports["client_web"]["port"] == 3001
     assert ports["memory"]["mcp"]["port"] == 10030
@@ -102,6 +118,9 @@ def test_collect_ports_from_agent_settings(tmp_path: Path, monkeypatch) -> None:
     assert ports["agent"]["admin"]["port"] == 9192
     assert ports["agent"]["grpc"]["port"] == 46000
     assert ports["nats"]["port"] == 4333
+    assert ports["data"]["api"]["port"] == 8084
+    assert ports["kernel"]["api"]["port"] == 8083
+    assert ports["eidolond"]["api"]["port"] == 8090
 
 
 def test_collect_ports_registry_writes_file(tmp_path: Path, monkeypatch) -> None:

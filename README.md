@@ -62,7 +62,33 @@ pnpm --dir web install --frozen-lockfile
 pnpm --dir web dev
 ```
 
-现有 `deploy/dev/run_all.sh` 和 Supervisor 页面仍用于本地开发进程运维。启动整套环境前，必须先确认 eidolond 当前 manifest 已发布 Data/Hub/Kernel 三个上述 endpoint，并配置独立的 Admin Data credential。不要把正式 `eidolon-system.sqlite3` 用作测试库。
+### 隔离 OS 控制面
+
+`os-control-plane` profile 已把真实 eidolond、Data V2、Hub、Kernel 与 Admin 接通。准备命令只在本 worktree 的 `var/os-control-plane/` 下生成权限为 `0600` 的随机凭证、配置和空 Data V2 库；它不启动进程，也不读取或修改 `~/eidolon/data/eidolon-system.sqlite3`。
+
+```bash
+# 1. 生成/复用隔离配置，执行 Data V2 migration，并校验 manifest 与 supervisor 配置
+./deploy/dev/run_all.sh os-control-plane prepare
+
+# 2. 可选：生成一个短期 sandbox Hub operator JWT（只写文件，不输出 token）
+./deploy/dev/run_all.sh os-control-plane issue-operator-token --ttl-seconds 900
+
+# 3. 启动 Admin + Web；Data/Hub/Kernel 的 desired state 只由 eidolond 管理
+./deploy/dev/run_all.sh os-control-plane start
+
+./deploy/dev/run_all.sh os-control-plane status
+./deploy/dev/run_all.sh os-control-plane stop
+```
+
+不要把该 sandbox JWT 或 `var/os-control-plane/env/` 复制到产品环境。Data 当前只接受一个 opaque authority token，所以隔离 profile 的 Admin 与 Kernel 暂时共享同一个 producer token；产品环境需要 Data 支持按 consumer 区分、可独立轮换的 service credential。
+
+现有默认 `start`/`core-contract` profile 保持不变；Agent 也不属于 `os-control-plane` profile。
+
+## 树莓派部署方向
+
+Kernel 当前已有 Raspberry Pi/Linux systemd units、eidolond systemd manifest，以及只切换 Kernel/Data/SDK 的原子 release 激活器。Admin 的并行 `refactor/memory-contracts-v2` 分支已有 Bootstrap 与 Controller-authenticated Local API systemd units，但它们按 ADR 与 Admin operator app 分离；Hub、Admin operator API、Admin Web/ingress 仍未进入同一 release。因此目前不能诚实地称为完整 Eidolon OS 一键部署。
+
+统一方式会复用现有的“非 root 准备/传输 + root 离线 dry-run/activate + 自动 rollback”边界，而不是另写一套会在线执行任意脚本的安装器。分阶段方案和缺口见 [Raspberry Pi 统一部署路线](docs/deployment/raspberry-pi-unified-deployment.md)。
 
 ## 验证
 

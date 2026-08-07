@@ -37,6 +37,7 @@ where = ["server"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["server/tests"]
+pythonpath = [".", "server"]
 markers = [
     "unit: pure application/domain behavior",
     "component: Admin ASGI behavior with controlled authority transports",

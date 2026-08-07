@@ -24,6 +24,13 @@ Admin is a control-plane product entry and orchestration process. It is not an
 Owner, Companion, Device Mount, Device Admission, runtime-event, or audit
 authority. It owns no copy of those tables and opens no sibling SQLite file.
 
+Process ownership is separate from business dependency direction. In the
+isolated macOS/dev profile, Admin's launch script starts one supervisord daemon
+as a host executor and starts eidolond; only eidolond owns desired state and
+issues start/stop/restart for Data, Hub and Kernel. Admin API never calls
+supervisor to implement a business workflow. The Raspberry Pi profile uses the
+same shape with systemd as the host executor.
+
 ## Verified producer contracts
 
 | Producer | Public contract used by Admin | Authority |
@@ -54,6 +61,10 @@ those APIs by importing `DataStore` or opening `eidolon-system.sqlite3`.
 | `/api/resolve` reads Data Device/Persona/Realm repositories | external DTOs and deleted tables leak into an Admin resolver | removed; runtime resolution belongs to Kernel/Agent public read models |
 | Hub discovery/commands/presence/metrics legacy UI | current Hub has no such `/api/admin` contract and admission is not presence | removed; high-frequency presence/telemetry needs its owning projection/API |
 | direct Supervisor ownership of Data/Kernel | conflicts with eidolond desired-state authority | Admin discovers Data/Hub/Kernel through eidolond; it does not start formal services |
+
+The explicit `os-control-plane` development profile is not a counterexample:
+its child supervisor programs have `autostart=false`; eidolond is the only
+component that changes their desired state.
 
 ## Device admission and mount workflow
 

@@ -32,8 +32,9 @@ _PORTS_HEADER = """\
 # run_all.sh start runs ``python -m eidolon_admin_server.app.ports collect`` to
 # refresh this file (aggregation only — child settings are never modified).
 #
-# Edit admin / client_web / nats.http_port here when needed; service ports come
-# from the corresponding sub-project settings.yaml.
+# Edit admin / client_web / nats.http_port here when needed. Data, Kernel and
+# eidolond currently have deployment-contract ports because their application
+# settings intentionally do not own ASGI binding.
 
 """
 
@@ -149,6 +150,27 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
             "port": int(
                 api.get("port", _deep_get(ports, "hub", "api", "port", default=8082))
             ),
+        },
+    }
+
+    # These are deployment bindings, not application settings. They match the
+    # exact endpoints published by Kernel's system-services manifests.
+    ports["data"] = {
+        "api": {
+            "host": "127.0.0.1",
+            "port": int(_deep_get(ports, "data", "api", "port", default=8084)),
+        },
+    }
+    ports["kernel"] = {
+        "api": {
+            "host": "127.0.0.1",
+            "port": int(_deep_get(ports, "kernel", "api", "port", default=8083)),
+        },
+    }
+    ports["eidolond"] = {
+        "api": {
+            "host": "127.0.0.1",
+            "port": int(_deep_get(ports, "eidolond", "api", "port", default=8090)),
         },
     }
 
@@ -299,6 +321,18 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     hub = p["hub"]
     put("EIDOLON_HUB_API_HOST", hub["api"]["host"])
     put("EIDOLON_HUB_API_PORT", hub["api"]["port"])
+
+    data = p["data"]
+    put("EIDOLON_DATA_API_HOST", data["api"]["host"])
+    put("EIDOLON_DATA_API_PORT", data["api"]["port"])
+
+    kernel = p["kernel"]
+    put("EIDOLON_KERNEL_API_HOST", kernel["api"]["host"])
+    put("EIDOLON_KERNEL_API_PORT", kernel["api"]["port"])
+
+    eidolond = p["eidolond"]
+    put("EIDOLON_SYSTEM_API_HOST", eidolond["api"]["host"])
+    put("EIDOLON_SYSTEM_API_PORT", eidolond["api"]["port"])
 
     agent = p["agent"]
     put("EIDOLON_AGENT_HTTP_PORT", agent["http"]["port"])

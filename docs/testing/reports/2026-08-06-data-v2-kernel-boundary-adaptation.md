@@ -8,6 +8,8 @@ Admin 代码已从 Data/Kernel/Hub 的数据库聚合层改为无业务数据库
 
 代码及隔离测试已完成，但当前正式开发运行配置**尚不具备安全恢复完整 Admin 业务功能的条件**：`eidolon_kernel/config/system-services.yaml` 只发布 Hub，没有发布 Data `companion-authority.http` 和 Kernel `device-mount.http`；同时未发现已配置的 `EIDOLON_ADMIN_DATA_AUTHORITY_TOKEN`。因此本次没有启动 Admin/Agent，最终进程检查也没有发现 Admin、Agent、eidolond、Data、Hub 或 Kernel 服务进程。
 
+> 2026-08-07 后续：上述段落是本报告结项时的历史状态。dev manifest 与隔离凭证/数据库/supervisor profile 已在下一阶段接通并完成真实 eidolond 验收，详见 [`2026-08-07-runtime-wiring-phase-1.md`](2026-08-07-runtime-wiring-phase-1.md)。正式 credential 与正式启动仍未执行。
+
 ## 核验证据范围
 
 - Admin 适配起点：`c553872`（tag `v0.1.0`）。
@@ -166,7 +168,7 @@ cd web && pnpm test && pnpm build
 
 ## 已知风险与剩余跨项目工作
 
-1. 当前 dev eidolond manifest 只含 Hub；需由 Kernel/eidolond 所有者加入真实 Data/Kernel host target、endpoint、health/readiness，再做正式配置 dry-run。
+1. 本报告结项时 dev eidolond manifest 只含 Hub；该项已由 2026-08-07 隔离 runtime wiring 阶段补齐并验证，不代表正式环境已经启动。
 2. 需安全下发 Admin Data credential。Data 当前只有单 opaque token 配置；若不允许 Admin/Kernel 共享 token，Data 应最小扩展为多 service credential/audience，而不是让 Admin读 DB。
 3. Data Owner/Companion lifecycle mutation、Persona、Realm catalog、Face/Guard 管理契约仍缺失；对应 Admin UI/API 保持删除。
 4. 独立、可重建的全局 audit projection/query/publisher 及 queue lag/backpressure 指标仍缺失；Mission Control 不恢复。
@@ -178,4 +180,4 @@ cd web && pnpm test && pnpm build
 
 代码级：可以在隔离环境安全启动，真实进程 E2E 已证明。
 
-当前正式开发环境：**不可声明可安全恢复完整 Admin 功能**。阻塞条件是 eidolond dev manifest 缺 Data/Kernel endpoint 以及 Admin Data credential 未配置。完成这两项并在隔离配置上复跑 health/directory/contract smoke 后，才应获得明确授权启动 Admin；Agent 仍应独立评估。当前 Admin/Agent 保持停止。
+本报告结项当时的正式开发环境：**不可声明可安全恢复完整 Admin 功能**。后续阶段已经在隔离 profile 中解决 manifest 并复跑 health/directory/contract smoke；正式 Admin credential、产品 operator ingress 和正式启动仍需单独授权。Agent 仍应独立评估。当前正式 Admin/Agent 保持停止。
