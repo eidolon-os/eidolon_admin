@@ -63,8 +63,13 @@ def create_app(
         settings.supervisor_available_dir,
         settings.supervisor_enabled_dir,
     )
-    app.state.esp32_tools = Esp32ToolService(catalog_file=settings.esp32_tools_file)
-    app.state.mobile_tools = MobileToolService()
+    app.state.esp32_tools = Esp32ToolService(
+        catalog_file=settings.esp32_tools_file,
+        jobs_root=settings.state_dir / "esp32-tools" / "jobs",
+    )
+    app.state.mobile_tools = MobileToolService(
+        jobs_root=settings.state_dir / "mobile-tools" / "jobs",
+    )
 
     app.add_middleware(
         CORSMiddleware,

@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from eidolon_admin_server.app.main import create_app
-from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig
+from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig, Settings
 from eidolon_admin_server.app.tools.esp32 import catalog as esp32_catalog
 from eidolon_admin_server.app.tools.esp32.schemas import (
     Esp32Job,
@@ -29,6 +29,19 @@ from eidolon_admin_server.app.tools.esp32.service import (
 
 def _service(tmp_path: Path) -> Esp32ToolService:
     return Esp32ToolService(jobs_root=tmp_path / "jobs")
+
+
+def test_app_composition_keeps_tool_state_under_configured_state_dir(
+    tmp_path: Path,
+) -> None:
+    state_dir = tmp_path / "state"
+    app = create_app(
+        GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[]),
+        settings=Settings(state_dir=state_dir),
+    )
+
+    assert app.state.esp32_tools.jobs_root == state_dir / "esp32-tools" / "jobs"
+    assert app.state.mobile_tools.jobs_root == state_dir / "mobile-tools" / "jobs"
 
 
 def test_default_job_logs_root_uses_admin_log_tree(

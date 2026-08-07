@@ -137,6 +137,7 @@ class Settings(BaseSettings):
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
     esp32_tools_file: Path = _REPO_ROOT / "config" / "esp32_tools.yaml"
+    state_dir: Path = _REPO_ROOT / "var"
     system_directory_url: str = "http://127.0.0.1:8090"
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
