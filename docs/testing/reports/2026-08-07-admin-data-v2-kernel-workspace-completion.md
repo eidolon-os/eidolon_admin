@@ -29,6 +29,9 @@ Workspace、Hub、Kernel，并完成 Workspace content-bound 幂等、冲突和 
 - Hub Device Management contract：`a91ea8356f79da75b359faf9d90cace6d4a07ffb`。
 - Admin 两条既有适配历史由普通 merge `b4e4667` 汇合，没有 rebase、squash
   或丢弃提交。
+- 并行产生的 Admin 持久工具状态修复 `41b15d1` 又由普通 merge `ca04a3d`
+  合入；该提交把 ESP32/Mobile job state 放入独立 Admin state directory，不改变
+  Data/Kernel 权威边界。
 
 契约测试从上述 Data/Kernel Git object 读取实际 schema、router 和 manifest，而非
 根据文档名称构造接口。最终真实 runtime 还使用了当时 sibling 工作树的当前代码：
@@ -128,13 +131,13 @@ pytest 临时资源或 `var/os-control-plane/` 隔离资源。
 
 | 层级 | 命令 | 实际结果 |
 | --- | --- | ---: |
-| Unit | `.venv/bin/pytest server/tests -m unit -q` | 20 passed，254 deselected |
-| Component/functional | `.venv/bin/pytest server/tests -m component -q` | 47 passed，225 deselected |
-| Contract | `.venv/bin/pytest server/tests -m contract -q` | 12 passed，260 deselected |
-| Integration | `.venv/bin/pytest server/tests -m integration -q` | 5 passed，267 deselected |
-| Real-process E2E | `.venv/bin/pytest server/tests -m e2e -q -s` | 1 passed，271 deselected |
-| Backend full + branch coverage | `.venv/bin/coverage run -m pytest server/tests -q` | 274 passed，0 failed/skipped，24 warnings，42.90s |
-| Coverage report | `.venv/bin/coverage report` | 70%，7651 statements / 1922 branches |
+| Unit | `.venv/bin/pytest server/tests -m unit -q` | 20 passed，255 deselected |
+| Component/functional | `.venv/bin/pytest server/tests -m component -q` | 47 passed，228 deselected |
+| Contract | `.venv/bin/pytest server/tests -m contract -q` | 12 passed，263 deselected |
+| Integration | `.venv/bin/pytest server/tests -m integration -q` | 5 passed，270 deselected |
+| Real-process E2E | `.venv/bin/pytest server/tests -m e2e -q -s` | 1 passed，274 deselected |
+| Backend full + branch coverage | `.venv/bin/coverage run -m pytest server/tests -q` | 275 passed，0 failed/skipped，24 warnings，41.83s |
+| Coverage report | `.venv/bin/coverage report` | 70%，7653 statements / 1922 branches |
 | Frontend | `npm test -- --run` | 6 files / 25 tests passed |
 | Frontend type/build | `npm run build` | `vue-tsc --noEmit` + Vite build passed |
 
@@ -142,7 +145,7 @@ pytest 临时资源或 `var/os-control-plane/` 隔离资源。
 
 ```bash
 .venv/bin/ruff check server deploy
-.venv/bin/ruff format --check <13 changed Python files>
+.venv/bin/ruff format --check <18 changed Python files>
 .venv/bin/python -m compileall -q server/eidolon_admin_server deploy/dev
 bash -n deploy/dev/run_all.sh
 uv lock --check --offline
@@ -203,10 +206,10 @@ chunk 超过 500 kB 的 warning。
 
 | 低频 mutation / 聚合读取 | 结果 |
 | --- | ---: |
-| Workspace 首次 mutation | 23.77 ms |
-| Device admission + Mount + Attachment 首次 mutation | 32.16 ms |
-| 6 路重复 Device mutation | p50 39.62 ms / p95 40.53 ms |
-| 20 路 Hub + Kernel inventory | wall 103.76 ms / p50 93.95 ms / p95 99.52 ms |
+| Workspace 首次 mutation | 21.19 ms |
+| Device admission + Mount + Attachment 首次 mutation | 24.93 ms |
+| 6 路重复 Device mutation | p50 35.02 ms / p95 37.03 ms |
+| 20 路 Hub + Kernel inventory | wall 87.98 ms / p50 79.77 ms / p95 84.77 ms |
 
 合法本地 SQLite / 审计投影诊断：
 
