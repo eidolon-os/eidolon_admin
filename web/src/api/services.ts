@@ -17,7 +17,7 @@ export interface ServiceEntry {
   name: string
   features: FeatureEntry[]
   deploy: DeployMeta | null
-  auth_type: 'none' | 'bearer'
+  auth_type: 'none' | 'bearer' | 'passthrough'
 }
 
 export async function listServices(): Promise<ServiceEntry[]> {
@@ -52,6 +52,7 @@ export async function gatewayCall(
     method?: string
     params?: Record<string, any>
     data?: any
+    headers?: Record<string, string>
   } = {},
 ) {
   const path = subPath.startsWith('/') ? subPath.slice(1) : subPath
@@ -60,5 +61,6 @@ export async function gatewayCall(
     method: options.method || 'GET',
     params: options.params,
     data: options.data,
+    headers: options.headers,
   })
 }

@@ -1,7 +1,7 @@
 [project]
 name = "eidolon-admin"
 version = "0.1.0"
-description = "Unified admin gateway for Eidolon sub-projects (agent / hub / memory)"
+description = "Eidolon OS control-plane gateway and bounded-context orchestrator"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.115",
@@ -10,24 +10,8 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.5",
     "pyyaml>=6.0",
-    "pyserial>=3.5",
-    "eidolon-sdk",
-    "eidolon-data",
     "supervisor>=4.2.5",
     "psutil>=6.0",
-    "mcp>=1.2.0",
-    "nats-py>=2.9",
-    "modelscope>=1.37.1",
-    "addict>=2.4",
-    "datasets>=4.0",
-    "simplejson>=3.19",
-    "sortedcontainers>=2.4",
-    "soundfile>=0.12",
-    "torch>=2.2",
-    "torchaudio>=2.2",
-    "scikit-learn>=1.3.2",
-    "pillow>=11.0",
-    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
@@ -36,36 +20,12 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.4",
     "respx>=0.21",
-    # PyJWT — admin doesn't sign tokens itself, but the cross-project
-    # contract test (server/tests/test_runtime_token_contract.py)
-    # decodes channel-signed JWTs to assert payload field invariants.
-    # Keeping it here instead of base deps because admin's own runtime
-    # never touches JWTs.
-    "pyjwt>=2.8",
-    # Channel's ``eidolon.livekit.agent`` package eagerly imports
-    # streaming/batch/factory at package-load, all of which require
-    # ``livekit.agents``. Declaring it in admin's [dev] extra means the
-    # contract test can do a plain ``from eidolon.livekit.agent.runtime
-    # import sign_device_token`` with zero importlib tricks.
-    "livekit-agents>=1.5",
+    "pytest-cov>=5.0",
+    "jsonschema>=4.23",
 ]
-# To enable the cross-repo in-process fullstack and contract tests,
-# editable-install the sibling repos into this venv:
-#     pip install -e ../eidolon_hub -e ../eidolon_agent -e ../eidolon_channel
-# These are NOT declared as deps here because PEP 508 doesn't have a
-# portable relative-path syntax and we don't want every dev to need
-# all three sibling repos checked out. Without them, the
-# affected test files skip cleanly at module-load.
 
 [project.scripts]
 eidolon-admin = "eidolon_admin_server.app.cli:main"
-
-[tool.uv]
-find-links = ["https://modelscope.oss-cn-beijing.aliyuncs.com/releases/repo.html"]
-
-[tool.uv.sources]
-eidolon-sdk = { path = "../eidolon_sdk", editable = true }
-eidolon-data = { path = "../eidolon_data", editable = true }
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -77,3 +37,18 @@ where = ["server"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["server/tests"]
+markers = [
+    "unit: pure application/domain behavior",
+    "component: Admin ASGI behavior with controlled authority transports",
+    "contract: consumed producer contract verification",
+    "integration: several real ASGI applications or process boundaries",
+    "e2e: real Admin and producer processes over isolated loopback ports",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["eidolon_admin_server"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

@@ -13,7 +13,11 @@ import pytest
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig
 from eidolon_admin_server.app.tools.esp32 import catalog as esp32_catalog
-from eidolon_admin_server.app.tools.esp32.schemas import Esp32Job, Esp32JobRequest, Esp32Port
+from eidolon_admin_server.app.tools.esp32.schemas import (
+    Esp32Job,
+    Esp32JobRequest,
+    Esp32Port,
+)
 from eidolon_admin_server.app.tools.esp32.service import (
     Esp32JobConflict,
     Esp32ToolError,
@@ -47,11 +51,13 @@ boards: []
     assert svc.jobs_root == tmp_path / "admin" / "var/esp32-tools/jobs"
     assert svc.index_path == svc.jobs_root / "index.jsonl"
     assert svc.backups_root == svc.jobs_root / "backups"
-    assert svc.job_logs_root == tmp_path / "home" / "eidolon/logs/admin/esp32-tools/jobs"
+    assert (
+        svc.job_logs_root == tmp_path / "home" / "eidolon/logs/admin/esp32-tools/jobs"
+    )
 
 
 @pytest.mark.asyncio
-async def test_http_lists_four_board_profiles(tmp_path: Path) -> None:
+async def test_http_lists_current_board_profiles(tmp_path: Path) -> None:
     app = create_app(GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[]))
     app.state.esp32_tools = _service(tmp_path)
     async with httpx.AsyncClient(
@@ -66,8 +72,12 @@ async def test_http_lists_four_board_profiles(tmp_path: Path) -> None:
         "atk-dnesp32s3",
         "esp-box-3",
         "m5stack-core-s3",
+        "m5stack-stackchan",
     ]
-    assert all("erase_nvs" in {cap["action"] for cap in board["capabilities"]} for board in boards)
+    assert all(
+        "erase_nvs" in {cap["action"] for cap in board["capabilities"]}
+        for board in boards
+    )
 
 
 def test_board_catalog_can_be_loaded_from_yaml(tmp_path: Path) -> None:
@@ -87,8 +97,7 @@ def test_board_catalog_can_be_loaded_from_yaml(tmp_path: Path) -> None:
     idf_py.write_text("#!/usr/bin/env python\n", encoding="utf-8")
     esptool.write_text("#!/usr/bin/env python\n", encoding="utf-8")
     partition.write_text(
-        "# Name, Type, SubType, Offset, Size, Flags\n"
-        "nvs,data,nvs,0x9000,0x4000,\n",
+        "# Name, Type, SubType, Offset, Size, Flags\nnvs,data,nvs,0x9000,0x4000,\n",
         encoding="utf-8",
     )
     catalog_file = tmp_path / "esp32_tools.yaml"
@@ -146,8 +155,7 @@ def test_toolchain_config_is_injected_into_commands(tmp_path: Path) -> None:
     idf_py.write_text("#!/usr/bin/env python\n", encoding="utf-8")
     esptool.write_text("#!/usr/bin/env python\n", encoding="utf-8")
     partition.write_text(
-        "# Name, Type, SubType, Offset, Size, Flags\n"
-        "nvs,data,nvs,0x9000,0x4000,\n",
+        "# Name, Type, SubType, Offset, Size, Flags\nnvs,data,nvs,0x9000,0x4000,\n",
         encoding="utf-8",
     )
     catalog_file = tmp_path / "esp32_tools.yaml"
@@ -179,7 +187,9 @@ boards:
 
     flash_app = svc._steps(
         board,
-        Esp32JobRequest(board_id=board.id, action="flash_app", port="/dev/cu.usbmodem1101"),
+        Esp32JobRequest(
+            board_id=board.id, action="flash_app", port="/dev/cu.usbmodem1101"
+        ),
     )[0]
     assert flash_app.args[0] == str(idf_py.resolve())
     assert flash_app.env["EIDOLON_IDF_EXPORT"] == str(idf_export.resolve())
@@ -189,7 +199,9 @@ boards:
 
     chip_id = svc._steps(
         board,
-        Esp32JobRequest(board_id=board.id, action="chip_id", port="/dev/cu.usbmodem1101"),
+        Esp32JobRequest(
+            board_id=board.id, action="chip_id", port="/dev/cu.usbmodem1101"
+        ),
     )[0]
     assert chip_id.args[0] == str(esptool.resolve())
 
@@ -205,8 +217,7 @@ def test_local_catalog_override_and_action_overrides(tmp_path: Path) -> None:
     script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     esptool.write_text("#!/usr/bin/env python\n", encoding="utf-8")
     partition.write_text(
-        "# Name, Type, SubType, Offset, Size, Flags\n"
-        "nvs,data,nvs,0x9000,0x4000,\n",
+        "# Name, Type, SubType, Offset, Size, Flags\nnvs,data,nvs,0x9000,0x4000,\n",
         encoding="utf-8",
     )
     catalog_file = tmp_path / "esp32_tools.yaml"
@@ -250,7 +261,9 @@ toolchain:
     assert svc.environment().esptool_path == str(esptool.resolve())
     step = svc._steps(
         board,
-        Esp32JobRequest(board_id=board.id, action="flash_app", port="/dev/cu.usbmodem1101"),
+        Esp32JobRequest(
+            board_id=board.id, action="flash_app", port="/dev/cu.usbmodem1101"
+        ),
     )[0]
     assert step.args == [str(script.resolve()), "flash", "--app-only"]
 
@@ -290,7 +303,9 @@ async def test_job_history_survives_service_restart(tmp_path: Path) -> None:
     assert jobs[0].status == "succeeded"
 
 
-def test_port_scan_deduplicates_and_marks_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_port_scan_deduplicates_and_marks_first(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def fake_glob(pattern: str) -> list[str]:
         return {
             "/dev/cu.usbmodem*": ["/dev/cu.usbmodem1101"],
@@ -333,7 +348,9 @@ def test_erase_nvs_maps_only_to_nvs_partition(tmp_path: Path) -> None:
     assert "erase_flash" not in args
 
 
-def test_backup_and_restore_nvs_use_partition_bounds_and_latest_backup(tmp_path: Path) -> None:
+def test_backup_and_restore_nvs_use_partition_bounds_and_latest_backup(
+    tmp_path: Path,
+) -> None:
     svc = _service(tmp_path)
     board = svc.board("waveshare-esp32-s3-touch-amoled-206")
     req = Esp32JobRequest(
@@ -379,7 +396,9 @@ def test_action_mapping_ignores_user_supplied_shell_options(tmp_path: Path) -> N
     assert steps[0].args[-1] == "flash"
 
 
-def test_run_action_builds_and_flashes_without_interactive_monitor(tmp_path: Path) -> None:
+def test_run_action_builds_and_flashes_without_interactive_monitor(
+    tmp_path: Path,
+) -> None:
     svc = _service(tmp_path)
     board = svc.board("esp-box-3")
     steps = svc._steps(
@@ -429,7 +448,10 @@ def test_stackchan_core_s3_uses_board_script_contract(tmp_path: Path) -> None:
 def test_stackchan_serial_metadata_can_select_board() -> None:
     from eidolon_admin_server.app.tools.esp32.service import _guess_board_id
 
-    assert _guess_board_id("M5Stack CoreS3", "M5Stack", "0x303A", "0x1001") == "m5stack-core-s3"
+    assert (
+        _guess_board_id("M5Stack CoreS3", "M5Stack", "0x303A", "0x1001")
+        == "m5stack-core-s3"
+    )
     assert _guess_board_id("Core S3 USB Serial", "", None, None) == "m5stack-core-s3"
 
 
@@ -447,7 +469,9 @@ async def test_monitor_jobs_are_live_stream_only(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_serial_stream_reads_via_pyserial(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_serial_stream_reads_via_pyserial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     svc = _service(tmp_path)
     opened: dict[str, object] = {}
 
@@ -469,10 +493,15 @@ async def test_serial_stream_reads_via_pyserial(monkeypatch: pytest.MonkeyPatch,
         opened["port"] = FakeSerialPort(**kwargs)  # type: ignore[arg-type]
         return opened["port"]  # type: ignore[return-value]
 
-    monkeypatch.setitem(sys.modules, "serial", types.SimpleNamespace(Serial=fake_serial))
+    monkeypatch.setitem(
+        sys.modules, "serial", types.SimpleNamespace(Serial=fake_serial)
+    )
     stream = svc.serial_stream("esp-box-3", "/dev/cu.usbmodem1101", 115200)
     try:
-        assert await anext(stream) == ">> opening serial monitor: /dev/cu.usbmodem1101 @ 115200"
+        assert (
+            await anext(stream)
+            == ">> opening serial monitor: /dev/cu.usbmodem1101 @ 115200"
+        )
         assert await anext(stream) == ">> serial monitor started"
         assert await anext(stream) == "boot ok"
     finally:
@@ -518,9 +547,13 @@ def test_same_port_running_job_conflicts(tmp_path: Path) -> None:
         svc._assert_no_conflict(incoming)
 
 
-def test_ports_report_takeover_metadata_for_serial_monitor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ports_report_takeover_metadata_for_serial_monitor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     svc = _service(tmp_path)
-    monkeypatch.setattr(svc, "_pyserial_ports", lambda: [Esp32Port(path="/dev/cu.usbmodem1101")])
+    monkeypatch.setattr(
+        svc, "_pyserial_ports", lambda: [Esp32Port(path="/dev/cu.usbmodem1101")]
+    )
     svc._serial_sessions["/dev/cu.usbmodem1101"] = PortUse(
         kind="serial_monitor",
         board_id="esp-box-3",

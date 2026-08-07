@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import yaml
-from eidolon_sdk.memory import MEMORY_MCP_PORT_SPAN
 
 from eidolon_admin_server.app.ports import (
     _MAX_LIST_INDEX,
@@ -15,7 +14,7 @@ from eidolon_admin_server.app.ports import (
     collect_ports_registry,
     load_ports,
 )
-from eidolon_admin_server.app.settings import load_gateway_config
+from eidolon_admin_server.app.settings import Settings, load_gateway_config
 
 
 def test_apply_ports_exports_hub_port(monkeypatch) -> None:
@@ -24,14 +23,13 @@ def test_apply_ports_exports_hub_port(monkeypatch) -> None:
     assert os.environ.get("EIDOLON_HUB_API_PORT") == "8082"
 
 
-def test_apply_ports_exports_eidolon_data_path(monkeypatch) -> None:
+def test_apply_ports_does_not_export_foreign_database_paths(monkeypatch) -> None:
     monkeypatch.delenv("EIDOLON_ADMIN_API_URL", raising=False)
     monkeypatch.delenv("EIDOLON_DATA_SQLITE_PATH", raising=False)
     monkeypatch.delenv("EIDOLON_REGISTRY_DB_PATH", raising=False)
     apply_ports_to_environ()
     assert os.environ.get("EIDOLON_ADMIN_API_URL") == "http://127.0.0.1:9000"
-    shared = os.environ.get("EIDOLON_DATA_SQLITE_PATH", "")
-    assert shared.endswith("eidolon/data/eidolon.sqlite3")
+    assert os.environ.get("EIDOLON_DATA_SQLITE_PATH") is None
     assert os.environ.get("EIDOLON_REGISTRY_DB_PATH") is None
 
 
@@ -44,41 +42,16 @@ def test_gateway_config_uses_port_registry(monkeypatch) -> None:
     assert hub.ports.declared == [8082]
 
 
+def test_blank_directory_uds_does_not_override_http_directory() -> None:
+    assert Settings(system_directory_uds="").system_directory_uds is None
+
+
 def test_ports_registry_has_expected_sections() -> None:
     ports = load_ports()
     assert ports["hub"]["api"]["port"] == 8082
     assert ports["livekit"]["port"] == 7880
     assert ports["client_web"]["port"] == 3001
     assert ports["memory"]["mcp"]["port"] == 10030
-
-
-def test_memory_realm_dynamic_port_pool_does_not_overlap_fixed_services() -> None:
-    ports = load_ports()
-    memory_base = int(ports["memory"]["mcp"]["port"])
-    dynamic_pool = range(memory_base, memory_base + MEMORY_MCP_PORT_SPAN)
-
-    fixed_ports: list[tuple[str, int]] = []
-
-    def collect(path: str, value: object) -> None:
-        if isinstance(value, dict):
-            for key, child in value.items():
-                collect(f"{path}.{key}" if path else str(key), child)
-            return
-        if isinstance(value, int):
-            fixed_ports.append((path, value))
-
-    collect("", ports)
-    fixed_ports = [
-        (path, port)
-        for path, port in fixed_ports
-        if path != "memory.mcp.port"
-    ]
-
-    assert [
-        (path, port)
-        for path, port in fixed_ports
-        if port in dynamic_pool
-    ] == []
 
 
 def test_collect_ports_from_agent_settings(tmp_path: Path, monkeypatch) -> None:
@@ -98,13 +71,27 @@ def test_collect_ports_from_agent_settings(tmp_path: Path, monkeypatch) -> None:
     )
     # Minimal stubs so collect does not fall back to missing files only.
     for repo, body in (
-        ("eidolon_hub", {"api": {"host": "0.0.0.0", "port": 8082}, "livekit": {"api_url": "http://127.0.0.1:7880"}}),
-        ("eidolon_memory", {"discovery_http": {"host": "127.0.0.1", "port": 8020}, "mcp_http": {"port": 8030}}),
+        (
+            "eidolon_hub",
+            {
+                "api": {"host": "0.0.0.0", "port": 8082},
+                "livekit": {"api_url": "http://127.0.0.1:7880"},
+            },
+        ),
+        (
+            "eidolon_memory",
+            {
+                "discovery_http": {"host": "127.0.0.1", "port": 8020},
+                "mcp_http": {"port": 8030},
+            },
+        ),
         ("eidolon_channel", {"core": {"port": 8766}}),
     ):
         d = root / repo / "config"
         d.mkdir(parents=True)
-        d.joinpath("settings.yaml").write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+        d.joinpath("settings.yaml").write_text(
+            yaml.safe_dump(body, sort_keys=False), encoding="utf-8"
+        )
 
     monkeypatch.setattr(
         "eidolon_admin_server.app.settings.default_eidolon_root",
@@ -122,23 +109,46 @@ def test_collect_ports_registry_writes_file(tmp_path: Path, monkeypatch) -> None
     agent_dir = root / "eidolon_agent/config"
     agent_dir.mkdir(parents=True)
     agent_dir.joinpath("settings.yaml").write_text(
-        yaml.safe_dump({"http": {"port": 7777, "admin_port": 7778}, "grpc": {"tcp_port": 45051}}, sort_keys=False),
+        yaml.safe_dump(
+            {"http": {"port": 7777, "admin_port": 7778}, "grpc": {"tcp_port": 45051}},
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
     for repo, body in (
-        ("eidolon_hub", {"api": {"port": 8082}, "livekit": {"api_url": "http://127.0.0.1:7880"}}),
-        ("eidolon_memory", {"discovery_http": {"port": 8020}, "mcp_http": {"port": 8030}}),
+        (
+            "eidolon_hub",
+            {"api": {"port": 8082}, "livekit": {"api_url": "http://127.0.0.1:7880"}},
+        ),
+        (
+            "eidolon_memory",
+            {"discovery_http": {"port": 8020}, "mcp_http": {"port": 8030}},
+        ),
         ("eidolon_channel", {"core": {"port": 8766}}),
     ):
         d = root / repo / "config"
         d.mkdir(parents=True)
-        d.joinpath("settings.yaml").write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+        d.joinpath("settings.yaml").write_text(
+            yaml.safe_dump(body, sort_keys=False), encoding="utf-8"
+        )
 
     ports_path = tmp_path / "admin" / "config" / "ports.yaml"
     ports_path.parent.mkdir(parents=True)
-    ports_path.write_text(yaml.safe_dump({"admin": {"api": {"host": "127.0.0.1", "port": 9000}, "web": {"port": 9001}}}, sort_keys=False))
+    ports_path.write_text(
+        yaml.safe_dump(
+            {
+                "admin": {
+                    "api": {"host": "127.0.0.1", "port": 9000},
+                    "web": {"port": 9001},
+                }
+            },
+            sort_keys=False,
+        )
+    )
 
-    monkeypatch.setattr("eidolon_admin_server.app.settings.default_eidolon_root", lambda: root)
+    monkeypatch.setattr(
+        "eidolon_admin_server.app.settings.default_eidolon_root", lambda: root
+    )
     monkeypatch.setattr("eidolon_admin_server.app.ports.ports_file", lambda: ports_path)
 
     out = collect_ports_registry(root)

@@ -8,6 +8,7 @@ const route = useRoute()
 const method = ref<'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'>('GET')
 const path = ref('')
 const body = ref('')
+const authorization = ref('')
 const loading = ref(false)
 const status = ref<number | null>(null)
 const response = ref<any>(null)
@@ -22,7 +23,13 @@ async function send() {
     const resp = await gatewayCall(
       route.params.serviceId as string,
       path.value,
-      { method: method.value, data: parsedBody },
+      {
+        method: method.value,
+        data: parsedBody,
+        headers: authorization.value.trim()
+          ? { Authorization: authorization.value.trim() }
+          : undefined,
+      },
     )
     status.value = resp.status
     response.value = resp.data
@@ -57,6 +64,9 @@ async function send() {
         <el-button type="primary" :loading="loading" @click="send">发送</el-button>
       </el-form-item>
     </el-form>
+    <el-form-item label="Authorization（仅 passthrough 服务）">
+      <el-input v-model="authorization" type="password" show-password placeholder="Bearer ey..." />
+    </el-form-item>
     <el-form-item label="Body (JSON)" v-if="['POST', 'PUT', 'PATCH'].includes(method)">
       <el-input v-model="body" type="textarea" :rows="5" placeholder='{"key": "value"}' />
     </el-form-item>

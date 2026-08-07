@@ -1,4 +1,5 @@
 """Unified proxy router — mounts ANY /api/services/{service_id}/{sub_path:path}."""
+
 from __future__ import annotations
 
 import httpx
@@ -21,6 +22,9 @@ def _get_client(request: Request) -> httpx.AsyncClient:
 @router.api_route(
     "/services/{service_id}/{sub_path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    # The target surface is dynamic per bounded context and cannot be
+    # represented as one stable OpenAPI operation per HTTP method.
+    include_in_schema=False,
 )
 async def proxy(service_id: str, sub_path: str, request: Request):
     registry = _get_registry(request)
@@ -37,5 +41,9 @@ async def proxy(service_id: str, sub_path: str, request: Request):
         )
     try:
         return await proxy_request(request, service, sub_path, _get_client(request))
-    except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
+    except (
+        httpx.ConnectError,
+        httpx.TimeoutException,
+        httpx.RemoteProtocolError,
+    ) as exc:
         return upstream_error_response(exc, service_id)

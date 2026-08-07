@@ -1,4 +1,5 @@
 """Tests for the unified gateway proxy."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,6 +9,13 @@ import pytest
 import respx
 
 from eidolon_admin_server.app.gateway import proxy
+from eidolon_admin_server.app.main import create_app
+from eidolon_admin_server.app.settings import (
+    AdminBindConfig,
+    AuthConfig,
+    GatewayConfig,
+    ServiceConfig,
+)
 
 
 pytestmark = pytest.mark.asyncio
@@ -71,6 +79,47 @@ async def test_proxy_injects_bearer_token(app, monkeypatch):
 
 
 @respx.mock
+async def test_proxy_passes_operator_credential_only_for_declared_passthrough_service():
+    captured: dict[str, str] = {}
+
+    def _capture(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization", "")
+        captured["cookie"] = request.headers.get("cookie", "")
+        return httpx.Response(200, json={"operation": "device.directory-page"})
+
+    respx.get("http://hub.test/api/device-management/v1/owners/owner-1/devices").mock(
+        side_effect=_capture
+    )
+    config = GatewayConfig(
+        admin=AdminBindConfig(cors_origins=[]),
+        services=[
+            ServiceConfig(
+                id="hub",
+                name="Hub",
+                base_url="http://hub.test",
+                auth=AuthConfig(type="passthrough"),
+            )
+        ],
+    )
+    subject = create_app(config)
+    try:
+        transport = httpx.ASGITransport(app=subject)
+        async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:
+            response = await ac.get(
+                "/api/services/hub/api/device-management/v1/owners/owner-1/devices",
+                headers={
+                    "Authorization": "Bearer operator",
+                    "Cookie": "session=must-not-forward",
+                },
+            )
+    finally:
+        await subject.state.http_client.aclose()
+
+    assert response.status_code == 200
+    assert captured == {"auth": "Bearer operator", "cookie": ""}
+
+
+@respx.mock
 async def test_proxy_passes_query_string(app):
     route = respx.get("http://memory.test/api/memories?q=hello&top_k=5").mock(
         return_value=httpx.Response(200, json={"hits": []})
@@ -105,7 +154,9 @@ async def test_proxy_post_body(app):
         captured["ctype"] = request.headers.get("content-type")
         return httpx.Response(201, json={"ok": True})
 
-    respx.post("http://agent.test/api/admin/personas/instances").mock(side_effect=_capture)
+    respx.post("http://agent.test/api/admin/personas/instances").mock(
+        side_effect=_capture
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://gw") as ac:

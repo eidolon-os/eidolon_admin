@@ -1,284 +1,84 @@
 # eidolon_admin
 
-Unified admin gateway for the Eidolon ecosystem.
+Eidolon OS 的控制面与编排面。后端是 FastAPI，前端是 Vue 3。
 
-A thin FastAPI gateway plus a Vue 3 (Element Plus) SPA. The gateway forwards
-HTTP requests to each sub-project's existing admin API, exposes a one-click
-Deploy/Dev panel that drives every sub-project's `deploy/dev/run_all.sh`, and
-declares all integration through a single YAML file.
+Admin 不拥有 Owner、Companion、Device、Mount、Memory、运行态 telemetry 或全局审计数据，也不打开 Data、Kernel、Hub 的 SQLite。业务访问方向固定为：
 
-## Integration spectrum
-
-Each sub-project is integrated via one of four modes (declared in
-`config/services.yaml`'s `integration:` field):
-
-| Mode      | What it means                                                                                              | Examples       |
-| --------- | ---------------------------------------------------------------------------------------------------------- | -------------- |
-| `native`  | Admin endpoints implemented **inside this gateway** at `/api/<id>/*`. Talks to the sub-project via external protocols only (MCP / NATS / files). | `memory`       |
-| `proxy`   | Transparent HTTP forward to the sub-project's existing admin API at `base_url + upstream_prefix`.          | `hub`, `agent` |
-| `process` | No HTTP/NATS admin surface; supervisord owns lifecycle; UI shows status + logs + read-only config.         | `channel`      |
-| `infra`   | Shared infrastructure listed only in supervisor configs.                                                   | `nats`         |
-
-### Per-project notes
-
-- **`memory`** — fully native. `legacy/admin/` in the memory repo can be
-  deleted; this gateway provides all of Users / Memories / Search / Recall /
-  KG / Graph / Hierarchy / MCP Tools natively via MCP HTTP + NATS JetStream +
-  Eidolon Data + memory reconcile. Admin-owned tenant and user records live
-  in `~/eidolon/data/eidolon.sqlite3`, not NATS KV. Per-user **agent** and
-  opt-in **consolidator** workers are both children of `memory-supervisor`
-  (not separate supervisord programs); Admin edits the Eidolon Data owner row
-  and surfaces PIDs/logs on Runners & Workers / Users pages.
-- **`hub`** — proxy. Hub's in-memory state (commands, probe stats, presence)
-  and tight LiveKit integration make native re-implementation worse, not
-  better. Our gateway relays `/api/services/hub/*` → `:8082/api/admin/*` and
-  provides a polished UI on top. Hub's Next.js `client/web` and Vite
-  `client/admin` are NOT under our supervisord — they remain hub-project
-  concerns.
-- **`agent`** — proxy. PersonasService is dense domain logic; we proxy to it
-  rather than vendor it. Agent's own `admin_web/` can be retired once you're
-  satisfied with our UI.
-- **`channel`** — process-only. LiveKit voice worker with no HTTP/NATS admin
-  surface. We expose process status (from supervisord) and a read-only view
-  of `deploy/.livekit-channel.env` (secrets masked) — no channel project
-  changes required.
-- **`nats`** — shared infra under our supervisord (`nats-server` on
-  `:4222` / `:8222` JetStream). One source of truth across the stack.
-- **`livekit`** — shared infra under our supervisord (`livekit-server` on
-  `:7880`). Source config is `deploy/livekit/livekit.yaml`; the dev supervisor
-  wrapper renders `var/livekit/livekit.generated.yaml` with the current LAN
-  `rtc.node_ip` before starting LiveKit. Hub and channel only need matching
-  `LIVEKIT_API_*` in their `.env`.
-
-### Port registry
-
-Dev bind ports are defined in **each sub-project's `config/settings.yaml`**
-(source of truth). `./deploy/dev/run_all.sh` runs **`ports collect`** to
-aggregate them into **`config/ports.yaml`** for admin (health / supervisord /
-`services.yaml` expansion only — child settings are never modified). Change a
-service port in the sub-project, then `./deploy/dev/run_all.sh restart`.
-
-### Adding a new sub-project
-
-1. Write `deploy/supervisor/available/<id>.conf` (use `wrappers/with-env.sh`
-   if it needs a `.env` loaded).
-2. Append a `services[]` entry to `config/services.yaml` with the right
-   `integration:` mode and `supervisor:` block.
-3. (For `native` only) implement `server/eidolon_admin_server/app/<id>/`
-   following the memory module shape (`schemas.py`, `router.py`, `routers/`,
-   protocol clients in their own files).
-4. (For UI) add page components under `web/src/modules/<id>/` and register
-   them in `FeatureDispatcher.vue`. Unmapped features fall back to the
-   generic `ApiConsole`.
-
-## Architecture
-
-```
-┌─────────────────┐     /api/services/{id}/...     ┌────────────────────┐
-│   Vue 3 SPA     │ ─────────── proxy ───────────► │  FastAPI gateway   │
-│  (Element Plus) │                                │   (port 9000)      │
-│   port 9001     │ ◄──── JSON / SSE / binary ──── │                    │
-└─────────────────┘                                └────────┬───────────┘
-                                                            │
-                                              ┌─────────────┼──────────────┐
-                                              ▼             ▼              ▼
-                                       eidolon_agent  eidolon_hub  eidolon_memory
-                                       (whatever port is configured in services.yaml)
+```text
+Web / CLI
+  -> Admin HTTP
+  -> Admin application orchestration
+  -> strict Data / Hub / Kernel clients
+  -> eidolond System Service Directory
+  -> bounded-context public HTTP contracts
 ```
 
-The gateway has no business logic. It does four things:
+完整边界、迁移矩阵和缺失生产者契约见 [Data V2 / Kernel control-plane ADR](docs/architecture/eidolon-os-control-plane-v2.md)。
 
-1. **Forward** requests under `/api/services/{service_id}/{sub_path}` to the
-   right upstream (`base_url + upstream_prefix + sub_path`).
-2. **Probe** each upstream's `health` endpoint concurrently for the Health
-   panel.
-3. **Drive** each sub-project's `deploy/dev/run_all.sh` via a tightly
-   whitelisted subprocess runner — one-click start/stop/restart.
-4. **Serve** the SPA configuration (`/api/services` returns the menu).
+## 当前业务能力
 
-## Repo layout
+- `GET /api/control-plane/v1/capabilities`：报告已支持及因生产者契约缺失而不可用的能力。
+- `GET /api/control-plane/v1/companions/{companion_id}`：通过 Data V2 的只读 Companion Authority 查询。
+- `GET /api/control-plane/v1/owners/{owner_id}/inventory`：并发聚合 Hub Device Directory 与 Kernel Mount 的瞬时读模型；每个来源保留独立状态和延迟。
+- `POST /api/control-plane/v1/workflows/device-admission`：按 `Hub approval -> Kernel Mount -> optional Companion Attachment` 编排。
 
-```
-config/services.yaml          # service registry — edit this to add projects
-config/ports.yaml             # admin port index (collected from sub-projects)
-docs/                         # cross-project conventions (config, reference loaders)
-server/                       # FastAPI gateway
-  eidolon_admin_server/
-    app/
-      main.py                 # FastAPI factory
-      settings.py             # services.yaml loader (Pydantic)
-      gateway/                # proxy + router + registry
-      deploy/                 # safe runner + deploy router
-      routers/                # /api/services, /api/health
-  tests/
-web/                          # Vue 3 SPA (Vite)
-  src/
-    api/                      # axios client, service & deploy clients
-    layouts/                  # AdminLayout with dynamic menu
-    modules/                  # one folder per service (+ deploy, common, health)
-```
+设备接纳 workflow 要求调用方提供稳定 `request_id`。Admin 派生确定性的子 request ID，并把 CAS revision 传给 Kernel。它不是分布式事务：可重试的部分成功返回 HTTP 202、最后已提交阶段和 `retry-forward-same-request-id`；非重试冲突返回 `blocked/operator-action-required`。Admin 重启后由 Hub/Kernel 自有幂等记录恢复，不在本地复制权威状态。
 
-## Getting started
+旧 `/api/owners`、`/api/data/*`、`/api/devices`、`/api/events`、`/api/memory/*`、`/api/mission-control/*`、`/api/onboarding/*` 和 `/api/resolve/*` 已移除，不提供旧 schema、migration、CRUD 或 SQLite fallback。
 
-### One-shot (supervisord-managed stack)
+Agent、Memory 和 Hub 的独立管理界面通过 `/api/services/{service_id}/*` 透明代理。Hub 声明为 `passthrough`，由操作端提供管理 JWT；其他服务的 Authorization 不会被默认透传。
 
-This wrapper owns three things:
+## 配置
 
-1. The admin **gateway api** (uvicorn :9000)
-2. The admin **web** (vite :9001)
-3. A **supervisord daemon** that launches every sub-project declared under
-   `deploy/supervisor/enabled/*.conf`.
+主要环境变量：
+
+| 变量 | 默认值 | 用途 |
+| --- | --- | --- |
+| `EIDOLON_ADMIN_SYSTEM_DIRECTORY_URL` | `http://127.0.0.1:8090` | eidolond HTTP endpoint directory |
+| `EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS` | 空 | 可选 eidolond Unix socket；配置时优先使用 |
+| `EIDOLON_ADMIN_DATA_AUTHORITY_TOKEN` | 空 | Admin 自有 Data service credential；不会复用 Kernel 变量 |
+| `EIDOLON_ADMIN_DIRECTORY_TIMEOUT_SECONDS` | `2` | 服务目录调用超时 |
+| `EIDOLON_ADMIN_AUTHORITY_TIMEOUT_SECONDS` | `3` | Data/Hub/Kernel 调用超时 |
+| `EIDOLON_ADMIN_SERVICES_FILE` | `config/services.yaml` | 通用服务代理和运维目录 |
+
+Data、Hub、Kernel 的 URL 不在 Admin 静态配置中复制；必须由 eidolond 发布下列精确 endpoint/contract：
+
+| service / endpoint | contract |
+| --- | --- |
+| `data / companion-authority.http` | `https://eidolon.dev/data/contracts/v1/companion/identity.schema.json` |
+| `hub / device-authority.http` | `eidolon.hub.device-directory.v1` |
+| `kernel / device-mount.http` | `eidolon.kernel.device-mount.v1` |
+
+若目录未发布、服务不 ready、契约名不匹配或响应 schema 漂移，Admin 会返回显式 `unavailable` 或 `contract_violation`，不会伪造成 inactive/not found。
+
+## 本地开发
 
 ```bash
-./deploy/dev/run_all.sh                  # foreground admin only (Ctrl+C exits)
-./deploy/dev/run_all.sh start            # supervisord + admin
-./deploy/dev/run_all.sh stop             # reverse
-./deploy/dev/run_all.sh restart
-./deploy/dev/run_all.sh status           # admin + supervisorctl status
+uv sync --extra dev
+pnpm --dir web install --frozen-lockfile
 
-# Granular control
-./deploy/dev/run_all.sh start-admin | stop-admin | restart-admin | status-admin
-./deploy/dev/run_all.sh start-sv   | stop-sv   | status-sv
-
-# Direct supervisorctl passthrough
-./deploy/dev/run_all.sh sv status
-./deploy/dev/run_all.sh sv tail -f memory:memory-supervisor
-
-# Pre-supervisord wrapper (drives each sub-project's run_all.sh directly)
-./deploy/dev/run_all.sh --legacy status
+# 仅启动 Admin；不会自动启动 Data/Kernel/Agent
+.venv/bin/uvicorn eidolon_admin_server.app.main:app --host 127.0.0.1 --port 9000
+pnpm --dir web dev
 ```
 
-Per-program control (start / stop / restart of `memory-supervisor`, etc.)
-happens via the admin UI's **Supervisor** page or via `sv` passthrough — this
-top-level script doesn't touch individual programs.
+现有 `deploy/dev/run_all.sh` 和 Supervisor 页面仍用于本地开发进程运维。启动整套环境前，必须先确认 eidolond 当前 manifest 已发布 Data/Hub/Kernel 三个上述 endpoint，并配置独立的 Admin Data credential。不要把正式 `eidolon-system.sqlite3` 用作测试库。
 
-First run auto-creates `.venv`, installs `eidolon-admin` (which brings
-supervisord), and runs `pnpm install` (or `npm install`) for the web. PID /
-log files for the gateway live under `~/eidolon/run/eidolon-admin-gateway-*.pid`
-and `~/eidolon/logs/eidolon-admin-gateway-*.log`. The supervisord daemon
-itself stores its pid + socket under `var/` inside this repo (so the unix
-socket path stays short enough for macOS's 104-byte limit).
-
-### Adding a new sub-project to the supervisor
-
-1. Write `deploy/supervisor/available/<id>.conf` (`[program:...]` blocks +
-   optional `[group:<id>]`).
-2. Enable it — either from the admin UI's **Supervisor** page (toggle switch
-   on the config card) or manually:
-   ```bash
-   ln -snf ../available/<id>.conf deploy/supervisor/enabled/<id>.conf
-   ./deploy/dev/run_all.sh sv reread
-   ./deploy/dev/run_all.sh sv update
-   ```
-3. (Optional) add a `supervisor:` block to `config/services.yaml` so the UI
-   knows which programs belong to which service card:
-   ```yaml
-   - id: my-service
-     name: My Service
-     ...
-     supervisor:
-       config_file: deploy/supervisor/available/my-service.conf
-       group: my-service
-       programs: [my-prog-1, my-prog-2]
-   ```
-
-### Manual (each part separately)
+## 验证
 
 ```bash
-# Backend
-.venv/bin/eidolon-admin              # uvicorn on 127.0.0.1:9000
-.venv/bin/pytest server/tests/ -v
+# 后端 lint、格式、compile 和全量分层测试
+.venv/bin/ruff check server
+.venv/bin/ruff format --check <本次变更的 Python 文件>
+.venv/bin/python -m compileall -q server/eidolon_admin_server
+.venv/bin/pytest server/tests -q
+.venv/bin/pytest server/tests --cov=eidolon_admin_server --cov-branch --cov-report=term-missing
 
-# Frontend
-cd web && pnpm dev                   # Vite on 127.0.0.1:9001
+# 前端单测、类型检查和生产构建
+pnpm --dir web test
+pnpm --dir web build
 ```
 
-Open <http://127.0.0.1:9001>. Vite proxies `/api` → `http://127.0.0.1:9000`.
+`server/tests/test_control_plane_process_e2e.py` 只使用临时数据库和随机 loopback 端口，真实启动 Admin、Data V2、Hub 和 Kernel，验证成功、并发重复、Admin 重启恢复、Data outage 的部分成功语义以及旧路由不可用。它不会读取或修改正式数据库。
 
-### End-to-end: start every sub-project from the UI
-
-1. Boot the gateway and the frontend (above).
-2. Open the **Deploy / Dev** page (the default landing page).
-3. Click **全部启动** — the gateway invokes each sub-project's
-   `deploy/dev/run_all.sh start` in parallel.
-4. The Health panel turns green once each upstream comes online.
-
-Run output streams into a side drawer; logs declared in `services.yaml` are
-viewable from the same page.
-
-## Adding a new sub-project
-
-Append a block to `config/services.yaml` and restart the gateway:
-
-```yaml
-services:
-  - id: my-service
-    name: My Service
-    base_url: http://127.0.0.1:8123
-    upstream_prefix: /api/admin
-    auth: { type: none }
-    health: /api/admin/health
-    deploy:
-      script: /path/to/my-service/deploy/dev/run_all.sh
-      cwd:    /path/to/my-service
-      commands: [start, stop, restart, status]
-      log_files:
-        - /path/to/my-service/logs/app.log
-    features:
-      - { key: dashboard, label: "Dashboard" }
-      - { key: console,   label: "API Console" }
-```
-
-The menu picks it up automatically. Endpoints not yet covered by a hand-written
-page fall back to the generic **API Console** (an HTTP request builder bound to
-this service), so day-one coverage is complete by construction.
-
-## Deploy / Dev runner — safety model
-
-The runner is the only part of the gateway that executes arbitrary shell.
-Hardening:
-
-- **Command whitelist** — only commands listed in `deploy.commands` for the
-  service are accepted; anything else returns 400 before any process spawn.
-- **No shell** — uses `asyncio.create_subprocess_exec(script, command, ...)`
-  with positional args. Shell metacharacters in the command parameter cannot
-  reach a shell.
-- **Path validation** — script existence + executability checked at request
-  time; log files must match the configured `log_files` whitelist exactly
-  (after `~`/`$VAR` expansion + resolve).
-- **Timeouts** — 30s for status/reload, 120s for start/stop/restart; SIGTERM
-  on timeout, SIGKILL 5s later if still alive.
-- **Per-service lock** — concurrent invocations on the same service serialise
-  via `asyncio.Lock` so two starts can't race.
-- **Restart degradation** — services whose script lacks native `restart` (e.g.
-  `hub`) get a synthesised `stop → sleep 1s → start` in the gateway, leaving
-  the sub-project script untouched.
-
-## Configuration via env
-
-| Env var                     | Default                                  | Purpose                                              |
-| --------------------------- | ---------------------------------------- | ---------------------------------------------------- |
-| `EIDOLON_ADMIN_SERVICES_FILE` | `<repo>/config/services.yaml`          | Path to the service registry                         |
-| `EIDOLON_MEMORY_ADMIN_TOKEN` | (unset)                                  | Bearer token forwarded to eidolon_memory if required |
-
-## Tests
-
-```bash
-.venv/bin/pytest server/tests/ -v
-```
-
-Covers:
-
-- Proxy: forwarding, query strings, header filtering, bearer injection,
-  upstream errors → 502, SSE/JSON branching, services catalog, concurrent
-  health probes.
-- Deploy runner: whitelist enforcement, shell-injection rejection, restart
-  fallback, native restart preference, timeout/SIGKILL path, lock
-  serialisation, log whitelist enforcement, all HTTP routes.
-
-## Roadmap (post-MVP, not implemented)
-
-- Authentication (single admin account → JWT)
-- Operation audit log (JSONL)
-- Permission model for multi-user gateways
-- Docker compose for one-shot deployment
+性能脚本及当前环境结果见 `docs/testing/reports/`。所有数据仅是诊断值，不是产品 SLA。

@@ -879,7 +879,7 @@ do_foreground() {
   echo "  API log: $API_FOREGROUND_LOG_FILE"
   echo "  Web log: $WEB_FOREGROUND_LOG_FILE"
   echo "  Use '$0 start' for the full stack (NATS, memory, hub, agent, channel, … + vite)."
-  echo "  Foreground mode still serves the UI; /api/devices needs NATS from 'start'."
+  echo "  Control-plane calls require separately running eidolond and authority services."
   echo "  Ctrl+C to stop."
   echo
   wait "$API_PID" "$WEB_PID" || true

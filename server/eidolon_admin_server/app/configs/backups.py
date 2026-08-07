@@ -6,6 +6,7 @@ The most recent 10 backups are kept; older ones are deleted.
 Restoration is just an atomic-rename from a chosen backup to the live path
 (re-creating a fresh backup of whatever was there first).
 """
+
 from __future__ import annotations
 
 import os
@@ -19,8 +20,8 @@ _MAX_BACKUPS = 10
 
 @dataclass
 class Backup:
-    path: Path        # full path of the .bak file
-    timestamp: int    # unix seconds (matches filename suffix)
+    path: Path  # full path of the .bak file
+    timestamp: int  # unix seconds (matches filename suffix)
     size: int
 
 
@@ -51,7 +52,11 @@ def snapshot(target: Path) -> Backup | None:
     file doesn't exist yet (first write — nothing to back up)."""
     if not target.exists():
         return None
-    ts = int(time.time())
+    # Second-resolution names are part of the public restore API. Avoid
+    # overwriting a backup when two writes happen in the same second (or when
+    # restore snapshots the current file before copying its source backup).
+    existing = list_backups(target)
+    ts = max(int(time.time()), existing[0].timestamp + 1 if existing else 0)
     bak = target.parent / f"{target.name}.bak.{ts}"
     shutil.copy2(target, bak)
     _rotate(target)
