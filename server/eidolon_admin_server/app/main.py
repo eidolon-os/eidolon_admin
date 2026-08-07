@@ -74,6 +74,16 @@ def create_app(
         allow_credentials=False,
     )
 
+    @app.get("/healthz", include_in_schema=False)
+    async def process_health() -> dict[str, str]:
+        """Report only that the Admin process has completed composition.
+
+        Producer authority readiness is checked independently by deployment and
+        is never collapsed into this process-local signal.
+        """
+
+        return {"status": "ready"}
+
     app.include_router(services_router, prefix="/api")
     app.include_router(benchmarks_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")

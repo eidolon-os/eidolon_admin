@@ -152,6 +152,21 @@ async def test_capabilities_exposes_missing_producer_contracts(app) -> None:
     assert response.json()["global_audit_projection_configured"] is False
 
 
+async def test_process_health_is_independent_of_authority_availability(app) -> None:
+    control_plane = StubControlPlane()
+    control_plane.data.failure = AuthorityFailure(
+        "data", "unavailable", "authority unreachable", 503, retryable=True
+    )
+    app.state.control_plane = control_plane
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        response = await client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
 async def test_data_not_found_is_not_rewritten_as_inactive(app) -> None:
     control_plane = StubControlPlane()
     control_plane.data.failure = AuthorityFailure(

@@ -103,6 +103,18 @@ def test_local_api_and_admin_have_distinct_entrypoints() -> None:
     assert 'eidolon-admin = "eidolon_admin_server.app.cli:main"' in pyproject
 
 
+def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
+    unit = (_PROJECT_ROOT / "deploy" / "systemd" / "eidolon-admin.service").read_text()
+
+    assert "User=eidolon\n" in unit
+    assert "Group=eidolon\n" in unit
+    assert "EIDOLON_ADMIN_API_HOST=127.0.0.1\n" in unit
+    assert "EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS=/run/eidolon/system.sock\n" in unit
+    assert "SupplementaryGroups=eidolon-bootstrap" not in unit
+    assert "CapabilityBoundingSet=\n" in unit
+    assert "ExecStart=/srv/eidolon/current/eidolon_admin/.venv/bin/eidolon-admin\n" in unit
+
+
 def test_local_api_socket_access_is_scoped_to_its_systemd_process() -> None:
     unit = (
         _PROJECT_ROOT / "deploy" / "systemd" / "eidolon-local-api.service"
