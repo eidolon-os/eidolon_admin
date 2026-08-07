@@ -41,6 +41,8 @@ HUB_UVICORN = HUB_ROOT / ".venv/bin/uvicorn"
 KERNEL_PYTHON = KERNEL_ROOT / ".venv/bin/python"
 
 DATA_TOKEN = "admin-e2e-data-authority-token-value-0001"
+DATA_WORKSPACE_TOKEN = "admin-e2e-workspace-authority-token-value-0001"
+LOCAL_API_TOKEN = "admin-e2e-local-api-service-token-value-0001"
 HUB_MANAGEMENT_SECRET = "admin-e2e-hub-management-secret-value-0001"
 HUB_READER_TOKEN = "admin-e2e-hub-reader-token-value-0001"
 HUB_PROVIDER_TOKEN = "admin-e2e-hub-provider-token-value-0001"
@@ -165,6 +167,8 @@ def _assert_isolated_data_v2(database: Path) -> None:
         assert actual == expected
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert not database.with_name(f"{database.name}-wal").exists()
+    assert not database.with_name(f"{database.name}-shm").exists()
 
 
 def _b64url(value: bytes) -> str:
@@ -246,6 +250,8 @@ def _start_admin(
         "EIDOLON_ADMIN_SERVICES_FILE": str(services_file),
         "EIDOLON_ADMIN_SYSTEM_DIRECTORY_URL": directory_url,
         "EIDOLON_ADMIN_DATA_AUTHORITY_TOKEN": DATA_TOKEN,
+        "EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN": DATA_WORKSPACE_TOKEN,
+        "EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN": LOCAL_API_TOKEN,
         "EIDOLON_ADMIN_API_HOST": "127.0.0.1",
         "EIDOLON_ADMIN_API_PORT": str(port),
     }
@@ -275,10 +281,11 @@ async def test_real_process_workflow_idempotency_restart_and_data_outage(
     if not all(path.is_file() for path in required):
         pytest.skip("real Admin/Data/Hub/Kernel development runtimes are unavailable")
 
-    data_port, hub_port, kernel_port, directory_port, admin_port = (
-        _free_port() for _ in range(5)
+    data_port, workspace_port, hub_port, kernel_port, directory_port, admin_port = (
+        _free_port() for _ in range(6)
     )
     data_url = f"http://127.0.0.1:{data_port}"
+    workspace_url = f"http://127.0.0.1:{workspace_port}"
     hub_url = f"http://127.0.0.1:{hub_port}"
     kernel_url = f"http://127.0.0.1:{kernel_port}"
     directory_url = f"http://127.0.0.1:{directory_port}"
@@ -336,6 +343,7 @@ services: []
     _assert_isolated_data_v2(data_database)
 
     data_process: subprocess.Popen[str] | None = None
+    workspace_process: subprocess.Popen[str] | None = None
     hub_process: subprocess.Popen[str] | None = None
     kernel_process: subprocess.Popen[str] | None = None
     directory_process: subprocess.Popen[str] | None = None
@@ -361,6 +369,27 @@ services: []
                 **os.environ,
                 "EIDOLON_DATA_SQLITE_PATH": str(data_database),
                 "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN": DATA_TOKEN,
+            },
+        )
+        workspace_process = _spawn(
+            [
+                str(DATA_PYTHON),
+                "-m",
+                "uvicorn",
+                "eidolon_data.api.workspace_authority:create_app",
+                "--factory",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(workspace_port),
+                "--log-level",
+                "warning",
+            ],
+            cwd=DATA_ROOT,
+            env={
+                **os.environ,
+                "EIDOLON_DATA_SQLITE_PATH": str(data_database),
+                "EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN": DATA_WORKSPACE_TOKEN,
             },
         )
         hub_process = _spawn(
@@ -401,6 +430,7 @@ services: []
             env={
                 **os.environ,
                 "EIDOLON_E2E_DATA_URL": data_url,
+                "EIDOLON_E2E_DATA_WORKSPACE_URL": workspace_url,
                 "EIDOLON_E2E_HUB_URL": hub_url,
                 "EIDOLON_E2E_KERNEL_URL": kernel_url,
             },
@@ -411,6 +441,12 @@ services: []
                 lambda response: response.status_code == 200,
                 label="Data",
                 process=data_process,
+            )
+            await _eventually(
+                lambda: client.get(f"{workspace_url}/health"),
+                lambda response: response.status_code == 200,
+                label="Data Workspace",
+                process=workspace_process,
             )
             await _eventually(
                 lambda: client.get(f"{hub_url}/health"),
@@ -466,6 +502,55 @@ services: []
                 label="Admin",
                 process=admin_process,
             )
+            workspace_operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+            workspace_path = (
+                f"{admin_url}/api/control-plane/v1/workspace-onboarding/operations/"
+                f"{workspace_operation_id}"
+            )
+            workspace_headers = {
+                "Authorization": f"Bearer {LOCAL_API_TOKEN}",
+            }
+            workspace_payload = {
+                "owner_display_name": "Admin E2E Owner",
+                "companion_display_name": "Admin E2E Companion",
+            }
+            missing_workspace_auth = await client.put(
+                workspace_path,
+                json=workspace_payload,
+            )
+            assert missing_workspace_auth.status_code == 401
+            workspace_started = time.perf_counter()
+            first_workspace = await client.put(
+                workspace_path,
+                headers=workspace_headers,
+                json=workspace_payload,
+            )
+            metrics["workspace_first_mutation_ms"] = (
+                time.perf_counter() - workspace_started
+            ) * 1000
+            assert first_workspace.status_code == 200, first_workspace.text
+
+            workspace_duplicates = await asyncio.gather(
+                *(
+                    client.put(
+                        workspace_path,
+                        headers=workspace_headers,
+                        json=workspace_payload,
+                    )
+                    for _ in range(6)
+                )
+            )
+            assert {item.status_code for item in workspace_duplicates} == {200}
+            assert all(
+                item.json() == first_workspace.json() for item in workspace_duplicates
+            )
+            workspace_conflict = await client.put(
+                workspace_path,
+                headers=workspace_headers,
+                json={**workspace_payload, "companion_display_name": "Different"},
+            )
+            assert workspace_conflict.status_code == 409
+
             headers = {"Authorization": _management_credential()}
             payload = _workflow(
                 device_id="device-admin-e2e", request_id="admin-e2e-workflow-1"
@@ -546,6 +631,12 @@ services: []
                 "replayed",
                 "replayed",
             ]
+            workspace_after_restart = await client.get(
+                workspace_path,
+                headers=workspace_headers,
+            )
+            assert workspace_after_restart.status_code == 200
+            assert workspace_after_restart.json() == first_workspace.json()
 
             reused_with_different_payload = payload | {
                 "companion_id": "companion-different"
@@ -587,11 +678,25 @@ services: []
             failure = outage.json()["steps"][-1]["failure"]
             assert failure["kind"] == "upstream_failure"
             assert failure["retryable"] is True
+
+            _stop(workspace_process)
+            workspace_process = None
+            unavailable_workspace = await client.put(
+                (
+                    f"{admin_url}/api/control-plane/v1/workspace-onboarding/operations/"
+                    "7cab9151-c46a-4c90-a523-7e140ce49225"
+                ),
+                headers=workspace_headers,
+                json=workspace_payload,
+            )
+            assert unavailable_workspace.status_code == 503
+            assert unavailable_workspace.json()["detail"]["kind"] == "unavailable"
     finally:
         _stop(admin_process)
         _stop(kernel_process)
         _stop(directory_process)
         _stop(hub_process)
+        _stop(workspace_process)
         _stop(data_process)
 
     _assert_isolated_data_v2(data_database)

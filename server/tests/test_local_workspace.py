@@ -10,6 +10,9 @@ from eidolon_admin_server.app.control_plane.contracts import (
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
+from eidolon_admin_server.app.control_plane.workspace_policy import (
+    workspace_request_fingerprint,
+)
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.local_api.config import (
     LocalApiSettings,
@@ -23,17 +26,21 @@ from eidolon_admin_server.local_api.workspace import (
 )
 
 
-def _workspace_response(operation_id: str) -> dict:
+def _workspace_response(
+    operation_id: str,
+    payload: WorkspaceInitializeRequest | None = None,
+) -> dict:
+    resolved = payload or WorkspaceInitializeRequest(owner_display_name="Manson")
     marker = operation_id.replace("-", "")
     return {
         "contract_version": "1",
         "operation": "owner-workspace.initialize",
         "operation_id": operation_id,
-        "request_fingerprint": "sha256:" + "0" * 64,
+        "request_fingerprint": workspace_request_fingerprint(resolved),
         "status": "succeeded",
         "owner": {
             "owner_id": f"owner_{marker}",
-            "display_name": "Manson",
+            "display_name": resolved.owner_display_name,
             "lifecycle_state": "active",
         },
         "workspace": {
@@ -147,7 +154,10 @@ async def test_admin_workspace_client_reports_an_absent_operation() -> None:
 @pytest.mark.asyncio
 async def test_setup_resumes_a_completed_operation_before_owner_binding() -> None:
     operation_id = host_workspace_operation_id("ehost-56475aa75463474c0285")
-    result = WorkspaceOperation.model_validate(_workspace_response(operation_id))
+    payload = WorkspaceInitializeRequest(owner_display_name="Manson")
+    result = WorkspaceOperation.model_validate(
+        _workspace_response(operation_id, payload)
+    )
 
     class ExistingWorkspace:
         initialize_calls = 0
@@ -167,11 +177,39 @@ async def test_setup_resumes_a_completed_operation_before_owner_binding() -> Non
     resumed = await resolve_workspace_setup(
         workspace,  # type: ignore[arg-type]
         operation_id=operation_id,
-        payload=WorkspaceInitializeRequest(owner_display_name="Changed after restart"),
+        payload=payload,
         bound_owner_id=None,
     )
     assert resumed == result
     assert workspace.initialize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_setup_rejects_changed_input_before_owner_binding() -> None:
+    operation_id = host_workspace_operation_id("ehost-56475aa75463474c0285")
+    original = WorkspaceInitializeRequest(owner_display_name="Manson")
+    result = WorkspaceOperation.model_validate(
+        _workspace_response(operation_id, original)
+    )
+
+    class ExistingWorkspace:
+        async def get(self, _operation_id: str) -> WorkspaceOperation:
+            return result
+
+        async def initialize(self, **_kwargs) -> WorkspaceOperation:
+            raise AssertionError("a completed operation must not be reinitialized")
+
+        async def close(self) -> None:
+            return None
+
+    with pytest.raises(WorkspaceSetupError) as caught:
+        await resolve_workspace_setup(
+            ExistingWorkspace(),  # type: ignore[arg-type]
+            operation_id=operation_id,
+            payload=WorkspaceInitializeRequest(owner_display_name="Changed"),
+            bound_owner_id=None,
+        )
+    assert caught.value.status_code == 409
 
 
 def test_local_api_settings_keep_admin_transport_separate(tmp_path) -> None:

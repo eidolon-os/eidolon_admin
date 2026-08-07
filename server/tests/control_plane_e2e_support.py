@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 
 from eidolon_admin_server.app.control_plane.clients import (
     DATA_CONTRACT,
+    DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
     KERNEL_CONTRACT,
 )
@@ -19,6 +20,10 @@ def create_directory_app() -> FastAPI:
         ("data", "companion-authority.http"): (
             os.environ["EIDOLON_E2E_DATA_URL"],
             DATA_CONTRACT,
+        ),
+        ("data-workspace", "workspace-authority.http"): (
+            os.environ["EIDOLON_E2E_DATA_WORKSPACE_URL"],
+            DATA_WORKSPACE_CONTRACT,
         ),
         ("hub", "device-authority.http"): (
             os.environ["EIDOLON_E2E_HUB_URL"],

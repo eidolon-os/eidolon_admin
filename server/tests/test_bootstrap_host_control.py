@@ -58,6 +58,9 @@ from eidolon_admin_server.app.control_plane.contracts import (
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
+from eidolon_admin_server.app.control_plane.workspace_policy import (
+    workspace_request_fingerprint,
+)
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
 from eidolon_admin_server.local_api.workspace import WorkspaceSetupError
@@ -126,7 +129,7 @@ class _WorkspaceClient:
                 "contract_version": "1",
                 "operation": "owner-workspace.initialize",
                 "operation_id": operation_id,
-                "request_fingerprint": "sha256:" + "0" * 64,
+                "request_fingerprint": workspace_request_fingerprint(payload),
                 "status": "succeeded",
                 "owner": {
                     "owner_id": "owner_workspace_authority",

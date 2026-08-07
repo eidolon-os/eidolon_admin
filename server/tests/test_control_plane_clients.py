@@ -25,6 +25,9 @@ from eidolon_admin_server.app.control_plane.contracts import (
 )
 from eidolon_admin_server.app.control_plane.directory import SystemDirectoryClient
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
+from eidolon_admin_server.app.control_plane.workspace_policy import (
+    workspace_request_fingerprint,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
@@ -122,6 +125,7 @@ async def test_data_client_requires_a_distinct_configured_credential() -> None:
 
 async def test_workspace_client_uses_write_endpoint_and_distinct_credential() -> None:
     operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    payload = WorkspaceInitializeRequest(owner_display_name="Manson")
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "PUT"
@@ -139,7 +143,7 @@ async def test_workspace_client_uses_write_endpoint_and_distinct_credential() ->
                 "contract_version": "1",
                 "operation": "owner-workspace.initialize",
                 "operation_id": operation_id,
-                "request_fingerprint": "sha256:" + "0" * 64,
+                "request_fingerprint": workspace_request_fingerprint(payload),
                 "status": "succeeded",
                 "owner": {
                     "owner_id": "owner_32c421a3e0df40f98f7568745ae39d81",
@@ -165,7 +169,7 @@ async def test_workspace_client_uses_write_endpoint_and_distinct_credential() ->
         )
         result = await subject.initialize(
             operation_id=operation_id,
-            payload=WorkspaceInitializeRequest(owner_display_name="Manson"),
+            payload=payload,
         )
     finally:
         await http_client.aclose()
@@ -186,6 +190,87 @@ async def test_workspace_client_requires_its_own_write_credential() -> None:
     finally:
         await http_client.aclose()
     assert caught.value.kind == "configuration"
+
+
+@pytest.mark.parametrize(
+    ("status", "kind", "admin_status", "retryable"),
+    [
+        (400, "invalid_request", 422, False),
+        (401, "unauthorized", 401, False),
+        (403, "forbidden", 403, False),
+        (404, "not_found", 404, False),
+        (409, "conflict", 409, False),
+        (422, "invalid_request", 422, False),
+        (500, "upstream_failure", 502, True),
+        (503, "upstream_failure", 502, True),
+    ],
+)
+async def test_workspace_status_mapping(
+    status: int, kind: str, admin_status: int, retryable: bool
+) -> None:
+    http_client = client(
+        lambda _request: httpx.Response(status, json={"detail": "workspace failure"})
+    )
+    try:
+        subject = DataWorkspaceAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="workspace-token",
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as caught:
+            await subject.initialize(
+                operation_id="32c421a3-e0df-40f9-8f75-68745ae39d81",
+                payload=WorkspaceInitializeRequest(owner_display_name="Manson"),
+            )
+    finally:
+        await http_client.aclose()
+    assert caught.value.kind == kind
+    assert caught.value.status_code == admin_status
+    assert caught.value.retryable is retryable
+    assert caught.value.upstream_status == status
+
+
+async def test_workspace_response_fingerprint_mismatch_is_contract_violation() -> None:
+    operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    http_client = client(
+        lambda _request: httpx.Response(
+            200,
+            json={
+                "contract_version": "1",
+                "operation": "owner-workspace.initialize",
+                "operation_id": operation_id,
+                "request_fingerprint": "sha256:" + "0" * 64,
+                "status": "succeeded",
+                "owner": {
+                    "owner_id": "owner-1",
+                    "display_name": "Manson",
+                    "lifecycle_state": "active",
+                },
+                "workspace": {
+                    "state": "ready",
+                    "primary_companion_id": "companion-1",
+                    "persona_genome_id": "genome-1",
+                    "memory_realm_id": "realm-1",
+                },
+            },
+        )
+    )
+    try:
+        subject = DataWorkspaceAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="workspace-token",
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as caught:
+            await subject.initialize(
+                operation_id=operation_id,
+                payload=WorkspaceInitializeRequest(owner_display_name="Manson"),
+            )
+    finally:
+        await http_client.aclose()
+    assert caught.value.kind == "contract_violation"
 
 
 @pytest.mark.parametrize(

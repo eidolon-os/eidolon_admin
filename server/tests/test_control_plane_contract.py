@@ -9,6 +9,7 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+import yaml
 from referencing import Registry, Resource
 
 from eidolon_admin_server.app.control_plane.contracts import (
@@ -18,6 +19,11 @@ from eidolon_admin_server.app.control_plane.contracts import (
     KernelMount,
     KernelMountPage,
     KernelMutationResult,
+    WorkspaceInitializeRequest,
+    WorkspaceOperation,
+)
+from eidolon_admin_server.app.control_plane.workspace_policy import (
+    workspace_request_fingerprint,
 )
 
 pytestmark = pytest.mark.contract
@@ -38,6 +44,8 @@ MONOREPO_ROOT = _monorepo_root()
 DATA_ROOT = MONOREPO_ROOT / "eidolon_data"
 KERNEL_ROOT = MONOREPO_ROOT / "eidolon_kernel"
 HUB_ROOT = MONOREPO_ROOT / "eidolon_hub"
+DATA_WORKSPACE_COMMIT = "9fc4f4e6bcad1e4e44f0a63b7619ce0702031e4e"
+KERNEL_WORKSPACE_COMMIT = "c711238ef0be8f87bcf79fec8920b4c3b5cc849c"
 
 
 def _at_commit(repo: Path, commit: str, path: str) -> str:
@@ -98,6 +106,74 @@ def test_data_v2_consumed_identity_matches_baseline_2a33894() -> None:
     )
     assert "/api/companion-authority/v1/companions/{companion_id}" in producer_source
     assert "response_model=CompanionIdentityResponse" in producer_source
+
+
+def test_data_workspace_consumed_contract_matches_9fc4f4e() -> None:
+    operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    payload = WorkspaceInitializeRequest(owner_display_name="Manson")
+    document = WorkspaceOperation(
+        contract_version="1",
+        operation="owner-workspace.initialize",
+        operation_id=operation_id,
+        request_fingerprint=workspace_request_fingerprint(payload),
+        status="succeeded",
+        owner={
+            "owner_id": "owner_32c421a3e0df40f98f7568745ae39d81",
+            "display_name": "Manson",
+            "lifecycle_state": "active",
+        },
+        workspace={
+            "state": "ready",
+            "primary_companion_id": "c_32c421a3e0df40f98f7568745ae39d81",
+            "persona_genome_id": "g_32c421a3e0df40f98f7568745ae39d81_origin",
+            "memory_realm_id": "r_32c421a3e0df40f98f7568745ae39d81",
+        },
+    ).model_dump(mode="json")
+    schema = _json_at_commit(
+        DATA_ROOT,
+        DATA_WORKSPACE_COMMIT,
+        "eidolon_data/contracts/schemas/workspace/onboarding-operation.schema.json",
+    )
+    jsonschema.Draft202012Validator(schema).validate(document)
+
+    producer_source = _at_commit(
+        DATA_ROOT,
+        DATA_WORKSPACE_COMMIT,
+        "eidolon_data/api/workspace_authority.py",
+    )
+    assert (
+        producer_source.count('"/api/workspace-authority/v1/operations/{operation_id}"')
+        == 2
+    )
+    assert "EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN" in producer_source
+    assert "response_model=WorkspaceOperationResponse" in producer_source
+
+
+def test_kernel_publishes_workspace_authority_at_c711238() -> None:
+    manifest = yaml.safe_load(
+        _at_commit(
+            KERNEL_ROOT,
+            KERNEL_WORKSPACE_COMMIT,
+            "config/system-services.yaml",
+        )
+    )
+    workspace = next(
+        item for item in manifest["services"] if item["service_id"] == "data-workspace"
+    )
+    assert workspace["required"] is True
+    assert workspace["host_targets"] == {"supervisord": "data:data-workspace-api"}
+    assert workspace["endpoints"] == [
+        {
+            "endpoint_id": "workspace-authority.http",
+            "protocol": "http",
+            "address": "http://127.0.0.1:8085",
+            "contract": (
+                "https://eidolon.live/contracts/system-data/workspace/"
+                "onboarding-operation-v1.schema.json"
+            ),
+            "health_url": "http://127.0.0.1:8085/health",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

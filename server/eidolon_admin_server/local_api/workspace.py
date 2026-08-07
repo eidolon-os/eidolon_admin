@@ -12,6 +12,7 @@ from ..app.control_plane.contracts import (
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
+from ..app.control_plane.workspace_policy import workspace_request_fingerprint
 
 
 _HOST_WORKSPACE_NAMESPACE = UUID("bb5f68d3-192f-55b8-86d4-235887c426e8")
@@ -64,6 +65,11 @@ async def resolve_workspace_setup(
                 "Host Owner binding has no Data workspace operation"
             ) from exc
     else:
+        if existing.request_fingerprint != workspace_request_fingerprint(payload):
+            raise WorkspaceSetupError(
+                "This Host workspace was initialized with different setup input",
+                status_code=409,
+            )
         if bound_owner_id is not None and existing.owner.owner_id != bound_owner_id:
             raise WorkspaceSetupError(
                 "Host Owner scope does not match its Data workspace",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from eidolon_admin_server.app.control_plane.clients import (
     DATA_CONTRACT,
+    DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
     KERNEL_CONTRACT,
 )
@@ -29,6 +32,7 @@ class ProducerState:
         self.mount_requests: dict[str, dict] = {}
         self.attach_requests: dict[str, dict] = {}
         self.approval_requests: set[str] = set()
+        self.workspace_operations: dict[str, dict] = {}
         self.fail_mounts = 0
 
     @staticmethod
@@ -78,6 +82,10 @@ def producer_app(state: ProducerState) -> FastAPI:
             "http://producer.test",
             DATA_CONTRACT,
         ),
+        ("data-workspace", "workspace-authority.http"): (
+            "http://producer.test",
+            DATA_WORKSPACE_CONTRACT,
+        ),
         ("hub", "device-authority.http"): ("http://producer.test", HUB_CONTRACT),
         ("kernel", "device-mount.http"): (
             "http://producer.test",
@@ -114,6 +122,65 @@ def producer_app(state: ProducerState) -> FastAPI:
             "owner_id": "owner-1",
             "lifecycle_state": "active",
         }
+
+    def workspace_result(operation_id: str, payload: dict) -> dict:
+        marker = operation_id.replace("-", "")
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return {
+            "contract_version": "1",
+            "operation": "owner-workspace.initialize",
+            "operation_id": operation_id,
+            "request_fingerprint": f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+            "status": "succeeded",
+            "owner": {
+                "owner_id": f"owner_{marker}",
+                "display_name": payload["owner_display_name"],
+                "lifecycle_state": "active",
+            },
+            "workspace": {
+                "state": "ready",
+                "primary_companion_id": f"c_{marker}",
+                "persona_genome_id": f"g_{marker}_origin",
+                "memory_realm_id": f"r_{marker}",
+            },
+        }
+
+    @app.put("/api/workspace-authority/v1/operations/{operation_id}")
+    async def initialize_workspace(
+        operation_id: str,
+        payload: dict,
+        authorization: str = Header(alias="Authorization"),
+    ):
+        if authorization != "Bearer workspace-token":
+            raise HTTPException(403, "bad workspace credential")
+        result = workspace_result(operation_id, payload)
+        async with state.lock:
+            existing = state.workspace_operations.get(operation_id)
+            if existing is not None:
+                if existing["request_fingerprint"] != result["request_fingerprint"]:
+                    raise HTTPException(
+                        409, "operation already used for different input"
+                    )
+                return existing
+            state.workspace_operations[operation_id] = result
+            return result
+
+    @app.get("/api/workspace-authority/v1/operations/{operation_id}")
+    async def get_workspace(
+        operation_id: str,
+        authorization: str = Header(alias="Authorization"),
+    ):
+        if authorization != "Bearer workspace-token":
+            raise HTTPException(403, "bad workspace credential")
+        result = state.workspace_operations.get(operation_id)
+        if result is None:
+            raise HTTPException(404, "workspace operation not found")
+        return result
 
     @app.get("/api/device-management/v1/owners/{owner_id}/devices")
     async def devices(
@@ -214,6 +281,8 @@ async def admin_app(
         services_file=tmp_path / "unused.yaml",
         system_directory_url="http://producer.test",
         data_authority_token="data-token",
+        data_workspace_authority_token="workspace-token",
+        local_api_service_token="local-api-token",
         supervisor_socket=tmp_path / "supervisor.sock",
         supervisor_available_dir=tmp_path,
         supervisor_enabled_dir=tmp_path,
@@ -281,6 +350,43 @@ async def test_full_http_stack_success_inventory_and_data_read(tmp_path: Path) -
     assert inventory.json()["degraded"] is False
     assert inventory.json()["mounts"][0]["attached_companion_id"] == "companion-1"
     assert companion.json()["lifecycle_state"] == "active"
+
+
+async def test_workspace_http_stack_is_content_bound_and_converges(
+    tmp_path: Path,
+) -> None:
+    state = ProducerState()
+    app, producer_client = await admin_app(tmp_path, producer_app(state))
+    operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    path = f"/api/control-plane/v1/workspace-onboarding/operations/{operation_id}"
+    headers = {"Authorization": "Bearer local-api-token"}
+    payload = {
+        "owner_display_name": "Manson",
+        "companion_display_name": "Eidolon",
+    }
+    try:
+        missing_auth = await call_admin(app, "PUT", path, json=payload)
+        first, second = await asyncio.gather(
+            call_admin(app, "PUT", path, headers=headers, json=payload),
+            call_admin(app, "PUT", path, headers=headers, json=payload),
+        )
+        queried = await call_admin(app, "GET", path, headers=headers)
+        conflict = await call_admin(
+            app,
+            "PUT",
+            path,
+            headers=headers,
+            json={**payload, "companion_display_name": "Different"},
+        )
+    finally:
+        await app.state.control_plane.close()
+        await producer_client.aclose()
+
+    assert missing_auth.status_code == 401
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json() == queried.json()
+    assert conflict.status_code == 409
+    assert len(state.workspace_operations) == 1
 
 
 async def test_partial_failure_retry_and_admin_restart_recovery(tmp_path: Path) -> None:

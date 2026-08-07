@@ -19,6 +19,7 @@ from .contracts import (
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
+from .workspace_policy import workspace_request_fingerprint
 
 DATA_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
 DATA_WORKSPACE_CONTRACT = (
@@ -56,6 +57,8 @@ def _raise_status(authority: str, response: httpx.Response) -> None:
         raise AuthorityFailure(authority, "not_found", detail, 404, status, False)
     if status == 409:
         raise AuthorityFailure(authority, "conflict", detail, 409, status, False)
+    if status == 400:
+        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False)
     if status == 422:
         raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False)
     if status >= 500:
@@ -210,6 +213,10 @@ class DataWorkspaceAuthorityClient:
         if result.operation_id != operation_id:
             raise _contract_violation(
                 "data", "Data returned a different workspace operation"
+            )
+        if result.request_fingerprint != workspace_request_fingerprint(payload):
+            raise _contract_violation(
+                "data", "Data returned a workspace operation for different setup input"
             )
         return result
 

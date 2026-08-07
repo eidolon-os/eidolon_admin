@@ -429,6 +429,21 @@ def _validate_manifest(path: Path) -> None:
         for item in services
         if isinstance(item, dict) and isinstance(item.get("service_id"), str)
     }
+    required_enabled = {
+        item["service_id"]
+        for item in services
+        if isinstance(item, dict)
+        and isinstance(item.get("service_id"), str)
+        and item.get("required") is True
+        and item.get("enabled_by_default") is True
+    }
+    expected_services = set(_EXPECTED_ENDPOINTS)
+    if required_enabled != expected_services:
+        missing = sorted(expected_services - required_enabled)
+        unwired = sorted(required_enabled - expected_services)
+        raise ControlPlanePreparationError(
+            f"required manifest service set drift: missing={missing}, unwired={unwired}"
+        )
     for service_id, expected in _EXPECTED_ENDPOINTS.items():
         service = by_id.get(service_id)
         if not isinstance(service, dict):
@@ -585,7 +600,9 @@ def _read_existing_secrets(layout: RuntimeLayout) -> dict[str, str]:
         if not path.exists():
             continue
         parsed = _parse_env(path)
-        value = parsed.get(key, "")
+        if key not in parsed:
+            continue
+        value = parsed[key]
         if not value:
             raise ControlPlanePreparationError(
                 f"existing runtime secret is blank: {filename}:{key}"

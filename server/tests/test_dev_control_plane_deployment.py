@@ -200,6 +200,41 @@ def test_prepare_materializes_isolated_config_and_preserves_secrets(
 
 
 @pytest.mark.unit
+def test_prepare_adds_new_secret_to_an_existing_runtime(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    layout.env_dir.mkdir(parents=True)
+    existing_data_token = "existing-companion-authority-token"
+    (layout.env_dir / "data.env").write_text(
+        f"EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN={existing_data_token}\n",
+        encoding="utf-8",
+    )
+
+    prepare(layout, migrate=False)
+
+    data = _read_env(layout.env_dir / "data.env")
+    admin = _read_env(layout.env_dir / "admin.env")
+    assert data["EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN"] == existing_data_token
+    assert len(data["EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN"]) >= 24
+    assert (
+        admin["EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN"]
+        == data["EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN"]
+    )
+
+
+@pytest.mark.unit
+def test_prepare_rejects_an_explicitly_blank_existing_secret(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    layout.env_dir.mkdir(parents=True)
+    (layout.env_dir / "data.env").write_text(
+        "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN=\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ControlPlanePreparationError, match="secret is blank"):
+        prepare(layout, migrate=False)
+
+
+@pytest.mark.unit
 def test_prepare_removes_only_a_stale_eidolond_socket() -> None:
     with tempfile.TemporaryDirectory(prefix="eacp-", dir="/tmp") as temporary:
         layout = _layout(Path(temporary))
@@ -238,6 +273,29 @@ def test_validation_rejects_manifest_contract_drift(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ControlPlanePreparationError, match="data.contract"):
+        validate(layout, require_database=False)
+
+
+@pytest.mark.unit
+def test_validation_rejects_an_unwired_required_service(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    prepare(layout, migrate=False)
+    document = _manifest()
+    document["services"].append(  # type: ignore[union-attr]
+        {
+            "service_id": "new-required-authority",
+            "required": True,
+            "enabled_by_default": True,
+            "dependencies": [],
+            "host_targets": {"supervisord": "new:new-api"},
+            "endpoints": [],
+        }
+    )
+    layout.manifest.write_text(
+        yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
+    )
+
+    with pytest.raises(ControlPlanePreparationError, match="unwired"):
         validate(layout, require_database=False)
 
 

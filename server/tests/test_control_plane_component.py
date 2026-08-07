@@ -39,6 +39,7 @@ class DataPort:
 class StubControlPlane:
     def __init__(self) -> None:
         self.data = DataPort()
+        self.workspace_failure: AuthorityFailure | None = None
 
     @staticmethod
     def capabilities() -> BoundaryCapabilities:
@@ -56,9 +57,13 @@ class StubControlPlane:
         operation_id: str,
         payload: WorkspaceInitializeRequest,
     ) -> WorkspaceOperation:
+        if self.workspace_failure:
+            raise self.workspace_failure
         return _workspace_operation(operation_id, payload.owner_display_name)
 
     async def get_workspace_operation(self, operation_id: str) -> WorkspaceOperation:
+        if self.workspace_failure:
+            raise self.workspace_failure
         return _workspace_operation(operation_id, "Manson")
 
     async def admit_device(self, payload, **_kwargs) -> DeviceAdmissionResult:
@@ -208,6 +213,47 @@ async def test_workspace_onboarding_requires_exact_local_api_credential(app) -> 
     assert resumed.status_code == 200
     assert accepted.json() == resumed.json()
     assert accepted.json()["workspace"]["state"] == "ready"
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status"),
+    [
+        (AuthorityFailure("data", "forbidden", "bad credential", 403, 403), 403),
+        (AuthorityFailure("data", "not_found", "missing", 404, 404), 404),
+        (
+            AuthorityFailure(
+                "data", "unavailable", "workspace down", 503, retryable=True
+            ),
+            503,
+        ),
+        (
+            AuthorityFailure("data", "contract_violation", "schema drift", 502, 200),
+            502,
+        ),
+    ],
+)
+async def test_workspace_onboarding_preserves_upstream_failure_semantics(
+    app,
+    failure: AuthorityFailure,
+    expected_status: int,
+) -> None:
+    from eidolon_admin_server.app.settings import Settings
+
+    control_plane = StubControlPlane()
+    control_plane.workspace_failure = failure
+    app.state.control_plane = control_plane
+    app.state.settings = Settings(local_api_service_token="local-api-secret")
+    operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        response = await client.get(
+            f"/api/control-plane/v1/workspace-onboarding/operations/{operation_id}",
+            headers={"Authorization": "Bearer local-api-secret"},
+        )
+
+    assert response.status_code == expected_status
+    assert response.json()["detail"]["kind"] == failure.kind
 
 
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:

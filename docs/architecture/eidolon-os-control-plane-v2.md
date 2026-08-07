@@ -5,7 +5,9 @@ Status: implemented by the Admin adaptation that accompanies this document.
 Evidence baselines:
 
 - `eidolon_data` commit `2a33894` (`refactor: complete system data v2 boundary`)
+- `eidolon_data` commit `9fc4f4e` (`feat(onboarding): add workspace authority contract`)
 - `eidolon_kernel` commit `66e61c9` (`feat: align kernel with eidolon data v2 boundary`)
+- `eidolon_kernel` commit `c711238` (`feat(setup): deploy data workspace authority`)
 - the public Hub code present at adaptation time (`hub/interfaces/http/routers/device_management.py`)
 
 ## Dependency direction
@@ -18,6 +20,11 @@ Web / CLI
     -> strict HTTP transport adapters
     -> eidolond endpoint directory
     -> bounded-context versioned HTTP contracts
+
+Mobile Controller
+    -> authenticated Local API
+    -> exact loopback Admin workspace boundary
+    -> Data Workspace Authority
 ```
 
 Admin is a control-plane product entry and orchestration process. It is not an
@@ -27,7 +34,7 @@ authority. It owns no copy of those tables and opens no sibling SQLite file.
 Process ownership is separate from business dependency direction. In the
 isolated macOS/dev profile, Admin's launch script starts one supervisord daemon
 as a host executor and starts eidolond; only eidolond owns desired state and
-issues start/stop/restart for Data, Hub and Kernel. Admin API never calls
+issues start/stop/restart for Data read, Data Workspace write, Hub and Kernel. Admin API never calls
 supervisor to implement a business workflow. The Raspberry Pi profile uses the
 same shape with systemd as the host executor.
 
@@ -37,22 +44,26 @@ same shape with systemd as the host executor.
 | --- | --- | --- |
 | eidolond | `GET /api/system/v1/services/{service_id}/endpoints/{endpoint_id}` | machine-scoped endpoint discovery and readiness |
 | Data V2 | `GET /api/companion-authority/v1/companions/{companion_id}` | Companion identity, Owner membership, lifecycle |
+| Data Workspace | `GET/PUT /api/workspace-authority/v1/operations/{operation_id}` | atomic, content-bound first Owner workspace initialization |
 | Hub | Device list + Device approval under `/api/device-management/v1` | Device admission and Owner scope |
 | Kernel | Mount/list/Attachment under `/api/kernel/v1/device-mounts*` | Device Mount and optional Companion Attachment |
 | Agent | `/api/admin/*` through the existing transparent gateway | Agent-owned runtime/admin read models |
 | Memory | `/api/admin/*` through the existing transparent gateway | Memory-owned realm/runtime operations |
 
-The Data V2 producer exposes no public Owner list/mutation, Companion mutation,
-Persona Genome, Memory Realm catalog, face asset, Guard binding, Data audit
-outbox, or generic event query route. Admin therefore must not reconstruct
-those APIs by importing `DataStore` or opening `eidolon-system.sqlite3`.
+The Data V2 producer exposes the narrow first-use Workspace command, but no
+general Owner list/update/archive, Companion lifecycle management, Persona
+editing, Memory Realm catalog management, face asset, Guard binding, Data
+audit-outbox query, or generic event query route. Admin therefore must not
+reconstruct those APIs by importing `DataStore` or opening
+`eidolon-system.sqlite3`.
 
 ## Migration matrix
 
 | Previous Admin path | Verified problem | V2 disposition |
 | --- | --- | --- |
 | `DataStore.open()` + `init_schema()` during Admin startup | Admin becomes a second Data writer/schema owner | deleted; Data is reached only through a strict HTTP client |
-| `/api/owners`, `/api/data/*`, onboarding and workspace provisioning | direct Data repositories/application services; producer has no equivalent public Admin contract | removed until Data publishes the narrow management contracts listed below |
+| `/api/owners`, `/api/data/*` and general workspace CRUD | direct Data repositories/application services | removed until Data publishes the corresponding narrow management contracts |
+| first Owner workspace initialization | old onboarding directly invoked Data services and crossed Host state | replaced by Controller-authenticated Local API -> exact Admin loopback route -> Data Workspace Authority |
 | Admin `store.devices` CRUD and legacy Hub `/api/admin/devices` | Data V2 deleted Device; current Hub owns admission under `/api/device-management/v1` | replaced by Hub management client and control-plane routes |
 | device `bound_companion_id` in Data | duplicates Kernel Mount/Attachment authority | replaced by Kernel Mount/Attachment API |
 | Guard routes mixing Data Device, face metadata and runtime delivery | crosses Data, Hub and runtime authorities in one route | removed; requires separate Data Guard/face management and Guard runtime contracts |
@@ -65,6 +76,22 @@ those APIs by importing `DataStore` or opening `eidolon-system.sqlite3`.
 The explicit `os-control-plane` development profile is not a counterexample:
 its child supervisor programs have `autostart=false`; eidolond is the only
 component that changes their desired state.
+
+## First workspace initialization
+
+The Host identity deterministically derives one UUIDv5 workspace operation.
+Local API accepts the setup request only from a valid Controller session and
+calls an exact loopback-only Admin route with a separate service credential.
+Admin resolves `data-workspace/workspace-authority.http` through eidolond and
+uses a write credential that is not shared with Kernel's Companion read path.
+
+The operation is content-bound: Admin independently calculates the canonical
+request fingerprint and rejects a producer response or recovery attempt whose
+fingerprint belongs to different setup input. Data atomically commits Owner,
+primary Companion, Persona Genome and Memory Realm catalog state. If Data
+commits but Host Owner binding is interrupted, the same input resumes the
+durable Data operation before retrying the binding; changed input returns 409.
+No cross-service rollback or distributed transaction is claimed.
 
 ## Device admission and mount workflow
 
@@ -109,7 +136,7 @@ inactive or not found.
 
 ## Frequency and audit split
 
-- Data, Hub admission and Kernel Mount mutations are low-frequency control
+- Data Workspace, Hub admission and Kernel Mount mutations are low-frequency control
   facts in their own authority stores.
 - Agent turns, Memory work, Channel media, presence, telemetry, logs and metrics
   stay on their owning runtime/query surfaces. Admin does not synchronously
@@ -128,7 +155,8 @@ inactive or not found.
 Restoring the removed product surfaces requires producer-owned, authenticated,
 versioned contracts. The minimum useful additions are:
 
-1. Data Admin authority APIs for Owner list/get/create/update/archive; Companion
+1. Data Admin authority APIs beyond the supported first-use initialization:
+   Owner list/get/update/archive; Companion
    list/create/update/archive; Persona Genome commands; Memory Realm catalog;
    face metadata/object transfer; and Guard binding policy. Each mutation needs
    a content-bound request ID and CAS/revision where concurrent edits matter.

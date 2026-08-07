@@ -139,6 +139,8 @@ pnpm --dir web test
 pnpm --dir web build
 ```
 
-`server/tests/test_control_plane_process_e2e.py` 只使用临时数据库和随机 loopback 端口，真实启动 Admin、Data V2、Hub 和 Kernel，验证成功、并发重复、Admin 重启恢复、Data outage 的部分成功语义以及旧路由不可用。它不会读取或修改正式数据库。
+`server/tests/test_control_plane_process_e2e.py` 只使用临时数据库和随机 loopback 端口，真实启动 Admin、Data Companion Authority、Data Workspace Authority、Hub 和 Kernel，验证 Workspace 与 Device workflow 的成功、并发重复、content-bound 冲突、Admin 重启恢复、authority outage 语义以及旧路由不可用。它不会读取或修改正式数据库。
 
-性能脚本及当前环境结果见 `docs/testing/reports/`。所有数据仅是诊断值，不是产品 SLA。
+本次主线的最终证据、失败记录、性能和启动判定见
+[Admin Data V2 / Kernel 边界主线结项报告](docs/testing/reports/2026-08-07-admin-data-v2-kernel-workspace-completion.md)。
+所有性能数据仅是当前环境诊断值，不是产品 SLA。
