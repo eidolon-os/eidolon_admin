@@ -39,6 +39,12 @@
   checkpoint 状态机。当前 ESP32 build 虽同时打开 Hotspot/ESP-BLUFI，实际预处理分支
   优先进入开放 Hotspot + 明文 HTTP `/submit`；它没有产品 Device Identity 证明或
   enrollment receipt，因此尚未开放为产品 Add Device adapter。
+- Data 已发布 Owner 主 Companion runtime snapshot；System Directory 以独立
+  `companion-runtime-authority.http` endpoint 声明其只读契约。Admin 只向 Local API
+  service credential 开放精确 Owner runtime route，Local API 再从 Controller session
+  推导 Owner 并输出去除 raw Persona/runtime config 的 Workspace runtime 投影。
+- 自动化故障矩阵已覆盖 Workspace 重放、Local API 重启后短期 session 失效与重新签发、
+  runtime authority 降级、跨 Owner/Companion 拒绝；对应 Pi/Android 故障注入仍待执行。
 
 尚未完成并且不能宣称完成：完整 Pi/Android 路由器与 Workspace 故障矩阵、产品二维码制造流程、物理 recovery GPIO/按键、
 Factory Reset manifests、iOS、Local API/完整 stack 的产品 systemd 联动与故障注入。

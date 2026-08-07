@@ -6,6 +6,7 @@ import hmac
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
+from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 
 from .contracts import (
     BoundaryCapabilities,
@@ -90,6 +91,22 @@ async def get_workspace_operation(
     _authorize_local_api(request, authorization)
     try:
         return await _service(request).get_workspace_operation(str(operation_id))
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
+    "/owners/{owner_id}/primary-runtime-snapshot",
+    response_model=CompanionRuntimeSnapshot,
+)
+async def get_owner_primary_runtime(
+    owner_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> CompanionRuntimeSnapshot:
+    _authorize_local_api(request, authorization)
+    try:
+        return await _service(request).get_owner_primary_runtime(owner_id)
     except AuthorityFailure as exc:
         _raise(exc)
 

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 
 from eidolon_admin_server.app.control_plane.contracts import (
     BoundaryCapabilities,
@@ -60,6 +61,34 @@ class StubControlPlane:
 
     async def get_workspace_operation(self, operation_id: str) -> WorkspaceOperation:
         return _workspace_operation(operation_id, "Manson")
+
+    async def get_owner_primary_runtime(
+        self,
+        owner_id: str,
+    ) -> CompanionRuntimeSnapshot:
+        return CompanionRuntimeSnapshot.model_validate(
+            {
+                "contract_version": "1",
+                "operation": "companion.runtime-snapshot",
+                "owner_id": owner_id,
+                "companion_id": "companion-1",
+                "lifecycle_state": "active",
+                "runtime_config": {},
+                "memory_realm": {
+                    "realm_id": "realm-1",
+                    "lifecycle_state": "active",
+                },
+                "persona_genome": {
+                    "genome_id": "genome-1",
+                    "version": 1,
+                    "lifecycle_state": "committed",
+                    "schema_version": "eidolon.persona_genome",
+                    "genome_hash": "sha256:" + "a" * 64,
+                    "realizer_version": "1",
+                    "genome": {},
+                },
+            }
+        )
 
     async def admit_device(self, payload, **_kwargs) -> DeviceAdmissionResult:
         blocked = payload.request_id == "blocked"
@@ -208,6 +237,29 @@ async def test_workspace_onboarding_requires_exact_local_api_credential(app) -> 
     assert resumed.status_code == 200
     assert accepted.json() == resumed.json()
     assert accepted.json()["workspace"]["state"] == "ready"
+
+
+async def test_owner_runtime_requires_local_api_credential_and_derives_owner_path(
+    app,
+) -> None:
+    from eidolon_admin_server.app.settings import Settings
+
+    app.state.control_plane = StubControlPlane()
+    app.state.settings = Settings(local_api_service_token="local-api-secret")
+    path = "/api/control-plane/v1/owners/owner-1/primary-runtime-snapshot"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        missing = await client.get(path)
+        accepted = await client.get(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+        )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["owner_id"] == "owner-1"
+    assert accepted.json()["companion_id"] == "companion-1"
 
 
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:

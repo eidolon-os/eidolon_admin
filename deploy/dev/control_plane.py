@@ -28,6 +28,9 @@ from typing import Mapping
 import yaml
 
 DATA_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
+DATA_RUNTIME_CONTRACT = (
+    "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
+)
 DATA_WORKSPACE_CONTRACT = (
     "https://eidolon.live/contracts/system-data/workspace/"
     "onboarding-operation-v1.schema.json"
@@ -35,38 +38,61 @@ DATA_WORKSPACE_CONTRACT = (
 HUB_CONTRACT = "eidolon.hub.device-directory.v1"
 KERNEL_CONTRACT = "eidolon.kernel.device-mount.v1"
 
-_EXPECTED_ENDPOINTS = {
+_EXPECTED_SERVICES = {
     "data": {
-        "endpoint_id": "companion-authority.http",
-        "protocol": "http",
-        "address": "http://127.0.0.1:8084",
-        "contract": DATA_CONTRACT,
-        "health_url": "http://127.0.0.1:8084/health",
         "supervisord": "data:data-api",
+        "endpoints": (
+            {
+                "endpoint_id": "companion-authority.http",
+                "protocol": "http",
+                "address": "http://127.0.0.1:8084",
+                "contract": DATA_CONTRACT,
+                "health_url": "http://127.0.0.1:8084/health",
+            },
+            {
+                "endpoint_id": "companion-runtime-authority.http",
+                "protocol": "http",
+                "address": "http://127.0.0.1:8084",
+                "contract": DATA_RUNTIME_CONTRACT,
+                "health_url": "http://127.0.0.1:8084/health",
+            },
+        ),
     },
     "data-workspace": {
-        "endpoint_id": "workspace-authority.http",
-        "protocol": "http",
-        "address": "http://127.0.0.1:8085",
-        "contract": DATA_WORKSPACE_CONTRACT,
-        "health_url": "http://127.0.0.1:8085/health",
         "supervisord": "data:data-workspace-api",
+        "endpoints": (
+            {
+                "endpoint_id": "workspace-authority.http",
+                "protocol": "http",
+                "address": "http://127.0.0.1:8085",
+                "contract": DATA_WORKSPACE_CONTRACT,
+                "health_url": "http://127.0.0.1:8085/health",
+            },
+        ),
     },
     "hub": {
-        "endpoint_id": "device-authority.http",
-        "protocol": "http",
-        "address": "http://127.0.0.1:8082",
-        "contract": HUB_CONTRACT,
-        "health_url": "http://127.0.0.1:8082/health",
         "supervisord": "hub:hub-api",
+        "endpoints": (
+            {
+                "endpoint_id": "device-authority.http",
+                "protocol": "http",
+                "address": "http://127.0.0.1:8082",
+                "contract": HUB_CONTRACT,
+                "health_url": "http://127.0.0.1:8082/health",
+            },
+        ),
     },
     "kernel": {
-        "endpoint_id": "device-mount.http",
-        "protocol": "http",
-        "address": "http://127.0.0.1:8083",
-        "contract": KERNEL_CONTRACT,
-        "health_url": "http://127.0.0.1:8083/health",
         "supervisord": "kernel:kernel-api",
+        "endpoints": (
+            {
+                "endpoint_id": "device-mount.http",
+                "protocol": "http",
+                "address": "http://127.0.0.1:8083",
+                "contract": KERNEL_CONTRACT,
+                "health_url": "http://127.0.0.1:8083/health",
+            },
+        ),
     },
 }
 
@@ -429,7 +455,7 @@ def _validate_manifest(path: Path) -> None:
         for item in services
         if isinstance(item, dict) and isinstance(item.get("service_id"), str)
     }
-    for service_id, expected in _EXPECTED_ENDPOINTS.items():
+    for service_id, expected in _EXPECTED_SERVICES.items():
         service = by_id.get(service_id)
         if not isinstance(service, dict):
             raise ControlPlanePreparationError(
@@ -444,16 +470,34 @@ def _validate_manifest(path: Path) -> None:
                 f"manifest supervisord target drift for {service_id}"
             )
         endpoints = service.get("endpoints")
-        if not isinstance(endpoints, list) or len(endpoints) != 1:
+        expected_endpoints = expected["endpoints"]
+        if not isinstance(endpoints, list) or len(endpoints) != len(expected_endpoints):
             raise ControlPlanePreparationError(
                 f"manifest endpoint set drift for {service_id}"
             )
-        endpoint = endpoints[0]
-        for key in ("endpoint_id", "protocol", "address", "contract", "health_url"):
-            if not isinstance(endpoint, dict) or endpoint.get(key) != expected[key]:
-                raise ControlPlanePreparationError(
-                    f"manifest {service_id}.{key} does not match the consumed contract"
-                )
+        by_endpoint_id = {
+            endpoint.get("endpoint_id"): endpoint
+            for endpoint in endpoints
+            if isinstance(endpoint, dict)
+        }
+        for expected_endpoint in expected_endpoints:
+            endpoint_id = expected_endpoint["endpoint_id"]
+            endpoint = by_endpoint_id.get(endpoint_id)
+            for key in (
+                "endpoint_id",
+                "protocol",
+                "address",
+                "contract",
+                "health_url",
+            ):
+                if (
+                    not isinstance(endpoint, dict)
+                    or endpoint.get(key) != expected_endpoint[key]
+                ):
+                    raise ControlPlanePreparationError(
+                        f"manifest {service_id}/{endpoint_id}.{key} does not "
+                        "match the consumed contract"
+                    )
 
 
 def _validate_runtime_files(layout: RuntimeLayout) -> None:

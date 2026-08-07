@@ -15,6 +15,7 @@ import yaml
 
 from deploy.dev.control_plane import (
     DATA_CONTRACT,
+    DATA_RUNTIME_CONTRACT,
     DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
     KERNEL_CONTRACT,
@@ -45,7 +46,14 @@ def _manifest() -> dict[str, object]:
                         "address": "http://127.0.0.1:8084",
                         "contract": DATA_CONTRACT,
                         "health_url": "http://127.0.0.1:8084/health",
-                    }
+                    },
+                    {
+                        "endpoint_id": "companion-runtime-authority.http",
+                        "protocol": "http",
+                        "address": "http://127.0.0.1:8084",
+                        "contract": DATA_RUNTIME_CONTRACT,
+                        "health_url": "http://127.0.0.1:8084/health",
+                    },
                 ],
             },
             {
@@ -237,7 +245,10 @@ def test_validation_rejects_manifest_contract_drift(tmp_path: Path) -> None:
         yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
     )
 
-    with pytest.raises(ControlPlanePreparationError, match="data.contract"):
+    with pytest.raises(
+        ControlPlanePreparationError,
+        match=r"data/companion-authority\.http\.contract",
+    ):
         validate(layout, require_database=False)
 
 

@@ -11,6 +11,7 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.clients import (
     DATA_CONTRACT,
+    DATA_RUNTIME_CONTRACT,
     DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
     KERNEL_CONTRACT,
@@ -58,6 +59,10 @@ def directory() -> StaticDirectory:
             ("data", "companion-authority.http"): (
                 "http://data.test",
                 DATA_CONTRACT,
+            ),
+            ("data", "companion-runtime-authority.http"): (
+                "http://data.test",
+                DATA_RUNTIME_CONTRACT,
             ),
             ("data-workspace", "workspace-authority.http"): (
                 "http://workspace.test",
@@ -118,6 +123,75 @@ async def test_data_client_requires_a_distinct_configured_credential() -> None:
         await http_client.aclose()
     assert caught.value.kind == "configuration"
     assert caught.value.authority == "data"
+
+
+async def test_data_client_reads_owner_runtime_through_its_declared_contract() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.raw_path == (
+            b"/api/companion-authority/v1/owners/owner%2Fone/primary-runtime-snapshot"
+        )
+        assert request.headers["authorization"] == "Bearer admin-token"
+        return httpx.Response(
+            200,
+            json={
+                "contract_version": "1",
+                "operation": "companion.runtime-snapshot",
+                "owner_id": "owner/one",
+                "companion_id": "companion-1",
+                "lifecycle_state": "active",
+                "runtime_config": {},
+                "memory_realm": {
+                    "realm_id": "realm-1",
+                    "lifecycle_state": "active",
+                },
+                "persona_genome": {
+                    "genome_id": "genome-1",
+                    "version": 1,
+                    "lifecycle_state": "committed",
+                    "schema_version": "eidolon.persona_genome",
+                    "genome_hash": "sha256:" + "a" * 64,
+                    "realizer_version": "1",
+                    "genome": {},
+                },
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = DataAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="admin-token",
+            timeout_seconds=1,
+        )
+        result = await subject.get_owner_primary_runtime("owner/one")
+    finally:
+        await http_client.aclose()
+    assert result.companion_id == "companion-1"
+
+
+async def test_data_runtime_precondition_is_preserved_as_domain_conflict() -> None:
+    http_client = client(
+        lambda _request: httpx.Response(
+            412,
+            json={"detail": "owner has no active primary companion"},
+        )
+    )
+    try:
+        subject = DataAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="admin-token",
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as caught:
+            await subject.get_owner_primary_runtime("owner-1")
+    finally:
+        await http_client.aclose()
+    assert caught.value.kind == "conflict"
+    assert caught.value.status_code == 409
+    assert caught.value.upstream_status == 412
 
 
 async def test_workspace_client_uses_write_endpoint_and_distinct_credential() -> None:
