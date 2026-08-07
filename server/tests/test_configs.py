@@ -5,6 +5,7 @@ tmp_path, so we can exercise the real router end-to-end (atomic writes,
 backup rotation, format validation, restore) without touching the real
 project configs on disk.
 """
+
 from __future__ import annotations
 
 import time
@@ -56,7 +57,11 @@ def test_build_registry_rejects_path_outside_root(tmp_path, monkeypatch):
                 integration="native",
                 base_url="",
                 auth=AuthConfig(),
-                configs=[ConfigEntry(id="leak", label="leak", path=str(escape_file), format="yaml")],
+                configs=[
+                    ConfigEntry(
+                        id="leak", label="leak", path=str(escape_file), format="yaml"
+                    )
+                ],
             ),
         ],
     )
@@ -84,7 +89,9 @@ def test_build_registry_accepts_path_under_root(tmp_path, monkeypatch):
                 integration="native",
                 base_url="",
                 auth=AuthConfig(),
-                configs=[ConfigEntry(id="cfg", label="cfg", path=str(inside), format="yaml")],
+                configs=[
+                    ConfigEntry(id="cfg", label="cfg", path=str(inside), format="yaml")
+                ],
             ),
         ],
     )
@@ -275,14 +282,10 @@ def test_unknown_config_404(configs_client):
 
 
 def test_list_backups_after_two_writes(configs_client):
-    configs_client.put(
-        "/api/configs/demo/app", json={"text": "name: a\nport: 1\n"}
-    )
+    configs_client.put("/api/configs/demo/app", json={"text": "name: a\nport: 1\n"})
     # Sleep to force distinct timestamps (unix seconds precision).
     time.sleep(1.1)
-    configs_client.put(
-        "/api/configs/demo/app", json={"text": "name: b\nport: 2\n"}
-    )
+    configs_client.put("/api/configs/demo/app", json={"text": "name: b\nport: 2\n"})
     r = configs_client.get("/api/configs/demo/app/backups")
     assert r.status_code == 200
     items = r.json()["backups"]
@@ -291,16 +294,14 @@ def test_list_backups_after_two_writes(configs_client):
     assert items[0]["timestamp"] >= items[1]["timestamp"]
 
 
-def test_restore_round_trip(configs_client, configs_gateway):
+def test_restore_api_round_trip(configs_client, configs_gateway):
     _, yaml_file, _ = configs_gateway
     r = configs_client.put(
         "/api/configs/demo/app", json={"text": "name: v1\nport: 1\n"}
     )
     ts = r.json()["backup"]["timestamp"]
     time.sleep(1.1)
-    configs_client.put(
-        "/api/configs/demo/app", json={"text": "name: v2\nport: 2\n"}
-    )
+    configs_client.put("/api/configs/demo/app", json={"text": "name: v2\nport: 2\n"})
     assert "v2" in yaml_file.read_text()
     r = configs_client.post(f"/api/configs/demo/app/restore?ts={ts}")
     assert r.status_code == 200

@@ -89,7 +89,9 @@ def test_action_commands_are_fixed_and_do_not_use_a_shell(
 async def test_diagnose_job_runs_and_persists_log(tmp_path: Path) -> None:
     service = _service(tmp_path)
     job = await service.create_job(MobileJobRequest(action="diagnose"))
-    for _ in range(50):
+    # Process creation can be slower under the full integration suite; keep a
+    # bounded five-second deadline instead of assuming one-second scheduling.
+    for _ in range(250):
         current = service.get_job(job.id)
         if current.status in {"succeeded", "failed", "cancelled"}:
             break

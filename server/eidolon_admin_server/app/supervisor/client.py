@@ -7,6 +7,7 @@ References:
 - https://supervisord.org/api.html
 - ``supervisor.xmlrpc.SupervisorTransport`` for unix socket transport
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +31,7 @@ class SupervisorUnavailable(Exception):
 @dataclass
 class ProcessInfo:
     """Subset of supervisor.getProcessInfo() we expose to the frontend."""
+
     name: str
     group: str
     state: int
@@ -86,10 +88,8 @@ class SupervisorClient:
             )
         # supervisor.xmlrpc.SupervisorTransport accepts unix:// URLs.
         return xmlrpc.client.ServerProxy(
-            f"http://localhost",
-            transport=SupervisorTransport(
-                None, None, f"unix://{self._socket_path}"
-            ),
+            "http://localhost",
+            transport=SupervisorTransport(None, None, f"unix://{self._socket_path}"),
         )
 
     async def _call(self, attr: str, *args: Any) -> Any:
@@ -145,10 +145,14 @@ class SupervisorClient:
     async def stop_process(self, name: str, wait: bool = True) -> bool:
         return bool(await self._call("supervisor.stopProcess", name, wait))
 
-    async def start_process_group(self, group: str, wait: bool = True) -> list[dict[str, Any]]:
+    async def start_process_group(
+        self, group: str, wait: bool = True
+    ) -> list[dict[str, Any]]:
         return await self._call("supervisor.startProcessGroup", group, wait)
 
-    async def stop_process_group(self, group: str, wait: bool = True) -> list[dict[str, Any]]:
+    async def stop_process_group(
+        self, group: str, wait: bool = True
+    ) -> list[dict[str, Any]]:
         return await self._call("supervisor.stopProcessGroup", group, wait)
 
     # ---- config reconcile ---------------------------------------------------

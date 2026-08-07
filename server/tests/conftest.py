@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+
 import pytest
+
+from eidolon_admin_server.app.main import create_app
+from eidolon_admin_server.app.settings import (
+    AdminBindConfig,
+    AuthConfig,
+    GatewayConfig,
+    ServiceConfig,
+)
 
 
 @pytest.fixture
-def gateway_config():
-    # Keep bootstrap-only test collection independent from the operator app and
-    # its cross-project data dependencies.
-    from eidolon_admin_server.app.settings import (
-        AdminBindConfig,
-        AuthConfig,
-        GatewayConfig,
-        ServiceConfig,
-    )
-
+def gateway_config() -> GatewayConfig:
     return GatewayConfig(
         admin=AdminBindConfig(host="127.0.0.1", port=9000, cors_origins=[]),
         services=[
@@ -43,6 +43,4 @@ def gateway_config():
 
 @pytest.fixture
 def app(gateway_config):
-    from eidolon_admin_server.app.main import create_app
-
     return create_app(gateway_config)

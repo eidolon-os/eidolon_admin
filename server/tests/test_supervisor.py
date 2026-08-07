@@ -4,6 +4,7 @@ Each test launches a temporary supervisord pointing at a per-test socket and
 config tree under tmp_path, exercises the admin REST API via ASGITransport,
 then tears the daemon down.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,7 +27,6 @@ from eidolon_admin_server.app.settings import (
     GatewayConfig,
     Settings,
 )
-from eidolon_admin_server.app.supervisor.client import SupervisorClient
 
 
 pytestmark = pytest.mark.asyncio
@@ -39,7 +39,8 @@ PYTHON = sys.executable
 def _supervisord_conf(tmp: Path, available: Path, enabled: Path, socket: Path) -> Path:
     """Write a minimal supervisord master config in tmp."""
     conf = tmp / "supervisord.conf"
-    conf.write_text(textwrap.dedent(f"""\
+    conf.write_text(
+        textwrap.dedent(f"""\
         [unix_http_server]
         file={socket}
         chmod=0700
@@ -60,7 +61,8 @@ def _supervisord_conf(tmp: Path, available: Path, enabled: Path, socket: Path) -
 
         [include]
         files={enabled}/*.conf
-    """))
+    """)
+    )
     (tmp / "childlogs").mkdir(exist_ok=True)
     return conf
 
@@ -149,7 +151,9 @@ async def stack(tmp_path):
 
 
 async def _http(app):
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://gw"
+    )
 
 
 async def test_state_reports_socket(stack):
@@ -225,7 +229,10 @@ async def test_disable_removes_symlink_and_stops_process(stack):
         assert resp.json()["enabled"] is False
         assert not link.exists() and not link.is_symlink()
 
-        names = [p["full_name"] for p in (await ac.get("/api/supervisor/programs")).json()["programs"]]
+        names = [
+            p["full_name"]
+            for p in (await ac.get("/api/supervisor/programs")).json()["programs"]
+        ]
         assert "alpha:alpha" not in names
 
 
@@ -239,7 +246,10 @@ async def test_put_config_persists_and_reread_picks_up_new_program(stack):
         assert set(resp.json()["programs"]) == {"alpha", "beta"}
 
         # File on disk has both.
-        assert "program:beta" in (settings.supervisor_available_dir / "alpha.conf").read_text()
+        assert (
+            "program:beta"
+            in (settings.supervisor_available_dir / "alpha.conf").read_text()
+        )
 
         # Enable + supervisord should now know about both groups.
         resp = await ac.post("/api/supervisor/configs/alpha/enable")
@@ -280,7 +290,9 @@ async def test_state_when_socket_missing(tmp_path):
         GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[]),
         settings=settings,
     )
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gw") as ac:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://gw"
+    ) as ac:
         resp = await ac.get("/api/supervisor/state")
     assert resp.status_code == 200
     assert resp.json()["ping"] is False

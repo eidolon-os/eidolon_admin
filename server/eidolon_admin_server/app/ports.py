@@ -7,6 +7,7 @@ each service starts. This module never writes into those files.
 ``$EIDOLON_*`` expansion, supervisord). Refresh it with ``ports collect`` after
 you change a child project's ports (``run_all.sh start`` does this automatically).
 """
+
 from __future__ import annotations
 
 import os
@@ -17,7 +18,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from eidolon_data.settings import default_sqlite_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"
@@ -101,7 +101,9 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     ports["agent"] = {
         "http": {
             "port": int(
-                http.get("port", _deep_get(ports, "agent", "http", "port", default=8180))
+                http.get(
+                    "port", _deep_get(ports, "agent", "http", "port", default=8180)
+                )
             ),
         },
         "admin": {
@@ -114,14 +116,18 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
         },
         "grpc": {
             "port": int(
-                grpc.get("tcp_port", _deep_get(ports, "agent", "grpc", "port", default=45051))
+                grpc.get(
+                    "tcp_port", _deep_get(ports, "agent", "grpc", "port", default=45051)
+                )
             ),
         },
     }
 
     nats_url = str((agent_y.get("nats") or {}).get("url") or "")
     ports["nats"] = {
-        "port": _port_from_url(nats_url, default=int(_deep_get(ports, "nats", "port", default=4222))),
+        "port": _port_from_url(
+            nats_url, default=int(_deep_get(ports, "nats", "port", default=4222))
+        ),
         "http_port": int(_deep_get(ports, "nats", "http_port", default=8222)),
     }
 
@@ -136,22 +142,50 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     ports["hub"] = {
         "api": {
             "host": str(
-                api.get("host", _deep_get(ports, "hub", "api", "host", default="0.0.0.0"))
+                api.get(
+                    "host", _deep_get(ports, "hub", "api", "host", default="0.0.0.0")
+                )
             ),
-            "port": int(api.get("port", _deep_get(ports, "hub", "api", "port", default=8082))),
+            "port": int(
+                api.get("port", _deep_get(ports, "hub", "api", "port", default=8082))
+            ),
         },
     }
 
-    disc = memory_y.get("discovery_http") if isinstance(memory_y.get("discovery_http"), dict) else {}
+    disc = (
+        memory_y.get("discovery_http")
+        if isinstance(memory_y.get("discovery_http"), dict)
+        else {}
+    )
     mcp = memory_y.get("mcp_http") if isinstance(memory_y.get("mcp_http"), dict) else {}
-    sup = memory_y.get("supervisor") if isinstance(memory_y.get("supervisor"), dict) else {}
+    sup = (
+        memory_y.get("supervisor")
+        if isinstance(memory_y.get("supervisor"), dict)
+        else {}
+    )
     ports["memory"] = {
         "discovery": {
-            "host": str(disc.get("host", _deep_get(ports, "memory", "discovery", "host", default="127.0.0.1"))),
-            "port": int(disc.get("port", _deep_get(ports, "memory", "discovery", "port", default=8020))),
+            "host": str(
+                disc.get(
+                    "host",
+                    _deep_get(
+                        ports, "memory", "discovery", "host", default="127.0.0.1"
+                    ),
+                )
+            ),
+            "port": int(
+                disc.get(
+                    "port",
+                    _deep_get(ports, "memory", "discovery", "port", default=8020),
+                )
+            ),
         },
         "mcp": {
-            "port": int(mcp.get("port", _deep_get(ports, "memory", "mcp", "port", default=10030))),
+            "port": int(
+                mcp.get(
+                    "port", _deep_get(ports, "memory", "mcp", "port", default=10030)
+                )
+            ),
         },
         # Phase 29.B.2 — supervisor's embedded admin HTTP, used by admin
         # for user CRUD. Defaults align with memory's SupervisorConfig.
@@ -159,7 +193,9 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
             "host": str(
                 sup.get(
                     "admin_http_host",
-                    _deep_get(ports, "memory", "supervisor_http", "host", default="127.0.0.1"),
+                    _deep_get(
+                        ports, "memory", "supervisor_http", "host", default="127.0.0.1"
+                    ),
                 )
             ),
             "port": int(
@@ -174,7 +210,11 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     core = channel_y.get("core") if isinstance(channel_y.get("core"), dict) else {}
     ports["channel"] = {
         "worker": {
-            "port": int(core.get("port", _deep_get(ports, "channel", "worker", "port", default=8766))),
+            "port": int(
+                core.get(
+                    "port", _deep_get(ports, "channel", "worker", "port", default=8766)
+                )
+            ),
         },
     }
 
@@ -183,18 +223,35 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     ports["livekit"] = {
         "port": int(lk_y.get("port", lk_port)),
         "turn_udp_port": int(
-            turn.get("udp_port", _deep_get(ports, "livekit", "turn_udp_port", default=3478))
+            turn.get(
+                "udp_port", _deep_get(ports, "livekit", "turn_udp_port", default=3478)
+            )
         ),
         "rtc_port_start": int(
-            rtc.get("port_range_start", _deep_get(ports, "livekit", "rtc_port_start", default=50000))
+            rtc.get(
+                "port_range_start",
+                _deep_get(ports, "livekit", "rtc_port_start", default=50000),
+            )
         ),
         "rtc_port_end": int(
-            rtc.get("port_range_end", _deep_get(ports, "livekit", "rtc_port_end", default=60000))
+            rtc.get(
+                "port_range_end",
+                _deep_get(ports, "livekit", "rtc_port_end", default=60000),
+            )
         ),
     }
 
-    ports.setdefault("admin", _deep_get(ports, "admin", default={"api": {"host": "127.0.0.1", "port": 9000}, "web": {"port": 9001}}))
-    ports.setdefault("client_web", _deep_get(ports, "client_web", default={"port": 3001}))
+    ports.setdefault(
+        "admin",
+        _deep_get(
+            ports,
+            "admin",
+            default={"api": {"host": "127.0.0.1", "port": 9000}, "web": {"port": 9001}},
+        ),
+    )
+    ports.setdefault(
+        "client_web", _deep_get(ports, "client_web", default={"port": 3001})
+    )
 
     return ports
 
@@ -237,7 +294,6 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
         "EIDOLON_ADMIN_API_URL",
         f"http://{admin['api']['host']}:{admin['api']['port']}",
     )
-    put("EIDOLON_DATA_SQLITE_PATH", default_sqlite_path())
     put("EIDOLON_ADMIN_WEB_PORT", admin["web"]["port"])
 
     hub = p["hub"]
@@ -353,14 +409,19 @@ def _sync_yaml(path: Path, updates: dict[str, Any]) -> bool:
         if _set_nested(data, dotted, value):
             changed = True
     if changed:
-        path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
     return changed
 
 
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     if not args or args[0] not in {"export", "collect"}:
-        print("usage: python -m eidolon_admin_server.app.ports export|collect", file=sys.stderr)
+        print(
+            "usage: python -m eidolon_admin_server.app.ports export|collect",
+            file=sys.stderr,
+        )
         return 2
     cmd = args[0]
     if cmd == "export":

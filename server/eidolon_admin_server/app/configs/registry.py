@@ -11,13 +11,14 @@ services.yaml that points at ``/etc/passwd`` or
 ``~/.ssh/id_rsa`` is rejected at startup with a clear error, rather than
 silently exposing arbitrary host files through the configs editor.
 """
+
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..settings import GatewayConfig, ServiceConfig, default_eidolon_root
+from ..settings import GatewayConfig, default_eidolon_root
 
 
 @dataclass
@@ -25,7 +26,7 @@ class ResolvedConfig:
     service_id: str
     config_id: str
     label: str
-    path: Path             # resolved absolute path
+    path: Path  # resolved absolute path
     format: str
     reload: str
     reload_target: str | None
@@ -72,24 +73,32 @@ def build_registry(cfg: GatewayConfig) -> list[ResolvedConfig]:
     for svc in cfg.services:
         for entry in svc.configs:
             target = _resolve(str(entry.path))
-            _assert_inside_root(target, root, service_id=svc.id, config_id=entry.id, field="path")
+            _assert_inside_root(
+                target, root, service_id=svc.id, config_id=entry.id, field="path"
+            )
             template: Path | None = None
             if entry.template:
                 template = _resolve(str(entry.template))
                 _assert_inside_root(
-                    template, root, service_id=svc.id, config_id=entry.id, field="template"
+                    template,
+                    root,
+                    service_id=svc.id,
+                    config_id=entry.id,
+                    field="template",
                 )
-            out.append(ResolvedConfig(
-                service_id=svc.id,
-                config_id=entry.id,
-                label=entry.label or entry.id,
-                path=target,
-                format=entry.format,
-                reload=entry.reload,
-                reload_target=entry.reload_target,
-                template=template,
-                exists=target.exists(),
-            ))
+            out.append(
+                ResolvedConfig(
+                    service_id=svc.id,
+                    config_id=entry.id,
+                    label=entry.label or entry.id,
+                    path=target,
+                    format=entry.format,
+                    reload=entry.reload,
+                    reload_target=entry.reload_target,
+                    template=template,
+                    exists=target.exists(),
+                )
+            )
     return out
 
 

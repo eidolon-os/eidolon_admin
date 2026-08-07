@@ -6,10 +6,10 @@ provides a uniform interface so the router doesn't care about specifics.
 Validation = "can this text be parsed without raising"; we don't enforce
 project-specific schemas (that's the project's own loader's job at boot time).
 """
+
 from __future__ import annotations
 
 import configparser
-import io
 import re
 from typing import Any
 
@@ -99,14 +99,23 @@ def parsed_view(text: str, fmt: str) -> dict[str, Any]:
     if fmt == "dotenv":
         return {
             "entries": [
-                {"key": k, "value": _mask_value(k, v), "masked": bool(_SECRET_HINTS.search(k))}
+                {
+                    "key": k,
+                    "value": _mask_value(k, v),
+                    "masked": bool(_SECRET_HINTS.search(k)),
+                }
                 for k, v in raw
             ],
         }
     if fmt == "yaml":
         return {"data": _mask_nested(raw)}
     if fmt == "ini":
-        return {"sections": {s: {k: _mask_value(k, v) for k, v in kv.items()} for s, kv in raw.items()}}
+        return {
+            "sections": {
+                s: {k: _mask_value(k, v) for k, v in kv.items()}
+                for s, kv in raw.items()
+            }
+        }
     return {"data": raw}
 
 
@@ -114,8 +123,10 @@ def _mask_nested(node: Any) -> Any:
     """Recursively mask values whose key matches secret hints in nested
     yaml structures."""
     if isinstance(node, dict):
-        return {k: (_mask_value(k, str(v)) if _looks_like_secret(k, v) else _mask_nested(v))
-                for k, v in node.items()}
+        return {
+            k: (_mask_value(k, str(v)) if _looks_like_secret(k, v) else _mask_nested(v))
+            for k, v in node.items()
+        }
     if isinstance(node, list):
         return [_mask_nested(x) for x in node]
     return node

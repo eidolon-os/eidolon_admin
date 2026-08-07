@@ -5,32 +5,12 @@
 admin:
   host: $EIDOLON_ADMIN_API_HOST
   port: $EIDOLON_ADMIN_API_PORT
-  # Phase 32.C: client_web lists admin users via
-  # /api/users for the "select identity" picker, so its origin must
-  # be CORS-allowed alongside admin web (9001).
+  # Browser clients that use the control plane are explicitly allow-listed.
   cors_origins:
     - http://127.0.0.1:$EIDOLON_ADMIN_WEB_PORT
     - http://localhost:$EIDOLON_ADMIN_WEB_PORT
     - http://127.0.0.1:$EIDOLON_CLIENT_WEB_PORT
     - http://localhost:$EIDOLON_CLIENT_WEB_PORT
-
-# Digital-human (Ditto) service, used offline at face-upload time to generate a
-# companion's looping idle clip from the configured face + silence. Empty
-# service_url disables idle generation (the face still works). Self-signed host
-# → verify_ssl stays false.
-avatar:
-  service_url: https://111.2.199.31:61320
-  idle_seconds: 4.0
-  width: 448
-  height: 448
-  fps: 25.0
-  verify_ssl: false
-  request_timeout_sec: 120.0
-  # Idle motion amplitude. 0.0 = pure silence (closed-mouth, minimal motion).
-  # Raise a little (e.g. 0.02–0.06) for more facial motion, but note higher
-  # values read as speech (mouth movement), not richer natural idle — tune on
-  # real hardware and regenerate.
-  idle_drive_level: 0.0
 
 services:
 
@@ -88,10 +68,7 @@ services:
     ports:
       declared: [$EIDOLON_AGENT_HTTP_PORT, $EIDOLON_AGENT_ADMIN_PORT, $EIDOLON_AGENT_GRPC_PORT]
     features:
-      - { key: chat-test,          label: "Chat", stream: true }
-      - { key: conversations,      label: "Conversations" }
-      - { key: long-tasks,         label: "Long Tasks" }
-      - { key: replay-reports,     label: "Replay Reports" }
+      - { key: console, label: "API Console" }
     configs:
       - id: settings
         label: "agent settings.yaml"
@@ -112,9 +89,11 @@ services:
     name: Eidolon Hub
     integration: proxy
     base_url: http://127.0.0.1:$EIDOLON_HUB_API_PORT
-    upstream_prefix: /api/admin
-    auth: { type: none }
-    health: /api/admin/probe/health
+    upstream_prefix: ""
+    # Hub management JWT belongs to the operator/client. The generic proxy
+    # passes it through; the typed workflow also forwards it explicitly.
+    auth: { type: passthrough }
+    health: /health
     supervisor:
       config_file: deploy/supervisor/available/hub.conf
       group: hub
@@ -123,11 +102,6 @@ services:
     ports:
       declared: [$EIDOLON_HUB_API_PORT]
     features:
-      - { key: devices,   label: "Devices" }
-      - { key: discovery, label: "Discovery" }
-      - { key: commands, label: "Commands" }
-      - { key: events,   label: "Events", stream: true }
-      - { key: metrics,  label: "Metrics" }
       - { key: console,  label: "API Console" }
     configs:
       - id: settings
@@ -147,11 +121,11 @@ services:
 
   - id: memory
     name: Eidolon Memory
-    integration: native
-    base_url: ""
-    upstream_prefix: ""
+    integration: proxy
+    base_url: http://127.0.0.1:$EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT
+    upstream_prefix: /api/admin
     auth: { type: none }
-    health: http://127.0.0.1:$EIDOLON_MEMORY_DISCOVERY_PORT/api/discovery/agent-routing
+    health: /api/admin/health
     supervisor:
       config_file: deploy/supervisor/available/memory.conf
       group: memory
@@ -159,17 +133,9 @@ services:
         - memory-supervisor
         - memory-discovery
     ports:
-      declared: [$EIDOLON_MEMORY_DISCOVERY_PORT]
+      declared: [$EIDOLON_MEMORY_DISCOVERY_PORT, $EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT]
     features:
-      - { key: runners,   label: "Runners & Workers" }
-      - { key: memories,  label: "Memories" }
-      - { key: search,    label: "Search" }
-      - { key: write,     label: "Write Turn" }
-      - { key: recall,    label: "Recall" }
-      - { key: hierarchy, label: "Hierarchy" }
-      - { key: graph,     label: "Graph" }
-      - { key: kg,        label: "Knowledge Graph" }
-      - { key: mcp,       label: "MCP Tools" }
+      - { key: console, label: "API Console" }
     configs:
       - id: settings
         label: "memory settings.yaml"
