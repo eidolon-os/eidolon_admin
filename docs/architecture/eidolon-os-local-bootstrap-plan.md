@@ -22,17 +22,25 @@
 - Mobile 无网向导已实现：发现附近广播、验证 signed endpoint、输入 6 位短期 Setup 码、pin TLS SPKI、扫描/配置 Wi-Fi、生成独立 Controller key 并完成认领。Setup 码和 Wi-Fi 密码只保留在内存。
 - Mobile 已实现认领后的“连接主机”入口：mDNS 只发现候选地址，pinned HTTPS 验证 BLE signed endpoint 绑定的 TLS SPKI，再核对保存的 Host 公钥并用 Controller key 建立短期 session。旧版已保存 Host 缺少 TLS 指纹时，只通过 BLE signed endpoint 更新信任，不执行 Setup、换网或重新认领。
 - Controller Grant、operation journal、session 单次消费与 claim 权威迁移已落地；已认领换网使用 Controller challenge，不复用开箱 secret。
-- Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 的 Host 端链路已经实现，Mobile 后半段尚未接入，因此 Host commissioning 完成仍不等价于 Workspace ready。
+- Mobile 默认入口是首次 Setup / 我的 Eidolon；旧 Audio demo 不参与本闭环。Workspace onboarding 已接入 Mobile，但 Host commissioning 完成仍不等价于 Workspace ready；两者分别由 Host 与 Workspace 权威状态决定。
 - Production 默认 fail closed：缺少制造身份时不生成临时产品身份，且拒绝签发开发 Setup 码。
 - AST 架构测试禁止 Bootstrap import Admin app、Data、Memory、NATS、Supervisor、torch 和 uvicorn。
 - 开发树莓派上已经安装并由 systemd 常驻运行 `eidolon-bootstrapd` 和 `eidolon-local-api`；Avahi 仅发布与当前 IPv4 listener 一致的 `_eidolon-local-api._tcp` 地址。Android 平板已完成一次真实 Host commissioning 闭环，包括 BLE 发现、signed endpoint、pinned TLS、NetworkManager 配网确认、Controller Grant 和 claim。
 - 同一 Pi/Android 已完成 Controller-authenticated Local API 实机闭环：Mobile 经 mDNS 获取候选地址、验证保存的 TLS SPKI 和 Host identity、使用 Android Keystore Controller key 建立短期 session，并读取 Host 状态。Bootstrap 和整机分别重启后，Host identity、Controller Grant 与 `reset_epoch` 均保持，短期 session 可重新签发。
 - 整机重启实测中，Bootstrap 等待 NetworkManager boot-time autoconnect 收敛后才发布 `connected`，Local API、Avahi、BLE commissioning 均自动恢复；Mobile 新建会话读取到的网络状态为“已连接”。
 - 该实机结果只覆盖当前开发 Pi、Android 平板和当前路由器，不能外推为 2.4/5 GHz、隐藏 SSID、WPA3、DHCP 故障、guest isolation、App kill 和重启恢复矩阵均已验收。
-- 最近一次实机审计中 Host 为 `claimed/connected/normal`、`reset_epoch=2`，但 `workspace_state=absent`；该记录早于 Workspace Host 端链路落地，尚未重新做 Pi/Android 端到端验收，因此不能据此宣称完整 Workspace 开箱完成。
+- 2026-08-07 修复后实机复验中，当前开发 Pi 与 Android 平板通过 mDNS、pinned HTTPS 和 Controller session 成功提交 Workspace `PUT`；随后服务端返回 Owner `manson` 以及主 Companion、Persona、Memory Workspace 全部 ready，同会话刷新仍读取到 ready。
+- Mobile Workspace UI 已接入 `PUT`，真机首次 dogfood 暴露 Android pinned HTTPS
+  adapter 维护了重复的方法白名单且遗漏 `PUT`。Mobile 已将其重构为版本化、二进制
+  安全的通用 unary transport，补齐原生/Dart 契约测试和类型化错误；修复后的 APK/Pi
+  基础端到端闭环已通过，Phase 2C 仍需完成重启、Data outage、重复提交和 App kill
+  故障矩阵后才能退出。
+- Mobile 已建立独立的 `DeviceProvisioningTransport`、`DeviceAdmissionPort` 和非秘密
+  checkpoint 状态机。当前 ESP32 build 虽同时打开 Hotspot/ESP-BLUFI，实际预处理分支
+  优先进入开放 Hotspot + 明文 HTTP `/submit`；它没有产品 Device Identity 证明或
+  enrollment receipt，因此尚未开放为产品 Add Device adapter。
 
-尚未完成并且不能宣称完成：完整 Pi/Android 路由器与故障矩阵、Controller-authenticated
-Workspace 的 Mobile 后半段与 Pi/Android 端到端验收、产品二维码制造流程、物理 recovery GPIO/按键、
+尚未完成并且不能宣称完成：完整 Pi/Android 路由器与 Workspace 故障矩阵、产品二维码制造流程、物理 recovery GPIO/按键、
 Factory Reset manifests、iOS、Local API/完整 stack 的产品 systemd 联动与故障注入。
 
 ## 1. 背景与目标
@@ -438,7 +446,7 @@ operation_state:
 7. 旧的 LAN Local API Host proof 路径保留给网络可达后的诊断/接入测试，但不再是
    无网首次开箱的前置条件。
 
-**B. Host commissioning（代码完成，真机验收待执行）**
+**B. Host commissioning（当前开发组合的基础真机闭环已通过）**
 
 8. App 在 TLS 内提交短期 commissioning ID/Setup 码，Bootstrap 只校验已保存的 hash，并在 5 次失败后撤销 session。
 9. App 展示 Host 扫描到的 SSID；Bootstrap 只通过 `NetworkProvisioning` Port staging 新网络。
@@ -448,7 +456,7 @@ operation_state:
     handoff 是下一步，不阻塞 Host commissioning 的本地完成语义。
 12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`、`recovery_state=normal`；`workspace_state` 不阻塞 Host commissioning。
 
-**C. Workspace onboarding（Host 端已实现，Mobile 待接入）**
+**C. Workspace onboarding（Host/Mobile 已接入，基础真机闭环已通过）**
 
 13. Local API 从稳定 Host ID 派生确定性的 `operation_id`，以独立内部服务身份调用 Admin；Admin 再用独立写令牌调用 Data Workspace Authority，创建或重放同一 Owner、主 Companion 和 Workspace operation。
 14. Bootstrap 只保存稳定的 Owner 引用，不拥有 Owner/Companion/Workspace 数据。
@@ -724,11 +732,16 @@ Host 端已交付：
 - Local API 通过确定性的 Host operation 调用 Admin，并在成功后把 primary Owner 绑定回 Bootstrap。
 - Admin/Data Workspace 与 Local API/Admin 使用两组独立服务凭证；Data read authority 不获得 Workspace 写令牌。
 - Admin adapter 使用当前 `eidolon_data` V2 API，没有恢复已删除的 V1 `DataStore/schema.models` 依赖。
+- Android Setup 在 Host commissioning 后建立 LAN Controller session，创建或恢复 Owner、主 Companion 和 Workspace；Host 先持久化，后半段失败不会回滚 Host。
+
+当前实机验收：
+
+- 当前开发 Pi/Android 已完成一次真实 Workspace `PUT`，服务端返回 Owner、主 Companion、Persona 与 Memory Workspace ready。
+- Mobile 随后刷新并通过新签发的短期 Controller session 重读到相同 ready 状态。
 
 待交付：
 
-- Android Setup 在 Host commissioning 后建立 LAN Controller session，创建/恢复 Owner、主 Companion 和 Workspace，并在中断后恢复进度。
-- Pi/Android 真实进程、重启、Data outage 与重复提交的端到端验收。
+- Pi/Android 的进程重启、Data outage、重复提交与 App kill 端到端故障矩阵。
 - 产品镜像防火墙确认 Mobile 不能直达 Admin/Hub/Kernel。
 
 退出标准：
@@ -785,6 +798,16 @@ Phase 5 的共同进入条件是 Phase 2B/2C 已完成：Mobile 已持有 authen
 - Owner 切换只能选择 Controller Grant 已允许的 scope。
 
 #### Phase 5B：ESP32 等外部 Device Setup
+
+当前 Mobile 基座已交付：
+
+- provisioning/admission 两个正交状态轴、前向恢复 coordinator 与非秘密 checkpoint Port；
+- admission 失败后使用相同 request ID 恢复，不重新写 Wi-Fi；
+- production coordinator 默认拒绝没有产品身份绑定的 development TOFU transport。
+
+当前固件审计结论：活动目标的 `sdkconfig` 同时打开 Hotspot 与 ESP-BLUFI，但
+`WifiBoard::StartWifiConfigMode` 的条件顺序使 Hotspot 优先；开放 `Xiaozhi-XXXX` AP 的
+HTTP `/submit` 只能验证开发配网，不能满足产品身份、Wi-Fi 机密性和 enrollment receipt。
 
 交付：
 
