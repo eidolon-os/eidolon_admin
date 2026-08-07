@@ -15,6 +15,7 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -151,6 +152,7 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
     ):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         directory.chmod(0o700)
+    _clear_stale_system_socket(layout.system_socket)
 
     existing = _read_existing_secrets(layout)
     data_token = existing.get("data_token") or secrets.token_urlsafe(32)
@@ -269,6 +271,7 @@ def migrate_data(layout: RuntimeLayout) -> None:
         )
         raise ControlPlanePreparationError(f"isolated Data migration failed: {detail}")
     layout.data_database.chmod(0o600)
+    _checkpoint_isolated_database(layout.data_database)
 
 
 def validate(layout: RuntimeLayout, *, require_database: bool = True) -> None:
@@ -346,6 +349,43 @@ def _validate_layout_boundary(layout: RuntimeLayout) -> None:
     if runtime == formal or formal in runtime.parents:
         raise ControlPlanePreparationError(
             "control-plane runtime must not use the formal data root"
+        )
+
+
+def _clear_stale_system_socket(path: Path) -> None:
+    if not path.exists():
+        return
+    if not path.is_socket():
+        raise ControlPlanePreparationError(
+            f"eidolond UDS path exists but is not a socket: {path}"
+        )
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(0.2)
+    try:
+        client.connect(str(path))
+    except (ConnectionRefusedError, FileNotFoundError):
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ControlPlanePreparationError(
+            f"cannot prove eidolond UDS is stale: {path}: {exc}"
+        ) from exc
+    else:
+        raise ControlPlanePreparationError(
+            f"isolated eidolond is already accepting connections: {path}"
+        )
+    finally:
+        client.close()
+
+
+def _checkpoint_isolated_database(path: Path) -> None:
+    connection = sqlite3.connect(path, timeout=5.0)
+    try:
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        connection.close()
+    if checkpoint is not None and int(checkpoint[0]) != 0:
+        raise ControlPlanePreparationError(
+            f"isolated Data database is busy during checkpoint: {path}"
         )
 
 
@@ -458,7 +498,7 @@ def _validate_entrypoints(layout: RuntimeLayout) -> None:
 def _validate_data_database(path: Path) -> None:
     if not path.is_file():
         raise ControlPlanePreparationError(f"isolated Data database is missing: {path}")
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
     try:
         tables = {
             str(row[0])

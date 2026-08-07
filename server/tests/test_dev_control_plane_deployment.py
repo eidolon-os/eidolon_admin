@@ -5,7 +5,9 @@ import hashlib
 import hmac
 import json
 import os
+import socket
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -170,6 +172,34 @@ def test_prepare_materializes_isolated_config_and_preserves_secrets(
 
 
 @pytest.mark.unit
+def test_prepare_removes_only_a_stale_eidolond_socket() -> None:
+    with tempfile.TemporaryDirectory(prefix="eacp-", dir="/tmp") as temporary:
+        layout = _layout(Path(temporary))
+        stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stale.bind(str(layout.system_socket))
+        stale.close()
+
+        prepare(layout, migrate=False)
+
+        assert not layout.system_socket.exists()
+
+
+@pytest.mark.unit
+def test_prepare_refuses_a_live_eidolond_socket() -> None:
+    with tempfile.TemporaryDirectory(prefix="eacp-", dir="/tmp") as temporary:
+        layout = _layout(Path(temporary))
+        live = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        live.bind(str(layout.system_socket))
+        live.listen(1)
+        try:
+            with pytest.raises(ControlPlanePreparationError, match="already accepting"):
+                prepare(layout, migrate=False)
+        finally:
+            live.close()
+            layout.system_socket.unlink(missing_ok=True)
+
+
+@pytest.mark.unit
 def test_validation_rejects_manifest_contract_drift(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     prepare(layout, migrate=False)
@@ -309,3 +339,9 @@ def test_real_data_migration_targets_only_the_isolated_database(tmp_path: Path) 
     assert os.path.commonpath((layout.data_database, layout.runtime_root)) == str(
         layout.runtime_root
     )
+    assert not layout.data_database.with_name(
+        f"{layout.data_database.name}-wal"
+    ).exists()
+    assert not layout.data_database.with_name(
+        f"{layout.data_database.name}-shm"
+    ).exists()

@@ -179,8 +179,11 @@ def test_current_hub_consumed_page_and_mutation_match_producer_schemas() -> None
     )
 
 
-def test_admin_production_tree_has_no_foreign_database_or_orm_dependency() -> None:
-    production = ADMIN_ROOT / "server/eidolon_admin_server"
+def test_admin_operator_tree_has_no_database_or_orm_dependency() -> None:
+    production_roots = (
+        ADMIN_ROOT / "server/eidolon_admin_server/app",
+        ADMIN_ROOT / "server/eidolon_admin_server/local_api",
+    )
     forbidden = (
         "import eidolon_data",
         "from eidolon_data",
@@ -191,11 +194,37 @@ def test_admin_production_tree_has_no_foreign_database_or_orm_dependency() -> No
         "eidolon.sqlite3",
     )
     violations: list[str] = []
-    for path in production.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        for needle in forbidden:
-            if needle in text:
-                violations.append(f"{path.relative_to(ADMIN_ROOT)}: {needle}")
+    for production in production_roots:
+        for path in production.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for needle in forbidden:
+                if needle in text:
+                    violations.append(f"{path.relative_to(ADMIN_ROOT)}: {needle}")
+    assert violations == []
+
+
+def test_local_state_services_do_not_reference_foreign_authority_databases() -> None:
+    local_state_roots = (
+        ADMIN_ROOT / "server/eidolon_admin_server/audit",
+        ADMIN_ROOT / "server/eidolon_admin_server/bootstrap",
+    )
+    forbidden = (
+        "import eidolon_data",
+        "from eidolon_data",
+        "DataStore",
+        "EIDOLON_DATA_SQLITE_PATH",
+        "eidolon-system.sqlite3",
+        "eidolon.sqlite3",
+        "kernel.sqlite3",
+        "hub.sqlite3",
+    )
+    violations: list[str] = []
+    for local_state in local_state_roots:
+        for path in local_state.rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for needle in forbidden:
+                if needle in text:
+                    violations.append(f"{path.relative_to(ADMIN_ROOT)}: {needle}")
     assert violations == []
 
 
