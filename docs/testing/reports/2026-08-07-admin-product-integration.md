@@ -23,6 +23,12 @@ against SQLite/SQLAlchemy and foreign authority imports. Bootstrap and audit
 may use their own local SQLite state, with a separate guard rejecting any Data,
 Kernel or Hub database reference.
 
+The subsequent product-release phase adds a loopback-only
+`eidolon-admin.service` and a process-local `/healthz`. The health response does
+not query producer authorities; Data/Hub/Kernel readiness remains an independent
+release check, so an authority outage is not rewritten as an Admin process
+failure.
+
 ## Environment
 
 - macOS 26.5.2 arm64;
@@ -72,7 +78,8 @@ Final command:
   --cov=eidolon_admin_server --cov-branch --cov-report=term
 ```
 
-Final result: **241 passed, 0 failed, 0 skipped**, 24 warnings, 44.51 seconds,
+Final result after the product service addition: **243 passed, 0 failed, 0
+skipped**, 24 warnings, 41.95 seconds,
 overall branch-aware coverage **70%**. Warnings were one Starlette/httpx
 deprecation and 23 `dbus-next` Python deprecation warnings.
 
@@ -81,14 +88,14 @@ Marker runs before the two additional deployment-cleanliness unit tests were:
 | Layer | Result |
 | --- | ---: |
 | unit | 15 passed |
-| component | 30 passed |
+| component | 31 passed |
 | contract | 10 passed |
 | integration | 4 passed |
 | real-process E2E | 1 passed |
 
-The final suite therefore contains 17 unit-marked tests; other counts are
-unchanged. The remaining tests are unmarked Bootstrap, Local API, audit and
-legacy-neutral Admin infrastructure tests.
+The final suite contains 17 unit-marked tests and one additional unmarked
+systemd architecture test. The remaining tests are unmarked Bootstrap, Local
+API, audit and legacy-neutral Admin infrastructure tests.
 
 Two non-final runs are recorded rather than hidden:
 
@@ -100,6 +107,11 @@ Two non-final runs are recorded rather than hidden:
    failed because it incorrectly banned Bootstrap's own SQLite and the audit
    projection's SQLAlchemy. The guard was split by bounded context, after which
    the final run above passed.
+3. this product-service phase first ran the full suite inside a filesystem-only
+   sandbox: 207 passed, 24 failed and 12 errored because loopback/Unix socket
+   creation returned `Operation not permitted`. The exact same command was then
+   run with local socket permission and produced the final 243-pass result. No
+   external host or formal service was contacted.
 
 ## Runtime preparation evidence
 
@@ -161,8 +173,9 @@ a Raspberry Pi performance target.
    producer-owned Admin and Kernel service credentials.
 2. Admin operator API/Web has no product ingress authentication or production
    serving decision. Local API authentication must not be reused implicitly.
-3. Kernel release descriptor V1 still excludes Hub, Admin, Bootstrap and their
-   systemd/readiness assets.
+3. Kernel now has a strict unified release V2 implementation covering Hub,
+   Admin and Bootstrap assets, but it has not yet been activated or fault-tested
+   on a Raspberry Pi.
 4. Data lifecycle/Persona/Memory/Face/Guard mutation contracts remain absent,
    so their deleted Admin screens must remain unavailable.
 5. High-frequency telemetry projection remains absent. The audit projection is

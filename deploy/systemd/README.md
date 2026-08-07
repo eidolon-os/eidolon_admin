@@ -1,5 +1,11 @@
 # Eidolon host-control systemd units
 
+`eidolon-admin.service` runs the operator control plane as the unprivileged
+`eidolon` user and binds only to `127.0.0.1:9000`. It resolves Data, Hub and
+Kernel through `/run/eidolon/system.sock`; it does not receive Bootstrap socket
+access or open producer databases. Product remote access requires a separately
+authenticated ingress and is deliberately not supplied by this unit.
+
 `eidolon-bootstrapd.service` is intentionally outside the supervisord-managed
 application stack. It starts before `eidolon-stack.service`, does not depend on
 `network-online.target`, and uses `Restart=always` with systemd as the only
