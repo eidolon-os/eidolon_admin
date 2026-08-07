@@ -4,8 +4,9 @@
 # run_all.sh start runs ``python -m eidolon_admin_server.app.ports collect`` to
 # refresh this file (aggregation only — child settings are never modified).
 #
-# Edit admin / client_web / nats.http_port here when needed; service ports come
-# from the corresponding sub-project settings.yaml.
+# Edit admin / client_web / nats.http_port here when needed. Data, Kernel and
+# eidolond currently have deployment-contract ports because their application
+# settings intentionally do not own ASGI binding.
 
 admin:
   api:
@@ -17,6 +18,18 @@ hub:
   api:
     host: 0.0.0.0
     port: 8082
+data:
+  api:
+    host: 127.0.0.1
+    port: 8084
+kernel:
+  api:
+    host: 127.0.0.1
+    port: 8083
+eidolond:
+  api:
+    host: 127.0.0.1
+    port: 8090
 agent:
   http:
     port: 8180
