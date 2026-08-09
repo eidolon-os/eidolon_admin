@@ -6,6 +6,7 @@ from typing import TypeVar
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ValidationError
 
 from .contracts import (
@@ -22,6 +23,9 @@ from .errors import AuthorityFailure
 from .workspace_policy import workspace_request_fingerprint
 
 DATA_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema.json"
+DATA_RUNTIME_CONTRACT = (
+    "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
+)
 DATA_WORKSPACE_CONTRACT = (
     "https://eidolon.live/contracts/system-data/workspace/"
     "onboarding-operation-v1.schema.json"
@@ -55,7 +59,7 @@ def _raise_status(authority: str, response: httpx.Response) -> None:
         raise AuthorityFailure(authority, "forbidden", detail, 403, status, False)
     if status == 404:
         raise AuthorityFailure(authority, "not_found", detail, 404, status, False)
-    if status == 409:
+    if status in {409, 412}:
         raise AuthorityFailure(authority, "conflict", detail, 409, status, False)
     if status == 400:
         raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False)
@@ -155,6 +159,39 @@ class DataAuthorityClient:
                 "data", "Data returned a different companion identity"
             )
         return identity
+
+    async def get_owner_primary_runtime(
+        self,
+        owner_id: str,
+    ) -> CompanionRuntimeSnapshot:
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-runtime-authority.http",
+            required_contract=DATA_RUNTIME_CONTRACT,
+        )
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/primary-runtime-snapshot",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+        runtime = _parse("data", response, CompanionRuntimeSnapshot)
+        if runtime.owner_id != owner_id:
+            raise _contract_violation(
+                "data", "Data returned a different Owner runtime snapshot"
+            )
+        return runtime
 
 
 class DataWorkspaceAuthorityClient:

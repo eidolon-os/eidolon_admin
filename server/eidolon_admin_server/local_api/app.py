@@ -1,9 +1,9 @@
 """Minimal local product API.
 
 Public Host routes, Host proof, and Controller-authenticated short-lived
-sessions exist. Workspace Setup is the first product mutation: it is
-Controller-authenticated, Host-idempotent, and reaches Data only through
-Admin's exact loopback contract.
+sessions exist. Workspace Setup is the first product mutation and Workspace
+Runtime is the first daily-use projection. Both are Controller-authenticated
+and reach Data only through Admin's exact loopback contracts.
 """
 
 from __future__ import annotations
@@ -17,6 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from .auth import LocalControllerSessionStore
 from .config import LocalApiSettings, load_local_api_settings
+from .runtime import (
+    AdminOwnerRuntimeClient,
+    AdminOwnerRuntimePort,
+    WorkspaceRuntimeError,
+    WorkspaceRuntimeView,
+    workspace_runtime_view,
+)
 from .workspace import (
     AdminWorkspaceClient,
     AdminWorkspacePort,
@@ -57,6 +64,7 @@ def create_app(
     settings: LocalApiSettings | None = None,
     *,
     workspace_client: AdminWorkspacePort | None = None,
+    runtime_client: AdminOwnerRuntimePort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -65,14 +73,24 @@ def create_app(
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_workspace_client = workspace_client is None
+    runtime = runtime_client or AdminOwnerRuntimeClient(
+        base_url=resolved.admin_base_url,
+        service_token=resolved.admin_service_token,
+        timeout_seconds=resolved.admin_timeout_seconds,
+    )
+    owns_runtime_client = runtime_client is None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
             yield
         finally:
-            if owns_workspace_client:
-                await workspace.close()
+            try:
+                if owns_workspace_client:
+                    await workspace.close()
+            finally:
+                if owns_runtime_client:
+                    await runtime.close()
 
     app = FastAPI(
         title="Eidolon Local API",
@@ -251,6 +269,45 @@ def create_app(
                 "bootstrap did not confirm the Data Owner scope",
             )
         return workspace_status(operation_id=operation_id, result=result)
+
+    @app.get(
+        "/api/local/v1/workspace/runtime",
+        response_model=WorkspaceRuntimeView,
+    )
+    async def get_workspace_runtime(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> WorkspaceRuntimeView:
+        principal, _session = await authenticated_controller(authorization)
+        owner_id = principal.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Host Workspace is not initialized",
+            )
+        operation_id = await operation_id_for_host()
+        try:
+            workspace_operation = await workspace.get(operation_id)
+        except WorkspaceSetupError as exc:
+            code = (
+                status.HTTP_409_CONFLICT
+                if exc.status_code == status.HTTP_404_NOT_FOUND
+                else exc.status_code
+            )
+            raise HTTPException(code, str(exc)) from exc
+        try:
+            runtime_snapshot = await runtime.get_owner_primary_runtime(owner_id)
+            return workspace_runtime_view(
+                workspace=workspace_operation,
+                runtime=runtime_snapshot,
+                bound_owner_id=owner_id,
+            )
+        except WorkspaceRuntimeError as exc:
+            code = (
+                status.HTTP_409_CONFLICT
+                if exc.status_code == status.HTTP_404_NOT_FOUND
+                else exc.status_code
+            )
+            raise HTTPException(code, str(exc)) from exc
 
     @app.get("/api/local/v1/system/state")
     async def system_state() -> dict:

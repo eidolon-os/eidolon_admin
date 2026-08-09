@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/workspace-runtime.schema.json",
+  "title": "Eidolon Local API Workspace Runtime V1",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "operation_id",
+    "state",
+    "owner",
+    "primary_companion",
+    "persona",
+    "memory_workspace"
+  ],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "operation_id": { "type": "string", "format": "uuid" },
+    "state": { "const": "ready" },
+    "owner": {
+      "type": "object",
+      "required": ["owner_id", "display_name", "lifecycle_state"],
+      "properties": {
+        "owner_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "display_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "lifecycle_state": { "const": "active" }
+      },
+      "additionalProperties": false
+    },
+    "primary_companion": {
+      "type": "object",
+      "required": ["companion_id", "lifecycle_state"],
+      "properties": {
+        "companion_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "lifecycle_state": { "const": "active" }
+      },
+      "additionalProperties": false
+    },
+    "persona": {
+      "type": "object",
+      "required": [
+        "genome_id",
+        "version",
+        "lifecycle_state",
+        "schema_version",
+        "genome_hash",
+        "realizer_version"
+      ],
+      "properties": {
+        "genome_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "version": { "type": "integer", "minimum": 1 },
+        "lifecycle_state": { "const": "committed" },
+        "schema_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "genome_hash": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "realizer_version": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "additionalProperties": false
+    },
+    "memory_workspace": {
+      "type": "object",
+      "required": ["realm_id", "lifecycle_state"],
+      "properties": {
+        "realm_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "lifecycle_state": { "const": "active" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

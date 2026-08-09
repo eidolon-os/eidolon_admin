@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     SQLiteBootstrapStateStore,
@@ -157,6 +158,47 @@ class _WorkspaceClient:
             )
         assert self.result.operation_id == operation_id
         return self.result
+
+    async def close(self) -> None:
+        return None
+
+
+class _RuntimeClient:
+    def __init__(self, workspace: _WorkspaceClient) -> None:
+        self.workspace = workspace
+        self.calls = 0
+
+    async def get_owner_primary_runtime(
+        self,
+        owner_id: str,
+    ) -> CompanionRuntimeSnapshot:
+        self.calls += 1
+        operation = self.workspace.result
+        assert operation is not None
+        assert operation.owner.owner_id == owner_id
+        return CompanionRuntimeSnapshot.model_validate(
+            {
+                "contract_version": "1",
+                "operation": "companion.runtime-snapshot",
+                "owner_id": owner_id,
+                "companion_id": operation.workspace.primary_companion_id,
+                "lifecycle_state": "active",
+                "runtime_config": {},
+                "memory_realm": {
+                    "realm_id": operation.workspace.memory_realm_id,
+                    "lifecycle_state": "active",
+                },
+                "persona_genome": {
+                    "genome_id": operation.workspace.persona_genome_id,
+                    "version": 1,
+                    "lifecycle_state": "committed",
+                    "schema_version": "eidolon.persona_genome",
+                    "genome_hash": "sha256:" + "a" * 64,
+                    "realizer_version": "1",
+                    "genome": {},
+                },
+            }
+        )
 
     async def close(self) -> None:
         return None
@@ -628,9 +670,11 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             await asyncio.sleep(0.01)
 
         workspace_client = _WorkspaceClient()
+        runtime_client = _RuntimeClient(workspace_client)
         app = create_app(
             LocalApiSettings(bootstrap=settings),
             workspace_client=workspace_client,
+            runtime_client=runtime_client,
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -690,6 +734,12 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert absent.status_code == 200
             assert absent.json()["state"] == "absent"
+            runtime_before_workspace = await client.get(
+                "/api/local/v1/workspace/runtime",
+                headers=workspace_headers,
+            )
+            assert runtime_before_workspace.status_code == 409
+            assert runtime_client.calls == 0
 
             unauthenticated = await client.put(
                 "/api/local/v1/setup/workspace",
@@ -723,6 +773,74 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 headers=workspace_headers,
             )
             assert ready.json() == initialized.json()
+
+            runtime = await client.get(
+                "/api/local/v1/workspace/runtime",
+                headers=workspace_headers,
+            )
+            assert runtime.status_code == 200
+            assert runtime.json()["owner"]["owner_id"] == ("owner_workspace_authority")
+            assert (
+                runtime.json()["primary_companion"]["companion_id"]
+                == (initialized.json()["workspace"]["primary_companion_id"])
+            )
+            assert runtime_client.calls == 1
+
+            restarted_app = create_app(
+                LocalApiSettings(bootstrap=settings),
+                workspace_client=workspace_client,
+                runtime_client=runtime_client,
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=restarted_app),
+                base_url="https://local-restarted.test",
+            ) as restarted:
+                expired_on_restart = await restarted.get(
+                    "/api/local/v1/auth/session",
+                    headers=workspace_headers,
+                )
+                assert expired_on_restart.status_code == 401
+
+                next_challenge_response = await restarted.post(
+                    "/api/local/v1/auth/challenges",
+                    json={
+                        "contract_version": "1",
+                        "controller_id": controller_id,
+                    },
+                )
+                assert next_challenge_response.status_code == 200
+                next_challenge = next_challenge_response.json()
+                next_signature = private_key.sign(
+                    json.dumps(
+                        next_challenge,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                    ec.ECDSA(hashes.SHA256()),
+                )
+                next_session = await restarted.post(
+                    "/api/local/v1/auth/sessions",
+                    json={
+                        **next_challenge,
+                        "signature": base64.urlsafe_b64encode(next_signature)
+                        .rstrip(b"=")
+                        .decode(),
+                    },
+                )
+                assert next_session.status_code == 200
+                next_headers = {
+                    "Authorization": (f"Bearer {next_session.json()['access_token']}")
+                }
+                resumed_workspace = await restarted.get(
+                    "/api/local/v1/setup/workspace",
+                    headers=next_headers,
+                )
+                resumed_runtime = await restarted.get(
+                    "/api/local/v1/workspace/runtime",
+                    headers=next_headers,
+                )
+                assert resumed_workspace.json() == initialized.json()
+                assert resumed_runtime.status_code == 200
 
             control = BootstrapControlClient(settings.control_socket)
             refreshed = await client.get(
@@ -774,7 +892,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
         json.loads(path.read_text())
         for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
     ]
-    assert len(local_api_documents) == 11
+    assert len(local_api_documents) == 12
     assert all(
         document["$schema"].endswith("2020-12/schema")
         for document in local_api_documents
