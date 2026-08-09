@@ -13,10 +13,11 @@ User=eidolon-bootstrap
 Group=eidolon-bootstrap
 UMask=0007
 EnvironmentFile=-/etc/eidolon/bootstrap.env
+EnvironmentFile=/etc/eidolon/host.env
 Environment=EIDOLON_BOOTSTRAP_MODE=production
 Environment=EIDOLON_BOOTSTRAP_STATE_DIR=/var/lib/eidolon-bootstrap
 Environment=EIDOLON_BOOTSTRAP_RUNTIME_DIR=/run/eidolon-bootstrap
-ExecStart=/srv/eidolon/current/eidolon_admin/.venv/bin/eidolon-bootstrapd
+ExecStart=/opt/eidolon/current/eidolon_admin/.venv/bin/eidolon-bootstrapd
 Restart=always
 RestartSec=3s
 KillSignal=SIGTERM
