@@ -163,23 +163,21 @@ class StubControlPlane:
             mount=mounted,
         )
 
-    async def admit_device_pairing(
+    async def admit_controller_device(
         self,
         *,
-        setup_id: str,
         payload,
     ) -> DeviceAdmissionResult:
-        assert setup_id == "setup-1"
         now = datetime.now(UTC)
         mount = KernelMount(
             operation="kernel.device-mount",
-            device_id="device-from-hub",
+            device_id=payload.device_id,
             owner_id=payload.owner_id,
             attached_companion_id=payload.companion_id,
             revision=2,
             created_at=now,
             updated_at=now,
-            request_id="admin:pairing:kernel-attach",
+            request_id="admin:approval:kernel-attach",
             fingerprint="sha256:" + "0" * 64,
             active=True,
         )
@@ -188,7 +186,7 @@ class StubControlPlane:
             outcome="completed",
             completed_stage="companion_attached",
             steps=(
-                WorkflowStep(name="hub_pairing_claim", state="committed"),
+                WorkflowStep(name="hub_approval", state="committed"),
                 WorkflowStep(name="kernel_mount", state="committed", revision=1),
                 WorkflowStep(
                     name="companion_attachment", state="committed", revision=2
@@ -196,7 +194,7 @@ class StubControlPlane:
             ),
             hub=HubLifecycleStatus(
                 operation="device.lifecycle-status",
-                device_id="device-from-hub",
+                device_id=payload.device_id,
                 owner_id=payload.owner_id,
                 lifecycle_state="approved",
             ),
@@ -415,21 +413,20 @@ async def test_non_retryable_partial_workflow_returns_conflict(app) -> None:
     assert response.json()["recovery"] == "operator-action-required"
 
 
-async def test_local_pairing_workflow_requires_service_auth_and_no_mobile_device_id(
+async def test_local_approval_workflow_requires_service_auth_and_matching_device_id(
     app,
 ) -> None:
     from eidolon_admin_server.app.settings import Settings
 
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
-    path = "/api/control-plane/v1/local-device-admissions/setup-1"
+    path = "/api/control-plane/v1/local-device-admissions/device-1"
     payload = {
         "contract_version": "1",
         "request_id": "mobile-claim-1",
         "owner_id": "owner-derived",
         "controller_id": "ectrl-0123456789abcdefabcd",
-        "enrollment_id": "enrollment_abcdefghijklmnopqrstuvwx",
-        "pairing_secret": "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+        "device_id": "device-1",
         "companion_id": "companion-1",
     }
     async with httpx.AsyncClient(
@@ -444,13 +441,13 @@ async def test_local_pairing_workflow_requires_service_auth_and_no_mobile_device
         injected_device = await client.put(
             path,
             headers={"Authorization": "Bearer local-api-secret"},
-            json={**payload, "device_id": "mobile-chosen-device"},
+            json={**payload, "device_id": "another-device"},
         )
 
     assert missing.status_code == 401
     assert accepted.status_code == 200
-    assert accepted.json()["hub"]["device_id"] == "device-from-hub"
-    assert injected_device.status_code == 422
+    assert accepted.json()["hub"]["device_id"] == "device-1"
+    assert injected_device.status_code == 409
 
 
 @pytest.mark.parametrize(

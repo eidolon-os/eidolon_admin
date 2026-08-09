@@ -33,9 +33,11 @@ from .device_admissions import (
     AdminDeviceAdmissionPort,
     DeviceAdmissionError,
     LocalDeviceAdmissionProgress,
-    LocalDeviceAdmissionRequest,
+    LocalDeviceApprovalRequest,
     LocalDeviceOnboardingTarget,
+    LocalPendingDeviceEnrollmentPage,
     device_admission_progress,
+    pending_device_enrollment_page,
 )
 from .runtime import (
     AdminOwnerRuntimeClient,
@@ -413,12 +415,27 @@ def create_app(
             )
         return LocalDeviceOnboardingTarget.from_verified(target)
 
-    @app.put(
-        "/api/local/v1/device-admissions/{setup_id}",
+    @app.get(
+        "/api/local/v1/device-enrollments/pending",
+        response_model=LocalPendingDeviceEnrollmentPage,
+    )
+    async def list_pending_device_enrollments(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalPendingDeviceEnrollmentPage:
+        principal, _session = await authenticated_controller(authorization)
+        _owner_id, controller_id = _owner_principal(principal)
+        try:
+            page = await device_admission.list_pending(controller_id=controller_id)
+            return pending_device_enrollment_page(page)
+        except DeviceAdmissionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.post(
+        "/api/local/v1/device-enrollments/{device_id}/approval",
         response_model=LocalDeviceAdmissionProgress,
     )
-    async def claim_device_admission(
-        setup_id: Annotated[
+    async def approve_device_enrollment(
+        device_id: Annotated[
             str,
             Path(
                 min_length=1,
@@ -426,29 +443,20 @@ def create_app(
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ],
-        payload: LocalDeviceAdmissionRequest,
+        payload: LocalDeviceApprovalRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> LocalDeviceAdmissionProgress:
         principal, _session = await authenticated_controller(authorization)
         owner_id, controller_id = _owner_principal(principal)
-        target = resolved.device_onboarding_target
-        if target is None:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Hub Device onboarding target is not configured",
-            )
         try:
-            payload.verify_target(target)
             result = await device_admission.claim(
-                setup_id=setup_id,
                 payload=payload.to_admin(
+                    device_id=device_id,
                     owner_id=owner_id,
                     controller_id=controller_id,
                 ),
             )
             return device_admission_progress(
-                setup_id=setup_id,
-                enrollment_id=payload.enrollment_id,
                 owner_id=owner_id,
                 companion_id=payload.companion_id,
                 result=result,

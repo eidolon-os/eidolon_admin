@@ -1,17 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contracts.eidolon.local/local-api/v1/device-admission-request.schema.json",
-  "title": "Local Device admission request",
+  "title": "Local Device approval request",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contract_version", "request_id", "hub_id", "descriptor_uri", "enrollment_id", "pairing_secret"],
+  "required": ["contract_version", "request_id"],
   "properties": {
     "contract_version": {"const": "1"},
     "request_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+$", "minLength": 1, "maxLength": 128},
-    "hub_id": {"type": "string", "minLength": 1, "maxLength": 128},
-    "descriptor_uri": {"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048},
-    "enrollment_id": {"type": "string", "pattern": "^enrollment_[A-Za-z0-9_-]{24}$"},
-    "pairing_secret": {"type": "string", "pattern": "^[A-Za-z0-9_-]{43}$"},
     "companion_id": {"type": "string", "minLength": 1, "maxLength": 64}
   }
 }

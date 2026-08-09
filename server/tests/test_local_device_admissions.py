@@ -14,7 +14,8 @@ from cryptography.x509.oid import NameOID
 
 from eidolon_admin_server.app.control_plane.contracts import (
     DeviceAdmissionResult,
-    DevicePairingAdmissionRequest,
+    HubDevicePage,
+    ControllerDeviceAdmissionRequest,
     HubLifecycleStatus,
     KernelMount,
     WorkflowStep,
@@ -33,8 +34,7 @@ from eidolon_admin_server.local_api.device_admissions import (
 )
 
 
-_ENROLLMENT_ID = "enrollment_abcdefghijklmnopqrstuvwx"
-_PAIRING_SECRET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+_AUTH_CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 
 
@@ -97,16 +97,16 @@ def _result(*, owner_id: str = "owner-1") -> DeviceAdmissionResult:
         revision=2,
         created_at=now,
         updated_at=now,
-        request_id="admin:pair:kernel-attach",
+        request_id="admin:approval:kernel-attach",
         fingerprint="sha256:" + "a" * 64,
         active=True,
     )
     return DeviceAdmissionResult(
-        request_id="device-pair-claim-1",
+        request_id="device-approval-1",
         outcome="completed",
         completed_stage="companion_attached",
         steps=(
-            WorkflowStep(name="hub_pairing_claim", state="committed"),
+            WorkflowStep(name="hub_approval", state="committed"),
             WorkflowStep(name="kernel_mount", state="committed", revision=1),
             WorkflowStep(
                 name="companion_attachment", state="committed", revision=2
@@ -147,14 +147,14 @@ def test_hub_target_rejects_descriptor_hostname_not_in_certificate(
 
 
 @pytest.mark.asyncio
-async def test_local_admin_adapter_forwards_secret_only_to_exact_loopback_contract() -> None:
+async def test_local_admin_adapter_forwards_exact_approval_contract() -> None:
     observed: dict = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
         observed.update(json.loads(request.content))
         assert request.method == "PUT"
         assert request.url.raw_path == (
-            b"/api/control-plane/v1/local-device-admissions/setup%2Fone"
+            b"/api/control-plane/v1/local-device-admissions/device-authoritative"
         )
         assert request.headers["authorization"] == "Bearer local-service-token"
         return httpx.Response(200, json=_result().model_dump(mode="json"))
@@ -166,30 +166,27 @@ async def test_local_admin_adapter_forwards_secret_only_to_exact_loopback_contra
         timeout_seconds=1,
         client=http_client,
     )
-    payload = DevicePairingAdmissionRequest(
+    payload = ControllerDeviceAdmissionRequest(
         contract_version="1",
-        request_id="device-pair-claim-1",
+        request_id="device-approval-1",
         owner_id="owner-1",
         controller_id=_CONTROLLER_ID,
-        enrollment_id=_ENROLLMENT_ID,
-        pairing_secret=_PAIRING_SECRET,
+        device_id="device-authoritative",
         companion_id="companion-1",
     )
     try:
-        result = await subject.claim(setup_id="setup/one", payload=payload)
+        result = await subject.claim(payload=payload)
     finally:
         await http_client.aclose()
 
     assert result.hub is not None
     assert result.hub.device_id == "device-authoritative"
-    assert observed["pairing_secret"] == _PAIRING_SECRET
-    assert "device_id" not in observed
+    assert observed["device_id"] == "device-authoritative"
+    assert "owner_id" in observed
 
 
 def test_mobile_progress_uses_hub_authoritative_device_identity() -> None:
     progress = device_admission_progress(
-        setup_id="setup-1",
-        enrollment_id=_ENROLLMENT_ID,
         owner_id="owner-1",
         companion_id="companion-1",
         result=_result(),
@@ -206,12 +203,41 @@ class _UnusedPort:
 
 
 class _AdmissionPort:
-    payload: DevicePairingAdmissionRequest | None = None
+    payload: ControllerDeviceAdmissionRequest | None = None
 
-    async def claim(self, *, setup_id: str, payload: DevicePairingAdmissionRequest):
-        assert setup_id == "setup-1"
+    async def claim(self, *, payload: ControllerDeviceAdmissionRequest):
         self.payload = payload
         return _result(owner_id=payload.owner_id)
+
+    async def list_pending(self, *, controller_id: str) -> HubDevicePage:
+        assert controller_id == _CONTROLLER_ID
+        return HubDevicePage.model_validate(
+            {
+                "operation": "device.directory-page",
+                "next_cursor": None,
+                "devices": [
+                    {
+                        "operation": "device.directory-entry",
+                        "device_id": "device-authoritative",
+                        "owner_scope": "unclaimed",
+                        "display_name": "Desk Device",
+                        "device_kind": "voice-client",
+                        "manifest": {
+                            "schema_version": 1,
+                            "title": "Desk Device",
+                            "properties": [],
+                            "actions": [],
+                            "events": [],
+                            "media": [],
+                        },
+                        "manifest_revision": "sha256:" + "a" * 64,
+                        "lifecycle_state": "pending-approval",
+                        "enrolled_at": datetime.now(UTC).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                ],
+            }
+        )
 
     async def close(self) -> None:
         return None
@@ -261,7 +287,7 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
                 "contract_version": "1",
                 "purpose": "eidolon-controller-local-auth-v1",
                 "controller_id": _CONTROLLER_ID,
-                "challenge": _PAIRING_SECRET,
+                "challenge": _AUTH_CHALLENGE,
                 "reset_epoch": 0,
                 "signature": "abcdefgh",
             },
@@ -272,29 +298,25 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
             "/api/local/v1/device-onboarding/target",
             headers=headers,
         )
-        admitted = await client.put(
-            "/api/local/v1/device-admissions/setup-1",
+        pending = await client.get(
+            "/api/local/v1/device-enrollments/pending",
+            headers=headers,
+        )
+        admitted = await client.post(
+            "/api/local/v1/device-enrollments/device-authoritative/approval",
             headers=headers,
             json={
                 "contract_version": "1",
-                "request_id": "device-pair-claim-1",
-                "hub_id": target.hub_id,
-                "descriptor_uri": target.descriptor_uri,
-                "enrollment_id": _ENROLLMENT_ID,
-                "pairing_secret": _PAIRING_SECRET,
+                "request_id": "device-approval-1",
                 "companion_id": "companion-1",
             },
         )
-        injected_owner = await client.put(
-            "/api/local/v1/device-admissions/setup-1",
+        injected_owner = await client.post(
+            "/api/local/v1/device-enrollments/device-authoritative/approval",
             headers=headers,
             json={
                 "contract_version": "1",
-                "request_id": "device-pair-claim-1",
-                "hub_id": target.hub_id,
-                "descriptor_uri": target.descriptor_uri,
-                "enrollment_id": _ENROLLMENT_ID,
-                "pairing_secret": _PAIRING_SECRET,
+                "request_id": "device-approval-1",
                 "owner_id": "owner-mobile-chosen",
             },
         )
@@ -302,6 +324,8 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
     assert unauthenticated.status_code == 401
     assert session.status_code == 200
     assert target_response.status_code == 200
+    assert pending.status_code == 200
+    assert pending.json()["devices"][0]["device_id"] == "device-authoritative"
     assert target_response.json() == {
         "operation": "local.device-onboarding-target",
         "contract_version": "1",

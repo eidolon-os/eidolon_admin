@@ -18,9 +18,10 @@ from .clients import (
 )
 from .contracts import (
     BoundaryCapabilities,
+    ControllerDeviceAdmissionRequest,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
-    DevicePairingAdmissionRequest,
+    HubDevicePage,
     HubLifecycleStatus,
     KernelMountPage,
     OwnerInventory,
@@ -31,22 +32,22 @@ from .contracts import (
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
-from .hub_credentials import HubOwnerCredentialIssuer
+from .hub_credentials import HubAdminCredentialIssuer
 
 
-_PAIRING_WORKFLOW_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
+_CONTROLLER_ADMISSION_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
 
 
 def _child_request_id(workflow_id: str, suffix: str) -> str:
     return f"admin:{workflow_id}:{suffix}"
 
 
-def _pairing_workflow_id(setup_id: str, request_id: str) -> str:
+def _controller_admission_workflow_id(device_id: str, request_id: str) -> str:
     operation = uuid5(
-        _PAIRING_WORKFLOW_NAMESPACE,
-        f"eidolon-device-pairing-v1:{setup_id}:{request_id}",
+        _CONTROLLER_ADMISSION_NAMESPACE,
+        f"eidolon-controller-device-admission-v1:{device_id}:{request_id}",
     )
-    return f"device-pairing-{operation.hex}"
+    return f"device-admission-{operation.hex}"
 
 
 class ControlPlaneService:
@@ -58,7 +59,7 @@ class ControlPlaneService:
         workspace: DataWorkspaceAuthorityClient,
         hub: HubManagementClient,
         kernel: KernelMountClient,
-        hub_credentials: HubOwnerCredentialIssuer | None = None,
+        hub_credentials: HubAdminCredentialIssuer | None = None,
     ) -> None:
         self.directory = directory
         self.data = data
@@ -104,7 +105,7 @@ class ControlPlaneService:
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
             ),
-            hub_credentials=HubOwnerCredentialIssuer(
+            hub_credentials=HubAdminCredentialIssuer(
                 secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
                 ttl_seconds=settings.hub_management_jwt_ttl_seconds,
             ),
@@ -165,13 +166,12 @@ class ControlPlaneService:
             attach_request_id=attach_request_id,
         )
 
-    async def admit_device_pairing(
+    async def admit_controller_device(
         self,
         *,
-        setup_id: str,
-        payload: DevicePairingAdmissionRequest,
+        payload: ControllerDeviceAdmissionRequest,
     ) -> DeviceAdmissionResult:
-        """Claim in Hub, then move forward through Kernel and Companion binding.
+        """Apply explicit Mobile approval, then mount and bind forward only.
 
         There is intentionally no rollback. Every downstream mutation uses a
         deterministic child request ID, so the same Mobile request resumes the
@@ -185,17 +185,18 @@ class ControlPlaneService:
                 "Hub Owner credential issuer is unavailable",
                 503,
             )
-        workflow_id = _pairing_workflow_id(setup_id, payload.request_id)
-        hub_request_id = _child_request_id(workflow_id, "hub-pairing-claim")
+        workflow_id = _controller_admission_workflow_id(
+            payload.device_id,
+            payload.request_id,
+        )
+        hub_request_id = _child_request_id(workflow_id, "hub-approve")
         mount_request_id = _child_request_id(workflow_id, "kernel-mount")
         attach_request_id = _child_request_id(workflow_id, "kernel-attach")
         authorization = self.hub_credentials.issue(
-            owner_id=payload.owner_id,
             controller_id=payload.controller_id,
         )
-        hub = await self.hub.claim_pairing(
-            enrollment_id=payload.enrollment_id,
-            pairing_secret=payload.pairing_secret.get_secret_value(),
+        hub = await self.hub.approve(
+            device_id=payload.device_id,
             owner_id=payload.owner_id,
             request_id=hub_request_id,
             authorization=authorization,
@@ -203,18 +204,37 @@ class ControlPlaneService:
         return await self._mount_approved_device(
             response_request_id=payload.request_id,
             owner_id=payload.owner_id,
-            device_id=hub.device_id,
+            device_id=payload.device_id,
             companion_id=payload.companion_id,
             expected_mount_revision=0,
             replace_existing_mount=False,
             hub=hub,
             hub_step=WorkflowStep(
-                name="hub_pairing_claim",
+                name="hub_approval",
                 state="committed",
                 request_id=hub_request_id,
             ),
             mount_request_id=mount_request_id,
             attach_request_id=attach_request_id,
+        )
+
+    async def list_pending_device_enrollments(
+        self,
+        *,
+        controller_id: str,
+    ) -> HubDevicePage:
+        """Return Hub's screen-independent, unclaimed enrollment queue."""
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Admin credential issuer is unavailable",
+                503,
+            )
+        return await self.hub.list_devices(
+            owner_id="unclaimed",
+            authorization=self.hub_credentials.issue(controller_id=controller_id),
         )
 
     async def _mount_approved_device(
@@ -392,7 +412,7 @@ class ControlPlaneService:
 
         This narrow read is consumed by the Controller-authenticated Local API.
         It deliberately excludes pending Hub enrollments and directory metadata:
-        those require the separate pairing/admission authority contract.
+        those require the separate Device admission authority contract.
         """
 
         return await self.kernel.list_mounts(owner_id=owner_id)

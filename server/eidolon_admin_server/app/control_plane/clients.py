@@ -335,43 +335,6 @@ class HubManagementClient:
             )
         return result
 
-    async def claim_pairing(
-        self,
-        *,
-        enrollment_id: str,
-        pairing_secret: str,
-        owner_id: str,
-        request_id: str,
-        authorization: str,
-    ) -> HubLifecycleStatus:
-        """Consume Hub's Owner pairing claim and trust only its returned Device ID."""
-
-        base_url = await self._base_url()
-        response = await _request(
-            "hub",
-            self._client,
-            "POST",
-            f"{base_url}/api/device-management/v1/enrollments/"
-            f"{quote(enrollment_id, safe='')}/pairing-claims",
-            timeout=self._timeout,
-            headers=self._headers(authorization),
-            json={
-                "operation": "device.pairing-claim",
-                "request_id": request_id,
-                "pairing_secret": pairing_secret,
-            },
-        )
-        result = _parse("hub", response, HubLifecycleStatus)
-        if (
-            result.owner_id != owner_id
-            or result.lifecycle_state != "approved"
-        ):
-            raise _contract_violation(
-                "hub",
-                "Hub pairing response did not confirm the Controller Owner scope",
-            )
-        return result
-
     async def list_devices(
         self,
         *,

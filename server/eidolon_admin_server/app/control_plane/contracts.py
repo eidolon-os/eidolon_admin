@@ -5,12 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
-
-
-_BASE64URL_CHARS = frozenset(
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-)
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -169,8 +164,8 @@ class DeviceAdmissionRequest(StrictModel):
     replace_existing_mount: bool = False
 
 
-class DevicePairingAdmissionRequest(StrictModel):
-    """Internal service-authenticated input derived from a Controller session."""
+class ControllerDeviceAdmissionRequest(StrictModel):
+    """Internal service input derived from explicit Mobile confirmation."""
 
     contract_version: Literal["1"]
     request_id: str = Field(
@@ -180,21 +175,12 @@ class DevicePairingAdmissionRequest(StrictModel):
     )
     owner_id: str = Field(min_length=1, max_length=64)
     controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
-    enrollment_id: str = Field(pattern=r"^enrollment_[A-Za-z0-9_-]{24}$")
-    pairing_secret: SecretStr = Field(
-        min_length=43,
-        max_length=43,
-        repr=False,
+    device_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
     )
     companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-
-    @field_validator("pairing_secret")
-    @classmethod
-    def _pairing_secret_is_base64url(cls, value: SecretStr) -> SecretStr:
-        secret = value.get_secret_value()
-        if any(character not in _BASE64URL_CHARS for character in secret):
-            raise ValueError("pairing_secret must be canonical unpadded base64url")
-        return value
 
 
 class WorkflowFailure(StrictModel):
@@ -218,7 +204,6 @@ class WorkflowFailure(StrictModel):
 class WorkflowStep(StrictModel):
     name: Literal[
         "hub_approval",
-        "hub_pairing_claim",
         "kernel_mount",
         "companion_attachment",
     ]

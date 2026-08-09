@@ -11,9 +11,10 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from .contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
+    ControllerDeviceAdmissionRequest,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
-    DevicePairingAdmissionRequest,
+    HubDevicePage,
     KernelMountPage,
     OwnerInventory,
     WorkspaceInitializeRequest,
@@ -178,24 +179,45 @@ async def admit_device(
     return result
 
 
+@router.get(
+    "/pending-device-enrollments/{controller_id}",
+    response_model=HubDevicePage,
+)
+async def list_pending_device_enrollments(
+    controller_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> HubDevicePage:
+    _authorize_local_api(request, authorization)
+    if not controller_id or len(controller_id) > 128:
+        raise HTTPException(422, "controller_id must contain between 1 and 128 characters")
+    try:
+        return await _service(request).list_pending_device_enrollments(
+            controller_id=controller_id,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
 @router.put(
-    "/local-device-admissions/{setup_id}",
+    "/local-device-admissions/{device_id}",
     response_model=DeviceAdmissionResult,
 )
-async def admit_local_device_pairing(
-    setup_id: str,
-    payload: DevicePairingAdmissionRequest,
+async def admit_local_device(
+    device_id: str,
+    payload: ControllerDeviceAdmissionRequest,
     request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> DeviceAdmissionResult:
     """Service-only forward workflow consumed by the Controller Local API."""
 
     _authorize_local_api(request, authorization)
-    if not setup_id or len(setup_id) > 128:
-        raise HTTPException(422, "setup_id must contain between 1 and 128 characters")
+    if not device_id or len(device_id) > 128:
+        raise HTTPException(422, "device_id must contain between 1 and 128 characters")
+    if payload.device_id != device_id:
+        raise HTTPException(409, "device admission path and body do not match")
     try:
-        return await _service(request).admit_device_pairing(
-            setup_id=setup_id,
+        return await _service(request).admit_controller_device(
             payload=payload,
         )
     except AuthorityFailure as exc:

@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     # Loopback ingress credential used only by eidolon-local-api.
     local_api_service_token: str = ""
     # Installation secret shared only with Hub's Owner management verifier.
-    # It is used to mint short-lived Owner-scoped pairing credentials and is
+    # It is used to mint short-lived Admin Device-approval credentials and is
     # never exposed through Admin or the Local API.
     hub_management_jwt_secret: SecretStr = SecretStr("")
     hub_management_jwt_ttl_seconds: int = Field(default=60, ge=30, le=300)
