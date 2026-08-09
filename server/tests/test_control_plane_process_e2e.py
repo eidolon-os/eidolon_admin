@@ -510,6 +510,40 @@ services: []
             workspace_headers = {
                 "Authorization": f"Bearer {LOCAL_API_TOKEN}",
             }
+            runtime_path = (
+                f"{admin_url}/api/control-plane/v1/owners/owner-admin-e2e/"
+                "primary-runtime-snapshot"
+            )
+            missing_runtime_auth = await client.get(runtime_path)
+            assert missing_runtime_auth.status_code == 401
+
+            async def timed_runtime() -> tuple[httpx.Response, float]:
+                call_started = time.perf_counter()
+                response = await client.get(runtime_path, headers=workspace_headers)
+                return response, (time.perf_counter() - call_started) * 1000
+
+            runtime_started = time.perf_counter()
+            runtime_results = await asyncio.gather(
+                *(timed_runtime() for _ in range(20))
+            )
+            metrics["runtime_read_concurrency"] = len(runtime_results)
+            metrics["runtime_read_wall_ms"] = (
+                time.perf_counter() - runtime_started
+            ) * 1000
+            runtime_latencies = [latency for _, latency in runtime_results]
+            metrics["runtime_read_p50_ms"] = _percentile(runtime_latencies, 0.50)
+            metrics["runtime_read_p95_ms"] = _percentile(runtime_latencies, 0.95)
+            runtime_reads = [response for response, _ in runtime_results]
+            assert {item.status_code for item in runtime_reads} == {200}
+            runtime_snapshot = runtime_reads[0].json()
+            assert runtime_snapshot["owner_id"] == "owner-admin-e2e"
+            assert runtime_snapshot["companion_id"] == "companion-admin-e2e"
+            assert runtime_snapshot["persona_genome"]["genome_id"] == (
+                "genome-admin-e2e"
+            )
+            assert runtime_snapshot["memory_realm"]["realm_id"] == "realm-admin-e2e"
+            assert all(item.json() == runtime_snapshot for item in runtime_reads)
+
             workspace_payload = {
                 "owner_display_name": "Admin E2E Owner",
                 "companion_display_name": "Admin E2E Companion",
@@ -637,6 +671,12 @@ services: []
             )
             assert workspace_after_restart.status_code == 200
             assert workspace_after_restart.json() == first_workspace.json()
+            runtime_after_restart = await client.get(
+                runtime_path,
+                headers=workspace_headers,
+            )
+            assert runtime_after_restart.status_code == 200
+            assert runtime_after_restart.json() == runtime_snapshot
 
             reused_with_different_payload = payload | {
                 "companion_id": "companion-different"
@@ -678,6 +718,12 @@ services: []
             failure = outage.json()["steps"][-1]["failure"]
             assert failure["kind"] == "upstream_failure"
             assert failure["retryable"] is True
+            unavailable_runtime = await client.get(
+                runtime_path,
+                headers=workspace_headers,
+            )
+            assert unavailable_runtime.status_code == 503
+            assert unavailable_runtime.json()["detail"]["kind"] == "unavailable"
 
             _stop(workspace_process)
             workspace_process = None
