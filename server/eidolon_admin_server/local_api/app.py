@@ -3,7 +3,10 @@
 Public Host routes, Host proof, and Controller-authenticated short-lived
 sessions exist. Workspace Setup is the first product mutation and Workspace
 Runtime is the first daily-use projection. Both are Controller-authenticated
-and reach Data only through Admin's exact loopback contracts.
+and reach Data only through Admin's exact loopback contracts. Mounted Device
+membership follows the same boundary: Owner scope comes from the Controller
+principal and the Local API consumes a narrow, service-authenticated Admin
+projection rather than accepting Hub credentials from Mobile.
 """
 
 from __future__ import annotations
@@ -17,6 +20,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from .auth import LocalControllerSessionStore
 from .config import LocalApiSettings, load_local_api_settings
+from .devices import (
+    AdminOwnerDevicesClient,
+    AdminOwnerDevicesPort,
+    DeviceInventoryError,
+    LocalDeviceInventoryView,
+    LocalDeviceView,
+    owner_device_inventory_view,
+)
 from .runtime import (
     AdminOwnerRuntimeClient,
     AdminOwnerRuntimePort,
@@ -65,6 +76,7 @@ def create_app(
     *,
     workspace_client: AdminWorkspacePort | None = None,
     runtime_client: AdminOwnerRuntimePort | None = None,
+    devices_client: AdminOwnerDevicesPort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -79,6 +91,12 @@ def create_app(
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_runtime_client = runtime_client is None
+    devices = devices_client or AdminOwnerDevicesClient(
+        base_url=resolved.admin_base_url,
+        service_token=resolved.admin_service_token,
+        timeout_seconds=resolved.admin_timeout_seconds,
+    )
+    owns_devices_client = devices_client is None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -89,8 +107,12 @@ def create_app(
                 if owns_workspace_client:
                     await workspace.close()
             finally:
-                if owns_runtime_client:
-                    await runtime.close()
+                try:
+                    if owns_runtime_client:
+                        await runtime.close()
+                finally:
+                    if owns_devices_client:
+                        await devices.close()
 
     app = FastAPI(
         title="Eidolon Local API",
@@ -308,6 +330,51 @@ def create_app(
                 else exc.status_code
             )
             raise HTTPException(code, str(exc)) from exc
+
+    async def owner_device_inventory(
+        authorization: str | None,
+    ) -> LocalDeviceInventoryView:
+        principal, _session = await authenticated_controller(authorization)
+        owner_id = principal.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Host Workspace is not initialized",
+            )
+        try:
+            mounts = await devices.list_mounts(owner_id)
+            return owner_device_inventory_view(
+                mounts=mounts,
+                bound_owner_id=owner_id,
+            )
+        except DeviceInventoryError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.get(
+        "/api/local/v1/devices",
+        response_model=LocalDeviceInventoryView,
+    )
+    async def get_devices(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceInventoryView:
+        return await owner_device_inventory(authorization)
+
+    @app.get(
+        "/api/local/v1/devices/{device_id}",
+        response_model=LocalDeviceView,
+    )
+    async def get_device(
+        device_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceView:
+        inventory = await owner_device_inventory(authorization)
+        device = next(
+            (item for item in inventory.devices if item.device_id == device_id),
+            None,
+        )
+        if device is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Device is not mounted")
+        return device
 
     @app.get("/api/local/v1/system/state")
     async def system_state() -> dict:

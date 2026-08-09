@@ -13,6 +13,7 @@ from .contracts import (
     CompanionIdentity,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    KernelMountPage,
     OwnerInventory,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
@@ -107,6 +108,24 @@ async def get_owner_primary_runtime(
     _authorize_local_api(request, authorization)
     try:
         return await _service(request).get_owner_primary_runtime(owner_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
+    "/owners/{owner_id}/device-mounts",
+    response_model=KernelMountPage,
+)
+async def get_owner_device_mounts(
+    owner_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> KernelMountPage:
+    """Narrow product projection used only by the loopback Local API."""
+
+    _authorize_local_api(request, authorization)
+    try:
+        return await _service(request).list_owner_device_mounts(owner_id)
     except AuthorityFailure as exc:
         _raise(exc)
 

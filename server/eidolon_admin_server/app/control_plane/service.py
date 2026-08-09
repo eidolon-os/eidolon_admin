@@ -19,6 +19,7 @@ from .contracts import (
     BoundaryCapabilities,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    KernelMountPage,
     OwnerInventory,
     SourceStatus,
     WorkspaceInitializeRequest,
@@ -285,6 +286,16 @@ class ControlPlaneService:
             devices=hub_page.devices if hub_page else (),
             mounts=mount_page.mounts if mount_page else (),
         )
+
+    async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
+        """Return Kernel-owned membership without requiring Hub operator authority.
+
+        This narrow read is consumed by the Controller-authenticated Local API.
+        It deliberately excludes pending Hub enrollments and directory metadata:
+        those require the separate pairing/admission authority contract.
+        """
+
+        return await self.kernel.list_mounts(owner_id=owner_id)
 
     @staticmethod
     def capabilities() -> BoundaryCapabilities:

@@ -14,6 +14,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     DeviceAdmissionResult,
     HubLifecycleStatus,
     KernelMount,
+    KernelMountPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
     WorkflowStep,
@@ -88,6 +89,27 @@ class StubControlPlane:
                     "genome": {},
                 },
             }
+        )
+
+    async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
+        now = datetime.now(UTC)
+        return KernelMountPage(
+            operation="kernel.device-mount-page",
+            next_cursor=None,
+            mounts=(
+                KernelMount(
+                    operation="kernel.device-mount",
+                    device_id="device-mounted-1",
+                    owner_id=owner_id,
+                    attached_companion_id="companion-1",
+                    revision=2,
+                    created_at=now,
+                    updated_at=now,
+                    request_id="device-mount-read-fixture",
+                    fingerprint="sha256:" + "0" * 64,
+                    active=True,
+                ),
+            ),
         )
 
     async def admit_device(self, payload, **_kwargs) -> DeviceAdmissionResult:
@@ -260,6 +282,29 @@ async def test_owner_runtime_requires_local_api_credential_and_derives_owner_pat
     assert accepted.status_code == 200
     assert accepted.json()["owner_id"] == "owner-1"
     assert accepted.json()["companion_id"] == "companion-1"
+
+
+async def test_owner_device_mounts_are_narrow_and_require_local_api_credential(
+    app,
+) -> None:
+    from eidolon_admin_server.app.settings import Settings
+
+    app.state.control_plane = StubControlPlane()
+    app.state.settings = Settings(local_api_service_token="local-api-secret")
+    path = "/api/control-plane/v1/owners/owner-1/device-mounts"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        missing = await client.get(path)
+        accepted = await client.get(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+        )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["mounts"][0]["owner_id"] == "owner-1"
+    assert accepted.json()["mounts"][0]["device_id"] == "device-mounted-1"
 
 
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:
