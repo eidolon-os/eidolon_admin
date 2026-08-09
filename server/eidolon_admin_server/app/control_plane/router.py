@@ -13,6 +13,7 @@ from .contracts import (
     CompanionIdentity,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    DevicePairingAdmissionRequest,
     KernelMountPage,
     OwnerInventory,
     WorkspaceInitializeRequest,
@@ -175,3 +176,27 @@ async def admit_device(
             "contract_violation": 502,
         }.get(failed.kind if failed else "", 502)
     return result
+
+
+@router.put(
+    "/local-device-admissions/{setup_id}",
+    response_model=DeviceAdmissionResult,
+)
+async def admit_local_device_pairing(
+    setup_id: str,
+    payload: DevicePairingAdmissionRequest,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> DeviceAdmissionResult:
+    """Service-only forward workflow consumed by the Controller Local API."""
+
+    _authorize_local_api(request, authorization)
+    if not setup_id or len(setup_id) > 128:
+        raise HTTPException(422, "setup_id must contain between 1 and 128 characters")
+    try:
+        return await _service(request).admit_device_pairing(
+            setup_id=setup_id,
+            payload=payload,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)

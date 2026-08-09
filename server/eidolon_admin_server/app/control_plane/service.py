@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from uuid import UUID, uuid5
 
 import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
@@ -19,6 +20,8 @@ from .contracts import (
     BoundaryCapabilities,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    DevicePairingAdmissionRequest,
+    HubLifecycleStatus,
     KernelMountPage,
     OwnerInventory,
     SourceStatus,
@@ -28,10 +31,22 @@ from .contracts import (
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
+from .hub_credentials import HubOwnerCredentialIssuer
+
+
+_PAIRING_WORKFLOW_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
 
 
 def _child_request_id(workflow_id: str, suffix: str) -> str:
     return f"admin:{workflow_id}:{suffix}"
+
+
+def _pairing_workflow_id(setup_id: str, request_id: str) -> str:
+    operation = uuid5(
+        _PAIRING_WORKFLOW_NAMESPACE,
+        f"eidolon-device-pairing-v1:{setup_id}:{request_id}",
+    )
+    return f"device-pairing-{operation.hex}"
 
 
 class ControlPlaneService:
@@ -43,12 +58,14 @@ class ControlPlaneService:
         workspace: DataWorkspaceAuthorityClient,
         hub: HubManagementClient,
         kernel: KernelMountClient,
+        hub_credentials: HubOwnerCredentialIssuer | None = None,
     ) -> None:
         self.directory = directory
         self.data = data
         self.workspace = workspace
         self.hub = hub
         self.kernel = kernel
+        self.hub_credentials = hub_credentials
 
     @classmethod
     def build(
@@ -86,6 +103,10 @@ class ControlPlaneService:
                 directory=directory,
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
+            ),
+            hub_credentials=HubOwnerCredentialIssuer(
+                secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
+                ttl_seconds=settings.hub_management_jwt_ttl_seconds,
             ),
         )
 
@@ -127,20 +148,99 @@ class ControlPlaneService:
             request_id=hub_request_id,
             authorization=hub_authorization,
         )
-        steps = [
-            WorkflowStep(
+        return await self._mount_approved_device(
+            response_request_id=payload.request_id,
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+            companion_id=payload.companion_id,
+            expected_mount_revision=payload.expected_mount_revision,
+            replace_existing_mount=payload.replace_existing_mount,
+            hub=hub,
+            hub_step=WorkflowStep(
                 name="hub_approval",
                 state="committed",
                 request_id=hub_request_id,
+            ),
+            mount_request_id=mount_request_id,
+            attach_request_id=attach_request_id,
+        )
+
+    async def admit_device_pairing(
+        self,
+        *,
+        setup_id: str,
+        payload: DevicePairingAdmissionRequest,
+    ) -> DeviceAdmissionResult:
+        """Claim in Hub, then move forward through Kernel and Companion binding.
+
+        There is intentionally no rollback. Every downstream mutation uses a
+        deterministic child request ID, so the same Mobile request resumes the
+        last safe intermediate state after process or network interruption.
+        """
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Owner credential issuer is unavailable",
+                503,
             )
+        workflow_id = _pairing_workflow_id(setup_id, payload.request_id)
+        hub_request_id = _child_request_id(workflow_id, "hub-pairing-claim")
+        mount_request_id = _child_request_id(workflow_id, "kernel-mount")
+        attach_request_id = _child_request_id(workflow_id, "kernel-attach")
+        authorization = self.hub_credentials.issue(
+            owner_id=payload.owner_id,
+            controller_id=payload.controller_id,
+        )
+        hub = await self.hub.claim_pairing(
+            enrollment_id=payload.enrollment_id,
+            pairing_secret=payload.pairing_secret.get_secret_value(),
+            owner_id=payload.owner_id,
+            request_id=hub_request_id,
+            authorization=authorization,
+        )
+        return await self._mount_approved_device(
+            response_request_id=payload.request_id,
+            owner_id=payload.owner_id,
+            device_id=hub.device_id,
+            companion_id=payload.companion_id,
+            expected_mount_revision=0,
+            replace_existing_mount=False,
+            hub=hub,
+            hub_step=WorkflowStep(
+                name="hub_pairing_claim",
+                state="committed",
+                request_id=hub_request_id,
+            ),
+            mount_request_id=mount_request_id,
+            attach_request_id=attach_request_id,
+        )
+
+    async def _mount_approved_device(
+        self,
+        *,
+        response_request_id: str,
+        owner_id: str,
+        device_id: str,
+        companion_id: str | None,
+        expected_mount_revision: int,
+        replace_existing_mount: bool,
+        hub: HubLifecycleStatus,
+        hub_step: WorkflowStep,
+        mount_request_id: str,
+        attach_request_id: str,
+    ) -> DeviceAdmissionResult:
+        steps = [
+            hub_step,
         ]
         try:
             mount_result = await self.kernel.mount(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
+                owner_id=owner_id,
+                device_id=device_id,
                 request_id=mount_request_id,
-                expected_revision=payload.expected_mount_revision,
-                replace_existing=payload.replace_existing_mount,
+                expected_revision=expected_mount_revision,
+                replace_existing=replace_existing_mount,
             )
         except AuthorityFailure as exc:
             steps.extend(
@@ -154,14 +254,14 @@ class ControlPlaneService:
                     WorkflowStep(
                         name="companion_attachment",
                         state="not_attempted"
-                        if payload.companion_id
+                        if companion_id
                         else "not_requested",
-                        request_id=attach_request_id if payload.companion_id else None,
+                        request_id=attach_request_id if companion_id else None,
                     ),
                 )
             )
             return DeviceAdmissionResult(
-                request_id=payload.request_id,
+                request_id=response_request_id,
                 outcome="retry_required" if exc.retryable else "blocked",
                 completed_stage="hub_approved",
                 recovery=(
@@ -180,12 +280,12 @@ class ControlPlaneService:
                 revision=mount_result.mount.revision,
             )
         )
-        if payload.companion_id is None:
+        if companion_id is None:
             steps.append(
                 WorkflowStep(name="companion_attachment", state="not_requested")
             )
             return DeviceAdmissionResult(
-                request_id=payload.request_id,
+                request_id=response_request_id,
                 outcome="completed",
                 completed_stage="kernel_mounted",
                 steps=tuple(steps),
@@ -194,9 +294,9 @@ class ControlPlaneService:
             )
         try:
             attach_result = await self.kernel.attach(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
-                companion_id=payload.companion_id,
+                owner_id=owner_id,
+                device_id=device_id,
+                companion_id=companion_id,
                 request_id=attach_request_id,
                 expected_revision=mount_result.mount.revision,
             )
@@ -211,7 +311,7 @@ class ControlPlaneService:
                 )
             )
             return DeviceAdmissionResult(
-                request_id=payload.request_id,
+                request_id=response_request_id,
                 outcome="retry_required" if exc.retryable else "blocked",
                 completed_stage="kernel_mounted",
                 recovery=(
@@ -232,7 +332,7 @@ class ControlPlaneService:
             )
         )
         return DeviceAdmissionResult(
-            request_id=payload.request_id,
+            request_id=response_request_id,
             outcome="completed",
             completed_stage="companion_attached",
             steps=tuple(steps),

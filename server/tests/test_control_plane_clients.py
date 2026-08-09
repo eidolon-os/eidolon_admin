@@ -298,6 +298,49 @@ async def test_hub_status_mapping(
     assert caught.value.upstream_status == status
 
 
+async def test_hub_pairing_claim_uses_exact_contract_and_authoritative_device_id() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.raw_path == (
+            b"/api/device-management/v1/enrollments/"
+            b"enrollment_abcdefghijklmnopqrstuvwx/pairing-claims"
+        )
+        assert request.headers["authorization"] == "Bearer owner-jwt"
+        assert json.loads(request.content) == {
+            "operation": "device.pairing-claim",
+            "request_id": "admin:pairing:hub-pairing-claim",
+            "pairing_secret": "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "operation": "device.lifecycle-status",
+                "device_id": "device-authoritative",
+                "owner_id": "owner-1",
+                "lifecycle_state": "approved",
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        result = await subject.claim_pairing(
+            enrollment_id="enrollment_abcdefghijklmnopqrstuvwx",
+            pairing_secret="0123456789abcdefghijklmnopqrstuvwxyzABCDEFG",
+            owner_id="owner-1",
+            request_id="admin:pairing:hub-pairing-claim",
+            authorization="Bearer owner-jwt",
+        )
+    finally:
+        await http_client.aclose()
+
+    assert result.device_id == "device-authoritative"
+
+
 async def test_timeout_is_unavailable_not_not_found() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow", request=request)

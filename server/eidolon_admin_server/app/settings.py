@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     data_workspace_authority_token: str = ""
     # Loopback ingress credential used only by eidolon-local-api.
     local_api_service_token: str = ""
+    # Installation secret shared only with Hub's Owner management verifier.
+    # It is used to mint short-lived Owner-scoped pairing credentials and is
+    # never exposed through Admin or the Local API.
+    hub_management_jwt_secret: SecretStr = SecretStr("")
+    hub_management_jwt_ttl_seconds: int = Field(default=60, ge=30, le=300)
     # supervisord wiring — these defaults match what deploy/dev/supervisord.conf
     # writes when run from the project root.
     supervisor_socket: Path = _REPO_ROOT / "var" / "supervisor.sock"
