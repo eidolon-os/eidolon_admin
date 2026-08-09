@@ -250,3 +250,109 @@ rebuildable projection 的有限 backlog 诊断，只证明 bounded batch 与当
 - 正式 Admin：当前不批准启动；阻塞为 product credential/operator ingress、其他
   子项目主线和统一 release 验收，而不是本次 Admin Data V2/Kernel 代码适配。
 - Agent：不属于该 profile 或本次启动判定；本任务没有启动或修改 Agent。
+
+## 2026-08-09 Owner Runtime 收口补充
+
+### 变更与固定提交矩阵
+
+在 Workspace 首次初始化边界之上，Mobile 日常运行态现在经以下只读链路消费已提交
+的 Owner 主 Companion runtime：
+
+```text
+Mobile
+  -> authenticated Local API /api/local/v1/workspace/runtime
+  -> loopback Admin /api/control-plane/v1/owners/{owner_id}/primary-runtime-snapshot
+  -> eidolond: data / companion-runtime-authority.http
+  -> Data /api/companion-authority/v1/owners/{owner_id}/primary-runtime-snapshot
+```
+
+Local API 只返回 Owner、主 Companion、Persona identity/hash/realizer 与 Memory Realm
+identity/lifecycle 的窄化 projection；不返回原始 Persona genome 或 runtime config，
+也不读取任何 sibling SQLite。Admin 实现由 `994adeb` 合入 main；真实进程补强提交为
+`485b8e593c2513bc963d5e664404a6dfdd94c711`。
+
+本轮逐仓库执行 `git rev-parse HEAD`、`git merge-base --is-ancestor <required> HEAD`
+和 `git status --porcelain=v1` 得到：
+
+| 仓库/角色 | 固定提交 | 核验状态 |
+| --- | --- | --- |
+| Data runtime producer | `d81086e2807f44ca0c0e43e31103cd85e6165a46` | main，clean；包含 Data V2 `2a33894` |
+| Kernel / Pi runtime manifest | `42122ecbb813d04e6e01650d21e36a8b072bcc32` | main；manifest 精确发布 runtime contract |
+| SDK Runtime Token V5 | `8108970514d9fefd3d93e7466e91706a1681c331` | main，clean |
+| Agent RuntimeSession consumer | `2ae449982efe8cf8fede6a32d950111e1290ad15` | main；另有其他任务未提交 E2E/文档 |
+| Channel session binding | `72895eea1e29cd3bab5cb37952f812fca940da09`，当前 HEAD `fdf7dd42f5d38e14ae05be6fbcf7febf10908397` | required commit 是 HEAD 祖先；另有其他任务未提交 resolver 测试 |
+| Admin projection | `994adebdf64709f59f626577d9b33f02a9d6a11e` + `485b8e593c2513bc963d5e664404a6dfdd94c711` | main，clean |
+| Mobile consumer | `7d20a86b12db2a1806926ee1b7ff7cf623fa4c11` | main，clean |
+| Hub | `96438a2507fb76ad025824873a99b213a99016ad` | main，clean |
+
+跨进程 E2E 执行时，Kernel 未提交差异只位于 `eidolon_deploy/bundle.py` 和对应测试，
+没有覆盖测试加载的 `eidolon_kernel` runtime 源码；本报告仍不把这些并行部署差异算入
+固定提交。Agent/Channel 不属于该 Admin E2E 的进程集合，其未提交文件同样未修改、
+未暂存、未提交。
+
+### 新增契约与代码
+
+- `app/control_plane/clients.py`：按 exact service/endpoint/contract 解析 Data runtime
+  authority，并严格校验响应和 Owner identity；
+- `app/control_plane/router.py`、`service.py`：只允许独立 Local API service credential
+  调用 Owner runtime 内部路由；
+- `local_api/runtime.py`、`local_api/app.py`：领域 port、Admin transport adapter 与
+  sanitized Workspace Runtime read model 分层；
+- `deploy/dev/control_plane.py` 与 Kernel manifest contract 校验：新 required endpoint
+  缺失时 fail closed；
+- `server/tests/control_plane_e2e_support.py` 与
+  `server/tests/test_control_plane_process_e2e.py`：把真实 Data runtime producer 登记进
+  临时目录并验证 HTTP 链路。
+
+没有恢复旧 schema、migration、CRUD、Device/Event/runtime 表或旧 API；没有新增
+Admin 业务 SQLite、跨库事务、同步 audit 双写或 telemetry 集中写入。
+
+### 最终验证
+
+本轮在 macOS 26.5.2 arm64、Python 3.13.13 上执行；数据库与端口均为 pytest 临时
+资源，正式 Admin/Agent 和正式 Data 库未启动或修改。
+
+| 层级 | 命令 | 实际结果 |
+| --- | --- | ---: |
+| Unit | `.venv/bin/pytest server/tests -q -m unit` | 20 passed，261 deselected，24 warnings |
+| Component/functional | `.venv/bin/pytest server/tests -q -m component` | 50 passed，231 deselected，24 warnings |
+| Contract | `.venv/bin/pytest server/tests -q -m contract` | 12 passed，269 deselected，24 warnings |
+| Integration | `.venv/bin/pytest server/tests -q -m integration` | 5 passed，276 deselected，24 warnings |
+| Real-process E2E | `.venv/bin/pytest server/tests/test_control_plane_process_e2e.py -q -s -m e2e` | 1 passed，4.34s |
+| Backend full + branch coverage | `.venv/bin/pytest server/tests -q --cov=eidolon_admin_server --cov-branch --cov-report=term` | 281 passed，0 failed/skipped，24 warnings，70%，42.26s |
+| Frontend | `npm test -- --run` | 6 files / 25 tests passed |
+| Frontend type/build | `npm run build` | `vue-tsc --noEmit` + Vite build passed |
+
+24 个后端 warning 仍为 1 个 Starlette/httpx 和 23 个 `dbus-next` 上游弃用；前端构建
+仍报告第三方 PURE annotation 和 1.242 MB chunk warning。项目没有配置 mypy/pyright，
+未执行且不声明通过。Ruff、两份新增 E2E 文件格式、`git diff --check` 均通过；合并
+提交的 server/deploy Ruff、compileall、shell syntax、离线 lock check 也已通过。
+
+真实进程 E2E 新增验证：缺 service credential 为 401；20 路并发读取返回同一严格
+runtime snapshot；Admin 重启后结果一致；Data 停机明确为 503 `unavailable`，没有
+伪造成 inactive/not-found。现有 component/contract 测试继续覆盖 403、404、409/412、
+timeout、5xx、schema/identity drift 与 Local API Owner/Companion scope mismatch。
+
+### 性能补充（不是 SLA）
+
+同一轮真实 loopback 进程诊断：
+
+| 路径 | 结果 |
+| --- | ---: |
+| Workspace 首次 mutation | 19.99 ms |
+| Device admission + Mount + Attachment 首次 mutation | 27.80 ms |
+| 6 路重复 Device mutation | p50 42.28 ms / p95 44.71 ms |
+| 20 路 Data Owner Runtime 读取 | wall 74.79 ms / p50 60.11 ms / p95 71.54 ms |
+| 20 路 Hub + Kernel inventory | wall 90.20 ms / p50 80.51 ms / p95 85.44 ms |
+
+SQLite 写锁、busy timeout 与 audit projection 背压结果未因本轮只读 projection 改变，
+仍以本报告前述隔离诊断为准。Admin operator 业务路径仍没有 SQLite writer。
+
+### 最终结论与剩余工作
+
+Admin 对 Data V2、Kernel 新边界以及 Owner Runtime 消费链的主线代码适配已完成并在
+main 上形成独立提交；隔离 profile 可安全重新启动。正式 Admin 仍不应在本任务中
+启动：producer-owned per-consumer credential、operator ingress/auth、Pi target 的
+activate/rollback/reboot 和真机 Mobile/Controller 验收属于已分离的统一部署任务。
+全局 audit publisher/query 与高频 telemetry projection 仍是独立产品能力缺口，不能
+通过恢复跨库读取或写 Data `audit_outbox` 来规避。
