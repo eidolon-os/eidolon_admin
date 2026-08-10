@@ -41,6 +41,7 @@ HUB_UVICORN = HUB_ROOT / ".venv/bin/uvicorn"
 KERNEL_PYTHON = KERNEL_ROOT / ".venv/bin/python"
 
 DATA_TOKEN = "admin-e2e-data-authority-token-value-0001"
+ROSTER_TOKEN = "admin-e2e-data-memory-runtime-roster-token-0001"
 DATA_WORKSPACE_TOKEN = "admin-e2e-workspace-authority-token-value-0001"
 LOCAL_API_TOKEN = "admin-e2e-local-api-service-token-value-0001"
 HUB_MANAGEMENT_SECRET = "admin-e2e-hub-management-secret-value-0001"
@@ -369,6 +370,7 @@ services: []
                 **os.environ,
                 "EIDOLON_DATA_SQLITE_PATH": str(data_database),
                 "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN": DATA_TOKEN,
+                "EIDOLON_DATA_MEMORY_RUNTIME_ROSTER_TOKEN": ROSTER_TOKEN,
             },
         )
         workspace_process = _spawn(
