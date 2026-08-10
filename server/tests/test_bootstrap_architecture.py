@@ -109,14 +109,15 @@ def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
     assert "User=eidolon\n" in unit
     assert "Group=eidolon\n" in unit
     assert "EIDOLON_ADMIN_API_HOST=127.0.0.1\n" in unit
-    assert "EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon-admin\n" in unit
+    assert "EIDOLON_PORTS_FILE=/opt/eidolon/current/eidolon_admin/config/ports.yaml\n" in unit
+    assert "EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon/admin\n" in unit
     assert "EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS=/run/eidolon/system.sock\n" in unit
-    assert "StateDirectory=eidolon-admin\n" in unit
+    assert "StateDirectory=eidolon/admin\n" in unit
     assert "StateDirectoryMode=0750\n" in unit
     assert "SupplementaryGroups=eidolon-bootstrap" not in unit
     assert "CapabilityBoundingSet=\n" in unit
     assert (
-        "ExecStart=/srv/eidolon/current/eidolon_admin/.venv/bin/eidolon-admin\n" in unit
+        "ExecStart=/opt/eidolon/current/eidolon_admin/.venv/bin/eidolon-admin\n" in unit
     )
 
 
