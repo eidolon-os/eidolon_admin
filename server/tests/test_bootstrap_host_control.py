@@ -432,6 +432,8 @@ def test_production_rejects_development_setup_code_issuance(tmp_path: Path) -> N
     try:
         with pytest.raises(BootstrapOperationRejected):
             service.issue_development_setup_code()
+        with pytest.raises(BootstrapOperationRejected, match="LAN commissioning"):
+            service.development_lan_commissioning_endpoint()
     finally:
         service.shutdown()
 
@@ -589,6 +591,22 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
                 break
             await asyncio.sleep(0.01)
 
+        control = BootstrapControlClient(bootstrap.control_socket)
+        setup = await control.request("dev.code", ttl_seconds=300)
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        public_der = private_key.public_key().public_bytes(
+            Encoding.DER,
+            PublicFormat.SubjectPublicKeyInfo,
+        )
+        encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
+        controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+        controller = {
+            "controller_id": controller_id,
+            "public_key": encoded_public,
+            "display_name": "Mac development Pad",
+            "platform": "android",
+        }
+
         app = create_app(LocalApiSettings(bootstrap=bootstrap))
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -606,6 +624,29 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
                 },
             )
             mutation = await client.post("/api/local/v1/setup/initialize")
+            commissioning_endpoint = await client.get(
+                "/api/local/v1/development/commissioning/endpoint"
+            )
+            rejected_claim = await client.put(
+                "/api/local/v1/development/commissioning/claim",
+                json={
+                    "contract_version": "1",
+                    "commissioning_id": setup["commissioning_id"],
+                    "setup_code": (
+                        "000000" if setup["setup_code"] != "000000" else "999999"
+                    ),
+                    "controller": controller,
+                },
+            )
+            accepted_claim = await client.put(
+                "/api/local/v1/development/commissioning/claim",
+                json={
+                    "contract_version": "1",
+                    "commissioning_id": setup["commissioning_id"],
+                    "setup_code": setup["setup_code"],
+                    "controller": controller,
+                },
+            )
 
         assert descriptor.status_code == 200
         assert descriptor.json()["host_id"].startswith("ehost-")
@@ -640,6 +681,16 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
             proof_canonical,
         )
         assert mutation.status_code == 404
+        assert commissioning_endpoint.status_code == 200
+        assert commissioning_endpoint.json()["purpose"] == (
+            "eidolon-ble-commissioning-endpoint-v1"
+        )
+        assert rejected_claim.status_code == 401
+        assert accepted_claim.status_code == 200
+        assert accepted_claim.json()["host_id"] == descriptor.json()["host_id"]
+        assert accepted_claim.json()["controller"]["controller_id"] == controller_id
+        assert accepted_claim.json()["state"]["claim_state"] == "claimed"
+        assert accepted_claim.json()["state"]["network_state"] == "connected"
     finally:
         stop.set()
         await asyncio.wait_for(daemon_task, timeout=2)

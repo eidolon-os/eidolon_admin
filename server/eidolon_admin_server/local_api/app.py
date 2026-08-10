@@ -82,6 +82,29 @@ class ControllerProofRequest(BaseModel):
     signature: str = Field(pattern=r"^[A-Za-z0-9_-]{8,256}$")
 
 
+class DevelopmentControllerClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+    public_key: str = Field(pattern=r"^[A-Za-z0-9_-]{32,1024}$")
+    display_name: str = Field(min_length=1, max_length=80)
+    platform: Literal["android", "ios"]
+
+
+class DevelopmentLanCommissioningClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"]
+    commissioning_id: str = Field(
+        pattern=(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        )
+    )
+    setup_code: str = Field(pattern=r"^[0-9]{6}$")
+    controller: DevelopmentControllerClaim
+
+
 def create_app(
     settings: LocalApiSettings | None = None,
     *,
@@ -152,6 +175,7 @@ def create_app(
         operation: str,
         *,
         authentication: bool = False,
+        development_commissioning: bool = False,
         **parameters: Any,
     ) -> dict:
         try:
@@ -162,6 +186,16 @@ def create_app(
                     status.HTTP_401_UNAUTHORIZED,
                     "Controller authentication failed",
                 ) from exc
+            if development_commissioning:
+                code = {
+                    "commissioning_denied": status.HTTP_401_UNAUTHORIZED,
+                    "already_claimed": status.HTTP_409_CONFLICT,
+                    "operation_conflict": status.HTTP_409_CONFLICT,
+                    "invalid_controller_key": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "invalid_request": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "BootstrapOperationRejected": status.HTTP_404_NOT_FOUND,
+                }.get(exc.code, status.HTTP_503_SERVICE_UNAVAILABLE)
+                raise HTTPException(code, str(exc)) from exc
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "bootstrap control plane unavailable",
@@ -195,6 +229,25 @@ def create_app(
     @app.post("/api/local/v1/host/proof")
     async def host_proof(request: HostProofRequest) -> dict:
         return await request_bootstrap("host.prove", challenge=request.challenge)
+
+    @app.get("/api/local/v1/development/commissioning/endpoint")
+    async def development_commissioning_endpoint() -> dict:
+        return await request_bootstrap(
+            "dev.lan.endpoint",
+            development_commissioning=True,
+        )
+
+    @app.put("/api/local/v1/development/commissioning/claim")
+    async def development_commissioning_claim(
+        request: DevelopmentLanCommissioningClaimRequest,
+    ) -> dict:
+        return await request_bootstrap(
+            "dev.lan.claim",
+            development_commissioning=True,
+            commissioning_id=request.commissioning_id,
+            setup_code=request.setup_code,
+            controller=request.controller.model_dump(),
+        )
 
     @app.post("/api/local/v1/auth/challenges")
     async def controller_challenge(request: ControllerChallengeRequest) -> dict:

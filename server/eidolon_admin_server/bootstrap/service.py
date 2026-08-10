@@ -13,7 +13,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .config import BootstrapMode, BootstrapSettings
+from .commissioning_service import CommissioningService
+from .config import (
+    BootstrapMode,
+    BootstrapSettings,
+    CommissioningAdapter,
+    NetworkAdapter,
+)
 from .identity import HostIdentityManager
 from .controller_auth import (
     LOCAL_API_CONTROLLER_AUTH_PURPOSE,
@@ -351,6 +357,63 @@ class BootstrapService:
             "development_setup": self._active_development_setup(),
         }
         return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
+
+    def development_lan_commissioning_endpoint(self) -> dict[str, Any]:
+        """Expose the signed endpoint for an already-networked development Host.
+
+        This is the LAN transport equivalent of BlueZ's public Info
+        characteristic. It remains development-only and does not authorize a
+        mutation by itself.
+        """
+
+        self._require_development_lan_commissioning()
+        return self.commissioning_endpoint()
+
+    def claim_development_lan_controller(
+        self,
+        *,
+        commissioning_id: str,
+        setup_code: str,
+        controller: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Claim an already-networked development Host through the Local API.
+
+        Authorization and the atomic Grant/session consumption are delegated
+        to the same CommissioningService used by the BLE protocol.
+        """
+
+        self._require_development_lan_commissioning()
+        if self._network is None:
+            raise BootstrapOperationRejected(
+                "development LAN commissioning requires a network adapter"
+            )
+        commissioning = CommissioningService(store=self._store, network=self._network)
+        authorization = commissioning.authorize(
+            session_id=commissioning_id,
+            secret=setup_code,
+        )
+        # Reaching this pinned Local API proves that the development Host is
+        # already on the caller's LAN. The memory adapter has no OS network
+        # state to discover, so publish that fact before the normal atomic
+        # claim transition.
+        self.reconcile_network_state(NetworkState.CONNECTED)
+        result = commissioning.claim_controller(authorization, controller)
+        return {
+            "contract_version": "1",
+            "operation": "local.development-lan-commissioning-claim",
+            "host_id": self._identity_manager.identity.host_id,
+            **result,
+        }
+
+    def _require_development_lan_commissioning(self) -> None:
+        if (
+            self._settings.mode is not BootstrapMode.DEVELOPMENT
+            or self._settings.commissioning_adapter is not CommissioningAdapter.DISABLED
+            or self._settings.network_adapter is not NetworkAdapter.MEMORY
+        ):
+            raise BootstrapOperationRejected(
+                "development LAN commissioning is unavailable on this Host"
+            )
 
     def _active_development_setup(self) -> dict[str, str] | None:
         if self._settings.mode is not BootstrapMode.DEVELOPMENT:
