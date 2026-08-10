@@ -110,6 +110,10 @@ def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
     assert "Group=eidolon\n" in unit
     assert "EIDOLON_ADMIN_API_HOST=127.0.0.1\n" in unit
     assert "EIDOLON_PORTS_FILE=/opt/eidolon/current/eidolon_admin/config/ports.yaml\n" in unit
+    assert (
+        "EIDOLON_ADMIN_ESP32_TOOLS_FILE="
+        "/opt/eidolon/current/eidolon_admin/config/esp32_tools.yaml\n"
+    ) in unit
     assert "EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon/admin\n" in unit
     assert (
         "EIDOLON_ADMIN_SUPERVISOR_AVAILABLE_DIR=/var/lib/eidolon/admin/supervisor/available\n"

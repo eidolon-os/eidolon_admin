@@ -14,6 +14,7 @@ EnvironmentFile=/etc/eidolon/host.env
 Environment=EIDOLON_WORKSPACE_ROOT=/opt/eidolon/current
 Environment=EIDOLON_ROOT=/opt/eidolon/current
 Environment=EIDOLON_PORTS_FILE=/opt/eidolon/current/eidolon_admin/config/ports.yaml
+Environment=EIDOLON_ADMIN_ESP32_TOOLS_FILE=/opt/eidolon/current/eidolon_admin/config/esp32_tools.yaml
 Environment=EIDOLON_ADMIN_SERVICES_FILE=/opt/eidolon/current/eidolon_admin/config/services.yaml
 Environment=EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon/admin
 Environment=EIDOLON_ADMIN_SUPERVISOR_AVAILABLE_DIR=/var/lib/eidolon/admin/supervisor/available

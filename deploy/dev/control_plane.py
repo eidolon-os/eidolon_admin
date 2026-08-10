@@ -31,6 +31,9 @@ DATA_CONTRACT = "https://eidolon.dev/data/contracts/v1/companion/identity.schema
 DATA_RUNTIME_CONTRACT = (
     "https://eidolon.dev/data/contracts/v1/companion/runtime-snapshot.schema.json"
 )
+DATA_MEMORY_ROSTER_CONTRACT = (
+    "https://eidolon.dev/data/contracts/v1/memory/runtime-roster.schema.json"
+)
 DATA_WORKSPACE_CONTRACT = (
     "https://eidolon.live/contracts/system-data/workspace/"
     "onboarding-operation-v1.schema.json"
@@ -54,6 +57,13 @@ _EXPECTED_SERVICES = {
                 "protocol": "http",
                 "address": "http://127.0.0.1:8084",
                 "contract": DATA_RUNTIME_CONTRACT,
+                "health_url": "http://127.0.0.1:8084/health",
+            },
+            {
+                "endpoint_id": "memory-runtime-roster.http",
+                "protocol": "http",
+                "address": "http://127.0.0.1:8084",
+                "contract": DATA_MEMORY_ROSTER_CONTRACT,
                 "health_url": "http://127.0.0.1:8084/health",
             },
         ),
@@ -194,6 +204,7 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
 
     existing = _read_existing_secrets(layout)
     data_token = existing.get("data_token") or secrets.token_urlsafe(32)
+    memory_roster_token = existing.get("memory_roster_token") or secrets.token_urlsafe(32)
     workspace_token = existing.get("workspace_token") or secrets.token_urlsafe(32)
     local_api_token = existing.get("local_api_token") or secrets.token_urlsafe(32)
     hub_reader_token = existing.get("hub_reader_token") or secrets.token_urlsafe(32)
@@ -203,6 +214,7 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
     env_documents = {
         "data.env": {
             "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN": data_token,
+            "EIDOLON_DATA_MEMORY_RUNTIME_ROSTER_TOKEN": memory_roster_token,
             "EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN": workspace_token,
             "EIDOLON_DATA_SQLITE_PATH": str(layout.data_database),
             "EIDOLON_DATA_DATABASE_URL": (
@@ -508,6 +520,8 @@ def _validate_runtime_files(layout: RuntimeLayout) -> None:
     local_api = _parse_env(layout.env_dir / "local-api.env")
     if len(data.get("EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN", "")) < 24:
         raise ControlPlanePreparationError("Data companion authority token is invalid")
+    if len(data.get("EIDOLON_DATA_MEMORY_RUNTIME_ROSTER_TOKEN", "")) < 24:
+        raise ControlPlanePreparationError("Data Memory runtime roster token is invalid")
     if len(data.get("EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN", "")) < 24:
         raise ControlPlanePreparationError("Data workspace authority token is invalid")
     if len(hub.get("EIDOLON_HUB_DEVICE_REGISTRY_READER_TOKEN", "").encode()) < 32:
@@ -612,6 +626,10 @@ def _read_existing_secrets(layout: RuntimeLayout) -> dict[str, str]:
     values: dict[str, str] = {}
     mappings = {
         "data_token": ("data.env", "EIDOLON_DATA_COMPANION_AUTHORITY_TOKEN"),
+        "memory_roster_token": (
+            "data.env",
+            "EIDOLON_DATA_MEMORY_RUNTIME_ROSTER_TOKEN",
+        ),
         "workspace_token": (
             "data.env",
             "EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN",

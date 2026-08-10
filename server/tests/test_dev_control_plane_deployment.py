@@ -15,6 +15,7 @@ import yaml
 
 from deploy.dev.control_plane import (
     DATA_CONTRACT,
+    DATA_MEMORY_ROSTER_CONTRACT,
     DATA_RUNTIME_CONTRACT,
     DATA_WORKSPACE_CONTRACT,
     HUB_CONTRACT,
@@ -52,6 +53,13 @@ def _manifest() -> dict[str, object]:
                         "protocol": "http",
                         "address": "http://127.0.0.1:8084",
                         "contract": DATA_RUNTIME_CONTRACT,
+                        "health_url": "http://127.0.0.1:8084/health",
+                    },
+                    {
+                        "endpoint_id": "memory-runtime-roster.http",
+                        "protocol": "http",
+                        "address": "http://127.0.0.1:8084",
+                        "contract": DATA_MEMORY_ROSTER_CONTRACT,
                         "health_url": "http://127.0.0.1:8084/health",
                     },
                 ],
@@ -178,6 +186,7 @@ def test_prepare_materializes_isolated_config_and_preserves_secrets(
     first_admin = _read_env(layout.env_dir / "admin.env")
     first_local_api = _read_env(layout.env_dir / "local-api.env")
     assert first_data["EIDOLON_DATA_SQLITE_PATH"] == str(layout.data_database)
+    assert len(first_data["EIDOLON_DATA_MEMORY_RUNTIME_ROSTER_TOKEN"]) >= 24
     assert (
         str(Path.home() / "eidolon/data") not in first_data["EIDOLON_DATA_SQLITE_PATH"]
     )
