@@ -3,9 +3,9 @@
 Sub-project ``config/settings.yaml`` files are the **source of truth** for how
 each service starts. This module never writes into those files.
 
-``config/ports.yaml`` is an **admin-side index** (health checks, services.yaml
-``$EIDOLON_*`` expansion, supervisord). Refresh it with ``ports collect`` after
-you change a child project's ports (``run_all.sh start`` does this automatically).
+The Ops-owned ``config/ports.yaml`` is the host topology index used by Admin,
+health checks and the macOS executor. Refresh it with ``ports collect`` after
+changing a component port (``eidolon-ops start`` does this automatically).
 """
 
 from __future__ import annotations
@@ -20,16 +20,27 @@ from urllib.parse import urlparse
 import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"
+
+
+def _default_ops_root() -> Path:
+    explicit = os.environ.get("EIDOLON_OPS_ROOT", "").strip()
+    return (
+        Path(explicit).expanduser().resolve()
+        if explicit
+        else (_REPO_ROOT.parent / "eidolon_ops").resolve()
+    )
+
+
+_DEFAULT_PORTS_FILE = _default_ops_root() / "config" / "ports.yaml"
 
 # Hard cap on array indices in dotted paths (legacy helper for unit tests).
 _MAX_LIST_INDEX = 64
 
 _PORTS_HEADER = """\
-# Eidolon dev stack — port registry for admin (health / supervisord / services.yaml).
+# Eidolon dev stack — Ops-owned port registry for Admin and the host executor.
 #
 # Sub-project config/settings.yaml files are the source of truth for bind ports.
-# run_all.sh start runs ``python -m eidolon_admin_server.app.ports collect`` to
+# eidolon-ops start runs ``python -m eidolon_admin_server.app.ports collect`` to
 # refresh this file (aggregation only — child settings are never modified).
 #
 # Edit admin / client_web / nats.http_port here when needed. Data, Kernel and
@@ -95,7 +106,7 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     hub_y = _read_yaml(root / "eidolon_hub/config/settings.yaml")
     memory_y = _read_yaml(root / "eidolon_memory/config/settings.yaml")
     channel_y = _read_yaml(root / "eidolon_channel/config/settings.yaml")
-    lk_y = _read_yaml(_REPO_ROOT / "deploy/livekit/livekit.yaml")
+    lk_y = _read_yaml(_default_ops_root() / "deploy/livekit/livekit.yaml")
 
     http = agent_y.get("http") if isinstance(agent_y.get("http"), dict) else {}
     grpc = agent_y.get("grpc") if isinstance(agent_y.get("grpc"), dict) else {}

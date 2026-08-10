@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from pathlib import Path
 
 from .index import AuditIndexSettings, AuditIndexStore
 from .jetstream import AuditJetStreamSettings, JetStreamAuditIndexer
@@ -35,7 +36,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build the Eidolon global audit index")
     parser.add_argument(
         "--sqlite-path",
-        default=os.path.expanduser("~/eidolon/data/audit-index.sqlite3"),
+        default=str(
+            Path(os.environ.get("EIDOLON_STATE_ROOT", "~/eidolon/data")).expanduser()
+            / "audit/audit-index.sqlite3"
+        ),
     )
     parser.add_argument(
         "--nats-url",

@@ -2,7 +2,7 @@
 
 Layout (sites-available / sites-enabled pattern):
 
-    deploy/supervisor/
+    $EIDOLON_OPS_ROOT/deploy/supervisor/
       available/<name>.conf       # canonical home for every project's config
       enabled/<name>.conf -> ../available/<name>.conf
 
@@ -66,8 +66,6 @@ class ConfigStore:
     def __init__(self, available: Path, enabled: Path) -> None:
         self._available = Path(available)
         self._enabled = Path(enabled)
-        self._available.mkdir(parents=True, exist_ok=True)
-        self._enabled.mkdir(parents=True, exist_ok=True)
 
     @property
     def available_dir(self) -> Path:
@@ -161,6 +159,7 @@ class ConfigStore:
             available = self._available_path(name)
             if not available.exists():
                 raise ConfigError(f"no such config: {name}")
+            self._enabled.mkdir(parents=True, exist_ok=True)
             link = self._enabled_path(name)
             if link.is_symlink() or link.exists():
                 link.unlink()

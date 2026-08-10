@@ -44,6 +44,7 @@ def test_build_registry_rejects_path_outside_root(tmp_path, monkeypatch):
     safe_root = tmp_path / "safe"
     safe_root.mkdir()
     monkeypatch.setenv("EIDOLON_ROOT", str(safe_root))
+    monkeypatch.setenv("EIDOLON_WORKSPACE_ROOT", str(safe_root))
     escape_file = tmp_path / "escape" / "config.yaml"
     escape_file.parent.mkdir()
     escape_file.write_text("hi: 1\n")
@@ -76,6 +77,7 @@ def test_build_registry_accepts_path_under_root(tmp_path, monkeypatch):
     root = tmp_path / "root"
     root.mkdir()
     monkeypatch.setenv("EIDOLON_ROOT", str(root))
+    monkeypatch.setenv("EIDOLON_WORKSPACE_ROOT", str(root))
     inside = root / "subdir" / "config.yaml"
     inside.parent.mkdir()
     inside.write_text("a: 1\n")
@@ -179,6 +181,7 @@ def configs_gateway(tmp_path: Path, monkeypatch) -> tuple[GatewayConfig, Path, P
     treats the tmp config files as inside the sanctioned root.
     """
     monkeypatch.setenv("EIDOLON_ROOT", str(tmp_path))
+    monkeypatch.setenv("EIDOLON_WORKSPACE_ROOT", str(tmp_path))
     yaml_file = tmp_path / "app.yaml"
     yaml_file.write_text("name: hello\nport: 8080\n")
     env_file = tmp_path / "service.env"

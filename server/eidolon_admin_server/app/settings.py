@@ -132,12 +132,39 @@ class GatewayConfig(BaseModel):
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _ops_root() -> Path:
+    explicit = os.environ.get("EIDOLON_OPS_ROOT", "").strip()
+    return (
+        Path(explicit).expanduser().resolve()
+        if explicit
+        else (_REPO_ROOT.parent / "eidolon_ops").resolve()
+    )
+
+
+def _state_root() -> Path:
+    explicit = os.environ.get("EIDOLON_STATE_ROOT", "").strip()
+    return (
+        Path(explicit).expanduser().resolve()
+        if explicit
+        else (Path.home() / "eidolon/data").resolve()
+    )
+
+
+def _runtime_root() -> Path:
+    explicit = os.environ.get("EIDOLON_RUNTIME_ROOT", "").strip()
+    return (
+        Path(explicit).expanduser().resolve()
+        if explicit
+        else (Path.home() / "eidolon/run").resolve()
+    )
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EIDOLON_ADMIN_", extra="ignore")
 
     services_file: Path = _REPO_ROOT / "config" / "services.yaml"
     esp32_tools_file: Path = _REPO_ROOT / "config" / "esp32_tools.yaml"
-    state_dir: Path = _REPO_ROOT / "var"
+    state_dir: Path = _state_root() / "admin"
     system_directory_url: str = "http://127.0.0.1:8090"
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
@@ -154,11 +181,10 @@ class Settings(BaseSettings):
     # never exposed through Admin or the Local API.
     hub_management_jwt_secret: SecretStr = SecretStr("")
     hub_management_jwt_ttl_seconds: int = Field(default=60, ge=30, le=300)
-    # supervisord wiring — these defaults match what deploy/dev/supervisord.conf
-    # writes when run from the project root.
-    supervisor_socket: Path = _REPO_ROOT / "var" / "supervisor.sock"
-    supervisor_available_dir: Path = _REPO_ROOT / "deploy" / "supervisor" / "available"
-    supervisor_enabled_dir: Path = _REPO_ROOT / "deploy" / "supervisor" / "enabled"
+    # Admin consumes the executor owned and configured by Eidolon Ops.
+    supervisor_socket: Path = _runtime_root() / "ops" / "supervisor.sock"
+    supervisor_available_dir: Path = _ops_root() / "deploy" / "supervisor" / "available"
+    supervisor_enabled_dir: Path = _runtime_root() / "supervisor" / "enabled"
 
     @field_validator("system_directory_uds", mode="before")
     @classmethod
@@ -173,7 +199,10 @@ def get_settings() -> Settings:
 
 def default_eidolon_root() -> Path:
     """Monorepo root containing eidolon_admin, eidolon_agent, etc."""
-    env = os.environ.get("EIDOLON_ROOT", "").strip()
+    env = (
+        os.environ.get("EIDOLON_WORKSPACE_ROOT", "").strip()
+        or os.environ.get("EIDOLON_ROOT", "").strip()
+    )
     if env:
         return Path(env).expanduser().resolve()
     # A linked Git worktree has a .git *file* pointing into the original
@@ -201,7 +230,11 @@ def load_gateway_config(path: Path | None = None) -> GatewayConfig:
     apply_ports_to_environ()
     target = path or get_settings().services_file
     text = target.read_text(encoding="utf-8")
-    if "EIDOLON_ROOT" in text and not os.environ.get("EIDOLON_ROOT"):
-        os.environ.setdefault("EIDOLON_ROOT", str(default_eidolon_root()))
+    workspace = str(default_eidolon_root())
+    os.environ.setdefault("EIDOLON_WORKSPACE_ROOT", workspace)
+    os.environ.setdefault("EIDOLON_ROOT", workspace)
+    os.environ.setdefault("EIDOLON_OPS_ROOT", str(_ops_root()))
+    os.environ.setdefault("EIDOLON_CONFIG_ROOT", str(_ops_root() / "config"))
+    os.environ.setdefault("EIDOLON_ADMIN_ROOT", str(_REPO_ROOT))
     raw = yaml.safe_load(os.path.expandvars(text)) or {}
     return GatewayConfig.model_validate(raw)

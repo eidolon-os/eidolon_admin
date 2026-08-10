@@ -13,7 +13,7 @@ The inspected Kernel tree at `40d9b67602f428f848ce3c5b7f0471274086e93f` already 
 
 The same code and its runbook explicitly constrain release descriptor V1 to Kernel, Data and SDK. Hub, Admin and Bootstrap are outside that transaction.
 
-The Admin product integration is based on `refactor/memory-contracts-v2` at inspected commit `d88fb6f9c8376d5e029037cedcd347e9c581b0c6`. It retains reviewed `eidolon-bootstrapd.service` and `eidolon-local-api.service`, secure BLE commissioning and a pinned-HTTPS, Controller-authenticated Local API. Its ADR explicitly classifies Local API as product ingress and the Admin operator API as a separate loopback/support-mode process. Those units use `/srv/eidolon/current/eidolon_admin`, but they do not serve the Admin SPA or authenticate/proxy the Admin operator control plane.
+The Admin product integration retains reviewed `eidolon-bootstrapd.service` and `eidolon-local-api.service`, secure BLE commissioning and a pinned-HTTPS, Controller-authenticated Local API. Its ADR explicitly classifies Local API as product ingress and the Admin operator API as a separate loopback/support-mode process. Those units use `/opt/eidolon/current/eidolon_admin`; host lifecycle and release paths are owned by `eidolon_ops`.
 
 The former Data V2/Admin boundary and Bootstrap/Local API branches shared base `c553872` and overlapped in 35 changed files. Integration commit `06e7a2e` resolved those files semantically: Bootstrap, Local API and the independent audit projection remain, while Data ORM/SQLite aggregation, the Data-reading Memory runner, Mission Control cross-authority aggregation and their legacy Web/API surfaces remain deleted. A complete one-command Raspberry Pi deployment still does not exist because release composition and product ingress are not implemented.
 
@@ -37,11 +37,11 @@ Admin must not gain systemd authority merely to perform a Device Admission workf
 The final operator surface should be one command with internally explicit phases:
 
 ```text
-eidolon-pi deploy
+eidolon-ops --config config/hosts/pi5.toml deploy
   1. local/CI preflight and revision lock
   2. target-native aarch64 environment preparation (network allowed, non-root)
   3. contract tests and source/environment fingerprints
-  4. transfer into a unique /srv/eidolon/releases/<release_id>
+  4. transfer into a unique /opt/eidolon/releases/<release_id>
   5. target seal
   6. root activation dry-run
   7. explicit activation
