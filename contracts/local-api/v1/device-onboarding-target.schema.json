@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.eidolon.local/local-api/v1/device-onboarding-target.schema.json",
+  "title": "Local Device onboarding target",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "contract_version", "hub_id", "descriptor_uri", "tls_spki_fingerprint"],
+  "properties": {
+    "operation": {"const": "local.device-onboarding-target"},
+    "contract_version": {"const": "1"},
+    "hub_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "descriptor_uri": {"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048},
+    "tls_spki_fingerprint": {"type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$"}
+  }
+}

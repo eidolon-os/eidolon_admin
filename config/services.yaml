@@ -1,5 +1,6 @@
 # Eidolon Admin Gateway — service registry.
-# Paths use $EIDOLON_ROOT (export from deploy/dev/run_all.sh or set manually).
+# Admin's user-facing service catalog. Lifecycle assets referenced here are
+# owned by Ops; component settings remain owned by their components.
 # Bind ports come from config/ports.yaml → EIDOLON_* env vars (see app/ports.py).
 
 admin:
@@ -22,7 +23,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_ADMIN_API_PORT/docs
     supervisor:
-      config_file: deploy/supervisor/available/admin.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/admin.conf
       group: admin
       programs:
         - admin-api
@@ -32,7 +33,7 @@ services:
     configs:
       - id: services
         label: "services.yaml"
-        path: $EIDOLON_ROOT/eidolon_admin/config/services.yaml
+        path: $EIDOLON_ADMIN_ROOT/config/services.yaml
         format: yaml
         reload: restart_program
         reload_target: admin:admin-api
@@ -45,7 +46,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_NATS_HTTP_PORT/varz
     supervisor:
-      config_file: deploy/supervisor/available/nats.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/nats.conf
       group: nats
       programs:
         - nats-server
@@ -65,7 +66,7 @@ services:
     # process state is the operational probe; business clients use the typed
     # UDS directory adapter.
     supervisor:
-      config_file: deploy/supervisor/available/eidolond.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/eidolond.conf
       group: eidolond
       programs: [eidolond]
     ports: { declared: [] }
@@ -79,7 +80,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_DATA_API_PORT/health
     supervisor:
-      config_file: deploy/supervisor/available/data.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/data.conf
       group: data
       programs: [data-api]
     ports:
@@ -94,7 +95,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_DATA_WORKSPACE_API_PORT/health
     supervisor:
-      config_file: deploy/supervisor/available/data.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/data.conf
       group: data
       programs: [data-workspace-api]
     ports:
@@ -109,7 +110,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_KERNEL_API_PORT/health
     supervisor:
-      config_file: deploy/supervisor/available/kernel.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/kernel.conf
       group: kernel
       programs: [kernel-api]
     ports:
@@ -124,7 +125,7 @@ services:
     auth: { type: none }
     health: /api/admin/conversations/turns?limit=1
     supervisor:
-      config_file: deploy/supervisor/available/agent.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/agent.conf
       group: agent
       programs:
         - agent
@@ -135,18 +136,18 @@ services:
     configs:
       - id: settings
         label: "agent settings.yaml"
-        path: $EIDOLON_ROOT/eidolon_agent/config/settings.yaml
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/settings.yaml
         format: yaml
         reload: restart_program
         reload_target: agent:agent
-        template: $EIDOLON_ROOT/eidolon_agent/config/settings.example.yaml
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/settings.example.yaml
       - id: env
         label: "agent .env"
-        path: $EIDOLON_ROOT/eidolon_agent/config/.env
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/.env
         format: dotenv
         reload: restart_program
         reload_target: agent:agent
-        template: $EIDOLON_ROOT/eidolon_agent/config/.env.example
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/.env.example
 
   - id: hub
     name: Eidolon Hub
@@ -158,7 +159,7 @@ services:
     auth: { type: passthrough }
     health: /health
     supervisor:
-      config_file: deploy/supervisor/available/hub.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/hub.conf
       group: hub
       programs:
         - hub-api
@@ -169,18 +170,18 @@ services:
     configs:
       - id: settings
         label: "hub settings.yaml"
-        path: $EIDOLON_ROOT/eidolon_hub/config/settings.yaml
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/settings.yaml
         format: yaml
         reload: restart_program
         reload_target: hub:hub-api
-        template: $EIDOLON_ROOT/eidolon_hub/config/settings.example.yaml
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/settings.example.yaml
       - id: env
         label: "hub .env"
-        path: $EIDOLON_ROOT/eidolon_hub/config/.env
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/.env
         format: dotenv
         reload: restart_program
         reload_target: hub:hub-api
-        template: $EIDOLON_ROOT/eidolon_hub/config/.env.example
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/.env.example
 
   - id: memory
     name: Eidolon Memory
@@ -190,7 +191,7 @@ services:
     auth: { type: none }
     health: /api/admin/health
     supervisor:
-      config_file: deploy/supervisor/available/memory.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/memory.conf
       group: memory
       programs:
         - memory-supervisor
@@ -202,18 +203,18 @@ services:
     configs:
       - id: settings
         label: "memory settings.yaml"
-        path: $EIDOLON_ROOT/eidolon_memory/config/settings.yaml
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/settings.yaml
         format: yaml
         reload: restart_group
         reload_target: memory
-        template: $EIDOLON_ROOT/eidolon_memory/config/settings.example.yaml
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/settings.example.yaml
       - id: env
         label: "memory .env"
-        path: $EIDOLON_ROOT/eidolon_memory/config/.env
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/.env
         format: dotenv
         reload: restart_group
         reload_target: memory
-        template: $EIDOLON_ROOT/eidolon_memory/config/.env.example
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/.env.example
   - id: channel
     name: Eidolon Channel
     integration: process
@@ -221,7 +222,7 @@ services:
     upstream_prefix: ""
     auth: { type: none }
     supervisor:
-      config_file: deploy/supervisor/available/channel.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/channel.conf
       group: channel
       programs:
         - channel-worker
@@ -233,18 +234,18 @@ services:
     configs:
       - id: settings
         label: "channel settings.yaml"
-        path: $EIDOLON_ROOT/eidolon_channel/config/settings.yaml
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/settings.yaml
         format: yaml
         reload: restart_program
         reload_target: channel:channel-worker
-        template: $EIDOLON_ROOT/eidolon_channel/config/settings.example.yaml
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/settings.example.yaml
       - id: env
         label: "channel .env"
-        path: $EIDOLON_ROOT/eidolon_channel/config/.env
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/.env
         format: dotenv
         reload: restart_program
         reload_target: channel:channel-worker
-        template: $EIDOLON_ROOT/eidolon_channel/config/.env.example
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/.env.example
 
   # Phase 31.A: Mementos (Electron-vite dev). Supervised by admin so
   # operators can start/stop it from the Supervisor UI like the rest
@@ -267,7 +268,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_MEMENTOS_PORT/health
     supervisor:
-      config_file: deploy/supervisor/available/mementos.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/mementos.conf
       group: mementos
       programs:
         - mementos
@@ -283,7 +284,7 @@ services:
     auth: { type: none }
     health: http://127.0.0.1:$EIDOLON_CLIENT_WEB_PORT/
     supervisor:
-      config_file: deploy/supervisor/available/client-web.conf
+      config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/client-web.conf
       group: client-web
       programs:
         - client-web
@@ -295,8 +296,8 @@ services:
     configs:
       - id: env-local
         label: ".env.local"
-        path: $EIDOLON_ROOT/eidolon_client_web/.env.local
+        path: $EIDOLON_WORKSPACE_ROOT/eidolon_client_web/.env.local
         format: dotenv
         reload: restart_program
         reload_target: client-web:client-web
-        template: $EIDOLON_ROOT/eidolon_client_web/.env.local.example
+        template: $EIDOLON_WORKSPACE_ROOT/eidolon_client_web/.env.local.example

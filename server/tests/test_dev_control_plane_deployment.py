@@ -117,21 +117,23 @@ def _make_executable(path: Path) -> None:
 def _layout(tmp_path: Path) -> RuntimeLayout:
     admin = tmp_path / "admin"
     root = tmp_path / "eidolon"
-    runtime = admin / "var/os-control-plane"
+    state = tmp_path / "state"
+    runtime = state / "admin/control-plane"
+    ops = tmp_path / "ops"
     runtime.mkdir(parents=True)
     manifest = root / "eidolon_kernel/config/system-services.yaml"
     manifest.parent.mkdir(parents=True)
     manifest.write_text(yaml.safe_dump(_manifest(), sort_keys=False), encoding="utf-8")
     for path in (
-        admin / ".venv/bin/uvicorn",
-        admin / ".venv/bin/supervisorctl",
+        ops / ".venv/bin/uvicorn",
+        ops / ".venv/bin/supervisorctl",
         root / "eidolon_data/.venv/bin/uvicorn",
         root / "eidolon_hub/.venv/bin/uvicorn",
         root / "eidolon_kernel/.venv/bin/uvicorn",
         root / "eidolon_kernel/.venv/bin/eidolond",
     ):
         _make_executable(path)
-    supervisor = admin / "deploy/dev/supervisord.profile.conf"
+    supervisor = ops / "deploy/dev/supervisord.profile.conf"
     supervisor.parent.mkdir(parents=True)
     supervisor.write_text(
         "\n".join(
@@ -154,7 +156,13 @@ def _layout(tmp_path: Path) -> RuntimeLayout:
         ),
         encoding="utf-8",
     )
-    return RuntimeLayout(admin_root=admin, eidolon_root=root, runtime_root=runtime)
+    return RuntimeLayout(
+        admin_root=admin,
+        eidolon_root=root,
+        ops_root=ops,
+        state_root=state,
+        runtime_root=runtime,
+    )
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -316,9 +324,11 @@ def test_validation_rejects_runtime_outside_admin_boundary(tmp_path: Path) -> No
     unsafe = RuntimeLayout(
         admin_root=layout.admin_root,
         eidolon_root=layout.eidolon_root,
+        ops_root=layout.ops_root,
+        state_root=layout.state_root,
         runtime_root=tmp_path / "outside",
     )
-    with pytest.raises(ControlPlanePreparationError, match="below the Admin worktree"):
+    with pytest.raises(ControlPlanePreparationError, match="below the host state root"):
         prepare(unsafe, migrate=False)
 
 
@@ -407,7 +417,7 @@ def test_supervisor_targets_match_the_published_manifest() -> None:
         ("hub-os-control-plane.conf", "[program:hub-api]"),
         ("kernel.conf", "[program:kernel-api]"),
     ):
-        text = admin_root.joinpath("deploy/supervisor/available", filename).read_text(
+        text = eidolon_root.joinpath("eidolon_ops/deploy/supervisor/available", filename).read_text(
             encoding="utf-8"
         )
         assert target in text
@@ -423,6 +433,8 @@ def test_real_data_migration_targets_only_the_isolated_database(tmp_path: Path) 
     layout = RuntimeLayout(
         admin_root=layout.admin_root,
         eidolon_root=real_root,
+        ops_root=layout.ops_root,
+        state_root=layout.state_root,
         runtime_root=layout.runtime_root,
     )
     # Keep fake Admin entrypoints but use the real sibling Data migration and

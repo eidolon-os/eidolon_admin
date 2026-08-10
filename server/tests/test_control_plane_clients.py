@@ -383,6 +383,47 @@ async def test_hub_status_mapping(
     assert caught.value.upstream_status == status
 
 
+async def test_hub_approval_uses_exact_contract_and_confirms_device_id() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.raw_path == (
+            b"/api/device-management/v1/devices/device-1/approval"
+        )
+        assert request.headers["authorization"] == "Bearer owner-jwt"
+        assert json.loads(request.content) == {
+            "operation": "device.approval",
+            "request_id": "admin:approval:hub-approve",
+            "owner_id": "owner-1",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "operation": "device.lifecycle-status",
+                "device_id": "device-1",
+                "owner_id": "owner-1",
+                "lifecycle_state": "approved",
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        result = await subject.approve(
+            device_id="device-1",
+            owner_id="owner-1",
+            request_id="admin:approval:hub-approve",
+            authorization="Bearer owner-jwt",
+        )
+    finally:
+        await http_client.aclose()
+
+    assert result.device_id == "device-1"
+
+
 async def test_timeout_is_unavailable_not_not_found() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow", request=request)

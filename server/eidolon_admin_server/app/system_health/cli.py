@@ -1,4 +1,4 @@
-"""System health CLI used by run_all.sh around supervisord startup.
+"""System health CLI consumed by the Ops macOS host adapter.
 
 Why a separate entry point (not just curl /api/system/health):
     At pre-flight, supervisord isn't running yet — so admin-api isn't
@@ -324,18 +324,21 @@ def _print_preflight_refusal(
     print("What to do:")
     print(
         "  "
-        + _color("./deploy/dev/run_all.sh status", _GREEN)
+        + _color("eidolon-ops --config config/hosts/mac.toml status", _GREEN)
         + "  — see whether the stack is already up (no port check)"
     )
     print(
         "  "
-        + _color("./deploy/dev/run_all.sh restart", _GREEN)
+        + _color("eidolon-ops --config config/hosts/mac.toml restart", _GREEN)
         + "  — stop via this script, then start fresh (recommended)"
     )
     if eidolon_like:
         print(
             "  "
-            + _color("./deploy/dev/run_all.sh start --force-cleanup", _GREEN)
+            + _color(
+                "eidolon-ops --config config/hosts/mac.toml start --force-cleanup",
+                _GREEN,
+            )
             + "  — SIGTERM Eidolon-looking listeners only, then cold start"
         )
     print(
@@ -607,7 +610,7 @@ def main(argv: list[str] | None = None) -> int:
     wait_p.add_argument(
         "--include-admin-web",
         action="store_true",
-        help="also probe the run_all.sh-managed admin web dev server",
+        help="also probe the Ops-managed Admin web dev server",
     )
     wait_p.add_argument(
         "--strict",

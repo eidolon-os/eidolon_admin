@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.eidolon.local/local-api/v1/device-admission-progress.schema.json",
+  "title": "Local Device admission progress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["operation", "contract_version", "request_id", "device_id", "owner_id", "state", "completed_stage", "companion_id", "retryable"],
+  "properties": {
+    "operation": {"const": "local.device-admission-progress"},
+    "contract_version": {"const": "1"},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "device_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "owner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "state": {"enum": ["approved", "binding", "ready", "failed"]},
+    "completed_stage": {"enum": ["hub-approved", "kernel-mounted", "companion-attached"]},
+    "companion_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 64},
+    "retryable": {"type": "boolean"}
+  }
+}

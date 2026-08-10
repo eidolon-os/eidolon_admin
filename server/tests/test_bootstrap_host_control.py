@@ -56,6 +56,7 @@ from eidolon_admin_server.bootstrap.service import (
 )
 from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
+    KernelMountPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -197,6 +198,37 @@ class _RuntimeClient:
                     "realizer_version": "1",
                     "genome": {},
                 },
+            }
+        )
+
+    async def close(self) -> None:
+        return None
+
+
+class _DevicesClient:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def list_mounts(self, owner_id: str) -> KernelMountPage:
+        self.calls.append(owner_id)
+        return KernelMountPage.model_validate(
+            {
+                "operation": "kernel.device-mount-page",
+                "next_cursor": None,
+                "mounts": [
+                    {
+                        "operation": "kernel.device-mount",
+                        "device_id": "device-local-1",
+                        "owner_id": owner_id,
+                        "attached_companion_id": "companion-device-1",
+                        "revision": 2,
+                        "created_at": "2026-08-09T08:00:00Z",
+                        "updated_at": "2026-08-09T08:10:00Z",
+                        "request_id": "internal-device-request",
+                        "fingerprint": "sha256:" + "0" * 64,
+                        "active": True,
+                    }
+                ],
             }
         )
 
@@ -671,10 +703,12 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
 
         workspace_client = _WorkspaceClient()
         runtime_client = _RuntimeClient(workspace_client)
+        devices_client = _DevicesClient()
         app = create_app(
             LocalApiSettings(bootstrap=settings),
             workspace_client=workspace_client,
             runtime_client=runtime_client,
+            devices_client=devices_client,
         )
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
@@ -740,6 +774,12 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert runtime_before_workspace.status_code == 409
             assert runtime_client.calls == 0
+            devices_before_workspace = await client.get(
+                "/api/local/v1/devices",
+                headers=workspace_headers,
+            )
+            assert devices_before_workspace.status_code == 409
+            assert devices_client.calls == []
 
             unauthenticated = await client.put(
                 "/api/local/v1/setup/workspace",
@@ -785,11 +825,35 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 == (initialized.json()["workspace"]["primary_companion_id"])
             )
             assert runtime_client.calls == 1
+            devices = await client.get(
+                "/api/local/v1/devices",
+                headers=workspace_headers,
+            )
+            assert devices.status_code == 200
+            assert devices.json()["coverage"] == "mounted-devices"
+            assert devices.json()["devices"][0] == {
+                "device_id": "device-local-1",
+                "admission_state": "ready",
+                "mount": {
+                    "state": "active",
+                    "revision": 2,
+                    "attached_companion_id": "companion-device-1",
+                    "updated_at": "2026-08-09T08:10:00Z",
+                },
+            }
+            assert devices_client.calls == ["owner_workspace_authority"]
+            device = await client.get(
+                "/api/local/v1/devices/device-local-1",
+                headers=workspace_headers,
+            )
+            assert device.status_code == 200
+            assert device.json()["device_id"] == "device-local-1"
 
             restarted_app = create_app(
                 LocalApiSettings(bootstrap=settings),
                 workspace_client=workspace_client,
                 runtime_client=runtime_client,
+                devices_client=devices_client,
             )
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=restarted_app),
@@ -892,7 +956,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
         json.loads(path.read_text())
         for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
     ]
-    assert len(local_api_documents) == 12
+    assert len(local_api_documents) == 16
     assert all(
         document["$schema"].endswith("2020-12/schema")
         for document in local_api_documents

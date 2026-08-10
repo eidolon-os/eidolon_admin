@@ -3,20 +3,42 @@
 Public Host routes, Host proof, and Controller-authenticated short-lived
 sessions exist. Workspace Setup is the first product mutation and Workspace
 Runtime is the first daily-use projection. Both are Controller-authenticated
-and reach Data only through Admin's exact loopback contracts.
+and reach Data only through Admin's exact loopback contracts. Mounted Device
+membership follows the same boundary: Owner scope comes from the Controller
+principal and the Local API consumes a narrow, service-authenticated Admin
+projection rather than accepting Hub credentials from Mobile.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, Header, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from .auth import LocalControllerSessionStore
 from .config import LocalApiSettings, load_local_api_settings
+from .devices import (
+    AdminOwnerDevicesClient,
+    AdminOwnerDevicesPort,
+    DeviceInventoryError,
+    LocalDeviceInventoryView,
+    LocalDeviceView,
+    owner_device_inventory_view,
+)
+from .device_admissions import (
+    AdminDeviceAdmissionClient,
+    AdminDeviceAdmissionPort,
+    DeviceAdmissionError,
+    LocalDeviceAdmissionProgress,
+    LocalDeviceApprovalRequest,
+    LocalDeviceOnboardingTarget,
+    LocalPendingDeviceEnrollmentPage,
+    device_admission_progress,
+    pending_device_enrollment_page,
+)
 from .runtime import (
     AdminOwnerRuntimeClient,
     AdminOwnerRuntimePort,
@@ -65,6 +87,8 @@ def create_app(
     *,
     workspace_client: AdminWorkspacePort | None = None,
     runtime_client: AdminOwnerRuntimePort | None = None,
+    devices_client: AdminOwnerDevicesPort | None = None,
+    device_admission_client: AdminDeviceAdmissionPort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -79,6 +103,18 @@ def create_app(
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_runtime_client = runtime_client is None
+    devices = devices_client or AdminOwnerDevicesClient(
+        base_url=resolved.admin_base_url,
+        service_token=resolved.admin_service_token,
+        timeout_seconds=resolved.admin_timeout_seconds,
+    )
+    owns_devices_client = devices_client is None
+    device_admission = device_admission_client or AdminDeviceAdmissionClient(
+        base_url=resolved.admin_base_url,
+        service_token=resolved.admin_service_token,
+        timeout_seconds=resolved.admin_timeout_seconds,
+    )
+    owns_device_admission_client = device_admission_client is None
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -89,8 +125,16 @@ def create_app(
                 if owns_workspace_client:
                     await workspace.close()
             finally:
-                if owns_runtime_client:
-                    await runtime.close()
+                try:
+                    if owns_runtime_client:
+                        await runtime.close()
+                finally:
+                    try:
+                        if owns_devices_client:
+                            await devices.close()
+                    finally:
+                        if owns_device_admission_client:
+                            await device_admission.close()
 
     app = FastAPI(
         title="Eidolon Local API",
@@ -309,6 +353,117 @@ def create_app(
             )
             raise HTTPException(code, str(exc)) from exc
 
+    async def owner_device_inventory(
+        authorization: str | None,
+    ) -> LocalDeviceInventoryView:
+        principal, _session = await authenticated_controller(authorization)
+        owner_id = principal.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Host Workspace is not initialized",
+            )
+        try:
+            mounts = await devices.list_mounts(owner_id)
+            return owner_device_inventory_view(
+                mounts=mounts,
+                bound_owner_id=owner_id,
+            )
+        except DeviceInventoryError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.get(
+        "/api/local/v1/devices",
+        response_model=LocalDeviceInventoryView,
+    )
+    async def get_devices(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceInventoryView:
+        return await owner_device_inventory(authorization)
+
+    @app.get(
+        "/api/local/v1/devices/{device_id}",
+        response_model=LocalDeviceView,
+    )
+    async def get_device(
+        device_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceView:
+        inventory = await owner_device_inventory(authorization)
+        device = next(
+            (item for item in inventory.devices if item.device_id == device_id),
+            None,
+        )
+        if device is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Device is not mounted")
+        return device
+
+    @app.get(
+        "/api/local/v1/device-onboarding/target",
+        response_model=LocalDeviceOnboardingTarget,
+    )
+    async def get_device_onboarding_target(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceOnboardingTarget:
+        principal, _session = await authenticated_controller(authorization)
+        _owner_principal(principal)
+        target = resolved.device_onboarding_target
+        if target is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Hub Device onboarding target is not configured",
+            )
+        return LocalDeviceOnboardingTarget.from_verified(target)
+
+    @app.get(
+        "/api/local/v1/device-enrollments/pending",
+        response_model=LocalPendingDeviceEnrollmentPage,
+    )
+    async def list_pending_device_enrollments(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalPendingDeviceEnrollmentPage:
+        principal, _session = await authenticated_controller(authorization)
+        _owner_id, controller_id = _owner_principal(principal)
+        try:
+            page = await device_admission.list_pending(controller_id=controller_id)
+            return pending_device_enrollment_page(page)
+        except DeviceAdmissionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.post(
+        "/api/local/v1/device-enrollments/{device_id}/approval",
+        response_model=LocalDeviceAdmissionProgress,
+    )
+    async def approve_device_enrollment(
+        device_id: Annotated[
+            str,
+            Path(
+                min_length=1,
+                max_length=128,
+                pattern=r"^[A-Za-z0-9._:-]+$",
+            ),
+        ],
+        payload: LocalDeviceApprovalRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceAdmissionProgress:
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        try:
+            result = await device_admission.claim(
+                payload=payload.to_admin(
+                    device_id=device_id,
+                    owner_id=owner_id,
+                    controller_id=controller_id,
+                ),
+            )
+            return device_admission_progress(
+                owner_id=owner_id,
+                companion_id=payload.companion_id,
+                result=result,
+            )
+        except DeviceAdmissionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
     @app.get("/api/local/v1/system/state")
     async def system_state() -> dict:
         result = await request_bootstrap("health")
@@ -328,3 +483,19 @@ def _bearer_token(value: str | None) -> str:
     if separator != " " or scheme.lower() != "bearer" or not token:
         return ""
     return token
+
+
+def _owner_principal(principal: dict) -> tuple[str, str]:
+    owner_id = principal.get("owner_id")
+    controller_id = principal.get("controller_id")
+    if not isinstance(owner_id, str) or not owner_id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Host Workspace is not initialized",
+        )
+    if not isinstance(controller_id, str) or not controller_id:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Controller identity is unavailable",
+        )
+    return owner_id, controller_id

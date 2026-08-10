@@ -14,6 +14,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     DeviceAdmissionResult,
     HubLifecycleStatus,
     KernelMount,
+    KernelMountPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
     WorkflowStep,
@@ -95,6 +96,27 @@ class StubControlPlane:
             }
         )
 
+    async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
+        now = datetime.now(UTC)
+        return KernelMountPage(
+            operation="kernel.device-mount-page",
+            next_cursor=None,
+            mounts=(
+                KernelMount(
+                    operation="kernel.device-mount",
+                    device_id="device-mounted-1",
+                    owner_id=owner_id,
+                    attached_companion_id="companion-1",
+                    revision=2,
+                    created_at=now,
+                    updated_at=now,
+                    request_id="device-mount-read-fixture",
+                    fingerprint="sha256:" + "0" * 64,
+                    active=True,
+                ),
+            ),
+        )
+
     async def admit_device(self, payload, **_kwargs) -> DeviceAdmissionResult:
         blocked = payload.request_id == "blocked"
         now = datetime.now(UTC)
@@ -144,6 +166,44 @@ class StubControlPlane:
                 lifecycle_state="approved",
             ),
             mount=mounted,
+        )
+
+    async def admit_controller_device(
+        self,
+        *,
+        payload,
+    ) -> DeviceAdmissionResult:
+        now = datetime.now(UTC)
+        mount = KernelMount(
+            operation="kernel.device-mount",
+            device_id=payload.device_id,
+            owner_id=payload.owner_id,
+            attached_companion_id=payload.companion_id,
+            revision=2,
+            created_at=now,
+            updated_at=now,
+            request_id="admin:approval:kernel-attach",
+            fingerprint="sha256:" + "0" * 64,
+            active=True,
+        )
+        return DeviceAdmissionResult(
+            request_id=payload.request_id,
+            outcome="completed",
+            completed_stage="companion_attached",
+            steps=(
+                WorkflowStep(name="hub_approval", state="committed"),
+                WorkflowStep(name="kernel_mount", state="committed", revision=1),
+                WorkflowStep(
+                    name="companion_attachment", state="committed", revision=2
+                ),
+            ),
+            hub=HubLifecycleStatus(
+                operation="device.lifecycle-status",
+                device_id=payload.device_id,
+                owner_id=payload.owner_id,
+                lifecycle_state="approved",
+            ),
+            mount=mount,
         )
 
 
@@ -308,6 +368,29 @@ async def test_owner_runtime_requires_local_api_credential_and_derives_owner_pat
     assert accepted.json()["companion_id"] == "companion-1"
 
 
+async def test_owner_device_mounts_are_narrow_and_require_local_api_credential(
+    app,
+) -> None:
+    from eidolon_admin_server.app.settings import Settings
+
+    app.state.control_plane = StubControlPlane()
+    app.state.settings = Settings(local_api_service_token="local-api-secret")
+    path = "/api/control-plane/v1/owners/owner-1/device-mounts"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        missing = await client.get(path)
+        accepted = await client.get(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+        )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["mounts"][0]["owner_id"] == "owner-1"
+    assert accepted.json()["mounts"][0]["device_id"] == "device-mounted-1"
+
+
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:
     control_plane = StubControlPlane()
     control_plane.data.failure = AuthorityFailure(
@@ -374,6 +457,43 @@ async def test_non_retryable_partial_workflow_returns_conflict(app) -> None:
     assert response.status_code == 409
     assert response.json()["outcome"] == "blocked"
     assert response.json()["recovery"] == "operator-action-required"
+
+
+async def test_local_approval_workflow_requires_service_auth_and_matching_device_id(
+    app,
+) -> None:
+    from eidolon_admin_server.app.settings import Settings
+
+    app.state.control_plane = StubControlPlane()
+    app.state.settings = Settings(local_api_service_token="local-api-secret")
+    path = "/api/control-plane/v1/local-device-admissions/device-1"
+    payload = {
+        "contract_version": "1",
+        "request_id": "mobile-claim-1",
+        "owner_id": "owner-derived",
+        "controller_id": "ectrl-0123456789abcdefabcd",
+        "device_id": "device-1",
+        "companion_id": "companion-1",
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
+    ) as client:
+        missing = await client.put(path, json=payload)
+        accepted = await client.put(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+            json=payload,
+        )
+        injected_device = await client.put(
+            path,
+            headers={"Authorization": "Bearer local-api-secret"},
+            json={**payload, "device_id": "another-device"},
+        )
+
+    assert missing.status_code == 401
+    assert accepted.status_code == 200
+    assert accepted.json()["hub"]["device_id"] == "device-1"
+    assert injected_device.status_code == 409
 
 
 @pytest.mark.parametrize(

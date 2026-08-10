@@ -164,6 +164,25 @@ class DeviceAdmissionRequest(StrictModel):
     replace_existing_mount: bool = False
 
 
+class ControllerDeviceAdmissionRequest(StrictModel):
+    """Internal service input derived from explicit Mobile confirmation."""
+
+    contract_version: Literal["1"]
+    request_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    owner_id: str = Field(min_length=1, max_length=64)
+    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+    device_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class WorkflowFailure(StrictModel):
     authority: Literal["directory", "data", "hub", "kernel"]
     kind: Literal[
@@ -183,7 +202,11 @@ class WorkflowFailure(StrictModel):
 
 
 class WorkflowStep(StrictModel):
-    name: Literal["hub_approval", "kernel_mount", "companion_attachment"]
+    name: Literal[
+        "hub_approval",
+        "kernel_mount",
+        "companion_attachment",
+    ]
     state: Literal["committed", "replayed", "failed", "not_requested", "not_attempted"]
     request_id: str | None = None
     revision: int | None = None

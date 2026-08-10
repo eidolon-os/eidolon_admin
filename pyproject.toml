@@ -20,6 +20,7 @@ dependencies = [
     "nats-py>=2.9",
     # Bootstrap identity, commissioning and Linux system-bus adapters.
     "cryptography>=43",
+    "pyjwt>=2.8",
     "dbus-next>=0.2.3",
 ]
 

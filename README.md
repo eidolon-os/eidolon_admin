@@ -101,17 +101,20 @@ pnpm --dir web dev
 `os-control-plane` profile 已把真实 eidolond、Data V2、Hub、Kernel 与 Admin 接通。准备命令只在本 worktree 的 `var/os-control-plane/` 下生成权限为 `0600` 的随机凭证、配置和空 Data V2 库；它不启动进程，也不读取或修改 `~/eidolon/data/eidolon-system.sqlite3`。
 
 ```bash
+# 生命周期入口位于相邻的 eidolon_ops 项目；Admin 只提供自己的准备逻辑与 API。
+cd ../eidolon_ops
+
 # 1. 生成/复用隔离配置，执行 Data V2 migration，并校验 manifest 与 supervisor 配置
-./deploy/dev/run_all.sh os-control-plane prepare
+eidolon-ops --config config/hosts/mac.toml os-control-plane prepare
 
 # 2. 可选：生成一个短期 sandbox Hub operator JWT（只写文件，不输出 token）
-./deploy/dev/run_all.sh os-control-plane issue-operator-token --ttl-seconds 900
+eidolon-ops --config config/hosts/mac.toml os-control-plane issue-operator-token --ttl-seconds 900
 
 # 3. 启动 Admin + Web；Data/Hub/Kernel 的 desired state 只由 eidolond 管理
-./deploy/dev/run_all.sh os-control-plane start
+eidolon-ops --config config/hosts/mac.toml os-control-plane start
 
-./deploy/dev/run_all.sh os-control-plane status
-./deploy/dev/run_all.sh os-control-plane stop
+eidolon-ops --config config/hosts/mac.toml os-control-plane status
+eidolon-ops --config config/hosts/mac.toml os-control-plane stop
 ```
 
 不要把该 sandbox JWT 或 `var/os-control-plane/env/` 复制到产品环境。隔离 profile 会分别生成 Data Companion read、Data Workspace write 和 Local API→Admin 三组凭证；它们只共享给各自需要的进程，并在重复 prepare 时保持不变。

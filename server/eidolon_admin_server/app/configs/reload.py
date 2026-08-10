@@ -27,14 +27,19 @@ from ..supervisor.client import SupervisorClient, SupervisorError, SupervisorUna
 logger = logging.getLogger(__name__)
 
 
-# Repo root: this file is at
-# server/eidolon_admin_server/app/configs/reload.py, so parents[4] is the
-# project root. Used to locate supervisorctl + supervisord.conf when we
-# need to spawn an external restart helper for the admin-api self-restart
-# case (see ``_self_restart`` below).
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-_SUPERVISORCTL = _REPO_ROOT / ".venv" / "bin" / "supervisorctl"
-_SUPERVISORD_CONF = _REPO_ROOT / "deploy" / "dev" / "supervisord.conf"
+# Admin can request a process action, but the executable and process graph are
+# owned by Ops.  Resolve the same roots exported by the Host profile instead of
+# reaching back into Admin's repository layout.
+_ADMIN_ROOT = Path(__file__).resolve().parents[4]
+_OPS_ROOT = Path(
+    os.environ.get("EIDOLON_OPS_ROOT", str(_ADMIN_ROOT.parent / "eidolon_ops"))
+).expanduser().resolve()
+_OPS_VENV = Path(
+    os.environ.get("EIDOLON_OPS_VENV", str(_OPS_ROOT / ".venv"))
+).expanduser().resolve()
+_OPS_PYTHON = _OPS_VENV / "bin" / "python"
+_SUPERVISORCTL = _OPS_VENV / "bin" / "supervisorctl"
+_SUPERVISORD_CONF = _OPS_ROOT / "deploy" / "dev" / "supervisord.conf"
 
 
 async def trigger(
@@ -114,16 +119,27 @@ def _self_restart(target: str) -> dict[str, Any]:
     parent here (detached via ``start_new_session``) it survives admin-api
     being SIGTERM'd by supervisord.
     """
-    if not _SUPERVISORCTL.exists():
+    missing = [
+        path
+        for path in (_OPS_PYTHON, _SUPERVISORCTL, _SUPERVISORD_CONF)
+        if not path.is_file()
+    ]
+    if missing:
         return {
             "self_restart": False,
-            "error": f"supervisorctl not found at {_SUPERVISORCTL}",
+            "error": "Ops restart executor is incomplete: "
+            + ", ".join(str(path) for path in missing),
         }
     cmd = [
-        "/bin/sh",
-        "-c",
-        f"sleep 0.5 && exec {_SUPERVISORCTL} -c {_SUPERVISORD_CONF} "
-        f"restart {target} >/dev/null 2>&1",
+        str(_OPS_PYTHON),
+        "-m",
+        "eidolon_admin_server.app.configs.restart_helper",
+        "--supervisorctl",
+        str(_SUPERVISORCTL),
+        "--config",
+        str(_SUPERVISORD_CONF),
+        "--target",
+        target,
     ]
     # start_new_session decouples the helper from our process group so a
     # SIGTERM landing on admin-api doesn't cascade into it. stdin/out/err
@@ -137,7 +153,7 @@ def _self_restart(target: str) -> dict[str, Any]:
         start_new_session=True,
         close_fds=True,
     )
-    logger.info("self-restart scheduled via detached supervisorctl: %s", target)
+    logger.info("self-restart scheduled via detached Ops executor: %s", target)
     return {
         "self_restart": True,
         "message": (

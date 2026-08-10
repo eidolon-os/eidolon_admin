@@ -177,7 +177,7 @@ function probeLabel(probe: { configured: boolean; ok?: boolean; status_code?: nu
       style="margin-bottom: 16px"
     >
       <template #title>
-        supervisord 未运行。在终端启动：<code>./deploy/dev/run_all.sh start</code>
+        supervisord 未运行。在终端启动：<code>eidolon-ops --config config/hosts/mac.toml start</code>
       </template>
     </el-alert>
 

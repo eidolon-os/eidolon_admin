@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,11 @@ from sqlalchemy import JSON, DateTime, Index, Integer, String, event, select, te
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def _default_audit_index_path() -> str:
+    root = Path(os.environ.get("EIDOLON_STATE_ROOT", "~/eidolon/data")).expanduser()
+    return str(root / "audit/audit-index.sqlite3")
 
 
 class _AuditIndexBase(DeclarativeBase):
@@ -55,7 +61,7 @@ class _AuditIndexRow(_AuditIndexBase):
 
 @dataclass(frozen=True)
 class AuditIndexSettings:
-    sqlite_path: str = str(Path.home() / "eidolon" / "data" / "audit-index.sqlite3")
+    sqlite_path: str = field(default_factory=_default_audit_index_path)
     busy_timeout_ms: int = 5_000
     wal_autocheckpoint_pages: int = 1_000
     read_only: bool = False

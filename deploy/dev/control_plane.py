@@ -2,8 +2,8 @@
 
 This module deliberately owns only development/runtime materialization.  It
 never edits sibling repositories, never reads the formal System Data database,
-and never starts a process.  ``deploy/dev/run_all.sh`` remains the process
-lifecycle entrypoint after this preflight succeeds.
+and never starts a process. Eidolon Ops remains the lifecycle authority after
+this Admin-specific preflight succeeds.
 """
 
 from __future__ import annotations
@@ -118,6 +118,8 @@ class ControlPlanePreparationError(RuntimeError):
 class RuntimeLayout:
     admin_root: Path
     eidolon_root: Path
+    ops_root: Path
+    state_root: Path
     runtime_root: Path
 
     @property
@@ -154,7 +156,16 @@ class RuntimeLayout:
 
     @property
     def supervisor_config(self) -> Path:
-        return self.admin_root / "deploy/dev/supervisord.profile.conf"
+        return self.ops_root / "deploy/dev/supervisord.profile.conf"
+
+    @property
+    def ops_venv(self) -> Path:
+        explicit = os.environ.get("EIDOLON_OPS_VENV", "").strip()
+        return (
+            Path(explicit).expanduser().resolve()
+            if explicit
+            else (self.ops_root / ".venv").resolve()
+        )
 
     @property
     def manifest(self) -> Path:
@@ -166,14 +177,25 @@ def default_layout() -> RuntimeLayout:
 
     admin_root = Path(__file__).resolve().parents[2]
     runtime_override = os.environ.get("EIDOLON_ADMIN_CONTROL_PLANE_ROOT", "").strip()
+    state_root = Path(
+        os.environ.get("EIDOLON_STATE_ROOT", "~/eidolon/data")
+    ).expanduser().resolve()
+    ops_override = os.environ.get("EIDOLON_OPS_ROOT", "").strip()
+    ops_root = (
+        Path(ops_override).expanduser().resolve()
+        if ops_override
+        else (default_eidolon_root() / "eidolon_ops").resolve()
+    )
     runtime_root = (
         Path(runtime_override).expanduser().resolve()
         if runtime_override
-        else admin_root / "var/os-control-plane"
+        else state_root / "admin/control-plane"
     )
     return RuntimeLayout(
         admin_root=admin_root,
         eidolon_root=default_eidolon_root(),
+        ops_root=ops_root,
+        state_root=state_root,
         runtime_root=runtime_root,
     )
 
@@ -267,7 +289,7 @@ def prepare(layout: RuntimeLayout, *, migrate: bool = True) -> None:
             "persistence": {"path": str(layout.system_database)},
             "host": {
                 "driver": "supervisord",
-                "supervisorctl": str(layout.admin_root / ".venv/bin/supervisorctl"),
+                "supervisorctl": str(layout.ops_venv / "bin/supervisorctl"),
                 "supervisor_config": str(layout.supervisor_config),
                 "command_timeout_seconds": 20,
             },
@@ -387,15 +409,14 @@ def validate_supervisor_config(layout: RuntimeLayout) -> None:
 
 def _validate_layout_boundary(layout: RuntimeLayout) -> None:
     runtime = layout.runtime_root.resolve()
-    admin = layout.admin_root.resolve()
-    formal = (Path.home() / "eidolon/data").resolve()
-    if runtime == admin or admin not in runtime.parents:
+    state_root = layout.state_root.resolve()
+    if runtime == state_root or state_root not in runtime.parents:
         raise ControlPlanePreparationError(
-            f"control-plane runtime must stay below the Admin worktree: {runtime}"
+            f"control-plane state must stay below the host state root: {runtime}"
         )
-    if runtime == formal or formal in runtime.parents:
+    if runtime == (state_root / "eidolon-system.sqlite3"):
         raise ControlPlanePreparationError(
-            "control-plane runtime must not use the formal data root"
+            "control-plane state must not alias the formal System Data database"
         )
 
 
@@ -568,8 +589,8 @@ def _validate_runtime_files(layout: RuntimeLayout) -> None:
 
 def _validate_entrypoints(layout: RuntimeLayout) -> None:
     expected = (
-        layout.admin_root / ".venv/bin/uvicorn",
-        layout.admin_root / ".venv/bin/supervisorctl",
+        layout.ops_venv / "bin/uvicorn",
+        layout.ops_venv / "bin/supervisorctl",
         layout.eidolon_root / "eidolon_data/.venv/bin/uvicorn",
         layout.eidolon_root / "eidolon_hub/.venv/bin/uvicorn",
         layout.eidolon_root / "eidolon_kernel/.venv/bin/uvicorn",

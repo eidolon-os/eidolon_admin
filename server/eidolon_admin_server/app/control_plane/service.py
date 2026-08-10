@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from uuid import UUID, uuid5
 
 import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
@@ -17,8 +18,12 @@ from .clients import (
 )
 from .contracts import (
     BoundaryCapabilities,
+    ControllerDeviceAdmissionRequest,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    HubDevicePage,
+    HubLifecycleStatus,
+    KernelMountPage,
     OwnerInventory,
     SourceStatus,
     WorkspaceInitializeRequest,
@@ -27,10 +32,22 @@ from .contracts import (
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
+from .hub_credentials import HubAdminCredentialIssuer
+
+
+_CONTROLLER_ADMISSION_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
 
 
 def _child_request_id(workflow_id: str, suffix: str) -> str:
     return f"admin:{workflow_id}:{suffix}"
+
+
+def _controller_admission_workflow_id(device_id: str, request_id: str) -> str:
+    operation = uuid5(
+        _CONTROLLER_ADMISSION_NAMESPACE,
+        f"eidolon-controller-device-admission-v1:{device_id}:{request_id}",
+    )
+    return f"device-admission-{operation.hex}"
 
 
 class ControlPlaneService:
@@ -42,12 +59,14 @@ class ControlPlaneService:
         workspace: DataWorkspaceAuthorityClient,
         hub: HubManagementClient,
         kernel: KernelMountClient,
+        hub_credentials: HubAdminCredentialIssuer | None = None,
     ) -> None:
         self.directory = directory
         self.data = data
         self.workspace = workspace
         self.hub = hub
         self.kernel = kernel
+        self.hub_credentials = hub_credentials
 
     @classmethod
     def build(
@@ -85,6 +104,10 @@ class ControlPlaneService:
                 directory=directory,
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
+            ),
+            hub_credentials=HubAdminCredentialIssuer(
+                secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
+                ttl_seconds=settings.hub_management_jwt_ttl_seconds,
             ),
         )
 
@@ -126,20 +149,118 @@ class ControlPlaneService:
             request_id=hub_request_id,
             authorization=hub_authorization,
         )
-        steps = [
-            WorkflowStep(
+        return await self._mount_approved_device(
+            response_request_id=payload.request_id,
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+            companion_id=payload.companion_id,
+            expected_mount_revision=payload.expected_mount_revision,
+            replace_existing_mount=payload.replace_existing_mount,
+            hub=hub,
+            hub_step=WorkflowStep(
                 name="hub_approval",
                 state="committed",
                 request_id=hub_request_id,
+            ),
+            mount_request_id=mount_request_id,
+            attach_request_id=attach_request_id,
+        )
+
+    async def admit_controller_device(
+        self,
+        *,
+        payload: ControllerDeviceAdmissionRequest,
+    ) -> DeviceAdmissionResult:
+        """Apply explicit Mobile approval, then mount and bind forward only.
+
+        There is intentionally no rollback. Every downstream mutation uses a
+        deterministic child request ID, so the same Mobile request resumes the
+        last safe intermediate state after process or network interruption.
+        """
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Owner credential issuer is unavailable",
+                503,
             )
+        workflow_id = _controller_admission_workflow_id(
+            payload.device_id,
+            payload.request_id,
+        )
+        hub_request_id = _child_request_id(workflow_id, "hub-approve")
+        mount_request_id = _child_request_id(workflow_id, "kernel-mount")
+        attach_request_id = _child_request_id(workflow_id, "kernel-attach")
+        authorization = self.hub_credentials.issue(
+            controller_id=payload.controller_id,
+        )
+        hub = await self.hub.approve(
+            device_id=payload.device_id,
+            owner_id=payload.owner_id,
+            request_id=hub_request_id,
+            authorization=authorization,
+        )
+        return await self._mount_approved_device(
+            response_request_id=payload.request_id,
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+            companion_id=payload.companion_id,
+            expected_mount_revision=0,
+            replace_existing_mount=False,
+            hub=hub,
+            hub_step=WorkflowStep(
+                name="hub_approval",
+                state="committed",
+                request_id=hub_request_id,
+            ),
+            mount_request_id=mount_request_id,
+            attach_request_id=attach_request_id,
+        )
+
+    async def list_pending_device_enrollments(
+        self,
+        *,
+        controller_id: str,
+    ) -> HubDevicePage:
+        """Return Hub's screen-independent, unclaimed enrollment queue."""
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Admin credential issuer is unavailable",
+                503,
+            )
+        return await self.hub.list_devices(
+            owner_id="unclaimed",
+            authorization=self.hub_credentials.issue(controller_id=controller_id),
+        )
+
+    async def _mount_approved_device(
+        self,
+        *,
+        response_request_id: str,
+        owner_id: str,
+        device_id: str,
+        companion_id: str | None,
+        expected_mount_revision: int,
+        replace_existing_mount: bool,
+        hub: HubLifecycleStatus,
+        hub_step: WorkflowStep,
+        mount_request_id: str,
+        attach_request_id: str,
+    ) -> DeviceAdmissionResult:
+        steps = [
+            hub_step,
         ]
         try:
             mount_result = await self.kernel.mount(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
+                owner_id=owner_id,
+                device_id=device_id,
                 request_id=mount_request_id,
-                expected_revision=payload.expected_mount_revision,
-                replace_existing=payload.replace_existing_mount,
+                expected_revision=expected_mount_revision,
+                replace_existing=replace_existing_mount,
             )
         except AuthorityFailure as exc:
             steps.extend(
@@ -153,14 +274,14 @@ class ControlPlaneService:
                     WorkflowStep(
                         name="companion_attachment",
                         state="not_attempted"
-                        if payload.companion_id
+                        if companion_id
                         else "not_requested",
-                        request_id=attach_request_id if payload.companion_id else None,
+                        request_id=attach_request_id if companion_id else None,
                     ),
                 )
             )
             return DeviceAdmissionResult(
-                request_id=payload.request_id,
+                request_id=response_request_id,
                 outcome="retry_required" if exc.retryable else "blocked",
                 completed_stage="hub_approved",
                 recovery=(
@@ -179,12 +300,12 @@ class ControlPlaneService:
                 revision=mount_result.mount.revision,
             )
         )
-        if payload.companion_id is None:
+        if companion_id is None:
             steps.append(
                 WorkflowStep(name="companion_attachment", state="not_requested")
             )
             return DeviceAdmissionResult(
-                request_id=payload.request_id,
+                request_id=response_request_id,
                 outcome="completed",
                 completed_stage="kernel_mounted",
                 steps=tuple(steps),
@@ -193,9 +314,9 @@ class ControlPlaneService:
             )
         try:
             attach_result = await self.kernel.attach(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
-                companion_id=payload.companion_id,
+                owner_id=owner_id,
+                device_id=device_id,
+                companion_id=companion_id,
                 request_id=attach_request_id,
                 expected_revision=mount_result.mount.revision,
             )
@@ -210,7 +331,7 @@ class ControlPlaneService:
                 )
             )
             return DeviceAdmissionResult(
-                request_id=payload.request_id,
+                request_id=response_request_id,
                 outcome="retry_required" if exc.retryable else "blocked",
                 completed_stage="kernel_mounted",
                 recovery=(
@@ -231,7 +352,7 @@ class ControlPlaneService:
             )
         )
         return DeviceAdmissionResult(
-            request_id=payload.request_id,
+            request_id=response_request_id,
             outcome="completed",
             completed_stage="companion_attached",
             steps=tuple(steps),
@@ -285,6 +406,16 @@ class ControlPlaneService:
             devices=hub_page.devices if hub_page else (),
             mounts=mount_page.mounts if mount_page else (),
         )
+
+    async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
+        """Return Kernel-owned membership without requiring Hub operator authority.
+
+        This narrow read is consumed by the Controller-authenticated Local API.
+        It deliberately excludes pending Hub enrollments and directory metadata:
+        those require the separate Device admission authority contract.
+        """
+
+        return await self.kernel.list_mounts(owner_id=owner_id)
 
     @staticmethod
     def capabilities() -> BoundaryCapabilities:
