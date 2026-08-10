@@ -12,6 +12,7 @@ import DrilldownDrawer from './components/DrilldownDrawer.vue'
 import RuntimeActivityBoard from './components/RuntimeActivityBoard.vue'
 import RuntimeBusRail from './components/RuntimeBusRail.vue'
 import RecentEventsPanel from './components/RecentEventsPanel.vue'
+import RuntimeBlackboardViewer from './components/RuntimeBlackboardViewer.vue'
 import SovereignConstellation from './components/SovereignConstellation.vue'
 import OrbitField from './primitives/OrbitField.vue'
 import { useMissionControlStream } from './useMissionControlStream'
@@ -41,6 +42,7 @@ const {
 } = mc
 
 const drawer = ref<DrawerTarget | null>(null)
+const blackboardOpen = ref(false)
 const inspectorTab = ref<CompanionInspectorTab>('overview')
 const selectedSatKind = computed(() => inspectorTab.value === 'overview' ? undefined : inspectorTab.value)
 const configuredRealmCount = computed(() => mc.companionUnits.value.filter((companion) => !!companion.realm).length)
@@ -82,7 +84,8 @@ function closeDrawer() { drawer.value = null }
 
 function onEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape') return
-  if (drawer.value) closeDrawer()
+  if (blackboardOpen.value) blackboardOpen.value = false
+  else if (drawer.value) closeDrawer()
   else if (focusedCompanionId.value) clearCompanionFocus()
 }
 onMounted(() => window.addEventListener('keydown', onEscape))
@@ -123,7 +126,7 @@ function returnToConsole() { router.push({ name: 'home' }) }
     <div class="cy-scan" aria-hidden="true" />
     <div class="cy-flicker" aria-hidden="true" />
 
-    <CockpitHeader :mc="mc" @return-console="returnToConsole" />
+    <CockpitHeader :mc="mc" @open-blackboard="blackboardOpen = true" @return-console="returnToConsole" />
     <p v-if="error" class="cy-error">// {{ error }}</p>
 
     <DeviceRuntimeBlackboard :mc="mc" />
@@ -185,6 +188,7 @@ function returnToConsole() { router.push({ name: 'home' }) }
     />
 
     <DrilldownDrawer :mc="mc" :target="drawer" @open-companion="openCompDetails" @close="closeDrawer" />
+    <RuntimeBlackboardViewer v-if="blackboardOpen" :owners="mc.owners.value" @close="blackboardOpen = false" />
   </main>
 </template>
 

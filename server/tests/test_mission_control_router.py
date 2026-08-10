@@ -8,6 +8,7 @@ import httpx
 import pytest
 from eidolon_data import DataSettings, DataStore
 from eidolon_sdk.biz.body import (
+    DEVICE_BLACKBOARD_BUCKET,
     OwnerDeviceBlackboardSnapshot,
     owner_device_blackboard_key,
 )
@@ -55,6 +56,25 @@ class FakeRegistry:
         return None
 
 
+class FakeBlackboardKV:
+    def __init__(self, values: dict[str, bytes]) -> None:
+        self.values = values
+        self.opened: list[str] = []
+        self.gets: list[str] = []
+
+    async def open_bucket(self, bucket: str) -> None:
+        self.opened.append(bucket)
+
+    async def list_keys(self, bucket: str, prefix: str = "") -> list[str]:
+        assert bucket == DEVICE_BLACKBOARD_BUCKET
+        return [key for key in self.values if key.startswith(prefix)]
+
+    async def get(self, bucket: str, key: str) -> bytes | None:
+        assert bucket == DEVICE_BLACKBOARD_BUCKET
+        self.gets.append(key)
+        return self.values.get(key)
+
+
 @pytest.fixture
 async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
@@ -71,7 +91,135 @@ async def client(data_store: DataStore) -> AsyncIterator[httpx.AsyncClient]:
     await app.state.http_client.aclose()
 
 
-async def test_snapshot_degrades_without_runtime_sources(
+def _blackboard_snapshot(owner_id: str, *, revision: int = 7) -> bytes:
+    return (
+        "{"
+        '"schema_version":2,'
+        f'"owner_id":"{owner_id}",'
+        '"epoch":"epoch-test",'
+        f'"revision":{revision},'
+        '"ready":true,'
+        '"hub_lease_expires_at":"2026-07-18T20:00:45+08:00",'
+        '"updated_at":"2026-07-18T20:00:00+08:00",'
+        '"future_snapshot_field":{"preserved":true},'
+        '"devices":{"camera-1":{'
+        '"device_id":"camera-1",'
+        '"registration_id":"reg-1",'
+        '"provider_companion_id":"companion-guard",'
+        '"provider_companion_name":"Guard",'
+        '"name":"Front Camera",'
+        '"aliases":["front"],'
+        '"visibility":"owner",'
+        '"capabilities":[{'
+        '"name":"camera.capture",'
+        '"version":1,'
+        '"description":"Capture a still image",'
+        '"input_schema":{"type":"object","properties":{"quality":{"type":"integer"}}},'
+        '"result_schema":{"type":"object","properties":{"image_id":{"type":"string"}}}'
+        '}],'
+        '"manifest_revision":"sha256:manifest",'
+        '"status":"online",'
+        '"registered_at":"2026-07-18T19:59:00+08:00",'
+        '"lease_expires_at":"2026-07-18T20:00:45+08:00",'
+        '"last_seen_at":"2026-07-18T20:00:00+08:00",'
+        '"room_name":"room-owner",'
+        '"participant_sid":"PA_device",'
+        '"presence_revision":"presence-9"'
+        "}}}"
+    ).encode()
+
+
+async def test_runtime_blackboard_returns_all_current_snapshots_without_field_loss() -> None:
+    owner_a = "owner-a"
+    owner_b = "owner-b"
+    key_a = owner_device_blackboard_key(owner_a)
+    key_b = owner_device_blackboard_key(owner_b)
+    fake_kv = FakeBlackboardKV(
+        {
+            key_b: _blackboard_snapshot(owner_b, revision=8),
+            "not-a-current-key": b"{}",
+            key_a: _blackboard_snapshot(owner_a),
+        }
+    )
+    app = FastAPI()
+    app.state.nats_kv = fake_kv
+    app.include_router(mission_control_router, prefix="/api")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        response = await ac.get("/api/mission-control/runtime-blackboard")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bucket"] == DEVICE_BLACKBOARD_BUCKET
+    assert body["read_only"] is True
+    assert [entry["key"] for entry in body["entries"]] == sorted([key_a, key_b])
+    snapshot = next(
+        entry["snapshot"] for entry in body["entries"] if entry["owner_id"] == owner_a
+    )
+    assert snapshot["schema_version"] == 2
+    assert snapshot["future_snapshot_field"] == {"preserved": True}
+    device = snapshot["devices"]["camera-1"]
+    assert device["provider_companion_name"] == "Guard"
+    assert device["capabilities"][0]["input_schema"]["properties"]["quality"]["type"] == "integer"
+    assert device["capabilities"][0]["result_schema"]["properties"]["image_id"]["type"] == "string"
+    assert fake_kv.opened == [DEVICE_BLACKBOARD_BUCKET]
+
+
+async def test_runtime_blackboard_owner_filter_reads_only_opaque_owner_key() -> None:
+    owner_id = "owner-selected"
+    key = owner_device_blackboard_key(owner_id)
+    fake_kv = FakeBlackboardKV({key: _blackboard_snapshot(owner_id)})
+    app = FastAPI()
+    app.state.nats_kv = fake_kv
+    app.include_router(mission_control_router, prefix="/api")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        response = await ac.get(
+            "/api/mission-control/runtime-blackboard", params={"owner_id": owner_id}
+        )
+
+    assert response.status_code == 200
+    assert response.json()["owner_filter"] == owner_id
+    assert [entry["owner_id"] for entry in response.json()["entries"]] == [owner_id]
+    assert fake_kv.gets == [key]
+
+
+async def test_runtime_blackboard_surfaces_owner_key_corruption_without_re_attribution() -> None:
+    key = owner_device_blackboard_key("owner-a")
+    fake_kv = FakeBlackboardKV({key: _blackboard_snapshot("owner-b")})
+    app = FastAPI()
+    app.state.nats_kv = fake_kv
+    app.include_router(mission_control_router, prefix="/api")
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        all_response = await ac.get("/api/mission-control/runtime-blackboard")
+        scoped_response = await ac.get(
+            "/api/mission-control/runtime-blackboard", params={"owner_id": "owner-a"}
+        )
+
+    all_entry = all_response.json()["entries"][0]
+    assert all_entry["snapshot"]["owner_id"] == "owner-b"
+    assert "does not match" in all_entry["error"]
+    scoped_entry = scoped_response.json()["entries"][0]
+    assert scoped_entry["snapshot"] is None
+    assert "does not match" in scoped_entry["error"]
+
+
+async def test_runtime_blackboard_degrades_when_kv_is_unavailable(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/mission-control/runtime-blackboard")
+    assert response.status_code == 503
+    assert "KV client unavailable" in response.json()["detail"]
+
+
+async def test_snapshot_keeps_device_offline_when_runtime_sources_degrade(
     client: httpx.AsyncClient,
     data_store: DataStore,
 ) -> None:
@@ -103,7 +251,10 @@ async def test_snapshot_degrades_without_runtime_sources(
     # Role is read from the bound (persona) companion, not the board kind.
     assert body["devices"][0]["role"] == "对话身体"
     assert body["devices"][0]["role_kind"] == "persona"
-    assert body["devices"][0]["status"] == "degraded"
+    assert body["devices"][0]["status"] == "offline"
+    assert body["devices"][0]["online"] is False
+    assert body["devices"][0]["signals"]["presence_source"] == "data"
+    assert body["devices"][0]["signals"]["blackboard_health"] == "degraded"
     assert body["devices"][0]["capabilities"] == []
     assert body["runtime_blackboard"]["health"] == "degraded"
     assert body["runtime_blackboard"]["snapshot"] is None
@@ -340,8 +491,93 @@ async def test_runtime_blackboard_retains_raw_degraded_snapshot_but_fails_closed
     assert blackboard.available is False
     assert detail in blackboard.detail
     assert devices[0].online is False
-    assert devices[0].status == "degraded"
+    assert devices[0].status == "offline"
     assert devices[0].capabilities == []
+    assert devices[0].signals["presence_source"] == "data"
+    assert devices[0].signals["blackboard_health"] == "degraded"
+
+
+@pytest.mark.parametrize(
+    ("hub_status", "expected_status", "expected_online"),
+    [
+        ("offline", "offline", False),
+        ("degraded", "degraded", False),
+        ("online", "online", True),
+    ],
+)
+def test_degraded_blackboard_does_not_override_hub_device_presence(
+    hub_status: str,
+    expected_status: str,
+    expected_online: bool,
+) -> None:
+    owner_id = "owner-hub-fallback"
+    persistent = SimpleNamespace(
+        device_id="box-fallback",
+        owner_id=owner_id,
+        name="Persisted Box",
+        kind="esp_box_3",
+        bound_companion_id=None,
+        approved_at=datetime.now(UTC),
+    )
+    hub = SimpleNamespace(
+        device_id="box-fallback",
+        owner_id=owner_id,
+        name="Hub Box",
+        kind="esp_box_3",
+        status=hub_status,
+        approved=True,
+        paired=True,
+        missed_probes=85,
+        room_name="" if hub_status != "online" else "box-control",
+        participant_sid="" if hub_status != "online" else "PA_BOX",
+        last_seen=datetime.now(UTC),
+    )
+    blackboard = mission_control_service.RuntimeDeviceBlackboard(
+        health="degraded",
+        available=False,
+        detail="Hub snapshot lease expired",
+    )
+
+    devices = mission_control_service._merge_devices(  # noqa: SLF001
+        [persistent],
+        [hub],
+        runtime_blackboard=blackboard,
+        owner_id=owner_id,
+    )
+
+    assert len(devices) == 1
+    device = devices[0]
+    assert device.status == expected_status
+    assert device.online is expected_online
+    assert device.signals["source"] == "hub+data"
+    assert device.signals["presence_source"] == "hub"
+    assert device.signals["blackboard_health"] == "degraded"
+    assert device.signals["blackboard_detail"] == "Hub snapshot lease expired"
+    assert device.signals["missed_probes"] == 85
+
+
+async def test_expired_runtime_device_lease_projects_consistent_offline_status() -> None:
+    owner_id = "owner-expired-device"
+    kv = _FakeRuntimeKV(
+        _runtime_snapshot_bytes(owner_id, hub_lease_delta=60, device_lease_delta=-1)
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(nats_kv=kv)))
+    statuses: list[mission_control_service.SourceStatus] = []
+    blackboard = await mission_control_service._runtime_blackboard(  # noqa: SLF001
+        request, owner_id, statuses
+    )
+
+    devices = mission_control_service._merge_devices(  # noqa: SLF001
+        [],
+        [],
+        runtime_blackboard=blackboard,
+        owner_id=owner_id,
+    )
+
+    assert blackboard.available is True
+    assert devices[0].status == "offline"
+    assert devices[0].online is False
+    assert devices[0].signals["presence_source"] == "runtime_blackboard"
 
 
 async def test_runtime_merge_uses_online_contract_and_drops_foreign_hub_rows() -> None:

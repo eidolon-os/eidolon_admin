@@ -246,6 +246,18 @@ class KVClient:
             )
         self._buckets[spec.name] = kv
 
+    async def open_bucket(self, bucket: str) -> None:
+        """Attach to an existing bucket without creating or modifying it.
+
+        Read-only observability surfaces use this instead of ``ensure_bucket``:
+        a missing authoritative bucket must be reported as unavailable, not
+        silently created by an Admin GET request.
+        """
+        if bucket in self._buckets:
+            return
+        await self.connect()
+        self._buckets[bucket] = await self._js.key_value(bucket=bucket)
+
     # ---- value ops ---------------------------------------------------------
 
     async def get(self, bucket: str, key: str) -> bytes | None:

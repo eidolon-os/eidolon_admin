@@ -66,6 +66,28 @@ async def test_ensure_bucket_creates_new(kv: KVClient, bucket_name: str) -> None
     await kv.ensure_bucket(BucketSpec(name=bucket_name, max_value_size=1024))
 
 
+@pytest.mark.asyncio
+async def test_open_bucket_attaches_to_existing_without_ensure(
+    kv: KVClient, bucket_name: str
+) -> None:
+    await kv.ensure_bucket(BucketSpec(name=bucket_name, max_value_size=1024))
+    await kv.put(bucket_name, "current", b"snapshot")
+
+    await kv.open_bucket(bucket_name)
+
+    assert await kv.get(bucket_name, "current") == b"snapshot"
+
+
+@pytest.mark.asyncio
+async def test_open_bucket_does_not_create_missing_bucket(
+    kv: KVClient, bucket_name: str
+) -> None:
+    with pytest.raises(Exception):
+        await kv.open_bucket(bucket_name)
+    with pytest.raises(RuntimeError, match="not registered"):
+        await kv.get(bucket_name, "current")
+
+
 # ---- put / get / delete --------------------------------------------------
 
 

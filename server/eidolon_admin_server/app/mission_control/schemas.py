@@ -36,6 +36,23 @@ class SourceStatus(BaseModel):
     latency_ms: float | None = None
 
 
+class RuntimeBlackboardEntry(BaseModel):
+    """One raw owner/current value read directly from the shared NATS KV."""
+
+    key: str
+    owner_id: str | None = None
+    snapshot: JsonDict | None = None
+    error: str = ""
+
+
+class RuntimeBlackboardResponse(BaseModel):
+    generated_at: datetime
+    bucket: str
+    owner_filter: str | None = None
+    read_only: Literal[True] = True
+    entries: list[RuntimeBlackboardEntry] = Field(default_factory=list)
+
+
 class RuntimeEvent(BaseModel):
     event_id: str
     ts: datetime

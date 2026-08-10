@@ -14,8 +14,9 @@ from eidolon_sdk.core.streaming import encode_sse_comment, encode_sse_event
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
+from .blackboard import read_runtime_blackboard
 from .replay import replay_events
-from .schemas import RuntimeEvent, RuntimeSnapshot
+from .schemas import RuntimeBlackboardResponse, RuntimeEvent, RuntimeSnapshot
 from .service import (
     _as_utc,
     _events_from_data,
@@ -36,6 +37,15 @@ async def snapshot(
     mode: str | None = Query(default=None),
 ) -> RuntimeSnapshot:
     return await build_snapshot(request, owner_id=owner_id, demo_mode="replay" if mode == "replay" else "live")
+
+
+@router.get("/runtime-blackboard", response_model=RuntimeBlackboardResponse)
+async def runtime_blackboard(
+    request: Request,
+    owner_id: str | None = Query(default=None, min_length=1, max_length=64),
+) -> RuntimeBlackboardResponse:
+    """Return the Hub-owned owner/current snapshots without projecting fields."""
+    return await read_runtime_blackboard(request, owner_id=owner_id)
 
 
 @router.get("/events")

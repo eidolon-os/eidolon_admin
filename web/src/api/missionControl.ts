@@ -88,6 +88,7 @@ export interface RuntimeCapabilityContract {
   description: string
   input_schema: Record<string, any>
   result_schema: Record<string, any>
+  [key: string]: unknown
 }
 
 export interface RuntimeBlackboardDevice {
@@ -97,20 +98,21 @@ export interface RuntimeBlackboardDevice {
   provider_companion_name: string
   name: string
   aliases: string[]
-  visibility: 'owner' | 'bound_companion'
+  visibility: 'owner' | 'bound_companion' | string
   capabilities: RuntimeCapabilityContract[]
   manifest_revision: string
-  status: 'registered_waiting_transport' | 'online'
+  status: string
   registered_at: string
   lease_expires_at: string
   last_seen_at: string | null
   room_name: string
   participant_sid: string
   presence_revision: string
+  [key: string]: unknown
 }
 
 export interface RuntimeBlackboardSnapshot {
-  schema_version: 2
+  schema_version: number
   owner_id: string
   epoch: string
   revision: number
@@ -118,6 +120,7 @@ export interface RuntimeBlackboardSnapshot {
   hub_lease_expires_at: string
   updated_at: string
   devices: Record<string, RuntimeBlackboardDevice>
+  [key: string]: unknown
 }
 
 export interface RuntimeDeviceBlackboard {
@@ -127,6 +130,21 @@ export interface RuntimeDeviceBlackboard {
   bucket: string
   key: string
   snapshot: RuntimeBlackboardSnapshot | null
+}
+
+export interface RuntimeBlackboardEntry {
+  key: string
+  owner_id: string | null
+  snapshot: RuntimeBlackboardSnapshot | null
+  error: string
+}
+
+export interface RuntimeBlackboardResponse {
+  generated_at: string
+  bucket: string
+  owner_filter: string | null
+  read_only: true
+  entries: RuntimeBlackboardEntry[]
 }
 
 export interface RuntimeTurnStage {
@@ -341,6 +359,14 @@ export async function getMissionControlSnapshot(ownerId?: string, mode?: string)
   if (mode) params.mode = mode
   const { data } = await client.get<RuntimeSnapshot>('/mission-control/snapshot', {
     params: Object.keys(params).length ? params : undefined,
+    suppressToast: true,
+  })
+  return data
+}
+
+export async function getRuntimeBlackboard(ownerId?: string): Promise<RuntimeBlackboardResponse> {
+  const { data } = await client.get<RuntimeBlackboardResponse>('/mission-control/runtime-blackboard', {
+    params: ownerId ? { owner_id: ownerId } : undefined,
     suppressToast: true,
   })
   return data
