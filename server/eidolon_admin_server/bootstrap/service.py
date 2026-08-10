@@ -487,6 +487,44 @@ class BootstrapService:
         session = self._store.latest_commissioning_session()
         return {"current": None if session is None else session.to_dict()}
 
+    def reset_controllers(self) -> dict[str, Any]:
+        """Revoke every Controller Grant so a new phone can claim this Host again.
+
+        This is the recovery path for an Owner who lost every managing phone. It
+        keeps the Host identity, the Owner binding, saved Wi-Fi and every
+        sibling service's data; only the authority to manage this Host is
+        withdrawn, so the normal first-claim flow can run again.
+        """
+
+        before = self._store.get_state()
+        revoked = [
+            grant.controller_id
+            for grant in self._store.list_controllers()
+            if grant.revoked_at is None
+        ]
+        after = self._store.reset_authority(
+            network_state=before.network_state,
+            now=_timestamp(_now()),
+        )
+        logger.warning(
+            "controller authority reset reset_epoch=%s owner_id=%s revoked=%s",
+            after.reset_epoch,
+            after.owner_id,
+            len(revoked),
+        )
+        return {
+            "host_id": self._identity_manager.identity.host_id,
+            "before": before.to_dict(),
+            "after": after.to_dict(),
+            "revoked_controllers": revoked,
+            "preserved": [
+                "host_identity",
+                "owner_binding",
+                "network_profiles",
+                "component_data",
+            ],
+        }
+
     async def reset_development_state(
         self,
         *,

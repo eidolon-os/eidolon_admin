@@ -147,6 +147,8 @@ class BootstrapControlServer:
                 setup_code=request.get("setup_code"),
                 controller=controller,
             )
+        if operation == "controller.reset":
+            return self._service.reset_controllers()
         if operation == "dev.code":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)

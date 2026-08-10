@@ -18,6 +18,13 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("health")
     subparsers.add_parser("descriptor")
 
+    subparsers.add_parser(
+        "controller-reset",
+        help=(
+            "revoke every Controller Grant so a new phone can claim this Host; "
+            "keeps the Host identity, Owner, network and all component data"
+        ),
+    )
     dev = subparsers.add_parser("dev")
     dev_subparsers = dev.add_subparsers(dest="dev_command", required=True)
     code = dev_subparsers.add_parser("code")
@@ -39,6 +46,8 @@ async def _execute(args: argparse.Namespace) -> dict[str, Any]:
         return await client.request("health")
     if args.command == "descriptor":
         return await client.request("descriptor")
+    if args.command == "controller-reset":
+        return await client.request("controller.reset")
     if args.command == "dev" and args.dev_command == "code":
         parameters = {} if args.ttl is None else {"ttl_seconds": args.ttl}
         return await client.request("dev.code", **parameters)

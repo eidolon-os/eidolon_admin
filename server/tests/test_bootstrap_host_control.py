@@ -1057,3 +1057,101 @@ def test_systemd_watchdog_uses_half_interval_and_main_pid() -> None:
     assert notifier.address == "@eidolon-test"
     assert notifier.watchdog_interval_seconds == 15.0
     assert wrong_process.watchdog_interval_seconds is None
+
+
+@pytest.mark.asyncio
+async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
+    tmp_path: Path,
+) -> None:
+    """The Owner lost every managing phone; recovery must not cost them data."""
+
+    development = _settings(tmp_path)
+    HostIdentityManager(development.identity_key_path, development.mode).load()
+    settings = replace(_settings(tmp_path), dev_setup_code="135790")
+    store = SQLiteBootstrapStateStore(settings.database_path)
+    service = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+        network=InMemoryNetworkProvisioning(),
+    )
+    service.initialize()
+    service.reconcile_network_state(NetworkState.CONNECTED)
+    issued = service.issue_development_setup_code()
+    commissioning = CommissioningService(store=store, network=InMemoryNetworkProvisioning())
+    authorization = commissioning.authorize(
+        session_id=issued["commissioning_id"],
+        secret=issued["setup_code"],
+    )
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_der = private_key.public_key().public_bytes(
+        Encoding.DER,
+        PublicFormat.SubjectPublicKeyInfo,
+    )
+    encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
+    controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+    commissioning.claim_controller(
+        authorization,
+        {
+            "controller_id": controller_id,
+            "public_key": encoded_public,
+            "display_name": "Lost phone",
+            "platform": "android",
+        },
+    )
+    store.bind_controller_owner(
+        controller_id=controller_id,
+        owner_id="owner-1",
+        reset_epoch=0,
+        now="2026-08-11T00:00:00Z",
+    )
+
+    # A production Host refuses the development reset but must still recover.
+    production = BootstrapService(
+        settings=replace(settings, mode=BootstrapMode.PRODUCTION),
+        store=store,
+        identity_manager=HostIdentityManager(
+            settings.identity_key_path, BootstrapMode.PRODUCTION
+        ),
+        network=InMemoryNetworkProvisioning(),
+    )
+    try:
+        with pytest.raises(BootstrapOperationRejected, match="disabled"):
+            await production.reset_development_state(forget_wifi_profiles=False)
+
+        result = production.reset_controllers()
+        host_id = production.public_descriptor()["host_id"]
+        revoked_grant = store.get_controller(controller_id)
+        preserved_owner = store.get_state().owner_id
+    finally:
+        service.shutdown()
+
+    assert result["revoked_controllers"] == [controller_id]
+    assert result["before"]["claim_state"] == "claimed"
+    assert result["after"]["claim_state"] == "unclaimed"
+    assert result["after"]["reset_epoch"] == result["before"]["reset_epoch"] + 1
+    # Recovery replaces the manager, not the Host and not the Owner's data.
+    assert preserved_owner == "owner-1"
+    assert result["after"]["network_state"] == result["before"]["network_state"]
+    assert result["host_id"] == host_id
+    assert revoked_grant.revoked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_controller_reset_is_reachable_over_the_control_socket(
+    tmp_path: Path, short_runtime_dir: Path
+) -> None:
+    settings = _settings(tmp_path, runtime_dir=short_runtime_dir)
+    service = _service(settings, network=InMemoryNetworkProvisioning())
+    service.initialize()
+    server = BootstrapControlServer(settings.control_socket, service)
+    await server.start()
+    client = BootstrapControlClient(settings.control_socket)
+    try:
+        result = await client.request("controller.reset")
+        assert result["revoked_controllers"] == []
+        assert result["after"]["claim_state"] == "unclaimed"
+        assert "component_data" in result["preserved"]
+    finally:
+        await server.close()
+        service.shutdown()
