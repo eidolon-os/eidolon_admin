@@ -10,6 +10,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from .commissioning_service import CommissioningRequestRejected
 from .service import BootstrapOperationRejected, BootstrapService
 
 
@@ -68,6 +69,14 @@ class BootstrapControlServer:
             if not isinstance(request, dict):
                 raise BootstrapControlError("control request must be a JSON object")
             response = {"ok": True, "result": await self._dispatch(request)}
+        except CommissioningRequestRejected as exc:
+            response = {
+                "ok": False,
+                "error": {
+                    "code": exc.code,
+                    "message": str(exc),
+                },
+            }
         except (
             BootstrapControlError,
             BootstrapOperationRejected,
@@ -127,6 +136,17 @@ class BootstrapControlServer:
             )
         if operation == "commissioning.endpoint":
             return self._service.commissioning_endpoint()
+        if operation == "dev.lan.endpoint":
+            return self._service.development_lan_commissioning_endpoint()
+        if operation == "dev.lan.claim":
+            controller = request.get("controller")
+            if not isinstance(controller, dict):
+                raise BootstrapControlError("controller must be an object")
+            return self._service.claim_development_lan_controller(
+                commissioning_id=request.get("commissioning_id"),
+                setup_code=request.get("setup_code"),
+                controller=controller,
+            )
         if operation == "dev.code":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)
