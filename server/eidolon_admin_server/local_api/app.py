@@ -20,6 +20,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from .auth import LocalControllerSessionStore
 from .config import LocalApiSettings, load_local_api_settings
+from .host_services import (
+    AdminHostServicesClient,
+    AdminHostServicesPort,
+    HostServiceControlError,
+    LocalHostServiceInventoryView,
+    LocalHostServiceMutationView,
+    MutationOperation,
+    host_service_inventory,
+    host_service_mutation,
+)
 from .devices import (
     AdminOwnerDevicesClient,
     AdminOwnerDevicesPort,
@@ -62,6 +72,14 @@ class HostProofRequest(BaseModel):
 
     contract_version: Literal["1"]
     challenge: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+
+
+class HostServiceMutationRequest(BaseModel):
+    """Compare-and-swap intent, carried unchanged down to eidolond."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
 
 
 class ControllerChallengeRequest(BaseModel):
@@ -112,6 +130,7 @@ def create_app(
     runtime_client: AdminOwnerRuntimePort | None = None,
     devices_client: AdminOwnerDevicesPort | None = None,
     device_admission_client: AdminDeviceAdmissionPort | None = None,
+    host_services_client: AdminHostServicesPort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -138,26 +157,39 @@ def create_app(
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_device_admission_client = device_admission_client is None
+    host_services = host_services_client or AdminHostServicesClient(
+        base_url=resolved.admin_base_url,
+        service_token=resolved.admin_service_token,
+        timeout_seconds=resolved.admin_timeout_seconds,
+    )
+    owns_host_services_client = host_services_client is None
+
+    owned_clients = [
+        client
+        for owned, client in (
+            (owns_workspace_client, workspace),
+            (owns_runtime_client, runtime),
+            (owns_devices_client, devices),
+            (owns_device_admission_client, device_admission),
+            (owns_host_services_client, host_services),
+        )
+        if owned
+    ]
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         try:
             yield
         finally:
-            try:
-                if owns_workspace_client:
-                    await workspace.close()
-            finally:
+            # Every client this app created is closed, even if an earlier one raises.
+            failures: list[BaseException] = []
+            for client in owned_clients:
                 try:
-                    if owns_runtime_client:
-                        await runtime.close()
-                finally:
-                    try:
-                        if owns_devices_client:
-                            await devices.close()
-                    finally:
-                        if owns_device_admission_client:
-                            await device_admission.close()
+                    await client.close()
+                except Exception as exc:  # noqa: BLE001 - report all, hide none
+                    failures.append(exc)
+            if failures:
+                raise ExceptionGroup("Local API client shutdown failed", failures)
 
     app = FastAPI(
         title="Eidolon Local API",
@@ -515,6 +547,43 @@ def create_app(
                 result=result,
             )
         except DeviceAdmissionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.get(
+        "/api/local/v1/host/services",
+        response_model=LocalHostServiceInventoryView,
+    )
+    async def get_host_services(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalHostServiceInventoryView:
+        principal, _session = await authenticated_controller(authorization)
+        _owner_principal(principal)
+        try:
+            return host_service_inventory(await host_services.list_services())
+        except HostServiceControlError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.post(
+        "/api/local/v1/host/services/{service_id}/{operation}",
+        response_model=LocalHostServiceMutationView,
+    )
+    async def mutate_host_service(
+        service_id: str,
+        operation: MutationOperation,
+        payload: HostServiceMutationRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalHostServiceMutationView:
+        principal, _session = await authenticated_controller(authorization)
+        _owner_principal(principal)
+        try:
+            return host_service_mutation(
+                await host_services.mutate(
+                    service_id=service_id,
+                    operation=operation,
+                    expected_revision=payload.expected_revision,
+                )
+            )
+        except HostServiceControlError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
 
     @app.get("/api/local/v1/system/state")
