@@ -14,6 +14,8 @@ from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .control_plane import ControlPlaneService
 from .control_plane import router as control_plane_router
+from .host_services.client import HostServiceClient
+from .host_services.router import router as host_services_router
 from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .routers.overview import router as overview_router
@@ -40,6 +42,7 @@ def create_app(
             yield
         finally:
             await app.state.control_plane.close()
+            await app.state.host_services.close()
             await app.state.http_client.aclose()
 
     app = FastAPI(
@@ -57,6 +60,12 @@ def create_app(
     app.state.control_plane = ControlPlaneService.build(
         settings=settings,
         http_client=app.state.http_client,
+    )
+    app.state.host_services = HostServiceClient(
+        base_url=settings.system_directory_url,
+        timeout_seconds=settings.authority_timeout_seconds,
+        uds_path=settings.system_directory_uds,
+        client=app.state.http_client,
     )
     app.state.supervisor_client = SupervisorClient(settings.supervisor_socket)
     app.state.supervisor_configs = ConfigStore(
@@ -92,6 +101,7 @@ def create_app(
     app.include_router(services_router, prefix="/api")
     app.include_router(benchmarks_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
+    app.include_router(host_services_router, prefix="/api")
     app.include_router(supervisor_router, prefix="/api")
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
