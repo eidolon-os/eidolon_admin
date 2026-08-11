@@ -240,3 +240,48 @@ def test_admin_does_not_hand_a_tcp_pool_to_a_unix_socket_host() -> None:
     app = create_app(settings=settings)
 
     assert app.state.host_services._client is not app.state.http_client  # noqa: SLF001
+
+
+def test_a_product_host_starts_without_any_workstation_toolchain() -> None:
+    """A missing firmware catalog is a missing convenience, not a missing Host.
+
+    On the Pi this crash-looped Admin: the ESP32 catalog was read eagerly at
+    composition time and its absence took the whole control plane down.
+    """
+
+    from eidolon_admin_server.app.main import create_app
+    from eidolon_admin_server.app.settings import get_settings
+
+    settings = get_settings().model_copy(
+        update={"esp32_tools_file": Path("/nonexistent/esp32_tools.yaml")}
+    )
+
+    app = create_app(settings=settings)
+
+    assert app.state.esp32_tools is None
+    paths = set(app.openapi()["paths"])
+    assert not [path for path in paths if "esp32" in path]
+    # The Host still serves everything that is actually its job.
+    assert "/api/host/services" in paths
+
+
+async def test_the_host_reports_which_workstation_tools_it_has() -> None:
+    """The Web UI must not offer a page that cannot work on this Host."""
+
+    from eidolon_admin_server.app.main import create_app
+    from eidolon_admin_server.app.settings import get_settings
+
+    settings = get_settings().model_copy(
+        update={"esp32_tools_file": Path("/nonexistent/esp32_tools.yaml")}
+    )
+    app = create_app(settings=settings)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://admin") as api:
+        response = await api.get("/api/host/capabilities")
+
+    assert response.status_code == 200
+    esp32 = next(
+        item for item in response.json()["workstation"] if item["name"] == "esp32-tools"
+    )
+    assert esp32["available"] is False
+    assert "not present on this Host" in esp32["detail"]

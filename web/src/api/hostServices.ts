@@ -80,3 +80,18 @@ export function hostServiceTagType(
       return 'info'
   }
 }
+
+export interface WorkstationCapability {
+  name: string
+  available: boolean
+  detail: string
+}
+
+export interface HostCapabilities {
+  workstation: WorkstationCapability[]
+}
+
+/** What this Host can offer. A product Host has no firmware or Android tooling. */
+export function getHostCapabilities(): Promise<HostCapabilities> {
+  return client.get('/host/capabilities')
+}

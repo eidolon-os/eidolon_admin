@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { useServicesStore } from '@/stores/services'
 import { navigation, type NavGroup, type NavItem, type RouteTarget } from './navigation'
+import { getHostCapabilities } from '@/api/hostServices'
 
 const servicesStore = useServicesStore()
 const route = useRoute()
@@ -63,6 +64,7 @@ type MenuSection = {
 onMounted(() => {
   updateCompactLayout()
   servicesStore.load()
+  loadCapabilities()
   window.addEventListener('resize', updateCompactLayout)
   window.addEventListener('keydown', handleGlobalKeydown)
 })
@@ -83,6 +85,29 @@ const coveredServiceIds = computed(() => {
       if (item.route.name === 'feature' && item.route.params?.serviceId) ids.add(item.route.params.serviceId)
   return ids
 })
+// Workstation tools only exist on a developer machine. Offering a firmware page
+// on a product Host would send the operator to a route that cannot work there.
+const unavailableTools = ref<Set<string>>(new Set())
+const TOOL_NAV_IDS: Record<string, string> = {
+  'esp32-tools': 'firmware',
+  'mobile-tools': 'mobile',
+}
+
+async function loadCapabilities() {
+  try {
+    const capabilities = await getHostCapabilities()
+    unavailableTools.value = new Set(
+      capabilities.workstation
+        .filter((item) => !item.available)
+        .map((item) => TOOL_NAV_IDS[item.name])
+        .filter(Boolean),
+    )
+  } catch {
+    // An unreachable capability probe must not hide navigation that works.
+    unavailableTools.value = new Set()
+  }
+}
+
 const effectiveNav = computed<NavGroup[]>(() => {
   const generated: NavItem[] = servicesStore.services
     .filter((s) => !coveredServiceIds.value.has(s.id))
@@ -95,8 +120,12 @@ const effectiveNav = computed<NavGroup[]>(() => {
       route: { name: 'supervisor' },
       activeMatch: false,
     }))
-  if (!generated.length) return navigation
-  return navigation.map((group) =>
+  const visible = navigation.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !unavailableTools.value.has(item.id)),
+  }))
+  if (!generated.length) return visible
+  return visible.map((group) =>
     group.id === 'system' ? { ...group, items: [...group.items, ...generated] } : group,
   )
 })

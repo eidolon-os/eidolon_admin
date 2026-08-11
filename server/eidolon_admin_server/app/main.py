@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+import logging
+
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +29,8 @@ from .supervisor.router import router as supervisor_router
 from .system_health import router as system_health_router
 from .tools.esp32 import Esp32ToolService, router as esp32_tools_router
 from .tools.mobile import MobileToolService, router as mobile_tools_router
+from .tools.mobile.service import DEFAULT_CLIENT_ROOT as MOBILE_CLIENT_ROOT
+from .workstation import esp32_capability, mobile_capability
 
 
 def create_app(
@@ -73,13 +77,32 @@ def create_app(
         settings.supervisor_available_dir,
         settings.supervisor_enabled_dir,
     )
-    app.state.esp32_tools = Esp32ToolService(
-        catalog_file=settings.esp32_tools_file,
-        jobs_root=settings.state_dir / "esp32-tools" / "jobs",
+    # Workstation tools are optional developer conveniences. A product Host has
+    # no serial port, ESP-IDF or Flutter SDK, and their absence must not take
+    # the control plane down with them.
+    esp32 = esp32_capability(settings.esp32_tools_file)
+    mobile = mobile_capability(MOBILE_CLIENT_ROOT)
+    app.state.workstation_capabilities = (esp32, mobile)
+    app.state.esp32_tools = (
+        Esp32ToolService(
+            catalog_file=settings.esp32_tools_file,
+            jobs_root=settings.state_dir / "esp32-tools" / "jobs",
+        )
+        if esp32.available
+        else None
     )
-    app.state.mobile_tools = MobileToolService(
-        jobs_root=settings.state_dir / "mobile-tools" / "jobs",
+    app.state.mobile_tools = (
+        MobileToolService(jobs_root=settings.state_dir / "mobile-tools" / "jobs")
+        if mobile.available
+        else None
     )
+    for capability in app.state.workstation_capabilities:
+        if not capability.available:
+            logging.getLogger(__name__).info(
+                "workstation tool unavailable on this Host: %s (%s)",
+                capability.name,
+                capability.detail,
+            )
 
     app.add_middleware(
         CORSMiddleware,
@@ -109,8 +132,10 @@ def create_app(
     app.include_router(configs_router, prefix="/api")
     app.include_router(control_plane_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
-    app.include_router(esp32_tools_router, prefix="/api")
-    app.include_router(mobile_tools_router, prefix="/api")
+    if esp32.available:
+        app.include_router(esp32_tools_router, prefix="/api")
+    if mobile.available:
+        app.include_router(mobile_tools_router, prefix="/api")
     # Catch-all proxy remains last so the exact service catalog route wins.
     app.include_router(gateway_router, prefix="/api")
     return app

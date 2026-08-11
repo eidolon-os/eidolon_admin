@@ -48,6 +48,18 @@ def _fail(error: HostServiceError) -> HTTPException:
     return HTTPException(status_code=error.status_code, detail=error.detail)
 
 
+@router.get("/capabilities")
+async def list_capabilities(request: Request) -> dict[str, object]:
+    """What this Host can actually offer.
+
+    The Web UI uses this to avoid showing a page that cannot work here; a
+    product Host has no firmware or Android tooling.
+    """
+
+    capabilities = getattr(request.app.state, "workstation_capabilities", ())
+    return {"workstation": [item.to_wire() for item in capabilities]}
+
+
 @router.get("/services", response_model=HostServicePage)
 async def list_services(request: Request) -> HostServicePage:
     try:
