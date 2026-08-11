@@ -61,11 +61,24 @@ class HostServiceClient:
             raise self._invalid("service page did not carry a service list")
         try:
             return HostServicePage(
-                driver=str(document.get("driver", "eidolond")),
+                driver=await self._host_driver(),
                 services=tuple(self._service(item) for item in services),
             )
         except ValidationError as exc:
             raise self._invalid("service page did not match the expected shape") from exc
+
+    async def _host_driver(self) -> str:
+        """Which process manager eidolond is actually driving.
+
+        The service page does not carry it; health does. An operator needs it to
+        know whether they are looking at a supervisord Mac or a systemd Pi.
+        """
+
+        document = await self._request("GET", "/health")
+        driver = document.get("host_driver")
+        if not isinstance(driver, str) or not driver:
+            raise self._invalid("the Host system manager did not report its driver")
+        return driver
 
     async def get_service(self, service_id: str) -> HostService:
         document = await self._request(

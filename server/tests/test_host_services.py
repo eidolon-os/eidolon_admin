@@ -38,6 +38,16 @@ _STATUS = {
 }
 
 
+# Shapes captured from a live eidolond (supervisord Mac, 2026-08-11). The
+# service page carries no driver; health does.
+_HEALTH = {
+    "status": "ready",
+    "scope": "machine",
+    "owner_scoped": False,
+    "host_driver": "supervisord",
+}
+
+
 def _client(handler) -> HostServiceClient:
     return HostServiceClient(
         base_url="http://127.0.0.1:8090",
@@ -55,11 +65,15 @@ def _app(client: HostServiceClient) -> FastAPI:
 
 async def test_service_page_projects_only_the_facts_an_operator_acts_on() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json=_HEALTH)
         assert request.url.path == "/api/system/v1/services"
         return httpx.Response(200, json={"services": [_STATUS]})
 
     page = await _client(handler).list_services()
 
+    # eidolond reports the real process manager; it is not assumed.
+    assert page.driver == "supervisord"
     assert [item.service_id for item in page.services] == ["eidolon-hub"]
     service = page.services[0]
     assert service.enabled is True
@@ -127,8 +141,24 @@ async def test_an_unreachable_system_manager_is_not_reported_as_a_healthy_host()
 
 
 async def test_a_response_missing_the_desired_state_is_refused() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json=_HEALTH)
         return httpx.Response(200, json={"services": [{"service_id": "x"}]})
+
+    with pytest.raises(HostServiceError) as error:
+        await _client(handler).list_services()
+
+    assert error.value.kind == "invalid_response"
+
+
+async def test_a_health_response_without_a_driver_is_refused() -> None:
+    """Reporting a guessed driver would mislead an operator about the Host."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json={"status": "ready"})
+        return httpx.Response(200, json={"services": [_STATUS]})
 
     with pytest.raises(HostServiceError) as error:
         await _client(handler).list_services()
@@ -138,6 +168,8 @@ async def test_a_response_missing_the_desired_state_is_refused() -> None:
 
 async def test_rest_surface_exposes_control_on_both_hosts() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/health":
+            return httpx.Response(200, json=_HEALTH)
         if request.url.path.endswith("/restart"):
             return httpx.Response(
                 200,
