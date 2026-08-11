@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
 from .domain import (
+    is_usable_setup_code,
     BootstrapOperation,
     BootstrapOperationState,
     BootstrapOperationType,
@@ -32,6 +33,7 @@ from .ports import (
 
 
 _CONTROLLER_ID = re.compile(r"^ectrl-[0-9a-f]{20}$")
+
 logger = logging.getLogger("eidolon.bootstrap.commissioning")
 
 
@@ -158,7 +160,7 @@ class CommissioningService:
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
             )
-        if not isinstance(secret, str) or not re.fullmatch(r"[0-9]{6}", secret):
+        if not isinstance(secret, str) or not is_usable_setup_code(secret):
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
             )

@@ -149,10 +149,10 @@ class BootstrapControlServer:
             )
         if operation == "controller.reset":
             return self._service.reset_controllers()
-        if operation == "dev.code":
+        if operation == "commissioning.code":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)
-            return self._service.issue_development_setup_code(ttl)
+            return self._service.issue_setup_code(ttl)
         if operation == "dev.show":
             return self._service.development_setup_status()
         if operation == "dev.reset":

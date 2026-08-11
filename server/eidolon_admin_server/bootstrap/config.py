@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
-import re
 import uuid
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Mapping
+
+from .domain import SETUP_CODE_DIGITS, is_usable_setup_code
 
 
 class BootstrapMode(StrEnum):
@@ -155,9 +156,10 @@ def load_bootstrap_settings(
             raise BootstrapConfigurationError(
                 "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE is development-only"
             )
-        if re.fullmatch(r"[0-9]{6}", dev_setup_code) is None:
+        if not is_usable_setup_code(dev_setup_code):
             raise BootstrapConfigurationError(
-                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE must contain exactly 6 digits"
+                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE must be a usable "
+                f"{SETUP_CODE_DIGITS}-digit Setup code"
             )
 
     ble_service_uuid = env.get(

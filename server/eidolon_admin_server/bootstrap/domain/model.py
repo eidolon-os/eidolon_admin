@@ -7,6 +7,8 @@ Controller grants, network operations, and their reset-epoch boundary.
 
 from __future__ import annotations
 
+import re
+import secrets
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
@@ -155,3 +157,37 @@ class BootstrapOperation:
             "updated_at": self.updated_at,
             "error_code": self.error_code,
         }
+
+
+#: A Setup code is read aloud or typed from a label, so it is short by
+#: necessity. Eight digits is what Matter and HomeKit both settled on: about
+#: 26.6 bits, low enough to be usable and safe only because the session it
+#: unlocks is one-time, expires, and dies after a few wrong guesses.
+SETUP_CODE_DIGITS = 8
+_SETUP_CODE = re.compile(r"^[0-9]{8}$")
+
+
+def is_usable_setup_code(value: str) -> bool:
+    """Whether a Setup code is well formed and not one a person would guess.
+
+    Matter and HomeKit both refuse the same shapes: every digit the same, and
+    the plain run up or down. They carry no less entropy than any other code,
+    but they are what someone tries first, and they are what a factory prints
+    by accident.
+    """
+
+    if _SETUP_CODE.fullmatch(value) is None:
+        return False
+    if len(set(value)) == 1:
+        return False
+    ascending = "".join(str(digit % 10) for digit in range(SETUP_CODE_DIGITS))
+    return value not in {ascending, ascending[::-1]}
+
+
+def generate_setup_code() -> str:
+    """Draw a Setup code the Host has never used before, uniformly."""
+
+    while True:
+        candidate = f"{secrets.randbelow(10**SETUP_CODE_DIGITS):0{SETUP_CODE_DIGITS}d}"
+        if is_usable_setup_code(candidate):
+            return candidate

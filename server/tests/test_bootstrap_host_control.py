@@ -26,6 +26,7 @@ from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
 from eidolon_admin_server.bootstrap.commissioning_service import CommissioningService
+from eidolon_admin_server.bootstrap.domain import SETUP_CODE_DIGITS
 from eidolon_admin_server.bootstrap.config import (
     BootstrapConfigurationError,
     BootstrapMode,
@@ -256,23 +257,34 @@ def test_fixed_setup_code_is_accepted_only_in_development() -> None:
     settings = load_bootstrap_settings(
         {
             "EIDOLON_BOOTSTRAP_MODE": "development",
-            "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "246810",
+            "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "24681012",
         }
     )
-    assert settings.dev_setup_code == "246810"
+    assert settings.dev_setup_code == "24681012"
 
     with pytest.raises(BootstrapConfigurationError, match="development-only"):
         load_bootstrap_settings(
             {
                 "EIDOLON_BOOTSTRAP_MODE": "production",
-                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "246810",
+                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "24681012",
             }
         )
 
 
-@pytest.mark.parametrize("code", ["12345", "1234567", "abcdef", "12 456"])
-def test_fixed_development_setup_code_requires_six_digits(code: str) -> None:
-    with pytest.raises(BootstrapConfigurationError, match="exactly 6 digits"):
+@pytest.mark.parametrize(
+    "code",
+    [
+        "1234567",  # too short
+        "123456789",  # too long
+        "abcdefgh",
+        "12 45678",
+        "11111111",  # every digit the same
+        "01234567",  # the plain run up
+        "76543210",  # and down
+    ],
+)
+def test_a_fixed_setup_code_must_be_one_nobody_would_guess(code: str) -> None:
+    with pytest.raises(BootstrapConfigurationError, match="usable 8-digit Setup code"):
         load_bootstrap_settings(
             {
                 "EIDOLON_BOOTSTRAP_MODE": "development",
@@ -367,20 +379,20 @@ def test_development_setup_code_is_short_lived_and_not_persisted(
     service = _service(settings)
     service.initialize()
     try:
-        credential = service.issue_development_setup_code(300)
+        credential = service.issue_setup_code(300)
         assert settings.database_path.stat().st_mode & 0o777 == 0o600
         assert credential["host_id"].startswith("ehost-")
         assert credential["setup_code"].isdigit()
-        assert len(credential["setup_code"]) == 6
+        assert len(credential["setup_code"]) == SETUP_CODE_DIGITS
 
         database_dump = "\n".join(
             service._store.connection.iterdump()  # noqa: SLF001 - persistence invariant
         )
         assert credential["setup_code"] not in database_dump
 
-        replacement = service.issue_development_setup_code(300)
+        replacement = service.issue_setup_code(300)
         assert replacement["commissioning_id"] != credential["commissioning_id"]
-        status = service.development_setup_status()["current"]
+        status = service.setup_session_status()["current"]
         assert status["session_id"] == replacement["commissioning_id"]
         assert "setup_code" not in status
     finally:
@@ -390,37 +402,47 @@ def test_development_setup_code_is_short_lived_and_not_persisted(
 def test_fixed_development_setup_code_is_automatically_available(
     tmp_path: Path,
 ) -> None:
-    settings = replace(_settings(tmp_path), dev_setup_code="246810")
+    settings = replace(_settings(tmp_path), dev_setup_code="24681012")
     service = _service(settings)
     service.initialize()
     try:
         endpoint = service.commissioning_endpoint()
-        development_setup = endpoint["development_setup"]
-        assert development_setup is not None
+        setup_session = endpoint["setup_session"]
+        assert setup_session is not None
 
         commissioning = CommissioningService(
             store=service._store,  # noqa: SLF001 - test application boundary
             network=InMemoryNetworkProvisioning(),
         )
         authorization = commissioning.authorize(
-            session_id=development_setup["commissioning_id"],
-            secret="246810",
+            session_id=setup_session["commissioning_id"],
+            secret="24681012",
         )
-        assert authorization.session_id == development_setup["commissioning_id"]
+        assert authorization.session_id == setup_session["commissioning_id"]
 
-        replacement = service.issue_development_setup_code(300)
-        assert replacement["setup_code"] == "246810"
-        assert replacement["commissioning_id"] != development_setup["commissioning_id"]
+        replacement = service.issue_setup_code(300)
+        assert replacement["setup_code"] == "24681012"
+        assert replacement["commissioning_id"] != setup_session["commissioning_id"]
 
         database_dump = "\n".join(
             service._store.connection.iterdump()  # noqa: SLF001
         )
-        assert "246810" not in database_dump
+        assert "24681012" not in database_dump
     finally:
         service.shutdown()
 
 
-def test_production_rejects_development_setup_code_issuance(tmp_path: Path) -> None:
+def test_a_production_host_can_be_claimed_at_all(tmp_path: Path) -> None:
+    """The gate is the Host's own control socket, not the build being a
+    development one.
+
+    Issuance used to be refused unless the process was in development mode,
+    and nothing else could create a commissioning session — so a shipped Host
+    could not be claimed by any phone, ever. Reaching this operation already
+    means holding a root-owned local socket, which is the same authority
+    controller-reset runs under and the greater act of the two.
+    """
+
     development = _settings(tmp_path)
     HostIdentityManager(
         development.identity_key_path,
@@ -430,8 +452,18 @@ def test_production_rejects_development_setup_code_issuance(tmp_path: Path) -> N
     service = _service(production)
     service.initialize()
     try:
-        with pytest.raises(BootstrapOperationRejected):
-            service.issue_development_setup_code()
+        credential = service.issue_setup_code(300)
+
+        assert len(credential["setup_code"]) == SETUP_CODE_DIGITS
+        assert credential["host_id"].startswith("ehost-")
+        assert credential["commissioning_id"]
+
+        # A production Host draws a fresh code each time; only a development
+        # one may pin a fixed one.
+        assert service.issue_setup_code(300)["setup_code"] != credential["setup_code"]
+
+        # The development-only LAN shortcut stays development-only: it skips
+        # the pinned TLS the phone would otherwise verify.
         with pytest.raises(BootstrapOperationRejected, match="LAN commissioning"):
             service.development_lan_commissioning_endpoint()
     finally:
@@ -486,8 +518,8 @@ async def test_control_socket_exposes_read_state_and_dev_issuance(
         assert health["status"] == "running"
         assert health["state"]["claim_state"] == "unclaimed"
 
-        credential = await client.request("dev.code", ttl_seconds=300)
-        assert len(credential["setup_code"]) == 6
+        credential = await client.request("commissioning.code", ttl_seconds=300)
+        assert len(credential["setup_code"]) == SETUP_CODE_DIGITS
 
         challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
         proof = await client.request("host.prove", challenge=challenge)
@@ -513,7 +545,7 @@ async def test_control_socket_development_reset_can_forget_wifi(
 ) -> None:
     settings = replace(
         _settings(tmp_path, runtime_dir=short_runtime_dir),
-        dev_setup_code="246810",
+        dev_setup_code="24681012",
     )
     network = InMemoryNetworkProvisioning(current_ssid="Development Wi-Fi")
     service = _service(settings, network=network)
@@ -528,7 +560,7 @@ async def test_control_socket_development_reset_can_forget_wifi(
         assert reset["after"]["claim_state"] == "unclaimed"
         assert reset["after"]["network_state"] == "unconfigured"
         assert reset["after"]["reset_epoch"] == 1
-        assert reset["development_setup"] is not None
+        assert reset["setup_session"] is not None
     finally:
         await server.close()
         service.shutdown()
@@ -592,7 +624,7 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
             await asyncio.sleep(0.01)
 
         control = BootstrapControlClient(bootstrap.control_socket)
-        setup = await control.request("dev.code", ttl_seconds=300)
+        setup = await control.request("commissioning.code", ttl_seconds=300)
         private_key = ec.generate_private_key(ec.SECP256R1())
         public_der = private_key.public_key().public_bytes(
             Encoding.DER,
@@ -633,7 +665,7 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
                     "contract_version": "1",
                     "commissioning_id": setup["commissioning_id"],
                     "setup_code": (
-                        "000000" if setup["setup_code"] != "000000" else "999999"
+                        "00000012" if setup["setup_code"] != "00000012" else "99999987"
                     ),
                     "controller": controller,
                 },
@@ -715,7 +747,7 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
     )
     bootstrap_service.initialize()
     commissioning = CommissioningService(store=store, network=network)
-    setup = bootstrap_service.issue_development_setup_code(300)
+    setup = bootstrap_service.issue_setup_code(300)
     initial = commissioning.authorize(
         session_id=setup["commissioning_id"],
         secret=setup["setup_code"],
@@ -1067,7 +1099,7 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
 
     development = _settings(tmp_path)
     HostIdentityManager(development.identity_key_path, development.mode).load()
-    settings = replace(_settings(tmp_path), dev_setup_code="135790")
+    settings = replace(_settings(tmp_path), dev_setup_code="13579024")
     store = SQLiteBootstrapStateStore(settings.database_path)
     service = BootstrapService(
         settings=settings,
@@ -1077,7 +1109,7 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
     )
     service.initialize()
     service.reconcile_network_state(NetworkState.CONNECTED)
-    issued = service.issue_development_setup_code()
+    issued = service.issue_setup_code()
     commissioning = CommissioningService(store=store, network=InMemoryNetworkProvisioning())
     authorization = commissioning.authorize(
         session_id=issued["commissioning_id"],

@@ -18,6 +18,7 @@ from fastapi import FastAPI, Header, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
+from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
 from .config import LocalApiSettings, load_local_api_settings
 from .host_services import (
@@ -119,7 +120,7 @@ class DevelopmentLanCommissioningClaimRequest(BaseModel):
             r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         )
     )
-    setup_code: str = Field(pattern=r"^[0-9]{6}$")
+    setup_code: str = Field(pattern=rf"^[0-9]{{{SETUP_CODE_DIGITS}}}$")
     controller: DevelopmentControllerClaim
 
 

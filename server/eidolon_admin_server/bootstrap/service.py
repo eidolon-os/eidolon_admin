@@ -26,7 +26,7 @@ from .controller_auth import (
     ControllerSignatureError,
     verify_controller_signature,
 )
-from .domain import ControllerGrant, ControllerRole, NetworkState
+from .domain import ControllerGrant, ControllerRole, NetworkState, generate_setup_code
 from .ports import (
     BootstrapStateConflict,
     BootstrapStateStore,
@@ -354,7 +354,7 @@ class BootstrapService:
             "host_public_key": self._identity_manager.identity.public_key,
             "reset_epoch": self._store.get_state().reset_epoch,
             "tls_spki_fingerprint": self._tls_identity_manager.identity.spki_fingerprint,
-            "development_setup": self._active_development_setup(),
+            "setup_session": self._active_setup_session(),
         }
         return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
 
@@ -415,9 +415,19 @@ class BootstrapService:
                 "development LAN commissioning is unavailable on this Host"
             )
 
-    def _active_development_setup(self) -> dict[str, str] | None:
-        if self._settings.mode is not BootstrapMode.DEVELOPMENT:
-            return None
+    def _active_setup_session(self) -> dict[str, str] | None:
+        """Which setup session, if any, a phone may present a code against.
+
+        The code and the session that accepts it are two halves of one act, and
+        a phone is told only the half that is not a secret. Reporting this in
+        development only meant an operator could mint a code for a shipped Host
+        and the phone would still have nowhere to spend it.
+
+        Reporting is unconditional; creating one is not. A development Host may
+        conjure a session from its fixed code so a workstation loop keeps
+        working, and every other Host waits to be given one.
+        """
+
         session = self._store.latest_commissioning_session()
         now = _timestamp(_now())
         if (
@@ -426,11 +436,13 @@ class BootstrapService:
             or session.revoked_at is not None
             or session.expires_at <= now
         ):
+            if self._settings.mode is not BootstrapMode.DEVELOPMENT:
+                return None
             fixed_code = self._settings.dev_setup_code
             state = self._store.get_state()
             if fixed_code is None or state.claim_state.value != "unclaimed":
                 return None
-            self._issue_development_setup_code(
+            self._issue_setup_code(
                 fixed_code,
                 self._settings.dev_setup_code_ttl_seconds,
             )
@@ -441,23 +453,26 @@ class BootstrapService:
             "expires_at": session.expires_at,
         }
 
-    def issue_development_setup_code(
-        self, ttl_seconds: int | None = None
-    ) -> dict[str, Any]:
-        if self._settings.mode is not BootstrapMode.DEVELOPMENT:
-            raise BootstrapOperationRejected(
-                "development Setup code issuance is disabled in production"
-            )
+    def issue_setup_code(self, ttl_seconds: int | None = None) -> dict[str, Any]:
+        """Mint the one-time code a phone types to claim this Host.
+
+        Reaching this operation already means holding the Host's own control
+        socket, which is root-owned and local. That is the same authority
+        ``controller-reset`` runs under, and issuing a code is the lesser act
+        of the two — so gating it on the build being a development one only
+        ever meant a shipped Host could not be claimed at all.
+
+        A production Host draws a fresh code every time. A development one may
+        pin a fixed code so a workstation loop does not reprint it.
+        """
+
         ttl = ttl_seconds or self._settings.dev_setup_code_ttl_seconds
         if not 60 <= ttl <= 86400:
             raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
+        setup_code = self._settings.dev_setup_code or generate_setup_code()
+        return self._issue_setup_code(setup_code, ttl)
 
-        setup_code = self._settings.dev_setup_code or (
-            f"{secrets.randbelow(1_000_000):06d}"
-        )
-        return self._issue_development_setup_code(setup_code, ttl)
-
-    def _issue_development_setup_code(
+    def _issue_setup_code(
         self,
         setup_code: str,
         ttl_seconds: int,
@@ -479,7 +494,7 @@ class BootstrapService:
         )
         return result
 
-    def development_setup_status(self) -> dict[str, Any]:
+    def setup_session_status(self) -> dict[str, Any]:
         if self._settings.mode is not BootstrapMode.DEVELOPMENT:
             raise BootstrapOperationRejected(
                 "development Setup status is disabled in production"
@@ -567,7 +582,7 @@ class BootstrapService:
             self.reconcile_network_state(network.state)
             after = self._store.get_state()
 
-        setup = self._active_development_setup()
+        setup = self._active_setup_session()
         logger.warning(
             "development authority reset reset_epoch=%s forget_wifi_profiles=%s",
             after.reset_epoch,
@@ -578,5 +593,5 @@ class BootstrapService:
             "before": before.to_dict(),
             "after": after.to_dict(),
             "forgot_wifi_profiles": forget_wifi_profiles,
-            "development_setup": setup,
+            "setup_session": setup,
         }

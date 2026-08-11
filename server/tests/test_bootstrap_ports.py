@@ -66,7 +66,7 @@ def test_service_runs_against_state_store_port_without_sqlite(tmp_path: Path) ->
     )
     service.initialize()
     try:
-        credential = service.issue_development_setup_code(300)
+        credential = service.issue_setup_code(300)
         assert credential["host_id"].startswith("ehost-")
         assert store.latest_commissioning_session() is not None
         assert service.health()["state"]["claim_state"] == "unclaimed"
@@ -308,7 +308,7 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         network=network,
     )
     bootstrap.initialize()
-    descriptor = bootstrap.issue_development_setup_code(300)
+    descriptor = bootstrap.issue_setup_code(300)
     bootstrap.reconcile_network_state(NetworkState.CONNECTED)
     commissioning = CommissioningService(store=store, network=network)
     try:
@@ -426,12 +426,12 @@ def test_commissioning_revokes_setup_code_after_five_wrong_attempts(
     )
     bootstrap.initialize()
     try:
-        descriptor = bootstrap.issue_development_setup_code(300)
+        descriptor = bootstrap.issue_setup_code(300)
         commissioning = CommissioningService(
             store=store,
             network=InMemoryNetworkProvisioning(),
         )
-        wrong_code = "000000" if descriptor["setup_code"] != "000000" else "000001"
+        wrong_code = "00000012" if descriptor["setup_code"] != "00000012" else "00000013"
         for attempt in range(5):
             with pytest.raises(
                 CommissioningRequestRejected,
@@ -470,7 +470,7 @@ async def test_claimed_controller_authenticates_and_changes_network(
         access_points=[WifiAccessPoint("New Home", 90, True)]
     )
     commissioning = CommissioningService(store=store, network=network)
-    descriptor = bootstrap.issue_development_setup_code(300)
+    descriptor = bootstrap.issue_setup_code(300)
     initial = commissioning.authorize(
         session_id=descriptor["commissioning_id"],
         secret=descriptor["setup_code"],
@@ -551,7 +551,7 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
         identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
     )
     bootstrap.initialize()
-    descriptor = bootstrap.issue_development_setup_code(300)
+    descriptor = bootstrap.issue_setup_code(300)
     commissioning = CommissioningService(
         store=store,
         network=InMemoryNetworkProvisioning(),
