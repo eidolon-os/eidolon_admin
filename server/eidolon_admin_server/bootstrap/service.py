@@ -304,6 +304,55 @@ class BootstrapService:
             raise BootstrapOperationRejected(str(exc)) from exc
         return self._controller_principal(bound)
 
+    def invite_controller(
+        self, *, controller_id: str, ttl_seconds: int | None = None
+    ) -> dict[str, Any]:
+        """Open a short window in which one more phone may claim this Host.
+
+        Asked for by a phone that already holds this Host, the way Matter has
+        an existing administrator open a commissioning window with a freshly
+        minted one-time secret. Before this, a second phone could be added no
+        way but by revoking the first.
+        """
+
+        self._active_controller(controller_id)
+        return self.issue_setup_code(ttl_seconds)
+
+    def list_controllers(self, *, controller_id: str) -> dict[str, Any]:
+        """Show every phone that holds this Host, to one that already does."""
+
+        self._active_controller(controller_id)
+        state = self._store.get_state()
+        return {
+            "controllers": [
+                grant.to_dict()
+                for grant in self._store.list_controllers()
+                if grant.revoked_at is None and grant.reset_epoch == state.reset_epoch
+            ]
+        }
+
+    def revoke_controller(self, *, controller_id: str, target_id: str) -> dict[str, Any]:
+        """Withdraw one peer's authority at the request of another.
+
+        A phone may revoke itself; what it may not do is leave the Host with
+        nobody, which is controller-reset's job and the operator's to ask for.
+        """
+
+        self._active_controller(controller_id)
+        try:
+            revoked = self._store.revoke_controller(
+                controller_id=target_id,
+                now=_timestamp(_now()),
+            )
+        except BootstrapStateConflict as exc:
+            raise BootstrapOperationRejected(str(exc)) from exc
+        logger.info(
+            "controller revoked by=%s target=%s",
+            controller_id,
+            target_id,
+        )
+        return {"controller": revoked.to_dict()}
+
     def _active_controller(self, controller_id: str) -> ControllerGrant:
         if not isinstance(controller_id, str) or not re.fullmatch(
             r"ectrl-[0-9a-f]{20}", controller_id

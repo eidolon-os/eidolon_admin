@@ -359,8 +359,10 @@ class SQLiteBootstrapStateStore:
                 now=now,
             )
             state = self.get_state()
-            if state.claim_state is not ClaimState.UNCLAIMED:
-                raise BootstrapStateConflict("host is already claimed")
+            # A claimed Host may still admit another phone. The session is the
+            # authority — one-time, expiring, and minted only by someone who
+            # already holds this Host — so refusing on claim_state alone meant
+            # a second phone could be added no way but by revoking the first.
             if state.network_state is not NetworkState.CONNECTED:
                 raise BootstrapStateConflict("network must be connected before claim")
             if grant.reset_epoch != state.reset_epoch:
@@ -416,6 +418,41 @@ class SQLiteBootstrapStateStore:
             "SELECT * FROM controller_grants ORDER BY created_at, controller_id"
         ).fetchall()
         return [self._controller_from_row(row) for row in rows]
+
+    def revoke_controller(self, *, controller_id: str, now: str) -> ControllerGrant:
+        """Withdraw one phone's authority, never the last one.
+
+        Removing the only Controller would leave a Host nobody can manage and
+        no way back except the operator's own reset, so that is the operation
+        that must be asked for by name rather than arrived at by removing
+        phones one at a time.
+        """
+
+        with self.connection:
+            state = self.get_state()
+            active = [
+                grant
+                for grant in self.list_controllers()
+                if grant.revoked_at is None and grant.reset_epoch == state.reset_epoch
+            ]
+            target = next(
+                (grant for grant in active if grant.controller_id == controller_id),
+                None,
+            )
+            if target is None:
+                raise BootstrapStateConflict("controller is not authorized for this Host")
+            if len(active) == 1:
+                raise BootstrapStateConflict(
+                    "the last Controller cannot be revoked; use controller-reset"
+                )
+            self.connection.execute(
+                "UPDATE controller_grants SET revoked_at = ? WHERE controller_id = ?",
+                (now, controller_id),
+            )
+        result = self.get_controller(controller_id)
+        if result is None:
+            raise SQLiteBootstrapStoreError("revoked controller grant disappeared")
+        return result
 
     def bind_controller_owner(
         self,

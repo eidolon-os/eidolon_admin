@@ -411,9 +411,7 @@ class CommissioningService:
         except BootstrapStateConflict as exc:
             reason = str(exc)
             code = (
-                "already_claimed"
-                if reason == "host is already claimed"
-                else "commissioning_denied"
+                "commissioning_denied"
                 if reason == "commissioning session is unavailable"
                 else "operation_conflict"
             )

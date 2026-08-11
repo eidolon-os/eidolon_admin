@@ -154,8 +154,6 @@ class InMemoryBootstrapStateStore:
             now=now,
         )
         state = self.get_state()
-        if state.claim_state is not ClaimState.UNCLAIMED:
-            raise BootstrapStateConflict("host is already claimed")
         if state.network_state is not NetworkState.CONNECTED:
             raise BootstrapStateConflict("network must be connected before claim")
         if grant.reset_epoch != state.reset_epoch:
@@ -191,6 +189,26 @@ class InMemoryBootstrapStateStore:
             self._controllers.values(),
             key=lambda grant: (grant.created_at, grant.controller_id),
         )
+
+    def revoke_controller(self, *, controller_id: str, now: str) -> ControllerGrant:
+        state = self.get_state()
+        active = [
+            grant
+            for grant in self.list_controllers()
+            if grant.revoked_at is None and grant.reset_epoch == state.reset_epoch
+        ]
+        target = next(
+            (grant for grant in active if grant.controller_id == controller_id), None
+        )
+        if target is None:
+            raise BootstrapStateConflict("controller is not authorized for this Host")
+        if len(active) == 1:
+            raise BootstrapStateConflict(
+                "the last Controller cannot be revoked; use controller-reset"
+            )
+        revoked = replace(target, revoked_at=now)
+        self._controllers[controller_id] = revoked
+        return revoked
 
     def bind_controller_owner(
         self,

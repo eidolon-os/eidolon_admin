@@ -26,7 +26,7 @@ from eidolon_admin_server.bootstrap.commissioning_service import (
 from eidolon_admin_server.bootstrap.commissioning_protocol import (
     CommissioningProtocolSession,
 )
-from eidolon_admin_server.bootstrap.domain import NetworkState
+from eidolon_admin_server.bootstrap.domain import ClaimState, NetworkState
 from eidolon_admin_server.bootstrap.identity import HostIdentityManager
 from eidolon_admin_server.bootstrap.ports import (
     BootstrapStateStore,
@@ -639,3 +639,123 @@ def test_every_modelled_state_is_one_something_can_produce() -> None:
                 f"{enum.__name__}.{member.name} has no writer in either store; "
                 "delete it or write it"
             )
+
+
+def _claim_a_phone(bootstrap, store, network, name: str) -> str:
+    """Run one phone all the way to a Controller grant, and return its id."""
+
+    descriptor = bootstrap.issue_setup_code(300)
+    commissioning = CommissioningService(store=store, network=network)
+    authorization = commissioning.authorize(
+        session_id=descriptor["commissioning_id"],
+        secret=descriptor["setup_code"],
+    )
+    claimed = commissioning.claim_controller(
+        authorization,
+        {
+            "public_key": _controller_public_key(),
+            "display_name": name,
+            "platform": "android",
+        },
+    )
+    return claimed["controller"]["controller_id"]
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_a_claimed_host_still_admits_a_second_phone(tmp_path: Path, store_kind: str) -> None:
+    """Claim state alone used to refuse it, so a household with two people
+    could only ever have one phone, or revoke the first to add the second."""
+
+    settings = _settings(tmp_path)
+    store = (
+        InMemoryBootstrapStateStore()
+        if store_kind == "memory"
+        else SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
+    )
+    network = InMemoryNetworkProvisioning(current_ssid="Existing", access_points=[])
+    bootstrap = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+        network=network,
+    )
+    bootstrap.initialize()
+    bootstrap.reconcile_network_state(NetworkState.CONNECTED)
+    try:
+        first = _claim_a_phone(bootstrap, store, network, "Pad")
+        assert store.get_state().claim_state is ClaimState.CLAIMED
+
+        # An invitation is asked for by a phone that already holds the Host.
+        invitation = bootstrap.invite_controller(controller_id=first, ttl_seconds=300)
+        commissioning = CommissioningService(store=store, network=network)
+        authorization = commissioning.authorize(
+            session_id=invitation["commissioning_id"],
+            secret=invitation["setup_code"],
+        )
+        second = commissioning.claim_controller(
+            authorization,
+            {
+                "public_key": _controller_public_key(),
+                "display_name": "Phone",
+                "platform": "ios",
+            },
+        )["controller"]["controller_id"]
+
+        listed = bootstrap.list_controllers(controller_id=first)["controllers"]
+        assert {grant["controller_id"] for grant in listed} == {first, second}
+    finally:
+        bootstrap.shutdown()
+
+
+@pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
+def test_the_last_phone_cannot_revoke_itself_into_an_unmanageable_host(
+    tmp_path: Path, store_kind: str
+) -> None:
+    """Removing the only Controller leaves a Host nobody can manage and no way
+    back but the operator's own reset. That has to be asked for by name."""
+
+    settings = _settings(tmp_path)
+    store = (
+        InMemoryBootstrapStateStore()
+        if store_kind == "memory"
+        else SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
+    )
+    network = InMemoryNetworkProvisioning(current_ssid="Existing", access_points=[])
+    bootstrap = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+        network=network,
+    )
+    bootstrap.initialize()
+    bootstrap.reconcile_network_state(NetworkState.CONNECTED)
+    try:
+        first = _claim_a_phone(bootstrap, store, network, "Pad")
+
+        with pytest.raises(BootstrapOperationRejected, match="last Controller"):
+            bootstrap.revoke_controller(controller_id=first, target_id=first)
+
+        invitation = bootstrap.invite_controller(controller_id=first)
+        commissioning = CommissioningService(store=store, network=network)
+        second = commissioning.claim_controller(
+            commissioning.authorize(
+                session_id=invitation["commissioning_id"],
+                secret=invitation["setup_code"],
+            ),
+            {
+                "public_key": _controller_public_key(),
+                "display_name": "Phone",
+                "platform": "ios",
+            },
+        )["controller"]["controller_id"]
+
+        # With a peer present, a phone may hand back its own authority.
+        bootstrap.revoke_controller(controller_id=first, target_id=first)
+        remaining = bootstrap.list_controllers(controller_id=second)["controllers"]
+        assert [grant["controller_id"] for grant in remaining] == [second]
+
+        # And the survivor is now the last one again.
+        with pytest.raises(BootstrapOperationRejected, match="last Controller"):
+            bootstrap.revoke_controller(controller_id=second, target_id=second)
+    finally:
+        bootstrap.shutdown()

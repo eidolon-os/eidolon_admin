@@ -134,6 +134,21 @@ class BootstrapControlServer:
                 reset_epoch=request.get("reset_epoch"),
                 owner_id=request.get("owner_id"),
             )
+        if operation == "controller.invite":
+            raw_ttl = request.get("ttl_seconds")
+            return self._service.invite_controller(
+                controller_id=request.get("controller_id"),
+                ttl_seconds=None if raw_ttl is None else int(raw_ttl),
+            )
+        if operation == "controller.list":
+            return self._service.list_controllers(
+                controller_id=request.get("controller_id")
+            )
+        if operation == "controller.revoke":
+            return self._service.revoke_controller(
+                controller_id=request.get("controller_id"),
+                target_id=request.get("target_id"),
+            )
         if operation == "commissioning.endpoint":
             return self._service.commissioning_endpoint()
         if operation == "dev.lan.endpoint":
