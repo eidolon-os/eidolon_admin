@@ -123,7 +123,7 @@ async def test_network_adapter_rejects_overlapping_or_wrong_operation() -> None:
         await network.confirm("network-op-2")
 
 
-def test_sqlite_v5_keeps_authority_and_drops_v1_daemon_diagnostics(
+def test_sqlite_v6_keeps_authority_and_drops_what_no_longer_holds_state(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "bootstrap.sqlite3"
@@ -181,8 +181,15 @@ def test_sqlite_v5_keeps_authority_and_drops_v1_daemon_diagnostics(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 5
+        assert version == 6
         assert "daemon_runs" not in tables
+        # recovery_state only ever held "normal"; a Host that carried one is
+        # migrated out of it without losing the authority beside it.
+        columns = {
+            row[1]
+            for row in store.connection.execute("PRAGMA table_info(bootstrap_state)")
+        }
+        assert "recovery_state" not in columns
         assert store.get_state().reset_epoch == 7
         assert store.latest_commissioning_session().session_id == "session-1"
         assert store.latest_commissioning_session().failed_attempts == 0
@@ -242,8 +249,13 @@ def test_sqlite_v4_host_state_migrates_with_unbound_owner(
     finally:
         store.close()
 
+    # Rebuild what a real v4 Host carried: no owner binding yet, and a
+    # recovery_state column that never held anything but "normal".
     connection = sqlite3.connect(path)
     connection.execute("ALTER TABLE bootstrap_state DROP COLUMN owner_id")
+    connection.execute(
+        "ALTER TABLE bootstrap_state ADD COLUMN recovery_state TEXT NOT NULL DEFAULT 'normal'"
+    )
     connection.execute("PRAGMA user_version = 4")
     connection.commit()
     connection.close()
@@ -255,7 +267,7 @@ def test_sqlite_v4_host_state_migrates_with_unbound_owner(
         controller = migrated.get_controller("ectrl-v4-controller")
         assert controller is not None
         assert migrated.get_state().owner_id is None
-        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 6
     finally:
         migrated.close()
 
@@ -599,3 +611,31 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
         assert retried["operation"]["state"] == "waiting_confirmation"
     finally:
         restarted.shutdown()
+
+
+def test_every_modelled_state_is_one_something_can_produce() -> None:
+    """A value nothing writes is not a state a reader has to handle.
+
+    recovery_state had four values and one writer, so a phone rendered a row
+    promising the Host could report physical arming or a pending factory
+    reset — neither of which any code path could ever set. The field is gone;
+    what remains has to keep earning its place.
+    """
+
+    from eidolon_admin_server.bootstrap.adapters.persistence import (
+        memory as memory_store,
+        sqlite as sqlite_store,
+    )
+    from eidolon_admin_server.bootstrap.domain import ClaimState, NetworkState, WorkspaceState
+
+    sources = (
+        Path(memory_store.__file__).read_text(encoding="utf-8"),
+        Path(sqlite_store.__file__).read_text(encoding="utf-8"),
+    )
+    for enum in (ClaimState, NetworkState, WorkspaceState):
+        for member in enum:
+            written = any(f"{enum.__name__}.{member.name}" in source for source in sources)
+            assert written, (
+                f"{enum.__name__}.{member.name} has no writer in either store; "
+                "delete it or write it"
+            )

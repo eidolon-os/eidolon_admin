@@ -28,17 +28,15 @@ class NetworkState(StrEnum):
 
 
 class WorkspaceState(StrEnum):
+    """Whether this Host has an Owner's workspace on it yet.
+
+    Provisioning and degraded were modelled and never written. A value nothing
+    can produce is not a state a reader has to handle; it is a promise the
+    screen makes on the Host's behalf.
+    """
+
     ABSENT = "absent"
-    PROVISIONING = "provisioning"
     READY = "ready"
-    DEGRADED = "degraded"
-
-
-class RecoveryState(StrEnum):
-    NORMAL = "normal"
-    PHYSICALLY_ARMED = "physically_armed"
-    CONTROLLER_RECOVERY = "controller_recovery"
-    FACTORY_RESET_PENDING = "factory_reset_pending"
 
 
 class ControllerRole(StrEnum):
@@ -72,7 +70,6 @@ class BootstrapState:
     claim_state: ClaimState
     network_state: NetworkState
     workspace_state: WorkspaceState
-    recovery_state: RecoveryState
     owner_id: str | None
     updated_at: str
 
@@ -84,7 +81,6 @@ class BootstrapState:
             claim_state=self.claim_state.value,
             network_state=self.network_state.value,
             workspace_state=self.workspace_state.value,
-            recovery_state=self.recovery_state.value,
         )
         return result
 

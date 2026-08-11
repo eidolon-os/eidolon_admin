@@ -17,7 +17,6 @@ from ...domain import (
     ControllerGrant,
     ControllerRole,
     NetworkState,
-    RecoveryState,
     WorkspaceState,
 )
 from ...ports.state_store import (
@@ -26,7 +25,7 @@ from ...ports.state_store import (
 )
 
 
-BOOTSTRAP_SCHEMA_VERSION = 5
+BOOTSTRAP_SCHEMA_VERSION = 6
 _SCHEMA_VERSION = BOOTSTRAP_SCHEMA_VERSION
 
 
@@ -59,7 +58,7 @@ class SQLiteBootstrapStateStore:
 
     def initialize(self, now: str) -> None:
         version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, 1, 2, 3, 4, _SCHEMA_VERSION):
+        if version not in (0, 1, 2, 3, 4, 5, _SCHEMA_VERSION):
             raise SQLiteBootstrapStoreError(
                 f"unsupported bootstrap schema version {version}; expected {_SCHEMA_VERSION}"
             )
@@ -72,7 +71,6 @@ class SQLiteBootstrapStateStore:
                     claim_state TEXT NOT NULL,
                     network_state TEXT NOT NULL,
                     workspace_state TEXT NOT NULL,
-                    recovery_state TEXT NOT NULL,
                     owner_id TEXT,
                     updated_at TEXT NOT NULL
                 );
@@ -120,14 +118,13 @@ class SQLiteBootstrapStateStore:
                 """
                 INSERT INTO bootstrap_state (
                     singleton, reset_epoch, claim_state, network_state,
-                    workspace_state, recovery_state, owner_id, updated_at
-                ) VALUES (1, 0, ?, ?, ?, ?, NULL, ?)
+                    workspace_state, owner_id, updated_at
+                ) VALUES (1, 0, ?, ?, ?, NULL, ?)
                 """,
                 (
                     ClaimState.UNCLAIMED.value,
                     NetworkState.UNCONFIGURED.value,
                     WorkspaceState.ABSENT.value,
-                    RecoveryState.NORMAL.value,
                     now,
                 ),
             )
@@ -141,21 +138,25 @@ class SQLiteBootstrapStateStore:
             self._migrate_v2_to_v3()
             self._migrate_v3_to_v4()
             self._migrate_v4_to_v5()
+            self._migrate_v5_to_v6()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
         elif version == 2:
             self._migrate_v2_to_v3()
             self._migrate_v3_to_v4()
             self._migrate_v4_to_v5()
+            self._migrate_v5_to_v6()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
         elif version == 3:
             self._migrate_v3_to_v4()
             self._migrate_v4_to_v5()
+            self._migrate_v5_to_v6()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
         elif version == 4:
             self._migrate_v4_to_v5()
+            self._migrate_v5_to_v6()
             self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             self.connection.commit()
 
@@ -207,6 +208,21 @@ class SQLiteBootstrapStateStore:
             """
         )
 
+    def _migrate_v5_to_v6(self) -> None:
+        """Drop recovery_state: it only ever held one value.
+
+        Three of its four values had no writer anywhere, so the column carried
+        the constant "normal" while a phone rendered a row promising the Host
+        could report physical arming or a pending factory reset.
+        """
+
+        self.connection.execute(
+            """
+            ALTER TABLE bootstrap_state
+                DROP COLUMN recovery_state
+            """
+        )
+
     def get_state(self) -> BootstrapState:
         row = self.connection.execute(
             "SELECT * FROM bootstrap_state WHERE singleton = 1"
@@ -219,7 +235,6 @@ class SQLiteBootstrapStateStore:
                 claim_state=ClaimState(row["claim_state"]),
                 network_state=NetworkState(row["network_state"]),
                 workspace_state=WorkspaceState(row["workspace_state"]),
-                recovery_state=RecoveryState(row["recovery_state"]),
                 owner_id=row["owner_id"],
                 updated_at=row["updated_at"],
             )
@@ -631,14 +646,13 @@ class SQLiteBootstrapStateStore:
                 """
                 UPDATE bootstrap_state
                    SET reset_epoch = ?, claim_state = ?, network_state = ?,
-                       recovery_state = ?, updated_at = ?
+                       updated_at = ?
                  WHERE singleton = 1
                 """,
                 (
                     state.reset_epoch + 1,
                     ClaimState.UNCLAIMED.value,
                     network_state.value,
-                    RecoveryState.NORMAL.value,
                     now,
                 ),
             )

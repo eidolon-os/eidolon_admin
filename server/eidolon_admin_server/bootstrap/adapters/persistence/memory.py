@@ -13,7 +13,6 @@ from ...domain import (
     CommissioningSessionMetadata,
     ControllerGrant,
     NetworkState,
-    RecoveryState,
     WorkspaceState,
 )
 from ...ports.state_store import (
@@ -48,7 +47,6 @@ class InMemoryBootstrapStateStore:
                 claim_state=ClaimState.UNCLAIMED,
                 network_state=NetworkState.UNCONFIGURED,
                 workspace_state=WorkspaceState.ABSENT,
-                recovery_state=RecoveryState.NORMAL,
                 owner_id=None,
                 updated_at=now,
             )
@@ -374,7 +372,6 @@ class InMemoryBootstrapStateStore:
             reset_epoch=state.reset_epoch + 1,
             claim_state=ClaimState.UNCLAIMED,
             network_state=network_state,
-            recovery_state=RecoveryState.NORMAL,
             updated_at=now,
         )
         return self._state

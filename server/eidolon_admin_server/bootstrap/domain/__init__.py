@@ -14,7 +14,6 @@ from .model import (
     ControllerRole,
     HostIdentity,
     NetworkState,
-    RecoveryState,
     WorkspaceState,
 )
 
@@ -32,6 +31,5 @@ __all__ = [
     "ControllerRole",
     "HostIdentity",
     "NetworkState",
-    "RecoveryState",
     "WorkspaceState",
 ]
