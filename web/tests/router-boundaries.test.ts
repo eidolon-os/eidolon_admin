@@ -27,6 +27,14 @@ describe('Data V2 / Kernel control-plane routes', () => {
     }
   })
 
+  it('reaches Host services through eidolond rather than a platform-locked page', () => {
+    const items = navigation.flatMap((group) => group.items)
+    const hostServices = items.find((item) => item.id === 'host-services')
+    expect(hostServices?.route.name).toBe('host-services')
+    // The supervisord console stays, but must not claim to cover every Host.
+    expect(items.find((item) => item.id === 'supervisor')?.hint).toMatch(/macOS/)
+  })
+
   it('links bounded contexts through public API consoles', () => {
     const items = navigation.flatMap((group) => group.items)
     expect(items.find((item) => item.id === 'agent-api')?.route.params?.feature).toBe('console')

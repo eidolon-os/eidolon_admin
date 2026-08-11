@@ -12,6 +12,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/control-plane/ControlPlane.vue'),
       },
       {
+        path: 'host-services',
+        name: 'host-services',
+        component: () => import('@/modules/host/Services.vue'),
+      },
+      {
         path: 'supervisor',
         name: 'supervisor',
         component: () => import('@/modules/supervisor/Overview.vue'),

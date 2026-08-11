@@ -59,7 +59,8 @@ export const navigation: NavGroup[] = [
     icon: 'Operation',
     collapsible: true,
     items: [
-      { id: 'supervisor', label: 'Supervisor', hint: 'Legacy dev process host', icon: 'Cpu', route: { name: 'supervisor' } },
+      { id: 'host-services', label: 'Host Services', hint: 'eidolond: Mac and Pi', icon: 'Cpu', route: { name: 'host-services' } },
+      { id: 'supervisor', label: 'Supervisor', hint: 'macOS supervisord only', icon: 'Monitor', route: { name: 'supervisor' } },
       { id: 'configs', label: 'Service Configs', hint: 'Declared config files', icon: 'Document', route: { name: 'configs' } },
       { id: 'benchmark-agent', label: 'Benchmarks', hint: 'Diagnostic artifacts', icon: 'DataAnalysis', route: { name: 'benchmarks', params: { project: 'agent' } } },
       { id: 'firmware', label: 'Firmware & Serial', hint: 'Isolated system tool', icon: 'Tools', route: { name: 'system-firmware' } },
