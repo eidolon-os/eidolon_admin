@@ -65,7 +65,8 @@ def create_app(
         base_url=settings.system_directory_url,
         timeout_seconds=settings.authority_timeout_seconds,
         uds_path=settings.system_directory_uds,
-        client=app.state.http_client,
+        # The pooled client speaks TCP; a Unix socket needs its own transport.
+        client=None if settings.system_directory_uds else app.state.http_client,
     )
     app.state.supervisor_client = SupervisorClient(settings.supervisor_socket)
     app.state.supervisor_configs = ConfigStore(

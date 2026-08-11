@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -178,3 +180,31 @@ async def test_rest_surface_reports_a_missing_system_manager_instead_of_guessing
         response = await api.get("/api/host/services")
 
     assert response.status_code == 503
+
+
+def test_a_unix_socket_host_gets_its_own_transport() -> None:
+    """The Pi reaches eidolond over /run/eidolon/system.sock, not TCP."""
+
+    client = HostServiceClient(
+        base_url="http://eidolond",
+        timeout_seconds=2.0,
+        uds_path=Path("/run/eidolon/system.sock"),
+    )
+
+    transport = client._client._transport  # noqa: SLF001 - transport choice is the contract
+    assert isinstance(transport, httpx.AsyncHTTPTransport)
+    assert transport._pool._uds == "/run/eidolon/system.sock"  # noqa: SLF001
+
+
+def test_admin_does_not_hand_a_tcp_pool_to_a_unix_socket_host() -> None:
+    """Sharing the pooled TCP client would silently ignore the socket path."""
+
+    from eidolon_admin_server.app.main import create_app
+    from eidolon_admin_server.app.settings import get_settings
+
+    settings = get_settings().model_copy(
+        update={"system_directory_uds": Path("/run/eidolon/system.sock")}
+    )
+    app = create_app(settings=settings)
+
+    assert app.state.host_services._client is not app.state.http_client  # noqa: SLF001
