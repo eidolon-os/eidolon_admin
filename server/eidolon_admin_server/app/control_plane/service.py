@@ -212,12 +212,20 @@ class ControlPlaneService:
             request_id=hub_request_id,
             authorization=authorization,
         )
+        # A device the owner removed and is adding back still has its Kernel
+        # mount record, inactive, at whatever revision the removal left. Mounting
+        # it is a compare-and-swap against that revision, not against nothing.
+        existing = await self._owner_mount(
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+            active_only=False,
+        )
         return await self._mount_approved_device(
             response_request_id=payload.request_id,
             owner_id=payload.owner_id,
             device_id=payload.device_id,
             companion_id=payload.companion_id,
-            expected_mount_revision=0,
+            expected_mount_revision=existing.revision if existing else 0,
             replace_existing_mount=False,
             hub=hub,
             hub_step=WorkflowStep(
@@ -349,10 +357,10 @@ class ControlPlaneService:
             hub=hub,
         )
 
-    async def _owner_mount(self, *, owner_id: str, device_id: str):
+    async def _owner_mount(self, *, owner_id: str, device_id: str, active_only: bool = True):
         page = await self.kernel.list_mounts(owner_id=owner_id)
         for mount in page.mounts:
-            if mount.device_id == device_id and mount.active:
+            if mount.device_id == device_id and (mount.active or not active_only):
                 return mount
         return None
 

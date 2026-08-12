@@ -301,3 +301,31 @@ async def test_repeating_a_removal_reuses_the_same_child_request_ids() -> None:
 
     assert first.steps[0].request_id == second.steps[0].request_id
     assert kernel.unmount_calls[0]["request_id"] == kernel.unmount_calls[1]["request_id"]
+
+
+async def test_re_admitting_a_removed_device_mounts_at_its_current_revision() -> None:
+    # Removal leaves the mount record behind, inactive. Adding the device back
+    # has to compare against that revision — mounting at 0 would be rejected,
+    # which is exactly what stranded a phone the owner had just removed.
+    hub, kernel = _Hub(), _Kernel()
+    kernel.mounted = (
+        _mount(
+            device_id="device-1",
+            owner_id="owner-1",
+            request_id="r",
+            revision=3,
+        ).model_copy(update={"active": False}),
+    )
+
+    await _service(hub, kernel).admit_controller_device(payload=_request())
+
+    assert kernel.mount_calls[0]["expected_revision"] == 3
+    assert kernel.mount_calls[0]["replace_existing"] is False
+
+
+async def test_a_first_admission_still_mounts_from_nothing() -> None:
+    hub, kernel = _Hub(), _Kernel()
+
+    await _service(hub, kernel).admit_controller_device(payload=_request())
+
+    assert kernel.mount_calls[0]["expected_revision"] == 0
