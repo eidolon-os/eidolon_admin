@@ -360,6 +360,9 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
             "https://eidolon-hub.local/api/device-onboarding/v1/descriptor"
         ),
         "tls_spki_fingerprint": target.tls_spki_fingerprint,
+        # The Controller carries this to a device being set up: a device cannot
+        # obtain the Host's certificate from anywhere it could already trust.
+        "hub_certificate": certificate.read_text(encoding="utf-8"),
     }
     assert admitted.status_code == 200
     assert injected_owner.status_code == 422

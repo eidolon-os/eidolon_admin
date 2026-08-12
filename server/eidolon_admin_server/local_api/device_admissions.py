@@ -34,6 +34,15 @@ class LocalDeviceOnboardingTarget(BaseModel):
     hub_id: str = Field(min_length=1, max_length=128)
     descriptor_uri: str = Field(max_length=2048, pattern=r"^https://")
     tls_spki_fingerprint: str = Field(pattern=r"^sha256:[A-Za-z0-9_-]{43}$")
+    #: The Host's own certificate, for a Controller to hand to a device it is
+    #: setting up. A device cannot pin a fingerprint it has no way to obtain,
+    #: and no public authority can vouch for a Host, so the certificate travels
+    #: with the Owner rather than being fetched off the network by the device.
+    hub_certificate: str = Field(
+        min_length=1,
+        max_length=8192,
+        pattern=r"^-----BEGIN CERTIFICATE-----",
+    )
 
     @classmethod
     def from_verified(
@@ -44,6 +53,7 @@ class LocalDeviceOnboardingTarget(BaseModel):
             hub_id=target.hub_id,
             descriptor_uri=target.descriptor_uri,
             tls_spki_fingerprint=target.tls_spki_fingerprint,
+            hub_certificate=target.tls_certificate_path.read_text(encoding="utf-8"),
         )
 
 
