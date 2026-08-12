@@ -228,7 +228,19 @@ class _DevicesClient:
                         "request_id": "internal-device-request",
                         "fingerprint": "sha256:" + "0" * 64,
                         "active": True,
-                    }
+                    },
+                    {
+                        "operation": "kernel.device-mount",
+                        "device_id": "device-local-removed",
+                        "owner_id": owner_id,
+                        "attached_companion_id": None,
+                        "revision": 4,
+                        "created_at": "2026-08-09T08:00:00Z",
+                        "updated_at": "2026-08-09T08:20:00Z",
+                        "request_id": "internal-removal-request",
+                        "fingerprint": "sha256:" + "1" * 64,
+                        "active": False,
+                    },
                 ],
             }
         )
@@ -918,19 +930,28 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 "device_id": "device-local-1",
                 "admission_state": "ready",
                 "mount": {
-                    "state": "active",
                     "revision": 2,
                     "attached_companion_id": "companion-device-1",
                     "updated_at": "2026-08-09T08:10:00Z",
                 },
             }
             assert devices_client.calls == ["owner_workspace_authority"]
+            # The Kernel still holds the removed device's mount record; the
+            # Owner-facing inventory is mounted devices only.
+            assert [item["device_id"] for item in devices.json()["devices"]] == [
+                "device-local-1"
+            ]
             device = await client.get(
                 "/api/local/v1/devices/device-local-1",
                 headers=workspace_headers,
             )
             assert device.status_code == 200
             assert device.json()["device_id"] == "device-local-1"
+            removed = await client.get(
+                "/api/local/v1/devices/device-local-removed",
+                headers=workspace_headers,
+            )
+            assert removed.status_code == 404
 
             restarted_app = create_app(
                 LocalApiSettings(bootstrap=settings),

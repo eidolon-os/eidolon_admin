@@ -27,7 +27,6 @@ class AdminOwnerDevicesPort(Protocol):
 class LocalDeviceMountView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    state: Literal["active", "inactive"]
     revision: int = Field(ge=1)
     attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     updated_at: datetime
@@ -39,7 +38,7 @@ class LocalDeviceView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     device_id: str = Field(min_length=1, max_length=128)
-    admission_state: Literal["mounted", "ready", "inactive"]
+    admission_state: Literal["mounted", "ready"]
     mount: LocalDeviceMountView
 
 
@@ -125,24 +124,23 @@ def owner_device_inventory_view(
             "Host Owner scope does not match Kernel Device membership",
             status_code=409,
         )
+    # Kernel keeps the mount record of a removed device, inactive, because that
+    # record carries the revision the next admission has to swap against. The
+    # Owner is not being told about a revision; they are being told what is
+    # mounted. An inactive mount is a device this Owner removed, so it belongs
+    # to neither this view nor its stated coverage.
     return LocalDeviceInventoryView(
-        devices=tuple(_device_view(mount) for mount in mounts.mounts)
+        devices=tuple(_device_view(mount) for mount in mounts.mounts if mount.active)
     )
 
 
 def _device_view(mount: KernelMount) -> LocalDeviceView:
-    state: Literal["mounted", "ready", "inactive"]
-    if not mount.active:
-        state = "inactive"
-    elif mount.attached_companion_id is not None:
-        state = "ready"
-    else:
-        state = "mounted"
     return LocalDeviceView(
         device_id=mount.device_id,
-        admission_state=state,
+        admission_state=(
+            "ready" if mount.attached_companion_id is not None else "mounted"
+        ),
         mount=LocalDeviceMountView(
-            state="active" if mount.active else "inactive",
             revision=mount.revision,
             attached_companion_id=mount.attached_companion_id,
             updated_at=mount.updated_at,

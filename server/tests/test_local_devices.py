@@ -44,6 +44,18 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "fingerprint": "sha256:" + "1" * 64,
                     "active": True,
                 },
+                {
+                    "operation": "kernel.device-mount",
+                    "device_id": "device-removed",
+                    "owner_id": owner_id,
+                    "attached_companion_id": None,
+                    "revision": 5,
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                    "request_id": "removal-internal-request",
+                    "fingerprint": "sha256:" + "2" * 64,
+                    "active": False,
+                },
             ],
         }
     )
@@ -92,6 +104,20 @@ def test_mobile_device_projection_is_sanitized_and_explicitly_mount_scoped() -> 
     assert "owner_id" not in payload["devices"][0]
     assert "request_id" not in payload["devices"][0]["mount"]
     assert "fingerprint" not in payload["devices"][0]["mount"]
+
+
+def test_mobile_device_projection_drops_the_mounts_removal_left_behind() -> None:
+    """A removed device leaves an inactive Kernel mount. It is not membership."""
+
+    view = owner_device_inventory_view(
+        mounts=_mount_page(),
+        bound_owner_id="owner-1",
+    )
+
+    assert [item.device_id for item in view.devices] == [
+        "device-ready",
+        "device-mounted",
+    ]
 
 
 def test_mobile_device_projection_rejects_cross_owner_membership() -> None:
