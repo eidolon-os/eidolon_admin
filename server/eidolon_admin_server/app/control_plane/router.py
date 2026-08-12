@@ -12,8 +12,10 @@ from .contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
     ControllerDeviceAdmissionRequest,
+    ControllerDeviceRemovalRequest,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    DeviceRemovalResult,
     HubDevicePage,
     KernelMountPage,
     OwnerInventory,
@@ -220,5 +222,28 @@ async def admit_local_device(
         return await _service(request).admit_controller_device(
             payload=payload,
         )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.put(
+    "/local-device-removals/{device_id}",
+    response_model=DeviceRemovalResult,
+)
+async def remove_local_device(
+    device_id: str,
+    payload: ControllerDeviceRemovalRequest,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> DeviceRemovalResult:
+    """Service-only forward workflow consumed by the Controller Local API."""
+
+    _authorize_local_api(request, authorization)
+    if not device_id or len(device_id) > 128:
+        raise HTTPException(422, "device_id must contain between 1 and 128 characters")
+    if payload.device_id != device_id:
+        raise HTTPException(409, "device removal path and body do not match")
+    try:
+        return await _service(request).remove_controller_device(payload=payload)
     except AuthorityFailure as exc:
         _raise(exc)

@@ -46,8 +46,11 @@ from .device_admissions import (
     LocalDeviceAdmissionProgress,
     LocalDeviceApprovalRequest,
     LocalDeviceOnboardingTarget,
+    LocalDeviceRemovalProgress,
+    LocalDeviceRemovalRequest,
     LocalPendingDeviceEnrollmentPage,
     device_admission_progress,
+    device_removal_progress,
     pending_device_enrollment_page,
 )
 from .runtime import (
@@ -593,6 +596,47 @@ def create_app(
             return device_admission_progress(
                 owner_id=owner_id,
                 companion_id=payload.companion_id,
+                result=result,
+            )
+        except DeviceAdmissionError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.post(
+        "/api/local/v1/devices/{device_id}/removal",
+        response_model=LocalDeviceRemovalProgress,
+    )
+    async def remove_device(
+        device_id: Annotated[
+            str,
+            Path(
+                min_length=1,
+                max_length=128,
+                pattern=r"^[A-Za-z0-9._:-]+$",
+            ),
+        ],
+        payload: LocalDeviceRemovalRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceRemovalProgress:
+        """Take a device off this Host at the Owner's request.
+
+        Removal is what makes a device addable again: the Hub refuses to
+        enroll one it already holds, so a phone that lost its own credential
+        has no way back until its grant here is withdrawn.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        try:
+            result = await device_admission.remove(
+                payload=payload.to_admin(
+                    device_id=device_id,
+                    owner_id=owner_id,
+                    controller_id=controller_id,
+                ),
+            )
+            return device_removal_progress(
+                owner_id=owner_id,
+                device_id=device_id,
                 result=result,
             )
         except DeviceAdmissionError as exc:

@@ -13,9 +13,11 @@ from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.x509.oid import NameOID
 
 from eidolon_admin_server.app.control_plane.contracts import (
-    DeviceAdmissionResult,
-    HubDevicePage,
     ControllerDeviceAdmissionRequest,
+    ControllerDeviceRemovalRequest,
+    DeviceAdmissionResult,
+    DeviceRemovalResult,
+    HubDevicePage,
     HubLifecycleStatus,
     KernelMount,
     WorkflowStep,
@@ -31,6 +33,7 @@ from eidolon_admin_server.local_api.config import (
 from eidolon_admin_server.local_api.device_admissions import (
     AdminDeviceAdmissionClient,
     device_admission_progress,
+    device_removal_progress,
 )
 
 
@@ -122,6 +125,24 @@ def _result(*, owner_id: str = "owner-1") -> DeviceAdmissionResult:
     )
 
 
+def _removal(*, owner_id: str = "owner-1") -> DeviceRemovalResult:
+    return DeviceRemovalResult(
+        request_id="device-removal-1",
+        outcome="completed",
+        completed_stage="kernel_unmounted",
+        steps=(
+            WorkflowStep(name="hub_revocation", state="committed"),
+            WorkflowStep(name="kernel_unmount", state="committed", revision=2),
+        ),
+        hub=HubLifecycleStatus(
+            operation="device.lifecycle-status",
+            device_id="device-authoritative",
+            owner_id=owner_id,
+            lifecycle_state="revoked",
+        ),
+    )
+
+
 def test_hub_target_spki_is_derived_from_hostname_bound_leaf_certificate(
     tmp_path: Path,
 ) -> None:
@@ -204,10 +225,15 @@ class _UnusedPort:
 
 class _AdmissionPort:
     payload: ControllerDeviceAdmissionRequest | None = None
+    removal: ControllerDeviceRemovalRequest | None = None
 
     async def claim(self, *, payload: ControllerDeviceAdmissionRequest):
         self.payload = payload
         return _result(owner_id=payload.owner_id)
+
+    async def remove(self, *, payload: ControllerDeviceRemovalRequest):
+        self.removal = payload
+        return _removal(owner_id=payload.owner_id)
 
     async def list_pending(self, *, controller_id: str) -> HubDevicePage:
         assert controller_id == _CONTROLLER_ID
@@ -342,3 +368,150 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
     assert admission.payload is not None
     assert admission.payload.owner_id == "owner-derived"
     assert admission.payload.controller_id == _CONTROLLER_ID
+
+
+@pytest.mark.asyncio
+async def test_removal_forwards_the_exact_controller_contract() -> None:
+    observed: dict = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(json.loads(request.content))
+        assert request.method == "PUT"
+        assert request.url.raw_path == (
+            b"/api/control-plane/v1/local-device-removals/device-authoritative"
+        )
+        assert request.headers["authorization"] == "Bearer local-service-token"
+        return httpx.Response(200, json=_removal().model_dump(mode="json"))
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    subject = AdminDeviceAdmissionClient(
+        base_url="http://127.0.0.1:9000",
+        service_token="local-service-token",
+        timeout_seconds=1,
+        client=http_client,
+    )
+    payload = ControllerDeviceRemovalRequest(
+        contract_version="1",
+        request_id="device-removal-1",
+        owner_id="owner-1",
+        controller_id=_CONTROLLER_ID,
+        device_id="device-authoritative",
+    )
+    try:
+        result = await subject.remove(payload=payload)
+    finally:
+        await http_client.aclose()
+
+    assert result.hub is not None
+    assert result.hub.lifecycle_state == "revoked"
+    assert observed["reason"] == "owner-removed"
+
+
+def test_a_removal_that_only_revoked_is_not_reported_as_removed() -> None:
+    # The phone is already off — the Hub committed — but it is still mounted,
+    # so calling this "removed" would leave the owner looking at a device that
+    # is supposed to be gone.
+    partial = DeviceRemovalResult(
+        request_id="device-removal-1",
+        outcome="retry_required",
+        completed_stage="hub_revoked",
+        recovery="retry-forward-same-request-id",
+        steps=(
+            WorkflowStep(name="hub_revocation", state="committed"),
+            WorkflowStep(name="kernel_unmount", state="failed"),
+        ),
+        hub=HubLifecycleStatus(
+            operation="device.lifecycle-status",
+            device_id="device-authoritative",
+            owner_id="owner-1",
+            lifecycle_state="revoked",
+        ),
+    )
+
+    progress = device_removal_progress(
+        owner_id="owner-1",
+        device_id="device-authoritative",
+        result=partial,
+    )
+
+    assert progress.state == "revoked"
+    assert progress.completed_stage == "hub-revoked"
+    assert progress.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_removing_a_device_is_controller_authenticated_and_owner_derived(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    certificate = tmp_path / "hub-leaf.pem"
+    _write_certificate(certificate)
+    target = _target(certificate)
+    principal = {
+        "contract_version": "1",
+        "controller_id": _CONTROLLER_ID,
+        "owner_id": "owner-derived",
+        "reset_epoch": 0,
+    }
+
+    async def bootstrap_request(self, operation: str, **_parameters):
+        if operation in {"controller.authenticate", "controller.validate"}:
+            return principal
+        raise AssertionError(f"unexpected bootstrap operation: {operation}")
+
+    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    admission = _AdmissionPort()
+    unused = _UnusedPort()
+    app = create_app(
+        LocalApiSettings(
+            bootstrap=_bootstrap(tmp_path),
+            device_onboarding_target=target,
+        ),
+        workspace_client=unused,  # type: ignore[arg-type]
+        runtime_client=unused,  # type: ignore[arg-type]
+        devices_client=unused,  # type: ignore[arg-type]
+        device_admission_client=admission,  # type: ignore[arg-type]
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="https://local.test",
+    ) as client:
+        unauthenticated = await client.post(
+            "/api/local/v1/devices/device-authoritative/removal",
+            json={"contract_version": "1", "request_id": "device-removal-1"},
+        )
+        session = await client.post(
+            "/api/local/v1/auth/sessions",
+            json={
+                "contract_version": "1",
+                "purpose": "eidolon-controller-local-auth-v1",
+                "controller_id": _CONTROLLER_ID,
+                "challenge": _AUTH_CHALLENGE,
+                "reset_epoch": 0,
+                "signature": "abcdefgh",
+            },
+        )
+        headers = {"Authorization": f"Bearer {session.json()['access_token']}"}
+        removed = await client.post(
+            "/api/local/v1/devices/device-authoritative/removal",
+            headers=headers,
+            json={"contract_version": "1", "request_id": "device-removal-1"},
+        )
+        injected_owner = await client.post(
+            "/api/local/v1/devices/device-authoritative/removal",
+            headers=headers,
+            json={
+                "contract_version": "1",
+                "request_id": "device-removal-1",
+                "owner_id": "owner-mobile-chosen",
+            },
+        )
+
+    assert unauthenticated.status_code == 401
+    assert removed.status_code == 200
+    assert injected_owner.status_code == 422
+    assert removed.json()["state"] == "removed"
+    assert removed.json()["owner_id"] == "owner-derived"
+    assert admission.removal is not None
+    assert admission.removal.owner_id == "owner-derived"
+    assert admission.removal.controller_id == _CONTROLLER_ID

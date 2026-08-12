@@ -340,6 +340,36 @@ class HubManagementClient:
             )
         return result
 
+    async def revoke(
+        self,
+        *,
+        device_id: str,
+        reason: str,
+        request_id: str,
+        authorization: str,
+    ) -> HubLifecycleStatus:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{base_url}/api/device-management/v1/devices/{quote(device_id, safe='')}/revocation",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json={
+                "operation": "device.revocation",
+                "request_id": request_id,
+                "reason": reason,
+            },
+        )
+        result = _parse("hub", response, HubLifecycleStatus)
+        if result.device_id != device_id or result.lifecycle_state != "revoked":
+            raise _contract_violation(
+                "hub",
+                "Hub revocation response did not confirm the requested device",
+            )
+        return result
+
     async def list_devices(
         self,
         *,
@@ -460,6 +490,40 @@ class KernelMountClient:
             raise _contract_violation(
                 "kernel",
                 "Kernel Attachment response did not confirm the requested identities",
+            )
+        return result
+
+    async def unmount(
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        request_id: str,
+        expected_revision: int,
+    ) -> KernelMutationResult:
+        response = await _request(
+            "kernel",
+            self._client,
+            "POST",
+            f"{await self._base_url()}/api/kernel/v1/device-mounts/devices/"
+            f"{quote(device_id, safe='')}/unmount",
+            timeout=self._timeout,
+            headers=self._headers(owner_id),
+            json={
+                "operation": "device.unmount",
+                "request_id": request_id,
+                "expected_revision": expected_revision,
+            },
+        )
+        result = _parse("kernel", response, KernelMutationResult)
+        if (
+            result.mount.device_id != device_id
+            or result.mount.owner_id != owner_id
+            or result.mount.active
+        ):
+            raise _contract_violation(
+                "kernel",
+                "Kernel Unmount response did not confirm the device is no longer mounted",
             )
         return result
 

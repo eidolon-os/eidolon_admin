@@ -183,6 +183,25 @@ class ControllerDeviceAdmissionRequest(StrictModel):
     companion_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
+class ControllerDeviceRemovalRequest(StrictModel):
+    """Internal service input derived from explicit Controller confirmation."""
+
+    contract_version: Literal["1"]
+    request_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    owner_id: str = Field(min_length=1, max_length=64)
+    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+    device_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    reason: str = Field(default="owner-removed", min_length=1, max_length=128)
+
+
 class WorkflowFailure(StrictModel):
     authority: Literal["directory", "data", "hub", "kernel"]
     kind: Literal[
@@ -206,6 +225,8 @@ class WorkflowStep(StrictModel):
         "hub_approval",
         "kernel_mount",
         "companion_attachment",
+        "hub_revocation",
+        "kernel_unmount",
     ]
     state: Literal["committed", "replayed", "failed", "not_requested", "not_attempted"]
     request_id: str | None = None
@@ -230,6 +251,27 @@ class DeviceAdmissionResult(StrictModel):
     steps: tuple[WorkflowStep, ...]
     hub: HubLifecycleStatus | None = None
     mount: KernelMount | None = None
+
+
+class DeviceRemovalResult(StrictModel):
+    """What removing a device actually accomplished, stage by stage.
+
+    Removal is the reverse of admission and just as distributed: the grant is
+    withdrawn at the Hub, then the mount is dropped at the Kernel. The Hub step
+    is the one that matters — after it the device cannot obtain credentials —
+    so a Kernel step that fails leaves a device that is off but still listed,
+    and says so rather than reporting success.
+    """
+
+    operation: Literal["admin.device-removal-workflow"] = "admin.device-removal-workflow"
+    request_id: str
+    outcome: Literal["completed", "retry_required", "blocked"]
+    completed_stage: Literal["received", "hub_revoked", "kernel_unmounted"]
+    distributed_atomic: Literal[False] = False
+    compensation: Literal["none-safe-intermediate"] = "none-safe-intermediate"
+    recovery: Literal["none", "retry-forward-same-request-id", "operator-action-required"] = "none"
+    steps: tuple[WorkflowStep, ...]
+    hub: HubLifecycleStatus | None = None
 
 
 class SourceStatus(StrictModel):

@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..app.control_plane.contracts import (
     ControllerDeviceAdmissionRequest,
+    ControllerDeviceRemovalRequest,
     DeviceAdmissionResult,
+    DeviceRemovalResult,
     HubDevicePage,
 )
 from .config import VerifiedHubOnboardingTarget
@@ -112,6 +114,46 @@ class LocalDeviceAdmissionProgress(BaseModel):
     retryable: bool
 
 
+class LocalDeviceRemovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"]
+    request_id: str = Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+
+    def to_admin(
+        self,
+        *,
+        device_id: str,
+        owner_id: str,
+        controller_id: str,
+    ) -> ControllerDeviceRemovalRequest:
+        return ControllerDeviceRemovalRequest(
+            contract_version="1",
+            request_id=self.request_id,
+            owner_id=owner_id,
+            controller_id=controller_id,
+            device_id=device_id,
+            reason="owner-removed",
+        )
+
+
+class LocalDeviceRemovalProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["local.device-removal-progress"] = "local.device-removal-progress"
+    contract_version: Literal["1"] = "1"
+    request_id: str = Field(min_length=1, max_length=128)
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    state: Literal["revoked", "removed", "failed"]
+    completed_stage: Literal["hub-revoked", "kernel-unmounted"]
+    retryable: bool
+
+
 class AdminDeviceAdmissionPort(Protocol):
     async def list_pending(
         self,
@@ -124,6 +166,12 @@ class AdminDeviceAdmissionPort(Protocol):
         *,
         payload: ControllerDeviceAdmissionRequest,
     ) -> DeviceAdmissionResult: ...
+
+    async def remove(
+        self,
+        *,
+        payload: ControllerDeviceRemovalRequest,
+    ) -> DeviceRemovalResult: ...
 
     async def close(self) -> None: ...
 
@@ -227,9 +275,99 @@ class AdminDeviceAdmissionClient:
             )
         return result
 
+    async def remove(
+        self,
+        *,
+        payload: ControllerDeviceRemovalRequest,
+    ) -> DeviceRemovalResult:
+        if not self._token:
+            raise DeviceAdmissionError(
+                "Local API Admin service credential is not configured"
+            )
+        try:
+            response = await self._client.put(
+                f"{self._base_url}/api/control-plane/v1/local-device-removals/"
+                f"{quote(payload.device_id, safe='')}",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=payload.model_dump(mode="json"),
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise DeviceAdmissionError(
+                "Admin Device removal control plane is unavailable"
+            ) from exc
+        if response.status_code != 200:
+            status_code = (
+                response.status_code
+                if response.status_code in {403, 404, 409, 422, 502, 503}
+                else 503
+            )
+            raise DeviceAdmissionError(
+                "Admin Device removal did not complete the requested transition",
+                status_code=status_code,
+            )
+        try:
+            result = DeviceRemovalResult.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DeviceAdmissionError(
+                "Admin Device removal response violated its contract"
+            ) from exc
+        if result.request_id != payload.request_id:
+            raise DeviceAdmissionError(
+                "Admin Device removal response returned another request",
+                status_code=409,
+            )
+        return result
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+
+def device_removal_progress(
+    *,
+    owner_id: str,
+    device_id: str,
+    result: DeviceRemovalResult,
+) -> LocalDeviceRemovalProgress:
+    hub = result.hub
+    if hub is not None and (
+        hub.device_id != device_id or hub.lifecycle_state != "revoked"
+    ):
+        raise DeviceAdmissionError(
+            "Admin Device removal did not confirm the requested device",
+            status_code=502,
+        )
+    stage = {
+        "received": "hub-revoked",
+        "hub_revoked": "hub-revoked",
+        "kernel_unmounted": "kernel-unmounted",
+    }.get(result.completed_stage)
+    if stage is None:
+        raise DeviceAdmissionError(
+            "Admin Device removal returned an unsupported stage",
+            status_code=502,
+        )
+    if result.outcome == "completed":
+        state: Literal["revoked", "removed", "failed"] = "removed"
+    elif result.outcome == "retry_required":
+        # The grant is already gone whenever the Hub step committed, so the
+        # phone is off either way; what is left to retry is the mount.
+        state = "revoked" if result.completed_stage == "hub_revoked" else "failed"
+    else:
+        state = "failed"
+    return LocalDeviceRemovalProgress(
+        request_id=result.request_id,
+        device_id=device_id,
+        owner_id=owner_id,
+        state=state,
+        completed_stage=stage,
+        retryable=result.outcome == "retry_required",
+    )
 
 
 def device_admission_progress(

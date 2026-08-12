@@ -7,9 +7,11 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.contracts import (
     ControllerDeviceAdmissionRequest,
+    ControllerDeviceRemovalRequest,
     HubDevicePage,
     HubLifecycleStatus,
     KernelMount,
+    KernelMountPage,
     KernelMutationResult,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
@@ -28,6 +30,7 @@ class _Hub:
 
     def __init__(self) -> None:
         self.calls = []
+        self.revoke_failure: AuthorityFailure | None = None
 
     async def approve(self, **kwargs) -> HubLifecycleStatus:
         self.calls.append(kwargs)
@@ -36,6 +39,17 @@ class _Hub:
             device_id=kwargs["device_id"],
             owner_id=kwargs["owner_id"],
             lifecycle_state="approved",
+        )
+
+    async def revoke(self, **kwargs) -> HubLifecycleStatus:
+        self.calls.append(kwargs)
+        if self.revoke_failure:
+            raise self.revoke_failure
+        return HubLifecycleStatus(
+            operation="device.lifecycle-status",
+            device_id=kwargs["device_id"],
+            owner_id="owner-1",
+            lifecycle_state="revoked",
         )
 
     async def list_devices(self, **kwargs) -> HubDevicePage:
@@ -53,7 +67,31 @@ class _Kernel:
     def __init__(self) -> None:
         self.mount_calls: list[dict] = []
         self.attach_calls: list[dict] = []
+        self.unmount_calls: list[dict] = []
         self.mount_failure: AuthorityFailure | None = None
+        self.mounted: tuple[KernelMount, ...] = ()
+
+    async def list_mounts(self, **_kwargs) -> KernelMountPage:
+        return KernelMountPage(
+            operation="kernel.device-mount-page",
+            next_cursor=None,
+            mounts=self.mounted,
+        )
+
+    async def unmount(self, **kwargs) -> KernelMutationResult:
+        self.unmount_calls.append(kwargs)
+        mount = _mount(
+            device_id=kwargs["device_id"],
+            owner_id=kwargs["owner_id"],
+            request_id=kwargs["request_id"],
+            revision=kwargs["expected_revision"] + 1,
+        )
+        return KernelMutationResult(
+            operation="kernel.device-mount-mutation-result",
+            mount=mount.model_copy(update={"active": False}),
+            audit_position=3,
+            replayed=False,
+        )
 
     async def mount(self, **kwargs) -> KernelMutationResult:
         if self.mount_failure:
@@ -197,3 +235,69 @@ async def test_pending_directory_uses_admin_credential_and_unclaimed_scope() -> 
     claims = jwt.decode(encoded, _SECRET, algorithms=["HS256"], audience="eidolon-hub")
     assert claims["roles"] == ["hub-admin"]
     assert "owner_id" not in claims
+
+
+def _removal_request() -> ControllerDeviceRemovalRequest:
+    return ControllerDeviceRemovalRequest(
+        contract_version="1",
+        request_id="mobile-remove-1",
+        owner_id="owner-1",
+        controller_id="ectrl-0123456789abcdefabcd",
+        device_id="device-1",
+    )
+
+
+async def test_removal_revokes_the_grant_then_drops_the_mount() -> None:
+    hub, kernel = _Hub(), _Kernel()
+    kernel.mounted = (
+        _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=3),
+    )
+
+    result = await _service(hub, kernel).remove_controller_device(payload=_removal_request())
+
+    assert result.outcome == "completed"
+    assert result.completed_stage == "kernel_unmounted"
+    assert [step.name for step in result.steps] == ["hub_revocation", "kernel_unmount"]
+    assert hub.calls[0]["reason"] == "owner-removed"
+    # The mount is dropped at the revision that was read, so a mount that moved
+    # underneath fails the compare instead of removing the wrong state.
+    assert kernel.unmount_calls[0]["expected_revision"] == 3
+
+
+async def test_removal_is_idempotent_when_nothing_is_mounted() -> None:
+    hub, kernel = _Hub(), _Kernel()
+
+    result = await _service(hub, kernel).remove_controller_device(payload=_removal_request())
+
+    assert result.outcome == "completed"
+    assert kernel.unmount_calls == []
+    assert result.steps[-1].state == "not_requested"
+
+
+async def test_a_hub_that_refuses_leaves_the_mount_alone() -> None:
+    hub, kernel = _Hub(), _Kernel()
+    hub.revoke_failure = AuthorityFailure("hub", "not_found", "no such device", 404)
+    kernel.mounted = (
+        _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=3),
+    )
+
+    result = await _service(hub, kernel).remove_controller_device(payload=_removal_request())
+
+    assert result.outcome == "blocked"
+    assert result.completed_stage == "received"
+    assert kernel.unmount_calls == []
+    assert result.steps[0].failure is not None
+
+
+async def test_repeating_a_removal_reuses_the_same_child_request_ids() -> None:
+    hub, kernel = _Hub(), _Kernel()
+    kernel.mounted = (
+        _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=3),
+    )
+    service = _service(hub, kernel)
+
+    first = await service.remove_controller_device(payload=_removal_request())
+    second = await service.remove_controller_device(payload=_removal_request())
+
+    assert first.steps[0].request_id == second.steps[0].request_id
+    assert kernel.unmount_calls[0]["request_id"] == kernel.unmount_calls[1]["request_id"]

@@ -19,8 +19,10 @@ from .clients import (
 from .contracts import (
     BoundaryCapabilities,
     ControllerDeviceAdmissionRequest,
+    ControllerDeviceRemovalRequest,
     DeviceAdmissionRequest,
     DeviceAdmissionResult,
+    DeviceRemovalResult,
     HubDevicePage,
     HubLifecycleStatus,
     KernelMountPage,
@@ -36,6 +38,7 @@ from .hub_credentials import HubAdminCredentialIssuer
 
 
 _CONTROLLER_ADMISSION_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
+_CONTROLLER_REMOVAL_NAMESPACE = UUID("6c0a1f42-9b3e-5d77-8a41-0d2b6f9e5c18")
 
 
 def _child_request_id(workflow_id: str, suffix: str) -> str:
@@ -48,6 +51,14 @@ def _controller_admission_workflow_id(device_id: str, request_id: str) -> str:
         f"eidolon-controller-device-admission-v1:{device_id}:{request_id}",
     )
     return f"device-admission-{operation.hex}"
+
+
+def _controller_removal_workflow_id(device_id: str, request_id: str) -> str:
+    operation = uuid5(
+        _CONTROLLER_REMOVAL_NAMESPACE,
+        f"eidolon-controller-device-removal-v1:{device_id}:{request_id}",
+    )
+    return f"device-removal-{operation.hex}"
 
 
 class ControlPlaneService:
@@ -217,6 +228,133 @@ class ControlPlaneService:
             mount_request_id=mount_request_id,
             attach_request_id=attach_request_id,
         )
+
+    async def remove_controller_device(
+        self,
+        *,
+        payload: ControllerDeviceRemovalRequest,
+    ) -> DeviceRemovalResult:
+        """Withdraw a device's grant, then drop its mount.
+
+        The order is the one that holds under interruption: once the Hub has
+        revoked, the device can no longer obtain channel credentials, so a
+        Kernel step that fails leaves something inert and listed rather than
+        something invisible and live. Same forward-only, deterministic child
+        request IDs as admission — retrying resumes, it does not duplicate.
+        """
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Owner credential issuer is unavailable",
+                503,
+            )
+        workflow_id = _controller_removal_workflow_id(
+            payload.device_id,
+            payload.request_id,
+        )
+        revoke_request_id = _child_request_id(workflow_id, "hub-revoke")
+        unmount_request_id = _child_request_id(workflow_id, "kernel-unmount")
+        authorization = self.hub_credentials.issue(controller_id=payload.controller_id)
+        try:
+            hub = await self.hub.revoke(
+                device_id=payload.device_id,
+                reason=payload.reason,
+                request_id=revoke_request_id,
+                authorization=authorization,
+            )
+        except AuthorityFailure as exc:
+            return DeviceRemovalResult(
+                request_id=payload.request_id,
+                outcome="retry_required" if exc.retryable else "blocked",
+                completed_stage="received",
+                recovery=(
+                    "retry-forward-same-request-id"
+                    if exc.retryable
+                    else "operator-action-required"
+                ),
+                steps=(
+                    WorkflowStep(
+                        name="hub_revocation",
+                        state="failed",
+                        request_id=revoke_request_id,
+                        failure=exc.to_wire(),
+                    ),
+                    WorkflowStep(name="kernel_unmount", state="not_attempted"),
+                ),
+            )
+        steps = [
+            WorkflowStep(
+                name="hub_revocation",
+                state="committed",
+                request_id=revoke_request_id,
+            )
+        ]
+        mount = await self._owner_mount(owner_id=payload.owner_id, device_id=payload.device_id)
+        if mount is None:
+            # Nothing to drop: the device was never mounted, or a previous
+            # attempt already dropped it. Either way the end state is the one
+            # asked for.
+            steps.append(WorkflowStep(name="kernel_unmount", state="not_requested"))
+            return DeviceRemovalResult(
+                request_id=payload.request_id,
+                outcome="completed",
+                completed_stage="kernel_unmounted",
+                steps=tuple(steps),
+                hub=hub,
+            )
+        try:
+            await self.kernel.unmount(
+                owner_id=payload.owner_id,
+                device_id=payload.device_id,
+                request_id=unmount_request_id,
+                expected_revision=mount.revision,
+            )
+        except AuthorityFailure as exc:
+            steps.append(
+                WorkflowStep(
+                    name="kernel_unmount",
+                    state="failed",
+                    request_id=unmount_request_id,
+                    revision=mount.revision,
+                    failure=exc.to_wire(),
+                )
+            )
+            return DeviceRemovalResult(
+                request_id=payload.request_id,
+                outcome="retry_required" if exc.retryable else "blocked",
+                completed_stage="hub_revoked",
+                recovery=(
+                    "retry-forward-same-request-id"
+                    if exc.retryable
+                    else "operator-action-required"
+                ),
+                steps=tuple(steps),
+                hub=hub,
+            )
+        steps.append(
+            WorkflowStep(
+                name="kernel_unmount",
+                state="committed",
+                request_id=unmount_request_id,
+                revision=mount.revision,
+            )
+        )
+        return DeviceRemovalResult(
+            request_id=payload.request_id,
+            outcome="completed",
+            completed_stage="kernel_unmounted",
+            steps=tuple(steps),
+            hub=hub,
+        )
+
+    async def _owner_mount(self, *, owner_id: str, device_id: str):
+        page = await self.kernel.list_mounts(owner_id=owner_id)
+        for mount in page.mounts:
+            if mount.device_id == device_id and mount.active:
+                return mount
+        return None
 
     async def list_pending_device_enrollments(
         self,
