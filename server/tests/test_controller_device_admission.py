@@ -329,3 +329,39 @@ async def test_a_first_admission_still_mounts_from_nothing() -> None:
     await _service(hub, kernel).admit_controller_device(payload=_request())
 
     assert kernel.mount_calls[0]["expected_revision"] == 0
+
+
+async def test_admitting_an_already_mounted_device_touches_nothing() -> None:
+    # Every connect re-runs admission. The Kernel refuses to mount over an
+    # active mount, so converging on the state — rather than replaying a
+    # request — is what makes that safe.
+    hub, kernel = _Hub(), _Kernel()
+    kernel.mounted = (
+        _mount(
+            device_id="device-1",
+            owner_id="owner-1",
+            request_id="r",
+            companion_id="companion-1",
+            revision=4,
+        ),
+    )
+
+    result = await _service(hub, kernel).admit_controller_device(payload=_request())
+
+    assert result.outcome == "completed"
+    assert result.completed_stage == "companion_attached"
+    assert kernel.mount_calls == []
+    assert kernel.attach_calls == []
+
+
+async def test_a_mounted_device_still_gets_its_companion_attached() -> None:
+    hub, kernel = _Hub(), _Kernel()
+    kernel.mounted = (
+        _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=4),
+    )
+
+    result = await _service(hub, kernel).admit_controller_device(payload=_request())
+
+    assert result.outcome == "completed"
+    assert kernel.mount_calls == []
+    assert kernel.attach_calls[0]["expected_revision"] == 4

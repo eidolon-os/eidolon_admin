@@ -25,6 +25,7 @@ from .contracts import (
     DeviceRemovalResult,
     HubDevicePage,
     HubLifecycleStatus,
+    KernelMount,
     KernelMountPage,
     OwnerInventory,
     SourceStatus,
@@ -227,6 +228,7 @@ class ControlPlaneService:
             companion_id=payload.companion_id,
             expected_mount_revision=existing.revision if existing else 0,
             replace_existing_mount=False,
+            mounted=existing if existing is not None and existing.active else None,
             hub=hub,
             hub_step=WorkflowStep(
                 name="hub_approval",
@@ -396,10 +398,26 @@ class ControlPlaneService:
         hub_step: WorkflowStep,
         mount_request_id: str,
         attach_request_id: str,
+        mounted: KernelMount | None = None,
     ) -> DeviceAdmissionResult:
         steps = [
             hub_step,
         ]
+        if mounted is not None:
+            # Already where this step is trying to get to. Asking the Kernel to
+            # mount it again is not idempotent — the same device cannot be
+            # mounted over while it is active — so the state, not a repeated
+            # request, is what makes admission safe to run on every connect.
+            return await self._attach_mounted_device(
+                response_request_id=response_request_id,
+                owner_id=owner_id,
+                device_id=device_id,
+                companion_id=companion_id,
+                hub=hub,
+                steps=[*steps, WorkflowStep(name="kernel_mount", state="replayed", revision=mounted.revision)],
+                mount=mounted,
+                attach_request_id=attach_request_id,
+            )
         try:
             mount_result = await self.kernel.mount(
                 owner_id=owner_id,
@@ -446,6 +464,29 @@ class ControlPlaneService:
                 revision=mount_result.mount.revision,
             )
         )
+        return await self._attach_mounted_device(
+            response_request_id=response_request_id,
+            owner_id=owner_id,
+            device_id=device_id,
+            companion_id=companion_id,
+            hub=hub,
+            steps=steps,
+            mount=mount_result.mount,
+            attach_request_id=attach_request_id,
+        )
+
+    async def _attach_mounted_device(
+        self,
+        *,
+        response_request_id: str,
+        owner_id: str,
+        device_id: str,
+        companion_id: str | None,
+        hub: HubLifecycleStatus,
+        steps: list[WorkflowStep],
+        mount: KernelMount,
+        attach_request_id: str,
+    ) -> DeviceAdmissionResult:
         if companion_id is None:
             steps.append(
                 WorkflowStep(name="companion_attachment", state="not_requested")
@@ -456,7 +497,23 @@ class ControlPlaneService:
                 completed_stage="kernel_mounted",
                 steps=tuple(steps),
                 hub=hub,
-                mount=mount_result.mount,
+                mount=mount,
+            )
+        if mount.attached_companion_id == companion_id:
+            steps.append(
+                WorkflowStep(
+                    name="companion_attachment",
+                    state="replayed",
+                    revision=mount.revision,
+                )
+            )
+            return DeviceAdmissionResult(
+                request_id=response_request_id,
+                outcome="completed",
+                completed_stage="companion_attached",
+                steps=tuple(steps),
+                hub=hub,
+                mount=mount,
             )
         try:
             attach_result = await self.kernel.attach(
@@ -464,7 +521,7 @@ class ControlPlaneService:
                 device_id=device_id,
                 companion_id=companion_id,
                 request_id=attach_request_id,
-                expected_revision=mount_result.mount.revision,
+                expected_revision=mount.revision,
             )
         except AuthorityFailure as exc:
             steps.append(
@@ -472,7 +529,7 @@ class ControlPlaneService:
                     name="companion_attachment",
                     state="failed",
                     request_id=attach_request_id,
-                    revision=mount_result.mount.revision,
+                    revision=mount.revision,
                     failure=exc.to_wire(),
                 )
             )
@@ -487,7 +544,7 @@ class ControlPlaneService:
                 ),
                 steps=tuple(steps),
                 hub=hub,
-                mount=mount_result.mount,
+                mount=mount,
             )
         steps.append(
             WorkflowStep(
