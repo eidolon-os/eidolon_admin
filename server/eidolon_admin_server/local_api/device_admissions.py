@@ -27,19 +27,24 @@ _LOGGER = logging.getLogger(__name__)
 #: something the Owner can act on. What is deliberately not passed on is the
 #: authority's own sentence: it names internal request identifiers and
 #: authority internals that belong in the Host log, not on a screen.
+#:
+#: These are the only sentences on this API written for the person rather than
+#: for whoever is reading the Host, so they are the only ones in the language
+#: that person's App speaks. Everything else here stays English, because the App
+#: never shows it: it grades a status code into its own words.
 _REFUSAL_REASONS: dict[str, str] = {
     "conflict": (
-        "the Host refused this device in its current state; refresh the list "
-        "and retry, and take the device off the Host first if it is refused again"
+        "主机不接受这台设备当前的状态。请刷新列表后重试；若仍被拒绝，"
+        "先把这台设备从主机上移除，再重新添加。"
     ),
-    "not_found": "the Host no longer holds this device",
-    "unauthorized": "the Host no longer authorizes this Controller for devices",
-    "forbidden": "the Host no longer authorizes this Controller for devices",
-    "invalid_request": "the Host rejected the contents of this request",
-    "unavailable": "a Host device authority is temporarily unavailable",
-    "configuration": "a Host device authority is not fully configured",
-    "upstream_failure": "a Host device authority failed to answer",
-    "contract_violation": "a Host device authority answered outside its contract",
+    "not_found": "主机上已经没有这台设备了。",
+    "unauthorized": "主机不再授权这台手机管理设备。",
+    "forbidden": "主机不再授权这台手机管理设备。",
+    "invalid_request": "主机拒绝了这次请求的内容。",
+    "unavailable": "主机的设备权威暂时不可用。",
+    "configuration": "主机的设备权威尚未配置完成。",
+    "upstream_failure": "主机的设备权威没有应答。",
+    "contract_violation": "主机的设备权威返回了不符合契约的应答。",
 }
 
 

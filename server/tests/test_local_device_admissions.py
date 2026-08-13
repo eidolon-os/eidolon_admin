@@ -253,7 +253,7 @@ async def test_a_refused_admission_says_why_and_keeps_the_authority_words_here(
 
     assert caught.value.status_code == 409
     message = str(caught.value)
-    assert "refused this device in its current state" in message
+    assert "主机不接受这台设备当前的状态" in message
     # The authority's own words name internal request identifiers, so they stay
     # on the Host rather than travelling to a screen.
     assert "request_id" not in message
