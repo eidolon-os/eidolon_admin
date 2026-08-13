@@ -49,6 +49,7 @@ from .device_admissions import (
     LocalDeviceRemovalProgress,
     LocalDeviceRemovalRequest,
     LocalPendingDeviceEnrollmentPage,
+    device_admission_detail,
     device_admission_progress,
     device_removal_progress,
     pending_device_enrollment_page,
@@ -565,7 +566,9 @@ def create_app(
             page = await device_admission.list_pending(controller_id=controller_id)
             return pending_device_enrollment_page(page)
         except DeviceAdmissionError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise HTTPException(
+                exc.status_code, device_admission_detail(exc)
+            ) from exc
 
     @app.post(
         "/api/local/v1/device-enrollments/{device_id}/approval",
@@ -599,7 +602,9 @@ def create_app(
                 result=result,
             )
         except DeviceAdmissionError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise HTTPException(
+                exc.status_code, device_admission_detail(exc)
+            ) from exc
 
     @app.post(
         "/api/local/v1/devices/{device_id}/removal",
@@ -640,7 +645,9 @@ def create_app(
                 result=result,
             )
         except DeviceAdmissionError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise HTTPException(
+                exc.status_code, device_admission_detail(exc)
+            ) from exc
 
     @app.get(
         "/api/local/v1/host/services",

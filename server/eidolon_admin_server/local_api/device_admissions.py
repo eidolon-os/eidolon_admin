@@ -31,7 +31,10 @@ _LOGGER = logging.getLogger(__name__)
 #: These are the only sentences on this API written for the person rather than
 #: for whoever is reading the Host, so they are the only ones in the language
 #: that person's App speaks. Everything else here stays English, because the App
-#: never shows it: it grades a status code into its own words.
+#: never shows it: it grades a status code into its own words. That only holds
+#: while the two are told apart on the wire, which is what
+#: `device_admission_detail` is for — a bare sentence is a diagnostic, and only
+#: a tagged reason is meant for a screen.
 _REFUSAL_REASONS: dict[str, str] = {
     "conflict": (
         "主机不接受这台设备当前的状态。请刷新列表后重试；若仍被拒绝，"
@@ -49,9 +52,34 @@ _REFUSAL_REASONS: dict[str, str] = {
 
 
 class DeviceAdmissionError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int = 503) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int = 503,
+        reason: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        #: An Owner-facing sentence, set only where a refusal was graded into
+        #: one. Everything else raised here is a diagnostic for whoever reads
+        #: the Host — it names authorities and contracts, not anything the
+        #: person holding the phone can act on — so it stays untagged and App
+        #: keeps grading the status code into its own words.
+        self.reason = reason
+
+
+def device_admission_detail(exc: DeviceAdmissionError) -> str | dict[str, str]:
+    """What may leave the Host when a device request could not be completed.
+
+    Tagging the graded reason is what keeps "App never shows the diagnostics"
+    true: App cannot tell a sentence written for the Owner from one written for
+    a developer by looking at it, so the Host says which it is rather than
+    leaving App to guess — and guessing wrong in the direction that puts
+    contract-violation wording on a screen.
+    """
+
+    return {"reason": exc.reason} if exc.reason is not None else str(exc)
 
 
 def _refusal(
@@ -81,8 +109,15 @@ def _refusal(
         )
     reason = _REFUSAL_REASONS.get(kind or "")
     if reason is None:
+        # Admin refused with something other than an authority failure, so
+        # there is no graded sentence to offer and nothing here is fit to show.
+        _LOGGER.warning(
+            "Admin Device %s refused with HTTP %s and no authority failure",
+            operation,
+            response.status_code,
+        )
         return DeviceAdmissionError(fallback, status_code=status_code)
-    return DeviceAdmissionError(reason, status_code=status_code)
+    return DeviceAdmissionError(fallback, status_code=status_code, reason=reason)
 
 
 def _authority_failure(

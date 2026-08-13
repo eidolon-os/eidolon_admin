@@ -34,6 +34,7 @@ from eidolon_admin_server.local_api.config import (
 from eidolon_admin_server.local_api.device_admissions import (
     AdminDeviceAdmissionClient,
     DeviceAdmissionError,
+    device_admission_detail,
     device_admission_progress,
     device_removal_progress,
 )
@@ -252,13 +253,57 @@ async def test_a_refused_admission_says_why_and_keeps_the_authority_words_here(
         await http_client.aclose()
 
     assert caught.value.status_code == 409
-    message = str(caught.value)
-    assert "主机不接受这台设备当前的状态" in message
+    assert caught.value.reason is not None
+    assert "主机不接受这台设备当前的状态" in caught.value.reason
     # The authority's own words name internal request identifiers, so they stay
     # on the Host rather than travelling to a screen.
-    assert "request_id" not in message
+    assert "request_id" not in caught.value.reason
     assert "management request_id was reused" in caplog.text
     assert "hub" in caplog.text
+    # Tagged, so App can tell a sentence written for the Owner apart from the
+    # diagnostics this module raises everywhere else.
+    assert device_admission_detail(caught.value) == {"reason": caught.value.reason}
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_admin_did_not_grade_offers_the_owner_nothing_to_show(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Not every refusal comes with an authority failure to grade. What is left
+    # is a diagnostic naming authorities and contracts, which is for whoever
+    # reads the Host — so it must reach App untagged, leaving App to say
+    # something in its own words rather than putting this on a screen.
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "device admission path and body do not match"})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    subject = AdminDeviceAdmissionClient(
+        base_url="http://127.0.0.1:9000",
+        service_token="local-service-token",
+        timeout_seconds=1,
+        client=http_client,
+    )
+    payload = ControllerDeviceAdmissionRequest(
+        contract_version="1",
+        request_id="device-approval-1",
+        owner_id="owner-1",
+        controller_id=_CONTROLLER_ID,
+        device_id="24:ec:4a:52:f3:54",
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(DeviceAdmissionError) as caught:
+                await subject.claim(payload=payload)
+    finally:
+        await http_client.aclose()
+
+    assert caught.value.status_code == 409
+    assert caught.value.reason is None
+    detail = device_admission_detail(caught.value)
+    assert isinstance(detail, str)
+    assert "Admin Device admission" in detail
+    # The Host still records that it happened, so this is diagnosable from here.
+    assert "no authority failure" in caplog.text
 
 
 def test_mobile_progress_uses_hub_authoritative_device_identity() -> None:
@@ -426,6 +471,95 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
     assert admission.payload is not None
     assert admission.payload.owner_id == "owner-derived"
     assert admission.payload.controller_id == _CONTROLLER_ID
+
+
+class _RefusingAdmissionPort(_AdmissionPort):
+    def __init__(self, error: DeviceAdmissionError) -> None:
+        self._error = error
+
+    async def claim(self, *, payload: ControllerDeviceAdmissionRequest):
+        raise self._error
+
+
+@pytest.mark.asyncio
+async def test_only_a_graded_reason_leaves_the_host_tagged_for_a_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # App cannot tell a sentence written for the Owner from a diagnostic written
+    # for whoever reads the Host by looking at it, so the wire has to say which
+    # it is. Untagged, App falls back to its own words; that is what keeps
+    # contract-violation wording off a screen.
+    certificate = tmp_path / "hub-leaf.pem"
+    _write_certificate(certificate)
+    target = _target(certificate)
+    principal = {
+        "contract_version": "1",
+        "controller_id": _CONTROLLER_ID,
+        "owner_id": "owner-derived",
+        "reset_epoch": 0,
+    }
+
+    async def bootstrap_request(self, operation: str, **_parameters):
+        if operation in {"controller.authenticate", "controller.validate"}:
+            return principal
+        raise AssertionError(f"unexpected bootstrap operation: {operation}")
+
+    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+
+    async def refuse(error: DeviceAdmissionError) -> httpx.Response:
+        unused = _UnusedPort()
+        app = create_app(
+            LocalApiSettings(
+                bootstrap=_bootstrap(tmp_path),
+                device_onboarding_target=target,
+            ),
+            workspace_client=unused,  # type: ignore[arg-type]
+            runtime_client=unused,  # type: ignore[arg-type]
+            devices_client=unused,  # type: ignore[arg-type]
+            device_admission_client=_RefusingAdmissionPort(error),  # type: ignore[arg-type]
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://local.test",
+        ) as client:
+            session = await client.post(
+                "/api/local/v1/auth/sessions",
+                json={
+                    "contract_version": "1",
+                    "purpose": "eidolon-controller-local-auth-v1",
+                    "controller_id": _CONTROLLER_ID,
+                    "challenge": _AUTH_CHALLENGE,
+                    "reset_epoch": 0,
+                    "signature": "abcdefgh",
+                },
+            )
+            return await client.post(
+                "/api/local/v1/device-enrollments/24%3Aec%3A4a%3A52%3Af3%3A54/approval",
+                headers={"Authorization": f"Bearer {session.json()['access_token']}"},
+                json={"contract_version": "1", "request_id": "device-approval-1"},
+            )
+
+    graded = await refuse(
+        DeviceAdmissionError(
+            "Admin Device admission did not complete the requested transition",
+            status_code=409,
+            reason="主机上已经没有这台设备了。",
+        )
+    )
+    diagnostic = await refuse(
+        DeviceAdmissionError(
+            "Admin Device admission response violated its contract",
+            status_code=502,
+        )
+    )
+
+    assert graded.status_code == 409
+    assert graded.json()["detail"] == {"reason": "主机上已经没有这台设备了。"}
+    assert diagnostic.status_code == 502
+    assert diagnostic.json()["detail"] == (
+        "Admin Device admission response violated its contract"
+    )
 
 
 @pytest.mark.asyncio
