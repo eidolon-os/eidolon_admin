@@ -46,18 +46,39 @@ def _child_request_id(workflow_id: str, suffix: str) -> str:
     return f"admin:{workflow_id}:{suffix}"
 
 
-def _controller_admission_workflow_id(device_id: str, request_id: str) -> str:
+def _controller_admission_workflow_id(
+    payload: ControllerDeviceAdmissionRequest,
+) -> str:
+    """Name this admission by everything the authorities key idempotency on.
+
+    Downstream authorities do not take a request ID on trust: the Hub stores
+    the last management request ID for a device beside a fingerprint of that
+    mutation, and refuses an ID that comes back carrying a different one. Its
+    fingerprint covers the requesting Controller and the owner being granted,
+    so a workflow ID that leaves either out would hand the Hub one ID under two
+    fingerprints — a conflict it is right to refuse and that no retry can
+    clear. A household holds more than one phone, and every one of them derives
+    the same mobile request ID for a given device on purpose, so the collision
+    is reachable from the ordinary case of a second phone claiming a device.
+    """
+
     operation = uuid5(
         _CONTROLLER_ADMISSION_NAMESPACE,
-        f"eidolon-controller-device-admission-v1:{device_id}:{request_id}",
+        "eidolon-controller-device-admission-v1:"
+        f"{payload.device_id}:{payload.request_id}:"
+        f"{payload.owner_id}:{payload.controller_id}",
     )
     return f"device-admission-{operation.hex}"
 
 
-def _controller_removal_workflow_id(device_id: str, request_id: str) -> str:
+def _controller_removal_workflow_id(payload: ControllerDeviceRemovalRequest) -> str:
+    """Same naming rule as admission; the Hub fingerprints a revocation too."""
+
     operation = uuid5(
         _CONTROLLER_REMOVAL_NAMESPACE,
-        f"eidolon-controller-device-removal-v1:{device_id}:{request_id}",
+        "eidolon-controller-device-removal-v1:"
+        f"{payload.device_id}:{payload.request_id}:"
+        f"{payload.owner_id}:{payload.controller_id}:{payload.reason}",
     )
     return f"device-removal-{operation.hex}"
 
@@ -197,10 +218,7 @@ class ControlPlaneService:
                 "Hub Owner credential issuer is unavailable",
                 503,
             )
-        workflow_id = _controller_admission_workflow_id(
-            payload.device_id,
-            payload.request_id,
-        )
+        workflow_id = _controller_admission_workflow_id(payload)
         hub_request_id = _child_request_id(workflow_id, "hub-approve")
         mount_request_id = _child_request_id(workflow_id, "kernel-mount")
         attach_request_id = _child_request_id(workflow_id, "kernel-attach")
@@ -260,10 +278,7 @@ class ControlPlaneService:
                 "Hub Owner credential issuer is unavailable",
                 503,
             )
-        workflow_id = _controller_removal_workflow_id(
-            payload.device_id,
-            payload.request_id,
-        )
+        workflow_id = _controller_removal_workflow_id(payload)
         revoke_request_id = _child_request_id(workflow_id, "hub-revoke")
         unmount_request_id = _child_request_id(workflow_id, "kernel-unmount")
         authorization = self.hub_credentials.issue(controller_id=payload.controller_id)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from eidolon_admin_server.local_api.config import (
 )
 from eidolon_admin_server.local_api.device_admissions import (
     AdminDeviceAdmissionClient,
+    DeviceAdmissionError,
     device_admission_progress,
     device_removal_progress,
 )
@@ -204,6 +206,59 @@ async def test_local_admin_adapter_forwards_exact_approval_contract() -> None:
     assert result.hub.device_id == "device-authoritative"
     assert observed["device_id"] == "device-authoritative"
     assert "owner_id" in observed
+
+
+@pytest.mark.asyncio
+async def test_a_refused_admission_says_why_and_keeps_the_authority_words_here(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The Host is told which authority refused and in what way. Answering the
+    # phone with one generic sentence for every status is what left this
+    # undiagnosable: the Owner is asked to refresh a list that will never
+    # change, and nothing anywhere records the reason.
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            409,
+            json={
+                "detail": {
+                    "authority": "hub",
+                    "kind": "conflict",
+                    "detail": "management request_id was reused",
+                    "upstream_status": 409,
+                    "retryable": False,
+                }
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    subject = AdminDeviceAdmissionClient(
+        base_url="http://127.0.0.1:9000",
+        service_token="local-service-token",
+        timeout_seconds=1,
+        client=http_client,
+    )
+    payload = ControllerDeviceAdmissionRequest(
+        contract_version="1",
+        request_id="device-approval-1",
+        owner_id="owner-1",
+        controller_id=_CONTROLLER_ID,
+        device_id="24:ec:4a:52:f3:54",
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(DeviceAdmissionError) as caught:
+                await subject.claim(payload=payload)
+    finally:
+        await http_client.aclose()
+
+    assert caught.value.status_code == 409
+    message = str(caught.value)
+    assert "refused this device in its current state" in message
+    # The authority's own words name internal request identifiers, so they stay
+    # on the Host rather than travelling to a screen.
+    assert "request_id" not in message
+    assert "management request_id was reused" in caplog.text
+    assert "hub" in caplog.text
 
 
 def test_mobile_progress_uses_hub_authoritative_device_identity() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Literal, Protocol
 from urllib.parse import quote
 
@@ -17,11 +18,86 @@ from ..app.control_plane.contracts import (
 )
 from .config import VerifiedHubOnboardingTarget
 
+_LOGGER = logging.getLogger(__name__)
+
+#: What each kind of authority refusal means for the person holding the phone.
+#:
+#: Admin reports which authority refused and what kind of refusal it was. Those
+#: kinds are a published vocabulary, so they can be graded once here into
+#: something the Owner can act on. What is deliberately not passed on is the
+#: authority's own sentence: it names internal request identifiers and
+#: authority internals that belong in the Host log, not on a screen.
+_REFUSAL_REASONS: dict[str, str] = {
+    "conflict": (
+        "the Host refused this device in its current state; refresh the list "
+        "and retry, and take the device off the Host first if it is refused again"
+    ),
+    "not_found": "the Host no longer holds this device",
+    "unauthorized": "the Host no longer authorizes this Controller for devices",
+    "forbidden": "the Host no longer authorizes this Controller for devices",
+    "invalid_request": "the Host rejected the contents of this request",
+    "unavailable": "a Host device authority is temporarily unavailable",
+    "configuration": "a Host device authority is not fully configured",
+    "upstream_failure": "a Host device authority failed to answer",
+    "contract_violation": "a Host device authority answered outside its contract",
+}
+
 
 class DeviceAdmissionError(RuntimeError):
     def __init__(self, message: str, *, status_code: int = 503) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+def _refusal(
+    response: httpx.Response,
+    *,
+    operation: str,
+    fallback: str,
+    status_code: int,
+) -> DeviceAdmissionError:
+    """Carry forward *why* Admin refused, instead of only that it refused.
+
+    The Host knows the reason — an authority told it, in words. Answering every
+    non-200 with one generic sentence discards that, and leaves the Owner
+    refreshing a list that will never change and a developer with a status code.
+    So the authority's own words go to the Host log, and the graded reason for
+    the refusal travels on.
+    """
+
+    authority, kind, words = _authority_failure(response)
+    if words is not None:
+        _LOGGER.warning(
+            "Admin Device %s refused by %s authority (%s): %s",
+            operation,
+            authority or "an unnamed",
+            kind or "unknown kind",
+            words,
+        )
+    reason = _REFUSAL_REASONS.get(kind or "")
+    if reason is None:
+        return DeviceAdmissionError(fallback, status_code=status_code)
+    return DeviceAdmissionError(reason, status_code=status_code)
+
+
+def _authority_failure(
+    response: httpx.Response,
+) -> tuple[str | None, str | None, str | None]:
+    """Read Admin's authority failure envelope, tolerating anything else."""
+
+    try:
+        document = response.json()
+    except ValueError:
+        return None, None, None
+    detail = document.get("detail") if isinstance(document, dict) else None
+    if not isinstance(detail, dict):
+        return None, None, None
+
+    def _text(key: str) -> str | None:
+        value = detail.get(key)
+        return value if isinstance(value, str) and value else None
+
+    return _text("authority"), _text("kind"), _text("detail")
 
 
 class LocalDeviceOnboardingTarget(BaseModel):
@@ -268,8 +344,12 @@ class AdminDeviceAdmissionClient:
                 502,
                 503,
             } else 503
-            raise DeviceAdmissionError(
-                "Admin Device admission did not complete the requested transition",
+            raise _refusal(
+                response,
+                operation="admission",
+                fallback=(
+                    "Admin Device admission did not complete the requested transition"
+                ),
                 status_code=status_code,
             )
         try:
@@ -316,8 +396,12 @@ class AdminDeviceAdmissionClient:
                 if response.status_code in {403, 404, 409, 422, 502, 503}
                 else 503
             )
-            raise DeviceAdmissionError(
-                "Admin Device removal did not complete the requested transition",
+            raise _refusal(
+                response,
+                operation="removal",
+                fallback=(
+                    "Admin Device removal did not complete the requested transition"
+                ),
                 status_code=status_code,
             )
         try:

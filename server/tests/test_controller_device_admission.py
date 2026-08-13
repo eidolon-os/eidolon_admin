@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from hashlib import sha256
 
 import jwt
 import pytest
@@ -61,6 +63,89 @@ class _Hub:
                 "devices": [],
             }
         )
+
+
+class _LedgerHub:
+    """A Hub that keeps its own management idempotency guard.
+
+    The real Hub stores, per device, the last management request ID together
+    with a fingerprint of that mutation — and the fingerprint covers the
+    calling principal and the requested owner, not just the device. An ID that
+    arrives again carrying a different fingerprint is a reuse, not a replay,
+    and the Hub refuses it with a conflict that no retry can clear.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self._ledger: dict[str, tuple[str, str]] = {}
+
+    async def approve(self, **kwargs) -> HubLifecycleStatus:
+        self.calls.append(kwargs)
+        self._record(
+            operation="device.approve",
+            device_id=kwargs["device_id"],
+            request_id=kwargs["request_id"],
+            values={"owner_id": kwargs["owner_id"]},
+            authorization=kwargs["authorization"],
+        )
+        return HubLifecycleStatus(
+            operation="device.lifecycle-status",
+            device_id=kwargs["device_id"],
+            owner_id=kwargs["owner_id"],
+            lifecycle_state="approved",
+        )
+
+    async def revoke(self, **kwargs) -> HubLifecycleStatus:
+        self.calls.append(kwargs)
+        self._record(
+            operation="device.revoke",
+            device_id=kwargs["device_id"],
+            request_id=kwargs["request_id"],
+            values={"reason": kwargs["reason"]},
+            authorization=kwargs["authorization"],
+        )
+        return HubLifecycleStatus(
+            operation="device.lifecycle-status",
+            device_id=kwargs["device_id"],
+            owner_id="owner-1",
+            lifecycle_state="revoked",
+        )
+
+    def _record(
+        self,
+        *,
+        operation: str,
+        device_id: str,
+        request_id: str,
+        values: dict[str, str],
+        authorization: str,
+    ) -> None:
+        claims = jwt.decode(
+            authorization.removeprefix("Bearer "),
+            _SECRET,
+            algorithms=["HS256"],
+            audience="eidolon-hub",
+        )
+        document = json.dumps(
+            {
+                "operation": operation,
+                "values": {**values, "principal_id": claims["sub"]},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        fingerprint = sha256(document.encode()).hexdigest()
+        seen = self._ledger.get(device_id)
+        if seen is not None and seen[0] == request_id and seen[1] != fingerprint:
+            raise AuthorityFailure(
+                "hub",
+                "conflict",
+                "management request_id was reused",
+                409,
+                409,
+                False,
+            )
+        self._ledger[device_id] = (request_id, fingerprint)
 
 
 class _Kernel:
@@ -147,14 +232,17 @@ def _mount(
     )
 
 
-def _request() -> ControllerDeviceAdmissionRequest:
+def _request(**overrides) -> ControllerDeviceAdmissionRequest:
     return ControllerDeviceAdmissionRequest(
-        contract_version="1",
-        request_id="mobile-claim-1",
-        owner_id="owner-1",
-        controller_id="ectrl-0123456789abcdefabcd",
-        device_id="device-1",
-        companion_id="companion-1",
+        **{
+            "contract_version": "1",
+            "request_id": "mobile-claim-1",
+            "owner_id": "owner-1",
+            "controller_id": "ectrl-0123456789abcdefabcd",
+            "device_id": "device-1",
+            "companion_id": "companion-1",
+            **overrides,
+        }
     )
 
 
@@ -204,6 +292,55 @@ async def test_controller_admission_retry_reuses_all_deterministic_child_ids() -
     assert len(hub.calls[0]["request_id"]) <= 96
 
 
+async def test_a_second_phone_can_claim_a_device_the_first_phone_already_claimed() -> None:
+    # A household can hold more than one phone, and App derives its approval
+    # request ID from the Host and the device alone — so both phones send the
+    # identical one for the same device, on purpose, so a dropped reply resumes
+    # instead of starting a second claim. The Hub keys its management
+    # idempotency on that ID *together with* the Controller that called, so the
+    # ID Admin derives from it has to carry the Controller too. Deriving it from
+    # the device and the mobile ID alone hands the Hub one ID under two
+    # different fingerprints, which it refuses forever: the second phone can
+    # never claim a device the first one claimed, and no retry clears it.
+    hub, kernel = _LedgerHub(), _Kernel()
+    service = _service(hub, kernel)  # type: ignore[arg-type]
+    stable = "device-approval-2TrNj_OvNtC7u357M62_EaEpZJq2VluBv13i-StzeJo"
+
+    first = await service.admit_controller_device(payload=_request(request_id=stable))
+    second = await service.admit_controller_device(
+        payload=_request(
+            request_id=stable,
+            controller_id="ectrl-fedcba98765432100000",
+        )
+    )
+
+    assert first.outcome == "completed"
+    assert second.outcome == "completed"
+    assert hub.calls[0]["request_id"] != hub.calls[1]["request_id"]
+
+
+async def test_a_second_phone_can_remove_a_device_the_first_phone_removed() -> None:
+    # Same collision on the way out: App's removal request ID is stable per
+    # device too, and the Hub fingerprints a revocation by its caller.
+    hub, kernel = _LedgerHub(), _Kernel()
+    service = _service(hub, kernel)  # type: ignore[arg-type]
+    stable = "device-removal-device-1"
+
+    first = await service.remove_controller_device(
+        payload=_removal_request(request_id=stable)
+    )
+    second = await service.remove_controller_device(
+        payload=_removal_request(
+            request_id=stable,
+            controller_id="ectrl-fedcba98765432100000",
+        )
+    )
+
+    assert first.outcome == "completed"
+    assert second.outcome == "completed"
+    assert hub.calls[0]["request_id"] != hub.calls[1]["request_id"]
+
+
 async def test_controller_admission_refuses_missing_internal_credential_source() -> None:
     hub, kernel = _Hub(), _Kernel()
     service = ControlPlaneService(
@@ -237,13 +374,16 @@ async def test_pending_directory_uses_admin_credential_and_unclaimed_scope() -> 
     assert "owner_id" not in claims
 
 
-def _removal_request() -> ControllerDeviceRemovalRequest:
+def _removal_request(**overrides) -> ControllerDeviceRemovalRequest:
     return ControllerDeviceRemovalRequest(
-        contract_version="1",
-        request_id="mobile-remove-1",
-        owner_id="owner-1",
-        controller_id="ectrl-0123456789abcdefabcd",
-        device_id="device-1",
+        **{
+            "contract_version": "1",
+            "request_id": "mobile-remove-1",
+            "owner_id": "owner-1",
+            "controller_id": "ectrl-0123456789abcdefabcd",
+            "device_id": "device-1",
+            **overrides,
+        }
     )
 
 
