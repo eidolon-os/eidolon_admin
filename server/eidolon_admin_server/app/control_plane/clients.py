@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
@@ -17,6 +17,7 @@ from .contracts import (
     HubLifecycleStatus,
     KernelMountPage,
     KernelMutationResult,
+    OwnerIdentity,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -359,6 +360,42 @@ class DataWorkspaceAuthorityClient:
                 "data", "Data returned a workspace operation for different setup input"
             )
         return result
+
+    async def get_owner(self, owner_id: str) -> OwnerIdentity:
+        return await self._owner_call("GET", owner_id)
+
+    async def rename_owner(self, owner_id: str, display_name: str) -> OwnerIdentity:
+        """Set what this Owner is called.
+
+        As with a Companion, whether the caller may rename *this* Owner is not
+        decided here: this client speaks to Data on Admin's behalf, and whose
+        Owner it is belongs at the Local API boundary.
+        """
+
+        return await self._owner_call(
+            "PATCH", owner_id, json={"display_name": display_name}
+        )
+
+    async def _owner_call(
+        self,
+        method: str,
+        owner_id: str,
+        **kwargs: Any,
+    ) -> OwnerIdentity:
+        response = await _request(
+            "data",
+            self._client,
+            method,
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers,
+            **kwargs,
+        )
+        identity = _parse("data", response, OwnerIdentity)
+        if identity.owner_id != owner_id:
+            raise _contract_violation("data", "Data returned a different Owner identity")
+        return identity
 
     async def get(self, operation_id: str) -> WorkspaceOperation:
         response = await _request(

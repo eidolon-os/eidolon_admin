@@ -60,6 +60,7 @@ from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
     HubDevice,
+    OwnerIdentity,
     OwnerInventory,
     PersonaChapter,
     PersonaTimeline,
@@ -176,6 +177,7 @@ class _RuntimeClient:
         self.workspace = workspace
         self.calls = 0
         self.renamed: tuple[str, str] | None = None
+        self.renamed_owner: tuple[str, str] | None = None
         self.restored: tuple[str, str] | None = None
         self.owner_of_companion: str | None = None
 
@@ -265,6 +267,19 @@ class _RuntimeClient:
             operation="companion.identity",
             companion_id=companion_id,
             owner_id=self.workspace.result.owner.owner_id,
+            display_name=display_name,
+            lifecycle_state="active",
+        )
+
+    async def rename_owner(
+        self,
+        owner_id: str,
+        display_name: str,
+    ) -> OwnerIdentity:
+        self.renamed_owner = (owner_id, display_name)
+        return OwnerIdentity(
+            operation="owner.identity",
+            owner_id=owner_id,
             display_name=display_name,
             lifecycle_state="active",
         )
@@ -1542,6 +1557,55 @@ async def test_an_owner_names_their_own_companion_and_only_their_own(
         # hold this Companion learns nothing about whether it exists.
         assert refused.status_code == 404
         assert runtime_client.renamed is None
+
+
+@pytest.mark.asyncio
+async def test_a_person_renames_themselves_without_naming_themselves(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """Unlike a Companion, an Owner carries no identifier in the request.
+
+    There is exactly one Owner a session can speak for. Taking an id here
+    would invent a question — "is this your Owner?" — that the session has
+    already answered, and every place a question is asked twice is a place it
+    can be answered two ways.
+    """
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+        _devices_client,
+    ):
+        renamed = await client.patch(
+            "/api/local/v1/owner",
+            json={"contract_version": "1", "display_name": "  曼森  "},
+            headers=headers,
+        )
+
+        assert renamed.status_code == 200
+        assert renamed.json()["display_name"] == "曼森"
+        owner_id, name = runtime_client.renamed_owner
+        assert name == "曼森"
+        # The Owner written to is the session's own, not one a client chose.
+        assert owner_id == runtime_client.workspace.result.owner.owner_id
+
+        runtime_client.renamed_owner = None
+        blank = await client.patch(
+            "/api/local/v1/owner",
+            json={"contract_version": "1", "display_name": "   "},
+            headers=headers,
+        )
+        assert blank.status_code == 422
+        assert runtime_client.renamed_owner is None
+
+        unauthenticated = await client.patch(
+            "/api/local/v1/owner",
+            json={"contract_version": "1", "display_name": "谁"},
+        )
+        assert unauthenticated.status_code == 401
+        assert runtime_client.renamed_owner is None
 
 
 @pytest.mark.asyncio

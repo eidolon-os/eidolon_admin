@@ -60,6 +60,18 @@ class CompanionRenameRequest(StrictModel):
     display_name: str = Field(min_length=1, max_length=128)
 
 
+class OwnerIdentity(StrictModel):
+    operation: Literal["owner.identity"]
+    owner_id: str = Field(min_length=1, max_length=64)
+    #: What this person is called. Given at first use; correctable since.
+    display_name: str = Field(default="", max_length=128)
+    lifecycle_state: Literal["active", "inactive"]
+
+
+class OwnerRenameRequest(StrictModel):
+    display_name: str = Field(min_length=1, max_length=128)
+
+
 class WorkspaceInitializeRequest(StrictModel):
     owner_display_name: str = Field(min_length=1, max_length=128)
     companion_display_name: str = Field(default="Eidolon", min_length=1, max_length=128)

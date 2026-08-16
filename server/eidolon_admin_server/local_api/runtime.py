@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ..app.control_plane.contracts import (
     CompanionIdentity,
+    OwnerIdentity,
     PersonaChapter,
     PersonaTimeline,
     WorkspaceOperation,
@@ -37,6 +38,12 @@ class AdminOwnerRuntimePort(Protocol):
         companion_id: str,
         display_name: str,
     ) -> CompanionIdentity: ...
+
+    async def rename_owner(
+        self,
+        owner_id: str,
+        display_name: str,
+    ) -> OwnerIdentity: ...
 
     async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline: ...
 
@@ -155,6 +162,26 @@ class CompanionNameView(BaseModel):
     operation: Literal["local.companion-name"] = "local.companion-name"
     contract_version: Literal["1"] = "1"
     companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=128)
+
+
+class OwnerRenameCommand(CompanionRenameCommand):
+    """What this person wants to be called.
+
+    Same rule as naming a Companion, and deliberately the same model: a name
+    of only spaces would erase the one they have, and there is no reason for
+    the answer to differ depending on which of the two is being named.
+    """
+
+
+class OwnerNameView(BaseModel):
+    """What an Owner is called, after being told what to be called."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["local.owner-name"] = "local.owner-name"
+    contract_version: Literal["1"] = "1"
+    owner_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=128)
 
 
@@ -346,6 +373,55 @@ class AdminOwnerRuntimeClient:
         except (ValueError, TypeError, ValidationError) as exc:
             raise WorkspaceRuntimeError(
                 "Admin Companion response violated its contract"
+            ) from exc
+
+    async def rename_owner(
+        self,
+        owner_id: str,
+        display_name: str,
+    ) -> OwnerIdentity:
+        """Set what this Owner is called.
+
+        The Owner is not named in any request a client makes — the session
+        says who they are. This method takes the id because it talks to the
+        control plane, which serves every Owner on this Host and therefore has
+        to be told which one.
+        """
+
+        if not self._token:
+            raise WorkspaceRuntimeError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/owners/"
+            f"{quote(owner_id, safe='')}"
+        )
+        try:
+            response = await self._client.patch(
+                url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                json={"display_name": display_name},
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Owner control plane is unavailable"
+            ) from exc
+        if response.status_code == 404:
+            raise WorkspaceRuntimeError("Owner does not exist", status_code=404)
+        if response.status_code == 422:
+            raise WorkspaceRuntimeError("Owner name was rejected", status_code=422)
+        if response.status_code != 200:
+            raise WorkspaceRuntimeError("Admin Owner control plane is unavailable")
+        try:
+            return OwnerIdentity.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Owner response violated its contract"
             ) from exc
 
     async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline:

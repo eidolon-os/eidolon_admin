@@ -24,7 +24,9 @@ from .contracts import (
     DeviceRemovalResult,
     HubDevicePage,
     KernelMountPage,
+    OwnerIdentity,
     OwnerInventory,
+    OwnerRenameRequest,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -147,6 +149,29 @@ async def get_workspace_operation(
     _authorize_local_api(request, authorization)
     try:
         return await _service(request).get_workspace_operation(str(operation_id))
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get("/owners/{owner_id}", response_model=OwnerIdentity)
+async def get_owner(owner_id: str, request: Request) -> OwnerIdentity:
+    try:
+        return await _service(request).workspace.get_owner(owner_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.patch("/owners/{owner_id}", response_model=OwnerIdentity)
+async def rename_owner(
+    owner_id: str,
+    payload: OwnerRenameRequest,
+    request: Request,
+) -> OwnerIdentity:
+    try:
+        return await _service(request).workspace.rename_owner(
+            owner_id,
+            payload.display_name,
+        )
     except AuthorityFailure as exc:
         _raise(exc)
 
