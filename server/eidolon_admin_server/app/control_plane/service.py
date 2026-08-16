@@ -400,6 +400,26 @@ class ControlPlaneService:
             authorization=self.hub_credentials.issue(controller_id=controller_id),
         )
 
+    async def local_owner_inventory(
+        self,
+        *,
+        owner_id: str,
+        controller_id: str,
+    ) -> OwnerInventory:
+        """This Owner's devices, with a Hub credential Admin mints itself."""
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Admin credential issuer is unavailable",
+                503,
+            )
+        return await self.inventory(
+            owner_id=owner_id,
+            hub_authorization=self.hub_credentials.issue(controller_id=controller_id),
+        )
+
     async def _mount_approved_device(
         self,
         *,

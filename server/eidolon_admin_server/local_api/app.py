@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
+from ..app.control_plane.contracts import KernelMountPage
 from .config import LocalApiSettings, load_local_api_settings
 from .host_services import (
     AdminHostServicesClient,
@@ -610,11 +611,23 @@ def create_app(
                 status.HTTP_409_CONFLICT,
                 "Host Workspace is not initialized",
             )
+        controller_id = principal.get("controller_id")
         try:
-            mounts = await devices.list_mounts(owner_id)
+            inventory = await devices.list_inventory(
+                owner_id,
+                controller_id if isinstance(controller_id, str) else "",
+            )
+            # Kernel decides what is theirs; Hub only says what those things
+            # are called. A directory that could not be reached costs the names
+            # and nothing else — the devices are still listed, because whether
+            # they are yours was never Hub's to answer.
             return owner_device_inventory_view(
-                mounts=mounts,
+                mounts=KernelMountPage(
+                    operation="kernel.device-mount-page",
+                    mounts=inventory.mounts,
+                ),
                 bound_owner_id=owner_id,
+                directory={entry.device_id: entry for entry in inventory.devices},
             )
         except DeviceInventoryError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc

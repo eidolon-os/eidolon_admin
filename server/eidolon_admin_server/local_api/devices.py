@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import Mapping
 from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..app.control_plane.contracts import KernelMount, KernelMountPage
+from ..app.control_plane.contracts import (
+    HubDevice,
+    KernelMount,
+    KernelMountPage,
+    OwnerInventory,
+)
 
 
 class DeviceInventoryError(RuntimeError):
@@ -20,6 +26,12 @@ class DeviceInventoryError(RuntimeError):
 
 class AdminOwnerDevicesPort(Protocol):
     async def list_mounts(self, owner_id: str) -> KernelMountPage: ...
+
+    async def list_inventory(
+        self,
+        owner_id: str,
+        controller_id: str,
+    ) -> OwnerInventory: ...
 
     async def close(self) -> None: ...
 
@@ -33,11 +45,24 @@ class LocalDeviceMountView(BaseModel):
 
 
 class LocalDeviceView(BaseModel):
-    """Kernel-confirmed membership; directory identity is intentionally absent."""
+    """One device an Owner has, as they would recognise it.
+
+    Two authorities answer here and neither is asked to speak for the other:
+    Kernel says this is mounted to this Owner, and Hub says what it is called
+    and what kind of thing it is. Membership was all this carried, so a device
+    a person had adopted appeared as …4a52f354 — while the queue it came from
+    had been calling it Box-3 all along.
+
+    When Hub cannot be reached the name is simply absent. It is not filled in
+    with an identifier: an identifier is what someone falls back to when
+    nobody will tell them what a thing is.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     device_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(default="", max_length=128)
+    device_kind: str = Field(default="", max_length=96)
     admission_state: Literal["mounted", "ready"]
     mount: LocalDeviceMountView
 
@@ -109,6 +134,50 @@ class AdminOwnerDevicesClient:
             )
         return page
 
+    async def list_inventory(
+        self,
+        owner_id: str,
+        controller_id: str,
+    ) -> OwnerInventory:
+        """Both authorities' answer about this Owner's devices."""
+
+        if not self._token:
+            raise DeviceInventoryError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/owners/"
+            f"{quote(owner_id, safe='')}/device-inventory/"
+            f"{quote(controller_id, safe='')}"
+        )
+        try:
+            response = await self._client.get(
+                url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise DeviceInventoryError(
+                "Admin Device membership control plane is unavailable"
+            ) from exc
+        if response.status_code != 200:
+            raise DeviceInventoryError(
+                "Admin Device membership control plane is unavailable",
+                status_code=response.status_code
+                if response.status_code in {401, 403, 409}
+                else 503,
+            )
+        try:
+            return OwnerInventory.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DeviceInventoryError(
+                "Admin Device membership response violated its contract"
+            ) from exc
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -118,6 +187,7 @@ def owner_device_inventory_view(
     *,
     mounts: KernelMountPage,
     bound_owner_id: str,
+    directory: Mapping[str, HubDevice] | None = None,
 ) -> LocalDeviceInventoryView:
     if any(mount.owner_id != bound_owner_id for mount in mounts.mounts):
         raise DeviceInventoryError(
@@ -129,14 +199,21 @@ def owner_device_inventory_view(
     # Owner is not being told about a revision; they are being told what is
     # mounted. An inactive mount is a device this Owner removed, so it belongs
     # to neither this view nor its stated coverage.
+    known = directory or {}
     return LocalDeviceInventoryView(
-        devices=tuple(_device_view(mount) for mount in mounts.mounts if mount.active)
+        devices=tuple(
+            _device_view(mount, known.get(mount.device_id))
+            for mount in mounts.mounts
+            if mount.active
+        )
     )
 
 
-def _device_view(mount: KernelMount) -> LocalDeviceView:
+def _device_view(mount: KernelMount, entry: HubDevice | None) -> LocalDeviceView:
     return LocalDeviceView(
         device_id=mount.device_id,
+        display_name=entry.display_name if entry else "",
+        device_kind=entry.device_kind if entry else "",
         admission_state=(
             "ready" if mount.attached_companion_id is not None else "mounted"
         ),

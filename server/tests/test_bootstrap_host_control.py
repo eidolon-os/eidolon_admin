@@ -59,6 +59,7 @@ from eidolon_admin_server.bootstrap.service import (
 from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
+    OwnerInventory,
     PersonaChapter,
     PersonaTimeline,
     KernelMountPage,
@@ -283,6 +284,46 @@ class _RuntimeClient:
 class _DevicesClient:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        #: Set to None to answer as a Host whose directory could not be
+        #: reached: the devices are still theirs, the names are simply gone.
+        self.directory: list[dict] | None = [
+            {
+                "operation": "device.directory-entry",
+                "device_id": "device-local-1",
+                "owner_scope": "owner_workspace_authority",
+                "display_name": "客厅的 Box-3",
+                "device_kind": "esp32-box3",
+                "manifest": {
+                    "schema_version": 1,
+                    "title": "Box-3",
+                    "properties": [],
+                    "actions": [],
+                    "events": [],
+                    "media": [],
+                },
+                "manifest_revision": "rev-1",
+                "lifecycle_state": "approved",
+                "enrolled_at": "2026-08-09T08:00:00Z",
+                "updated_at": "2026-08-09T08:10:00Z",
+            }
+        ]
+
+    async def list_inventory(self, owner_id: str, controller_id: str):
+        mounts = await self.list_mounts(owner_id)
+        return OwnerInventory.model_validate(
+            {
+                "operation": "admin.owner-device-inventory",
+                "owner_id": owner_id,
+                "degraded": self.directory is None,
+                "hub": {
+                    "state": "ok" if self.directory is not None else "error",
+                    "latency_ms": 1.0,
+                },
+                "kernel": {"state": "ok", "latency_ms": 1.0},
+                "devices": self.directory or [],
+                "mounts": [mount.model_dump(mode="json") for mount in mounts.mounts],
+            }
+        )
 
     async def list_mounts(self, owner_id: str) -> KernelMountPage:
         self.calls.append(owner_id)
@@ -876,11 +917,12 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
             await asyncio.sleep(0.01)
         workspace_client = _WorkspaceClient()
         runtime_client = _RuntimeClient(workspace_client)
+        devices_client = _DevicesClient()
         app = create_app(
             LocalApiSettings(bootstrap=settings),
             workspace_client=workspace_client,
             runtime_client=runtime_client,
-            devices_client=_DevicesClient(),
+            devices_client=devices_client,
         )
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -917,7 +959,7 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
                 },
             )
             assert initialized.status_code == 200, initialized.text
-            yield client, headers, runtime_client
+            yield client, headers, runtime_client, devices_client
     finally:
         stop.set()
         await daemon_task
@@ -1115,6 +1157,11 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             assert devices.json()["coverage"] == "mounted-devices"
             assert devices.json()["devices"][0] == {
                 "device_id": "device-local-1",
+                # What it is, as its Owner would recognise it. The queue this
+                # device came from had been calling it 客厅的 Box-3 all along;
+                # once adopted, the list forgot and showed …local-1.
+                "display_name": "客厅的 Box-3",
+                "device_kind": "esp32-box3",
                 "admission_state": "ready",
                 "mount": {
                     "revision": 2,
@@ -1451,6 +1498,7 @@ async def test_an_owner_names_their_own_companion_and_only_their_own(
         client,
         headers,
         runtime_client,
+        _devices_client,
     ):
         companion_id = "c_11111111111111111111111111111111"
 
@@ -1488,6 +1536,7 @@ async def test_a_name_the_host_cannot_carry_out_is_refused_before_it_is_written(
         client,
         headers,
         runtime_client,
+        _devices_client,
     ):
         blank = await client.patch(
             "/api/local/v1/companions/c_11111111111111111111111111111111",
@@ -1528,6 +1577,7 @@ async def test_a_person_is_shown_what_their_eidolon_became_not_what_it_considere
         client,
         headers,
         _runtime_client,
+        _devices_client,
     ):
         history = await client.get(
             "/api/local/v1/companions/c_11111111111111111111111111111111/persona",
@@ -1558,6 +1608,7 @@ async def test_going_back_answers_with_where_that_leaves_them(
         client,
         headers,
         runtime_client,
+        _devices_client,
     ):
         restored = await client.post(
             "/api/local/v1/companions/c_11111111111111111111111111111111"
@@ -1586,6 +1637,7 @@ async def test_another_owners_persona_is_not_readable_or_restorable(
         client,
         headers,
         runtime_client,
+        _devices_client,
     ):
         runtime_client.owner_of_companion = "owner-somebody-else"
         path = "/api/local/v1/companions/c_11111111111111111111111111111111"
@@ -1600,3 +1652,33 @@ async def test_another_owners_persona_is_not_readable_or_restorable(
         assert read.status_code == 404
         assert wrote.status_code == 404
         assert runtime_client.restored is None
+
+
+@pytest.mark.asyncio
+async def test_a_directory_that_cannot_be_reached_costs_names_and_nothing_else(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """Two authorities answer here, and neither speaks for the other.
+
+    Kernel decides what is this Owner's; Hub only says what those things are
+    called. So a Hub that cannot be reached must not make someone's devices
+    disappear — it costs the names, and an absent name stays absent rather
+    than being replaced with an identifier.
+    """
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        _runtime_client,
+        devices_client,
+    ):
+        devices_client.directory = None
+
+        devices = await client.get("/api/local/v1/devices", headers=headers)
+
+        assert devices.status_code == 200
+        listed = devices.json()["devices"]
+        assert [device["device_id"] for device in listed] == ["device-local-1"]
+        assert listed[0]["display_name"] == ""
+        assert listed[0]["device_kind"] == ""

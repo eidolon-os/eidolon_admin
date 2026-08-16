@@ -231,6 +231,34 @@ async def admit_device(
 
 
 @router.get(
+    "/owners/{owner_id}/device-inventory/{controller_id}",
+    response_model=OwnerInventory,
+)
+async def local_owner_device_inventory(
+    owner_id: str,
+    controller_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> OwnerInventory:
+    """The Owner's devices as both authorities see them, for the Local API.
+
+    Separate from the inventory route beside it because of where the Hub
+    credential comes from: there, a caller supplies one; here, Admin mints it
+    for this Controller, the way it does for the pending queue. A phone should
+    never be holding a Hub management credential.
+    """
+
+    _authorize_local_api(request, authorization)
+    try:
+        return await _service(request).local_owner_inventory(
+            owner_id=owner_id,
+            controller_id=controller_id,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
     "/pending-device-enrollments/{controller_id}",
     response_model=HubDevicePage,
 )
