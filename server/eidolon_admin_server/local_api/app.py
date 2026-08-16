@@ -58,6 +58,9 @@ from .runtime import (
     AdminOwnerRuntimeClient,
     CompanionNameView,
     CompanionRenameCommand,
+    PersonaHistoryView,
+    PersonaRestoreCommand,
+    persona_history_view,
     AdminOwnerRuntimePort,
     WorkspaceRuntimeError,
     WorkspaceRuntimeView,
@@ -540,6 +543,84 @@ def create_app(
             companion_id=renamed.companion_id,
             display_name=renamed.display_name,
         )
+
+    async def _owned_companion(
+        companion_id: str,
+        authorization: str | None,
+    ) -> str:
+        """The Owner of this session, having proved this Companion is theirs.
+
+        The same check the rename route makes, in the same place and for the
+        same reason: an identifier in a path is not authority, and whose
+        Companion it is can only be judged where whose session this is is
+        known.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id = principal.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Host Workspace is not initialized",
+            )
+        try:
+            existing = await runtime.get_companion(companion_id)
+        except WorkspaceRuntimeError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        if existing.owner_id != owner_id:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Companion does not exist",
+            )
+        return owner_id
+
+    @app.get(
+        "/api/local/v1/companions/{companion_id}/persona",
+        response_model=PersonaHistoryView,
+    )
+    async def companion_persona_history(
+        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaHistoryView:
+        """What this Eidolon has been, as its Owner reads it."""
+
+        await _owned_companion(companion_id, authorization)
+        try:
+            timeline = await runtime.get_persona_timeline(companion_id)
+        except WorkspaceRuntimeError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return persona_history_view(timeline)
+
+    @app.post(
+        "/api/local/v1/companions/{companion_id}/persona-restorations",
+        response_model=PersonaHistoryView,
+    )
+    async def restore_companion_persona(
+        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
+        payload: PersonaRestoreCommand,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaHistoryView:
+        """Make this Eidolon the way it was then.
+
+        Answers with the history rather than the one new chapter: what someone
+        wants to see after going back is where that leaves them, and a screen
+        that had to ask again to find out would be showing the old answer in
+        the meantime.
+        """
+
+        await _owned_companion(companion_id, authorization)
+        try:
+            await runtime.restore_persona(
+                companion_id,
+                payload.chapter_id,
+                # Said in the Owner's voice because the Owner did it. Nothing
+                # here invents a reason on their behalf.
+                "回到了那时候的样子",
+            )
+            timeline = await runtime.get_persona_timeline(companion_id)
+        except WorkspaceRuntimeError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return persona_history_view(timeline)
 
     async def owner_device_inventory(
         authorization: str | None,

@@ -10,6 +10,8 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ValidationError
 
 from .contracts import (
+    PersonaChapter,
+    PersonaTimeline,
     CompanionIdentity,
     HubDevicePage,
     HubLifecycleStatus,
@@ -203,6 +205,63 @@ class DataAuthorityClient:
                 "data", "Data returned a different companion identity"
             )
         return identity
+
+    async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline:
+        return await self._companion_call(
+            "GET",
+            f"{companion_id}/persona-timeline",
+            companion_id,
+            PersonaTimeline,
+        )
+
+    async def restore_persona(
+        self,
+        companion_id: str,
+        genome_id: str,
+        change_summary: str,
+    ) -> PersonaChapter:
+        return await self._companion_call(
+            "POST",
+            f"{companion_id}/persona-restorations",
+            companion_id,
+            PersonaChapter,
+            json={"genome_id": genome_id, "change_summary": change_summary},
+        )
+
+    async def _companion_call(
+        self,
+        method: str,
+        path: str,
+        companion_id: str,
+        model: type,
+        *,
+        json: dict | None = None,
+    ):
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        head, _, tail = path.partition("/")
+        response = await _request(
+            "data",
+            self._client,
+            method,
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/companions/"
+            f"{quote(head, safe='')}/{tail}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json=json,
+        )
+        return _parse("data", response, model)
 
     async def get_owner_primary_runtime(
         self,

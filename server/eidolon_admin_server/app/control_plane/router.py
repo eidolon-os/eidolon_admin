@@ -12,6 +12,9 @@ from .contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
     CompanionRenameRequest,
+    PersonaChapter,
+    PersonaRestoreRequest,
+    PersonaTimeline,
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
     DeviceAdmissionRequest,
@@ -75,6 +78,36 @@ async def rename_companion(
         return await _service(request).data.rename_companion(
             companion_id,
             payload.display_name,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
+    "/companions/{companion_id}/persona-timeline",
+    response_model=PersonaTimeline,
+)
+async def persona_timeline(companion_id: str, request: Request) -> PersonaTimeline:
+    try:
+        return await _service(request).data.get_persona_timeline(companion_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.post(
+    "/companions/{companion_id}/persona-restorations",
+    response_model=PersonaChapter,
+)
+async def restore_persona(
+    companion_id: str,
+    payload: PersonaRestoreRequest,
+    request: Request,
+) -> PersonaChapter:
+    try:
+        return await _service(request).data.restore_persona(
+            companion_id,
+            payload.genome_id,
+            payload.change_summary,
         )
     except AuthorityFailure as exc:
         _raise(exc)

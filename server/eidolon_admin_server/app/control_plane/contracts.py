@@ -31,6 +31,27 @@ class CompanionIdentity(StrictModel):
     lifecycle_state: Literal["active", "inactive"]
 
 
+class PersonaChapter(StrictModel):
+    genome_id: str = Field(min_length=1, max_length=64)
+    version: int = Field(ge=1)
+    lifecycle_state: Literal["committed", "proposed", "rejected", "stale"]
+    change_summary: str = Field(default="", max_length=4096)
+    restored_from_version: int | None = None
+    is_current: bool = False
+    created_at: str
+
+
+class PersonaTimeline(StrictModel):
+    operation: Literal["companion.persona-timeline"]
+    companion_id: str = Field(min_length=1, max_length=64)
+    chapters: tuple[PersonaChapter, ...] = ()
+
+
+class PersonaRestoreRequest(StrictModel):
+    genome_id: str = Field(min_length=1, max_length=64)
+    change_summary: str = Field(default="", max_length=4096)
+
+
 class CompanionRenameRequest(StrictModel):
     display_name: str = Field(min_length=1, max_length=128)
 

@@ -59,6 +59,8 @@ from eidolon_admin_server.bootstrap.service import (
 from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
+    PersonaChapter,
+    PersonaTimeline,
     KernelMountPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
@@ -172,6 +174,7 @@ class _RuntimeClient:
         self.workspace = workspace
         self.calls = 0
         self.renamed: tuple[str, str] | None = None
+        self.restored: tuple[str, str] | None = None
         self.owner_of_companion: str | None = None
 
     async def get_owner_primary_runtime(
@@ -209,6 +212,46 @@ class _RuntimeClient:
     async def close(self) -> None:
         return None
 
+
+    async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline:
+        return PersonaTimeline(
+            operation="companion.persona-timeline",
+            companion_id=companion_id,
+            chapters=(
+                PersonaChapter(
+                    genome_id="g_2",
+                    version=2,
+                    lifecycle_state="proposed",
+                    change_summary="想变得更安静一些",
+                    created_at="2026-08-16T10:00:00Z",
+                ),
+                PersonaChapter(
+                    genome_id="g_1",
+                    version=1,
+                    lifecycle_state="committed",
+                    change_summary="",
+                    is_current=True,
+                    created_at="2026-08-09T08:00:00Z",
+                ),
+            ),
+        )
+
+    async def restore_persona(
+        self,
+        companion_id: str,
+        genome_id: str,
+        change_summary: str,
+    ) -> PersonaChapter:
+        self.restored = (genome_id, change_summary)
+        return PersonaChapter(
+            genome_id="g_3",
+            version=3,
+            lifecycle_state="committed",
+            change_summary=change_summary,
+            restored_from_version=1,
+            is_current=True,
+            created_at="2026-08-16T11:00:00Z",
+        )
 
     async def rename_companion(
         self,
@@ -1466,3 +1509,94 @@ async def test_a_name_the_host_cannot_carry_out_is_refused_before_it_is_written(
 
         assert padded.status_code == 200
         assert padded.json()["display_name"] == "小忆"
+
+
+@pytest.mark.asyncio
+async def test_a_person_is_shown_what_their_eidolon_became_not_what_it_considered(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """Living with an Eidolon is not reviewing it.
+
+    The authority stores proposals, because whatever changes a Companion needs
+    somewhere to stage. Handing them to the person turns growth into a queue of
+    approvals they have no basis to judge, so this boundary drops them: what is
+    shown is what it has actually been.
+    """
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        _runtime_client,
+    ):
+        history = await client.get(
+            "/api/local/v1/companions/c_11111111111111111111111111111111/persona",
+            headers=headers,
+        )
+
+        assert history.status_code == 200
+        chapters = history.json()["chapters"]
+        assert [chapter["chapter_id"] for chapter in chapters] == ["g_1"]
+        # Nothing about hashes, versions or schemas reaches this view.
+        assert set(chapters[0]) == {
+            "chapter_id",
+            "changed_at",
+            "what_changed",
+            "restored_from",
+            "is_current",
+        }
+        # Nothing was recorded for the first chapter, and nothing is invented.
+        assert chapters[0]["what_changed"] == ""
+
+
+@pytest.mark.asyncio
+async def test_going_back_answers_with_where_that_leaves_them(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+    ):
+        restored = await client.post(
+            "/api/local/v1/companions/c_11111111111111111111111111111111"
+            "/persona-restorations",
+            json={"contract_version": "1", "chapter_id": "g_1"},
+            headers=headers,
+        )
+
+        assert restored.status_code == 200
+        assert runtime_client.restored is not None
+        genome_id, summary = runtime_client.restored
+        assert genome_id == "g_1"
+        # Said in the Owner's voice, because the Owner is who did it.
+        assert summary
+        # The history comes back, not just the new chapter: what someone wants
+        # to see after going back is where that leaves them.
+        assert restored.json()["operation"] == "local.persona-history"
+
+
+@pytest.mark.asyncio
+async def test_another_owners_persona_is_not_readable_or_restorable(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+    ):
+        runtime_client.owner_of_companion = "owner-somebody-else"
+        path = "/api/local/v1/companions/c_11111111111111111111111111111111"
+
+        read = await client.get(f"{path}/persona", headers=headers)
+        wrote = await client.post(
+            f"{path}/persona-restorations",
+            json={"contract_version": "1", "chapter_id": "g_1"},
+            headers=headers,
+        )
+
+        assert read.status_code == 404
+        assert wrote.status_code == 404
+        assert runtime_client.restored is None
