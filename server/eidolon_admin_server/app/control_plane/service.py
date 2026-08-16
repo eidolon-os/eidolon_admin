@@ -285,6 +285,10 @@ class ControlPlaneService:
         try:
             hub = await self.hub.revoke(
                 device_id=payload.device_id,
+                # The Owner this removal is carried out for. The Hub checks it
+                # against its own record, so a request that arrived here with
+                # mismatched parts is refused at the authority as well.
+                owner_scope=payload.owner_id,
                 reason=payload.reason,
                 request_id=revoke_request_id,
                 authorization=authorization,

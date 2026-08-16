@@ -505,3 +505,30 @@ async def test_a_mounted_device_still_gets_its_companion_attached() -> None:
     assert result.outcome == "completed"
     assert kernel.mount_calls == []
     assert kernel.attach_calls[0]["expected_revision"] == 4
+
+
+async def test_removal_tells_the_hub_whose_device_it_is() -> None:
+    """The parameter exists so a call site has to say what it is claiming.
+
+    It nearly did not survive its own introduction: the real client gained a
+    required owner_scope and this service kept calling without it, and every
+    test passed — because the Hub fakes here take **kwargs and swallow
+    anything. A fake that accepts whatever it is given cannot fail a caller
+    that stopped agreeing with the thing it stands for.
+    """
+
+    hub, kernel = _Hub(), _Kernel()
+    service = _service(hub, kernel)  # type: ignore[arg-type]
+
+    await service.remove_controller_device(
+        payload=ControllerDeviceRemovalRequest(
+            contract_version="1",
+            request_id="mobile-removal-1",
+            owner_id="owner-1",
+            controller_id="ectrl-0123456789abcdefabcd",
+            device_id="device-1",
+            reason="owner-removed",
+        )
+    )
+
+    assert hub.calls[0]["owner_scope"] == "owner-1"

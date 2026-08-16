@@ -447,10 +447,18 @@ class HubManagementClient:
         self,
         *,
         device_id: str,
+        owner_scope: str | None,
         reason: str,
         request_id: str,
         authorization: str,
     ) -> HubLifecycleStatus:
+        """Withdraw a device's grant on behalf of the owner who names it.
+
+        `owner_scope` has no default here either. The Hub refuses a revocation
+        naming an owner that does not hold the device, and this call site is
+        where Admin has to decide what it is claiming.
+        """
+
         base_url = await self._base_url()
         response = await _request(
             "hub",
@@ -463,6 +471,7 @@ class HubManagementClient:
                 "operation": "device.revocation",
                 "request_id": request_id,
                 "reason": reason,
+                **({"owner_scope": owner_scope} if owner_scope else {}),
             },
         )
         result = _parse("hub", response, HubLifecycleStatus)
