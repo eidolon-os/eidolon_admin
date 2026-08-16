@@ -21,6 +21,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     HubDevicePage,
     HubLifecycleStatus,
     KernelMount,
+    OwnerInventory,
     WorkflowStep,
 )
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
@@ -323,6 +324,42 @@ class _UnusedPort:
         return None
 
 
+class _OwnedDevicesPort:
+    """A Host that holds exactly one device, mounted to the session's Owner."""
+
+    def __init__(self, device_id: str = "device-authoritative") -> None:
+        self.device_id = device_id
+
+    async def list_inventory(self, owner_id: str, controller_id: str):
+        return OwnerInventory.model_validate(
+            {
+                "operation": "admin.owner-device-inventory",
+                "owner_id": owner_id,
+                "degraded": False,
+                "hub": {"state": "ok", "latency_ms": 1.0},
+                "kernel": {"state": "ok", "latency_ms": 1.0},
+                "devices": [],
+                "mounts": [
+                    {
+                        "operation": "kernel.device-mount",
+                        "device_id": self.device_id,
+                        "owner_id": owner_id,
+                        "attached_companion_id": None,
+                        "revision": 1,
+                        "created_at": "2026-08-09T08:00:00Z",
+                        "updated_at": "2026-08-09T08:00:00Z",
+                        "request_id": "seed",
+                        "fingerprint": "sha256:" + "0" * 64,
+                        "active": True,
+                    }
+                ],
+            }
+        )
+
+    async def close(self) -> None:
+        return None
+
+
 class _AdmissionPort:
     payload: ControllerDeviceAdmissionRequest | None = None
     removal: ControllerDeviceRemovalRequest | None = None
@@ -399,7 +436,7 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
         ),
         workspace_client=unused,  # type: ignore[arg-type]
         runtime_client=unused,  # type: ignore[arg-type]
-        devices_client=unused,  # type: ignore[arg-type]
+        devices_client=_OwnedDevicesPort(),  # type: ignore[arg-type]
         device_admission_client=admission,  # type: ignore[arg-type]
     )
     async with httpx.AsyncClient(
@@ -661,7 +698,7 @@ async def test_removing_a_device_is_controller_authenticated_and_owner_derived(
         ),
         workspace_client=unused,  # type: ignore[arg-type]
         runtime_client=unused,  # type: ignore[arg-type]
-        devices_client=unused,  # type: ignore[arg-type]
+        devices_client=_OwnedDevicesPort(),  # type: ignore[arg-type]
         device_admission_client=admission,  # type: ignore[arg-type]
     )
     async with httpx.AsyncClient(
@@ -707,3 +744,72 @@ async def test_removing_a_device_is_controller_authenticated_and_owner_derived(
     assert admission.removal is not None
     assert admission.removal.owner_id == "owner-derived"
     assert admission.removal.controller_id == _CONTROLLER_ID
+
+
+@pytest.mark.asyncio
+async def test_a_device_that_is_not_this_owners_cannot_be_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An identifier in a path is not authority.
+
+    Removal took a device_id from the path and an owner_id from the session
+    and never asked whether they belonged together — not here, not in the
+    control plane, and not in the Hub use case underneath, which revokes
+    whatever id it is handed. Each layer could reasonably assume one of the
+    others had checked, and none had.
+    """
+
+    certificate = tmp_path / "hub-leaf.pem"
+    _write_certificate(certificate)
+    principal = {
+        "contract_version": "1",
+        "controller_id": _CONTROLLER_ID,
+        "owner_id": "owner-derived",
+        "reset_epoch": 0,
+    }
+
+    async def bootstrap_request(self, operation: str, **_parameters):
+        if operation in {"controller.authenticate", "controller.validate"}:
+            return principal
+        raise AssertionError(f"unexpected bootstrap operation: {operation}")
+
+    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    admission = _AdmissionPort()
+    app = create_app(
+        LocalApiSettings(
+            bootstrap=_bootstrap(tmp_path),
+            device_onboarding_target=_target(certificate),
+        ),
+        workspace_client=_UnusedPort(),  # type: ignore[arg-type]
+        runtime_client=_UnusedPort(),  # type: ignore[arg-type]
+        # This Host holds one device, and it is not the one being asked about.
+        devices_client=_OwnedDevicesPort("device-of-someone-else"),  # type: ignore[arg-type]
+        device_admission_client=admission,  # type: ignore[arg-type]
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="https://local.test",
+    ) as client:
+        session = await client.post(
+            "/api/local/v1/auth/sessions",
+            json={
+                "contract_version": "1",
+                "purpose": "eidolon-controller-local-auth-v1",
+                "controller_id": _CONTROLLER_ID,
+                "challenge": _AUTH_CHALLENGE,
+                "reset_epoch": 0,
+                "signature": "abcdefgh",
+            },
+        )
+        refused = await client.post(
+            "/api/local/v1/devices/device-authoritative/removal",
+            headers={"Authorization": f"Bearer {session.json()['access_token']}"},
+            json={"contract_version": "1", "request_id": "device-removal-1"},
+        )
+
+    # Absent rather than forbidden: whose devices exist is not something a
+    # stranger's session gets to learn.
+    assert refused.status_code == 404
+    # And nothing reached the authorities that would have carried it out.
+    assert admission.removal is None

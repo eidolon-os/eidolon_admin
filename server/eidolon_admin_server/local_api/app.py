@@ -728,6 +728,41 @@ def create_app(
                 exc.status_code, device_admission_detail(exc)
             ) from exc
 
+    async def _owned_device(
+        device_id: str,
+        authorization: str | None,
+    ) -> tuple[str, str]:
+        """This session's Owner and Controller, having proved the device is theirs.
+
+        The device-scoped twin of _owned_companion, and added for the same
+        reason: an identifier in a path is not authority. Removal took a
+        device_id and an owner_id from two different places and never asked
+        whether they belonged together — neither here, nor in the control
+        plane, nor in the Hub use case underneath, each of which could
+        reasonably assume one of the others had.
+
+        Kernel's mounts are the answer because they are owner-scoped by
+        construction. Mounts that are no longer active still count: a removal
+        that half-completed must be retryable, and refusing the retry would
+        strand the device in the one state that keeps it from being added
+        again.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        try:
+            inventory = await devices.list_inventory(owner_id, controller_id)
+        except DeviceInventoryError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        if not any(mount.device_id == device_id for mount in inventory.mounts):
+            # Absent rather than forbidden: whose devices exist is not
+            # something a stranger's session gets to learn.
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "Device does not exist",
+            )
+        return owner_id, controller_id
+
     @app.post(
         "/api/local/v1/devices/{device_id}/removal",
         response_model=LocalDeviceRemovalProgress,
@@ -751,8 +786,7 @@ def create_app(
         has no way back until its grant here is withdrawn.
         """
 
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        owner_id, controller_id = await _owned_device(device_id, authorization)
         try:
             result = await device_admission.remove(
                 payload=payload.to_admin(
