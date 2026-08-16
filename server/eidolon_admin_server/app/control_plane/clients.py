@@ -160,6 +160,50 @@ class DataAuthorityClient:
             )
         return identity
 
+    async def rename_companion(
+        self,
+        companion_id: str,
+        display_name: str,
+    ) -> CompanionIdentity:
+        """Set what this Companion is called.
+
+        Whether the caller may rename *this* Companion is not decided here.
+        This client speaks to Data on Admin's behalf; the question of whose
+        Companion it is belongs where an Owner's authority is known, which is
+        the Local API boundary. Deciding it twice would mean deciding it
+        differently one day.
+        """
+
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        response = await _request(
+            "data",
+            self._client,
+            "PATCH",
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/companions/"
+            f"{quote(companion_id, safe='')}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json={"display_name": display_name},
+        )
+        identity = _parse("data", response, CompanionIdentity)
+        if identity.companion_id != companion_id:
+            raise _contract_violation(
+                "data", "Data returned a different companion identity"
+            )
+        return identity
+
     async def get_owner_primary_runtime(
         self,
         owner_id: str,

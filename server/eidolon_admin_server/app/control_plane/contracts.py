@@ -31,6 +31,10 @@ class CompanionIdentity(StrictModel):
     lifecycle_state: Literal["active", "inactive"]
 
 
+class CompanionRenameRequest(StrictModel):
+    display_name: str = Field(min_length=1, max_length=128)
+
+
 class WorkspaceInitializeRequest(StrictModel):
     owner_display_name: str = Field(min_length=1, max_length=128)
     companion_display_name: str = Field(default="Eidolon", min_length=1, max_length=128)

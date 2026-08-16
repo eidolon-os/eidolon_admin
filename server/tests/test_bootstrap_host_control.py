@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import base64
 import hashlib
 import json
@@ -170,6 +171,8 @@ class _RuntimeClient:
     def __init__(self, workspace: _WorkspaceClient) -> None:
         self.workspace = workspace
         self.calls = 0
+        self.renamed: tuple[str, str] | None = None
+        self.owner_of_companion: str | None = None
 
     async def get_owner_primary_runtime(
         self,
@@ -207,13 +210,29 @@ class _RuntimeClient:
         return None
 
 
+    async def rename_companion(
+        self,
+        companion_id: str,
+        display_name: str,
+    ) -> CompanionIdentity:
+        self.renamed = (companion_id, display_name)
+        return CompanionIdentity(
+            operation="companion.identity",
+            companion_id=companion_id,
+            owner_id=self.workspace.result.owner.owner_id,
+            display_name=display_name,
+            lifecycle_state="active",
+        )
+
     async def get_companion(self, companion_id: str) -> CompanionIdentity:
         # The name a person gave this Eidolon lives with its identity, not in
         # the snapshot that says how to run it.
         return CompanionIdentity(
             operation="companion.identity",
             companion_id=companion_id,
-            owner_id=self.workspace.result.owner.owner_id,
+            owner_id=(
+                self.owner_of_companion or self.workspace.result.owner.owner_id
+            ),
             display_name="小忆",
             lifecycle_state="active",
         )
@@ -752,6 +771,115 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
         await asyncio.wait_for(daemon_task, timeout=2)
 
 
+@asynccontextmanager
+async def _local_api_session(tmp_path: Path, runtime_dir: Path):
+    """A Local API with a Controller already authenticated against it.
+
+    Extracted because every Owner-domain slice needs exactly this and nothing
+    else: a Host that has been set up, a phone that holds it, and a session to
+    ask questions with. Rebuilding it per test would make each new capability
+    cost a hundred lines before the first assertion.
+    """
+
+    settings = _settings(tmp_path, runtime_dir=runtime_dir)
+    store = SQLiteBootstrapStateStore(settings.database_path)
+    network = InMemoryNetworkProvisioning()
+    bootstrap_service = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(
+            settings.identity_key_path,
+            settings.mode,
+        ),
+        network=network,
+    )
+    bootstrap_service.initialize()
+    commissioning = CommissioningService(store=store, network=network)
+    setup = bootstrap_service.issue_setup_code(300)
+    initial = commissioning.authorize(
+        session_id=setup["commissioning_id"],
+        secret=setup["setup_code"],
+    )
+    operation_id = "9a6bc772-86f7-4ace-a022-ecb9cb8df114"
+    await commissioning.configure_network(
+        initial,
+        {"operation_id": operation_id, "ssid": "Existing Home"},
+    )
+    await commissioning.confirm_network(initial, operation_id)
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    public_der = private_key.public_key().public_bytes(
+        Encoding.DER,
+        PublicFormat.SubjectPublicKeyInfo,
+    )
+    encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
+    controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+    commissioning.claim_controller(
+        initial,
+        {
+            "controller_id": controller_id,
+            "public_key": encoded_public,
+            "display_name": "Primary phone",
+            "platform": "android",
+        },
+    )
+    bootstrap_service.shutdown()
+
+    stop = asyncio.Event()
+    daemon_task = asyncio.create_task(run_daemon(settings, stop_event=stop))
+    try:
+        for _ in range(100):
+            if settings.control_socket.exists():
+                break
+            await asyncio.sleep(0.01)
+        workspace_client = _WorkspaceClient()
+        runtime_client = _RuntimeClient(workspace_client)
+        app = create_app(
+            LocalApiSettings(bootstrap=settings),
+            workspace_client=workspace_client,
+            runtime_client=runtime_client,
+            devices_client=_DevicesClient(),
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://local.test",
+        ) as client:
+            challenge = (
+                await client.post(
+                    "/api/local/v1/auth/challenges",
+                    json={"contract_version": "1", "controller_id": controller_id},
+                )
+            ).json()
+            canonical = json.dumps(
+                challenge, sort_keys=True, separators=(",", ":")
+            ).encode()
+            signature = private_key.sign(canonical, ec.ECDSA(hashes.SHA256()))
+            session = (
+                await client.post(
+                    "/api/local/v1/auth/sessions",
+                    json={
+                        **challenge,
+                        "signature": base64.urlsafe_b64encode(signature)
+                        .rstrip(b"=")
+                        .decode(),
+                    },
+                )
+            ).json()
+            headers = {"Authorization": f"Bearer {session['access_token']}"}
+            initialized = await client.put(
+                "/api/local/v1/setup/workspace",
+                headers=headers,
+                json={
+                    "owner_display_name": "Manson",
+                    "companion_display_name": "小忆",
+                },
+            )
+            assert initialized.status_code == 200, initialized.text
+            yield client, headers, runtime_client
+    finally:
+        stop.set()
+        await daemon_task
+
+
 @pytest.mark.asyncio
 async def test_local_api_controller_session_is_one_time_and_reset_bound(
     tmp_path: Path,
@@ -1261,3 +1389,80 @@ def test_a_host_that_cannot_read_its_own_addresses_publishes_none(monkeypatch) -
     monkeypatch.setattr(host_addresses, "_kernel_reported_addresses", lambda: [])
 
     assert host_addresses.local_api_base_urls(9002) == []
+
+
+@pytest.mark.asyncio
+async def test_an_owner_names_their_own_companion_and_only_their_own(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """Renaming carries an id, so the id has to be checked against the session.
+
+    An Owner will have more than one Companion, so the path names which. That
+    makes "a valid session plus somebody else's identifier" a reachable
+    request, and the boundary that knows whose session this is has to refuse
+    it — not the control plane beneath, which knows only that Admin asked.
+    """
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+    ):
+        companion_id = "c_11111111111111111111111111111111"
+
+        renamed = await client.patch(
+            f"/api/local/v1/companions/{companion_id}",
+            json={"contract_version": "1", "display_name": "小忆"},
+            headers=headers,
+        )
+
+        assert renamed.status_code == 200
+        assert renamed.json()["display_name"] == "小忆"
+        assert runtime_client.renamed == (companion_id, "小忆")
+
+        # The same session, a Companion belonging to somebody else.
+        runtime_client.renamed = None
+        runtime_client.owner_of_companion = "owner-somebody-else"
+        refused = await client.patch(
+            f"/api/local/v1/companions/{companion_id}",
+            json={"contract_version": "1", "display_name": "小忆"},
+            headers=headers,
+        )
+
+        # Answered as absent rather than forbidden: a session that does not
+        # hold this Companion learns nothing about whether it exists.
+        assert refused.status_code == 404
+        assert runtime_client.renamed is None
+
+
+@pytest.mark.asyncio
+async def test_a_name_the_host_cannot_carry_out_is_refused_before_it_is_written(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+    ):
+        blank = await client.patch(
+            "/api/local/v1/companions/c_11111111111111111111111111111111",
+            json={"contract_version": "1", "display_name": "   "},
+            headers=headers,
+        )
+
+        # Whitespace is a name that would erase the one they have, and it is
+        # refused where the person is asking rather than two services away.
+        assert blank.status_code == 422
+        assert runtime_client.renamed is None
+
+        # A name is taken as typed, minus the spaces around it.
+        padded = await client.patch(
+            "/api/local/v1/companions/c_11111111111111111111111111111111",
+            json={"contract_version": "1", "display_name": "  小忆  "},
+            headers=headers,
+        )
+
+        assert padded.status_code == 200
+        assert padded.json()["display_name"] == "小忆"

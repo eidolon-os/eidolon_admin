@@ -11,6 +11,7 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from .contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
+    CompanionRenameRequest,
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
     DeviceAdmissionRequest,
@@ -60,6 +61,21 @@ async def capabilities(request: Request) -> BoundaryCapabilities:
 async def get_companion(companion_id: str, request: Request) -> CompanionIdentity:
     try:
         return await _service(request).data.get_companion(companion_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.patch("/companions/{companion_id}", response_model=CompanionIdentity)
+async def rename_companion(
+    companion_id: str,
+    payload: CompanionRenameRequest,
+    request: Request,
+) -> CompanionIdentity:
+    try:
+        return await _service(request).data.rename_companion(
+            companion_id,
+            payload.display_name,
+        )
     except AuthorityFailure as exc:
         _raise(exc)
 

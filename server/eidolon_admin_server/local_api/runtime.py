@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..app.control_plane.contracts import (
     CompanionIdentity,
@@ -30,6 +30,12 @@ class AdminOwnerRuntimePort(Protocol):
 
     async def get_companion(self, companion_id: str) -> CompanionIdentity: ...
 
+    async def rename_companion(
+        self,
+        companion_id: str,
+        display_name: str,
+    ) -> CompanionIdentity: ...
+
     async def close(self) -> None: ...
 
 
@@ -42,6 +48,40 @@ class PrimaryCompanionView(BaseModel):
     #: handle rather than filled in with an identifier here.
     display_name: str = Field(default="", max_length=128)
     lifecycle_state: Literal["active"]
+
+
+class CompanionRenameCommand(BaseModel):
+    """What to call this Companion, as the person typed it.
+
+    A name of only spaces passes a length check and would erase the one they
+    have. It is refused here rather than two services away: the answer is the
+    same either way, and this is the boundary the person is actually talking
+    to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    display_name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("display_name")
+    @classmethod
+    def _must_be_a_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("display_name cannot be blank")
+        return name
+
+
+class CompanionNameView(BaseModel):
+    """What a Companion is called, after being told what to be called."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["local.companion-name"] = "local.companion-name"
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=128)
 
 
 class PersonaRuntimeView(BaseModel):
@@ -190,6 +230,49 @@ class AdminOwnerRuntimeClient:
                 "Admin Companion response returned another Companion"
             )
         return identity
+
+    async def rename_companion(
+        self,
+        companion_id: str,
+        display_name: str,
+    ) -> CompanionIdentity:
+        if not self._token:
+            raise WorkspaceRuntimeError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/companions/"
+            f"{quote(companion_id, safe='')}"
+        )
+        try:
+            response = await self._client.patch(
+                url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                json={"display_name": display_name},
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Companion control plane is unavailable"
+            ) from exc
+        if response.status_code == 404:
+            raise WorkspaceRuntimeError("Companion does not exist", status_code=404)
+        if response.status_code == 422:
+            raise WorkspaceRuntimeError(
+                "Companion name was rejected", status_code=422
+            )
+        if response.status_code != 200:
+            raise WorkspaceRuntimeError("Admin Companion control plane is unavailable")
+        try:
+            return CompanionIdentity.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Companion response violated its contract"
+            ) from exc
 
     async def close(self) -> None:
         if self._owns_client:
