@@ -1208,3 +1208,40 @@ async def test_controller_reset_is_reachable_over_the_control_socket(
     finally:
         await server.close()
         service.shutdown()
+
+
+def test_the_endpoint_says_where_this_host_answers(monkeypatch) -> None:
+    """A Host that can only be found by announcement cannot be found at all
+    on a network that does not carry them to the phone in front of it.
+
+    So it says so over the channel that does not need the network: signed with
+    its identity, every address it has, because it does not know which one the
+    phone can reach. Nothing is trusted for being published — whatever answers
+    still proves it is this Host.
+    """
+
+    from eidolon_admin_server.bootstrap import host_addresses
+
+    monkeypatch.setattr(
+        host_addresses,
+        "_kernel_reported_addresses",
+        lambda: ["127.0.0.1", "169.254.181.137", "192.168.3.206"],
+    )
+
+    urls = host_addresses.local_api_base_urls(9002)
+
+    # Loopback is not somewhere a phone can reach this Host.
+    assert urls == [
+        "https://192.168.3.206:9002",
+        "https://169.254.181.137:9002",
+    ]
+
+
+def test_a_host_that_cannot_read_its_own_addresses_publishes_none(monkeypatch) -> None:
+    # Saying nothing leaves the phone to look elsewhere; saying something wrong
+    # sends it somewhere that will never answer.
+    from eidolon_admin_server.bootstrap import host_addresses
+
+    monkeypatch.setattr(host_addresses, "_kernel_reported_addresses", lambda: [])
+
+    assert host_addresses.local_api_base_urls(9002) == []

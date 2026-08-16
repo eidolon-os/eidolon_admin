@@ -27,6 +27,7 @@ from .controller_auth import (
     verify_controller_signature,
 )
 from .domain import ControllerGrant, ControllerRole, NetworkState, generate_setup_code
+from .host_addresses import local_api_base_urls
 from .ports import (
     BootstrapStateConflict,
     BootstrapStateStore,
@@ -404,6 +405,12 @@ class BootstrapService:
             "reset_epoch": self._store.get_state().reset_epoch,
             "tls_spki_fingerprint": self._tls_identity_manager.identity.spki_fingerprint,
             "setup_session": self._active_setup_session(),
+            # Said here because this channel does not depend on the network
+            # carrying announcements, which is exactly when a Controller needs
+            # to be told. Signed with everything else: an address that reaches
+            # the wrong Host still fails the identity check, but an address
+            # nobody could tamper with saves a phone from having none at all.
+            "local_api_base_urls": local_api_base_urls(self._settings.local_api_port),
         }
         return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
 

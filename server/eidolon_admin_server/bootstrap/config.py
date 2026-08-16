@@ -47,6 +47,10 @@ class BootstrapSettings:
     dev_setup_code: str | None = None
     commissioning_adapter: CommissioningAdapter = CommissioningAdapter.DISABLED
     network_adapter: NetworkAdapter = NetworkAdapter.MEMORY
+    #: Where this Host answers a Controller, so it can say so over a channel
+    #: that does not depend on the LAN carrying announcements. The default is
+    #: the product's own contract, which is also what the Host advertises.
+    local_api_port: int = 9002
 
     @property
     def database_path(self) -> Path:
@@ -184,6 +188,17 @@ def load_bootstrap_settings(
             "bootstrap control socket path must be at most 100 encoded bytes"
         )
 
+    try:
+        local_api_port = int(env.get("EIDOLON_BOOTSTRAP_LOCAL_API_PORT", "9002"))
+    except ValueError as exc:
+        raise BootstrapConfigurationError(
+            "EIDOLON_BOOTSTRAP_LOCAL_API_PORT must be an integer"
+        ) from exc
+    if not 1 <= local_api_port <= 65535:
+        raise BootstrapConfigurationError(
+            "EIDOLON_BOOTSTRAP_LOCAL_API_PORT must be between 1 and 65535"
+        )
+
     return BootstrapSettings(
         mode=mode,
         state_dir=state_dir,
@@ -194,4 +209,5 @@ def load_bootstrap_settings(
         dev_setup_code=dev_setup_code,
         commissioning_adapter=commissioning_adapter,
         network_adapter=network_adapter,
+        local_api_port=local_api_port,
     )
