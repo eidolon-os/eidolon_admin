@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..app.control_plane.contracts import (
     HubDevice,
@@ -32,6 +32,14 @@ class AdminOwnerDevicesPort(Protocol):
         owner_id: str,
         controller_id: str,
     ) -> OwnerInventory: ...
+
+    async def rename(
+        self,
+        owner_id: str,
+        controller_id: str,
+        device_id: str,
+        display_name: str,
+    ) -> HubDevice: ...
 
     async def close(self) -> None: ...
 
@@ -65,6 +73,27 @@ class LocalDeviceView(BaseModel):
     device_kind: str = Field(default="", max_length=96)
     admission_state: Literal["mounted", "ready"]
     mount: LocalDeviceMountView
+
+
+class LocalDeviceRenameCommand(BaseModel):
+    """What to call a device, as the person typed it.
+
+    Blank is refused here rather than two services away: the answer is the
+    same, and this is the boundary the person is talking to.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    display_name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("display_name")
+    @classmethod
+    def _must_be_a_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("display_name cannot be blank")
+        return name
 
 
 class LocalDeviceInventoryView(BaseModel):
@@ -176,6 +205,50 @@ class AdminOwnerDevicesClient:
         except (ValueError, TypeError, ValidationError) as exc:
             raise DeviceInventoryError(
                 "Admin Device membership response violated its contract"
+            ) from exc
+
+    async def rename(
+        self,
+        owner_id: str,
+        controller_id: str,
+        device_id: str,
+        display_name: str,
+    ) -> HubDevice:
+        if not self._token:
+            raise DeviceInventoryError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/owners/"
+            f"{quote(owner_id, safe='')}/devices/{quote(device_id, safe='')}"
+            f"/name/{quote(controller_id, safe='')}"
+        )
+        try:
+            response = await self._client.patch(
+                url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                json={"display_name": display_name},
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise DeviceInventoryError(
+                "Admin Device directory is unavailable"
+            ) from exc
+        if response.status_code == 404:
+            raise DeviceInventoryError("Device does not exist", status_code=404)
+        if response.status_code == 422:
+            raise DeviceInventoryError("Device name was rejected", status_code=422)
+        if response.status_code != 200:
+            raise DeviceInventoryError("Admin Device directory is unavailable")
+        try:
+            return HubDevice.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DeviceInventoryError(
+                "Admin Device rename response violated its contract"
             ) from exc
 
     async def close(self) -> None:

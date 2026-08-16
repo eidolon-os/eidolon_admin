@@ -37,6 +37,7 @@ from .devices import (
     AdminOwnerDevicesPort,
     DeviceInventoryError,
     LocalDeviceInventoryView,
+    LocalDeviceRenameCommand,
     LocalDeviceView,
     owner_device_inventory_view,
 )
@@ -762,6 +763,54 @@ def create_app(
                 "Device does not exist",
             )
         return owner_id, controller_id
+
+    @app.patch(
+        "/api/local/v1/devices/{device_id}",
+        response_model=LocalDeviceView,
+    )
+    async def rename_device(
+        device_id: Annotated[
+            str,
+            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
+        ],
+        payload: LocalDeviceRenameCommand,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceView:
+        """Set what this Owner calls one of their devices.
+
+        A device names itself when it enrols, so two of the same board arrive
+        indistinguishable and stay that way. This is the one part of a device
+        record its Owner decides.
+        """
+
+        owner_id, controller_id = await _owned_device(device_id, authorization)
+        try:
+            renamed = await devices.rename(
+                owner_id,
+                controller_id,
+                device_id,
+                payload.display_name,
+            )
+            # Re-read rather than patch a copy: the list is composed from two
+            # authorities, and what belongs on screen is what they now say.
+            inventory = await devices.list_inventory(owner_id, controller_id)
+        except DeviceInventoryError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        view = owner_device_inventory_view(
+            mounts=KernelMountPage(
+                operation="kernel.device-mount-page",
+                mounts=inventory.mounts,
+            ),
+            bound_owner_id=owner_id,
+            directory={entry.device_id: entry for entry in inventory.devices},
+        )
+        for device in view.devices:
+            if device.device_id == renamed.device_id:
+                return device
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Device is no longer mounted to this Owner",
+        )
 
     @app.post(
         "/api/local/v1/devices/{device_id}/removal",

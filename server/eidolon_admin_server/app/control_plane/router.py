@@ -12,6 +12,8 @@ from .contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
     CompanionRenameRequest,
+    DeviceRenameCommand,
+    HubDevice,
     PersonaChapter,
     PersonaRestoreRequest,
     PersonaTimeline,
@@ -228,6 +230,30 @@ async def admit_device(
             "contract_violation": 502,
         }.get(failed.kind if failed else "", 502)
     return result
+
+
+@router.patch(
+    "/owners/{owner_id}/devices/{device_id}/name/{controller_id}",
+    response_model=HubDevice,
+)
+async def rename_owner_device(
+    owner_id: str,
+    device_id: str,
+    controller_id: str,
+    payload: DeviceRenameCommand,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> HubDevice:
+    _authorize_local_api(request, authorization)
+    try:
+        return await _service(request).rename_owner_device(
+            owner_id=owner_id,
+            controller_id=controller_id,
+            device_id=device_id,
+            display_name=payload.display_name,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
 
 
 @router.get(

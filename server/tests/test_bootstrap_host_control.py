@@ -59,6 +59,7 @@ from eidolon_admin_server.bootstrap.service import (
 from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
+    HubDevice,
     OwnerInventory,
     PersonaChapter,
     PersonaTimeline,
@@ -284,6 +285,7 @@ class _RuntimeClient:
 class _DevicesClient:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.renamed: tuple[str, str] | None = None
         #: Set to None to answer as a Host whose directory could not be
         #: reached: the devices are still theirs, the names are simply gone.
         self.directory: list[dict] | None = [
@@ -307,6 +309,21 @@ class _DevicesClient:
                 "updated_at": "2026-08-09T08:10:00Z",
             }
         ]
+
+    async def rename(
+        self,
+        owner_id: str,
+        controller_id: str,
+        device_id: str,
+        display_name: str,
+    ):
+        self.renamed = (device_id, display_name)
+        assert self.directory is not None
+        for entry in self.directory:
+            if entry["device_id"] == device_id:
+                entry["display_name"] = display_name
+                return HubDevice.model_validate(entry)
+        raise AssertionError("renamed a device this Host does not hold")
 
     async def list_inventory(self, owner_id: str, controller_id: str):
         mounts = await self.list_mounts(owner_id)
@@ -1682,3 +1699,62 @@ async def test_a_directory_that_cannot_be_reached_costs_names_and_nothing_else(
         assert [device["device_id"] for device in listed] == ["device-local-1"]
         assert listed[0]["display_name"] == ""
         assert listed[0]["device_kind"] == ""
+
+
+@pytest.mark.asyncio
+async def test_an_owner_names_a_device_and_the_list_says_so(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """A device names itself when it enrols, and never gets to be renamed.
+
+    An ESP32 reports its board, so two of the same one arrive as the same
+    word. The Owner is the only one who knows which is in the living room.
+    """
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        _runtime_client,
+        devices_client,
+    ):
+        renamed = await client.patch(
+            "/api/local/v1/devices/device-local-1",
+            json={"contract_version": "1", "display_name": "  书房的 Box-3  "},
+            headers=headers,
+        )
+
+        assert renamed.status_code == 200
+        # Trimmed, because someone typing a name with a stray space meant the
+        # name, and answered from the list so what is shown is what was kept.
+        assert devices_client.renamed == ("device-local-1", "书房的 Box-3")
+        assert renamed.json()["display_name"] == "书房的 Box-3"
+
+
+@pytest.mark.asyncio
+async def test_a_device_that_is_not_this_owners_cannot_be_renamed(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        _runtime_client,
+        devices_client,
+    ):
+        refused = await client.patch(
+            "/api/local/v1/devices/device-of-someone-else",
+            json={"contract_version": "1", "display_name": "我的"},
+            headers=headers,
+        )
+        blank = await client.patch(
+            "/api/local/v1/devices/device-local-1",
+            json={"contract_version": "1", "display_name": "   "},
+            headers=headers,
+        )
+
+        assert refused.status_code == 404
+        # Whitespace would erase the name they have, and is refused where the
+        # person is asking rather than two services away.
+        assert blank.status_code == 422
+        assert devices_client.renamed is None

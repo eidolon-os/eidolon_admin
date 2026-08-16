@@ -52,6 +52,10 @@ class PersonaRestoreRequest(StrictModel):
     change_summary: str = Field(default="", max_length=4096)
 
 
+class DeviceRenameCommand(StrictModel):
+    display_name: str = Field(min_length=1, max_length=128)
+
+
 class CompanionRenameRequest(StrictModel):
     display_name: str = Field(min_length=1, max_length=128)
 

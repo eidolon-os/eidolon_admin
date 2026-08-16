@@ -17,6 +17,7 @@ from .clients import (
     KernelMountClient,
 )
 from .contracts import (
+    HubDevice,
     BoundaryCapabilities,
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
@@ -422,6 +423,30 @@ class ControlPlaneService:
         return await self.inventory(
             owner_id=owner_id,
             hub_authorization=self.hub_credentials.issue(controller_id=controller_id),
+        )
+
+    async def rename_owner_device(
+        self,
+        *,
+        owner_id: str,
+        controller_id: str,
+        device_id: str,
+        display_name: str,
+    ) -> HubDevice:
+        """Set what one of this Owner's devices is called."""
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Owner credential issuer is unavailable",
+                503,
+            )
+        return await self.hub.rename(
+            device_id=device_id,
+            owner_scope=owner_id,
+            display_name=display_name,
+            authorization=self.hub_credentials.issue(controller_id=controller_id),
         )
 
     async def _mount_approved_device(

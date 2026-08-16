@@ -482,6 +482,46 @@ class HubManagementClient:
             )
         return result
 
+    async def rename(
+        self,
+        *,
+        device_id: str,
+        owner_scope: str,
+        display_name: str,
+        authorization: str,
+    ) -> HubDevice:
+        """Set what a device is called, for the Owner who holds it."""
+
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "PATCH",
+            f"{base_url}/api/device-management/v1/devices/{quote(device_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json={
+                "operation": "device.rename",
+                "display_name": display_name,
+                "owner_scope": owner_scope,
+            },
+        )
+        status = _parse("hub", response, HubLifecycleStatus)
+        if status.device_id != device_id:
+            raise _contract_violation(
+                "hub", "Hub rename response named a different device"
+            )
+        page = await self.list_devices(
+            owner_id=owner_scope,
+            authorization=authorization,
+        )
+        for device in page.devices:
+            if device.device_id == device_id:
+                return device
+        raise _contract_violation(
+            "hub", "Hub directory no longer holds the device it just renamed"
+        )
+
     async def list_devices(
         self,
         *,
