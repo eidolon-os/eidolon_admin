@@ -498,62 +498,16 @@ def create_app(
             )
             raise HTTPException(code, str(exc)) from exc
 
-    @app.patch(
-        "/api/local/v1/companions/{companion_id}",
-        response_model=CompanionNameView,
-    )
-    async def rename_companion(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        payload: CompanionRenameCommand,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> CompanionNameView:
-        """Set what this Owner calls their Eidolon.
-
-        The id is in the path because an Owner will have more than one
-        Companion, and it is checked against this session's Owner before
-        anything is written — a Controller holding a valid session must not be
-        able to rename a Companion by knowing an identifier that is not theirs.
-        That check lives here, at the boundary that knows whose session this is,
-        and nowhere else, so it cannot be decided two ways.
-        """
-
-        principal, _session = await authenticated_controller(authorization)
-        owner_id = principal.get("owner_id")
-        if not isinstance(owner_id, str) or not owner_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Host Workspace is not initialized",
-            )
-        try:
-            existing = await runtime.get_companion(companion_id)
-            if existing.owner_id != owner_id:
-                # Said as "not found" on purpose: a session that does not hold
-                # this Companion learns nothing about whether it exists.
-                raise HTTPException(
-                    status.HTTP_404_NOT_FOUND,
-                    "Companion does not exist",
-                )
-            renamed = await runtime.rename_companion(
-                companion_id,
-                payload.display_name,
-            )
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return CompanionNameView(
-            companion_id=renamed.companion_id,
-            display_name=renamed.display_name,
-        )
-
     async def _owned_companion(
         companion_id: str,
         authorization: str | None,
     ) -> str:
         """The Owner of this session, having proved this Companion is theirs.
 
-        The same check the rename route makes, in the same place and for the
-        same reason: an identifier in a path is not authority, and whose
-        Companion it is can only be judged where whose session this is is
-        known.
+        Every Companion-scoped route goes through here. An identifier in a
+        path is not authority, and whose Companion it is can only be judged
+        where whose session this is is known — so it is judged once, and the
+        routes below cannot drift into judging it differently.
         """
 
         principal, _session = await authenticated_controller(authorization)
@@ -573,6 +527,30 @@ def create_app(
                 "Companion does not exist",
             )
         return owner_id
+
+    @app.patch(
+        "/api/local/v1/companions/{companion_id}",
+        response_model=CompanionNameView,
+    )
+    async def rename_companion(
+        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
+        payload: CompanionRenameCommand,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionNameView:
+        """Set what this Owner calls their Eidolon."""
+
+        await _owned_companion(companion_id, authorization)
+        try:
+            renamed = await runtime.rename_companion(
+                companion_id,
+                payload.display_name,
+            )
+        except WorkspaceRuntimeError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return CompanionNameView(
+            companion_id=renamed.companion_id,
+            display_name=renamed.display_name,
+        )
 
     @app.get(
         "/api/local/v1/companions/{companion_id}/persona",
