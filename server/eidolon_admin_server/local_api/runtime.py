@@ -9,7 +9,11 @@ import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..app.control_plane.contracts import WorkspaceOperation, WorkspaceOwner
+from ..app.control_plane.contracts import (
+    CompanionIdentity,
+    WorkspaceOperation,
+    WorkspaceOwner,
+)
 
 
 class WorkspaceRuntimeError(RuntimeError):
@@ -24,6 +28,8 @@ class AdminOwnerRuntimePort(Protocol):
         owner_id: str,
     ) -> CompanionRuntimeSnapshot: ...
 
+    async def get_companion(self, companion_id: str) -> CompanionIdentity: ...
+
     async def close(self) -> None: ...
 
 
@@ -31,6 +37,10 @@ class PrimaryCompanionView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     companion_id: str = Field(min_length=1, max_length=64)
+    #: What the Owner calls this Eidolon. Empty only on a Host whose Data
+    #: predates answering with it, and an empty name is left for the client to
+    #: handle rather than filled in with an identifier here.
+    display_name: str = Field(default="", max_length=128)
     lifecycle_state: Literal["active"]
 
 
@@ -135,6 +145,52 @@ class AdminOwnerRuntimeClient:
             )
         return runtime
 
+    async def get_companion(self, companion_id: str) -> CompanionIdentity:
+        """Who this Companion is, including what its Owner calls it.
+
+        A second call rather than a wider runtime snapshot: the snapshot is
+        what a Companion needs in order to run, and a name is not that. It is
+        what a person needs in order to recognise it.
+        """
+
+        if not self._token:
+            raise WorkspaceRuntimeError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/companions/"
+            f"{quote(companion_id, safe='')}"
+        )
+        try:
+            response = await self._client.get(
+                url,
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Companion control plane is unavailable"
+            ) from exc
+        if response.status_code == 404:
+            raise WorkspaceRuntimeError("Companion does not exist", status_code=404)
+        if response.status_code != 200:
+            raise WorkspaceRuntimeError("Admin Companion control plane is unavailable")
+        try:
+            identity = CompanionIdentity.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Companion response violated its contract"
+            ) from exc
+        if identity.companion_id != companion_id:
+            raise WorkspaceRuntimeError(
+                "Admin Companion response returned another Companion"
+            )
+        return identity
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
@@ -145,6 +201,7 @@ def workspace_runtime_view(
     workspace: WorkspaceOperation,
     runtime: CompanionRuntimeSnapshot,
     bound_owner_id: str,
+    companion_display_name: str = "",
 ) -> WorkspaceRuntimeView:
     if workspace.owner.owner_id != bound_owner_id or runtime.owner_id != bound_owner_id:
         raise WorkspaceRuntimeError(
@@ -161,6 +218,7 @@ def workspace_runtime_view(
         owner=workspace.owner,
         primary_companion=PrimaryCompanionView(
             companion_id=runtime.companion_id,
+            display_name=companion_display_name,
             lifecycle_state=runtime.lifecycle_state,
         ),
         persona=PersonaRuntimeView(

@@ -478,10 +478,12 @@ def create_app(
             raise HTTPException(code, str(exc)) from exc
         try:
             runtime_snapshot = await runtime.get_owner_primary_runtime(owner_id)
+            companion = await runtime.get_companion(runtime_snapshot.companion_id)
             return workspace_runtime_view(
                 workspace=workspace_operation,
                 runtime=runtime_snapshot,
                 bound_owner_id=owner_id,
+                companion_display_name=companion.display_name,
             )
         except WorkspaceRuntimeError as exc:
             code = (

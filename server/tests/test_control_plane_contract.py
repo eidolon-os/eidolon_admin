@@ -90,22 +90,54 @@ def _schema_documents(schema_root: Path) -> list[dict]:
     ]
 
 
-def test_data_v2_consumed_identity_matches_baseline_2a33894() -> None:
+def test_data_consumed_identity_matches_the_producer_it_was_verified_against() -> None:
+    """Verified against Data 718b2cb, which added the Companion's display name.
+
+    The previous baseline was 2a33894. Moving it is the deliberate part: this
+    copy of the contract is closed, so an addition at Data arrives here as a
+    failing test rather than as an unnoticed field, and someone decides.
+    """
+
     schema_path = "eidolon_data/contracts/schemas/companion/identity.schema.json"
-    schema = _json_at_commit(DATA_ROOT, "2a33894", schema_path)
+    schema = _json_at_commit(DATA_ROOT, "718b2cb", schema_path)
     document = CompanionIdentity(
         operation="companion.identity",
         companion_id="companion-1",
         owner_id="owner-1",
+        display_name="小忆",
         lifecycle_state="active",
     ).model_dump(mode="json")
     jsonschema.Draft202012Validator(schema).validate(document)
 
     producer_source = _at_commit(
-        DATA_ROOT, "2a33894", "eidolon_data/api/companion_authority.py"
+        DATA_ROOT, "718b2cb", "eidolon_data/api/companion_authority.py"
     )
     assert "/api/companion-authority/v1/companions/{companion_id}" in producer_source
     assert "response_model=CompanionIdentityResponse" in producer_source
+
+
+def test_a_host_whose_data_predates_the_name_is_still_understood() -> None:
+    # An App and an Admin are routinely newer than the Host they run beside.
+    # A Companion identity from before Data answered with a name has to parse,
+    # and the name is simply absent rather than invented.
+    older = jsonschema.Draft202012Validator(
+        _json_at_commit(
+            DATA_ROOT,
+            "2a33894",
+            "eidolon_data/contracts/schemas/companion/identity.schema.json",
+        )
+    )
+    document = {
+        "operation": "companion.identity",
+        "companion_id": "companion-1",
+        "owner_id": "owner-1",
+        "lifecycle_state": "active",
+    }
+    older.validate(document)
+
+    parsed = CompanionIdentity.model_validate(document)
+
+    assert parsed.display_name == ""
 
 
 def test_data_workspace_consumed_contract_matches_9fc4f4e() -> None:

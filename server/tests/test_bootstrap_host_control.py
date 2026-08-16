@@ -57,6 +57,7 @@ from eidolon_admin_server.bootstrap.service import (
 )
 from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
+    CompanionIdentity,
     KernelMountPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
@@ -205,6 +206,17 @@ class _RuntimeClient:
     async def close(self) -> None:
         return None
 
+
+    async def get_companion(self, companion_id: str) -> CompanionIdentity:
+        # The name a person gave this Eidolon lives with its identity, not in
+        # the snapshot that says how to run it.
+        return CompanionIdentity(
+            operation="companion.identity",
+            companion_id=companion_id,
+            owner_id=self.workspace.result.owner.owner_id,
+            display_name="小忆",
+            lifecycle_state="active",
+        )
 
 class _DevicesClient:
     def __init__(self) -> None:
@@ -919,6 +931,10 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 runtime.json()["primary_companion"]["companion_id"]
                 == (initialized.json()["workspace"]["primary_companion_id"])
             )
+            # The name a person gave this Eidolon reaches the Owner's own view.
+            # It was stored at onboarding and, until now, never read back — the
+            # product showed an identifier where someone had said what to call it.
+            assert runtime.json()["primary_companion"]["display_name"] == "小忆"
             assert runtime_client.calls == 1
             devices = await client.get(
                 "/api/local/v1/devices",

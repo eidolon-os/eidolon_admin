@@ -25,6 +25,9 @@ class CompanionIdentity(StrictModel):
     operation: Literal["companion.identity"]
     companion_id: str = Field(min_length=1, max_length=64)
     owner_id: str = Field(min_length=1, max_length=64)
+    #: What the Owner calls this Eidolon. Defaulted so a Host whose Data
+    #: predates answering with it still parses.
+    display_name: str = Field(default="", max_length=128)
     lifecycle_state: Literal["active", "inactive"]
 
 
