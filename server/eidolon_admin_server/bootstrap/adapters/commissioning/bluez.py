@@ -18,6 +18,8 @@ from dbus_next.service import ServiceInterface, dbus_property, method
 from ...ports import CommissioningLink, CommissioningLinkClosed
 
 
+from ...endpoint_encoding import encode_endpoint
+
 INFO_CHARACTERISTIC_UUID = "30af68fb-163b-581f-a94c-1488e8b3b4fd"
 RX_CHARACTERISTIC_UUID = "518d55c5-5433-5312-9099-a0a03c90f003"
 TX_CHARACTERISTIC_UUID = "c8a3ab33-7e3a-5827-adf0-f4358a0cfe38"
@@ -115,12 +117,7 @@ class _InfoCharacteristic(ServiceInterface):
 
     @method()
     def ReadValue(self, options: "a{sv}") -> "ay":
-        payload = json.dumps(
-            self._endpoint_provider(),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
+        payload = encode_endpoint(self._endpoint_provider())
         offset = int(options.get("offset", Variant("q", 0)).value)
         if offset > len(payload):
             raise DBusError("org.bluez.Error.InvalidOffset", "invalid read offset")

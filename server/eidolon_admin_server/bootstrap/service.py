@@ -27,6 +27,7 @@ from .controller_auth import (
     verify_controller_signature,
 )
 from .domain import ControllerGrant, ControllerRole, NetworkState, generate_setup_code
+from .endpoint_encoding import GATT_MAX_ATTRIBUTE_BYTES, endpoint_size
 from .host_addresses import local_api_base_urls
 from .ports import (
     BootstrapStateConflict,
@@ -410,9 +411,52 @@ class BootstrapService:
             # to be told. Signed with everything else: an address that reaches
             # the wrong Host still fails the identity check, but an address
             # nobody could tamper with saves a phone from having none at all.
-            "local_api_base_urls": local_api_base_urls(self._settings.local_api_port),
+            "local_api_base_urls": [],
         }
+        unsigned["local_api_base_urls"] = self._addresses_that_fit(
+            unsigned, local_api_base_urls(self._settings.local_api_port)
+        )
         return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
+
+    def _addresses_that_fit(
+        self, unsigned: dict[str, Any], addresses: list[str]
+    ) -> list[str]:
+        """As many addresses as a single characteristic read can carry.
+
+        Everything else in the endpoint is a fixed-size fact about this Host.
+        The address list is the one part that grows with the machine it runs
+        on — another interface, another cable, another address — and it was
+        growing against a hard 512-byte ceiling that nothing checked. A Host
+        with one more NIC than the last one silently produced an endpoint no
+        phone could read, and said so as "invalid identity data".
+
+        So the ceiling is respected where the list is built, and the list is
+        already ordered most-routable-first: what gets dropped is the address
+        least likely to be the one the phone can reach. Dropping is said out
+        loud, because a Host that cannot advertise one of its own addresses is
+        a thing an operator may need to know about.
+        """
+
+        admitted: list[str] = []
+        for address in addresses:
+            candidate = [*admitted, address]
+            probe = {**unsigned, "local_api_base_urls": candidate}
+            # Signed here rather than estimated: the signature is part of what
+            # the phone reads, so a budget that ignores it is not a budget.
+            probe["signature"] = self._identity_manager.sign_mapping(
+                {**unsigned, "local_api_base_urls": candidate}
+            )
+            if endpoint_size(probe) > GATT_MAX_ATTRIBUTE_BYTES:
+                logger.warning(
+                    "commissioning endpoint is full at %d of %d address(es); "
+                    "dropping %s and any after it",
+                    len(admitted),
+                    len(addresses),
+                    address,
+                )
+                break
+            admitted = candidate
+        return admitted
 
     def development_lan_commissioning_endpoint(self) -> dict[str, Any]:
         """Expose the signed endpoint for an already-networked development Host.
