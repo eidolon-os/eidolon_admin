@@ -220,6 +220,22 @@ class LocalPendingDeviceEnrollmentPage(BaseModel):
     devices: tuple[LocalPendingDeviceEnrollment, ...] = ()
 
 
+#: What an act came to, in the only terms that change what a person does next.
+#:
+#: ``done`` — it finished; there is nothing to decide.
+#: ``unfinished`` — it did not finish, and asking again can still finish it.
+#: ``refused`` — it did not finish, and asking again will not change that.
+#:
+#: Three fields used to say this between them: a ``state`` that mixed how far
+#: the act got with whether it had ended, a ``completed_stage`` naming an
+#: internal authority hand-off, and a ``retryable`` flag. A screen had to
+#: reassemble a decision out of all three, and every screen reassembled it
+#: slightly differently. The distinction that actually matters is the one this
+#: contract keeps everywhere else: a Host that got partway has not decided
+#: anything, and a Host that refused has.
+ActOutcome = Literal["done", "unfinished", "refused"]
+
+
 class LocalDeviceAdmissionProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -230,14 +246,15 @@ class LocalDeviceAdmissionProgress(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
-    state: Literal["approved", "binding", "ready", "failed"]
-    completed_stage: Literal[
+    outcome: ActOutcome
+    #: How far it got, for someone diagnosing it. Never the basis of what a
+    #: screen tells a person to do — that is what ``outcome`` is for.
+    stopped_after: Literal[
         "hub-approved",
         "kernel-mounted",
         "companion-attached",
     ]
     companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    retryable: bool
 
 
 class LocalDeviceRemovalRequest(BaseModel):
@@ -275,9 +292,11 @@ class LocalDeviceRemovalProgress(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
-    state: Literal["revoked", "removed", "failed"]
-    completed_stage: Literal["hub-revoked", "kernel-unmounted"]
-    retryable: bool
+    outcome: ActOutcome
+    #: ``hub-revoked`` with ``unfinished`` is the state worth reading twice:
+    #: the grant is gone, so the device is already off, and what is left to
+    #: retry is the unmount.
+    stopped_after: Literal["hub-revoked", "kernel-unmounted"]
 
 
 class AdminDeviceAdmissionPort(Protocol):
@@ -486,21 +505,12 @@ def device_removal_progress(
             "Admin Device removal returned an unsupported stage",
             status_code=502,
         )
-    if result.outcome == "completed":
-        state: Literal["revoked", "removed", "failed"] = "removed"
-    elif result.outcome == "retry_required":
-        # The grant is already gone whenever the Hub step committed, so the
-        # phone is off either way; what is left to retry is the mount.
-        state = "revoked" if result.completed_stage == "hub_revoked" else "failed"
-    else:
-        state = "failed"
     return LocalDeviceRemovalProgress(
         request_id=result.request_id,
         device_id=device_id,
         owner_id=owner_id,
-        state=state,
-        completed_stage=stage,
-        retryable=result.outcome == "retry_required",
+        outcome=_act_outcome(result.outcome),
+        stopped_after=stage,
     )
 
 
@@ -534,26 +544,37 @@ def device_admission_progress(
             "Admin Device admission returned an unsupported stage",
             status_code=502,
         )
-    if result.outcome == "completed":
-        if companion_id is not None and result.completed_stage != "companion_attached":
-            raise DeviceAdmissionError(
-                "Admin Device admission omitted the requested Companion attachment",
-                status_code=502,
-            )
-        state: Literal["approved", "binding", "ready", "failed"] = "ready"
-    elif result.outcome == "retry_required":
-        state = "binding" if result.completed_stage == "kernel_mounted" else "approved"
-    else:
-        state = "failed"
+    if result.outcome == "completed" and (
+        companion_id is not None and result.completed_stage != "companion_attached"
+    ):
+        raise DeviceAdmissionError(
+            "Admin Device admission omitted the requested Companion attachment",
+            status_code=502,
+        )
     return LocalDeviceAdmissionProgress(
         request_id=result.request_id,
         device_id=hub.device_id,
         owner_id=owner_id,
-        state=state,
-        completed_stage=stage,
+        outcome=_act_outcome(result.outcome),
+        stopped_after=stage,
         companion_id=companion_id,
-        retryable=result.outcome == "retry_required",
     )
+
+
+def _act_outcome(outcome: str) -> ActOutcome:
+    """What Admin's three internal outcomes mean to the person who asked.
+
+    ``retry_required`` is the whole reason this distinction exists: an act
+    that stopped partway has decided nothing, and the same request will carry
+    it further. Anything else that is not completion is a refusal, and
+    repeating it only produces the same refusal again.
+    """
+
+    if outcome == "completed":
+        return "done"
+    if outcome == "retry_required":
+        return "unfinished"
+    return "refused"
 
 
 def pending_device_enrollment_page(

@@ -33,6 +33,7 @@ from eidolon_admin_server.local_api.config import (
     load_local_api_settings,
 )
 from eidolon_admin_server.local_api.device_admissions import (
+    _act_outcome,
     AdminDeviceAdmissionClient,
     DeviceAdmissionError,
     device_admission_detail,
@@ -315,8 +316,8 @@ def test_mobile_progress_uses_hub_authoritative_device_identity() -> None:
     )
 
     assert progress.device_id == "device-authoritative"
-    assert progress.state == "ready"
-    assert progress.completed_stage == "companion-attached"
+    assert progress.outcome == "done"
+    assert progress.stopped_after == "companion-attached"
 
 
 class _UnusedPort:
@@ -663,9 +664,11 @@ def test_a_removal_that_only_revoked_is_not_reported_as_removed() -> None:
         result=partial,
     )
 
-    assert progress.state == "revoked"
-    assert progress.completed_stage == "hub-revoked"
-    assert progress.retryable is True
+    # The grant is gone, so the device is already off; what is left to retry
+    # is the unmount. One outcome says "ask again", one detail says how far it
+    # got, and the screen no longer has to infer that from three fields.
+    assert progress.outcome == "unfinished"
+    assert progress.stopped_after == "hub-revoked"
 
 
 @pytest.mark.asyncio
@@ -739,7 +742,7 @@ async def test_removing_a_device_is_controller_authenticated_and_owner_derived(
     assert unauthenticated.status_code == 401
     assert removed.status_code == 200
     assert injected_owner.status_code == 422
-    assert removed.json()["state"] == "removed"
+    assert removed.json()["outcome"] == "done"
     assert removed.json()["owner_id"] == "owner-derived"
     assert admission.removal is not None
     assert admission.removal.owner_id == "owner-derived"
@@ -813,3 +816,26 @@ async def test_a_device_that_is_not_this_owners_cannot_be_removed(
     assert refused.status_code == 404
     # And nothing reached the authorities that would have carried it out.
     assert admission.removal is None
+
+
+def test_the_three_shapes_a_screen_had_to_reassemble_are_now_one_decision() -> None:
+    """Every Admin outcome maps to one thing a person can act on.
+
+    ``retry_required`` is why this distinction exists at all: an act that
+    stopped partway has decided nothing and the same request carries it
+    further, while a refusal repeated is the same refusal. Before this, a
+    screen worked that out from ``state`` + ``completed_stage`` + ``retryable``
+    — and each screen worked it out slightly differently.
+    """
+
+    outcomes = {
+        "completed": "done",
+        "retry_required": "unfinished",
+        "rejected": "refused",
+        # Anything Admin grows later is a refusal until it is understood,
+        # which is the safe direction: it stops rather than loops.
+        "something-new": "refused",
+    }
+
+    for admin_outcome, expected in outcomes.items():
+        assert _act_outcome(admin_outcome) == expected
