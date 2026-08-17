@@ -41,6 +41,7 @@ from .host_services import (
     host_service_inventory,
     host_service_mutation,
 )
+from .activity import LocalActivityView, owner_activity_view
 from .devices import (
     AdminOwnerDevicesClient,
     AdminOwnerDevicesPort,
@@ -1001,6 +1002,32 @@ def create_app(
             raise HTTPException(
                 exc.status_code, device_admission_detail(exc)
             ) from exc
+
+    @app.get(
+        "/api/local/v1/activity",
+        response_model=LocalActivityView,
+    )
+    async def get_activity(
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalActivityView:
+        """What has happened to this Owner's devices lately.
+
+        Owner-scoped by the session, like the inventory beside it: there is one
+        history a session can ask for, so none is named here.
+
+        Only devices. This Host records no presence and no runtime telemetry,
+        and the view says so in its own coverage rather than leaving a screen
+        to guess that a quiet list means a quiet Host.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        try:
+            history = await devices.list_history(owner_id, controller_id, limit)
+        except DeviceInventoryError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return owner_activity_view(history)
 
     @app.get(
         "/api/local/v1/host/services",

@@ -61,6 +61,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     CompanionFace,
     CompanionIdentity,
     HubDevice,
+    OwnerDeviceHistory,
     OwnerIdentity,
     OwnerInventory,
     PersonaChapter,
@@ -354,6 +355,9 @@ class _RuntimeClient:
 class _DevicesClient:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.history_calls: list[tuple[str, str, int]] = []
+        #: Set to make the history unreadable, which must not read as empty.
+        self.history_failure: Exception | None = None
         self.renamed: tuple[str, str] | None = None
         #: Set to None to answer as a Host whose directory could not be
         #: reached: the devices are still theirs, the names are simply gone.
@@ -393,6 +397,42 @@ class _DevicesClient:
                 entry["display_name"] = display_name
                 return HubDevice.model_validate(entry)
         raise AssertionError("renamed a device this Host does not hold")
+
+    async def list_history(self, owner_id: str, controller_id: str, limit: int):
+        self.history_calls.append((owner_id, controller_id, limit))
+        if self.history_failure is not None:
+            raise self.history_failure
+        return OwnerDeviceHistory.model_validate(
+            {
+                "operation": "admin.owner-device-history",
+                "owner_id": owner_id,
+                "events": [
+                    {
+                        "operation": "device.management-event",
+                        "stream_position": 2,
+                        "event_id": "evt-approved",
+                        "event_type": "eidolon.device.approved.v1",
+                        "source": "eidolon-hub/device-management",
+                        "principal_id": f"eidolon-local-api/{controller_id}",
+                        "device_id": "device-local-1",
+                        "occurred_at": "2026-08-17T10:14:40Z",
+                        "data": {"owner_id": owner_id},
+                    },
+                    {
+                        "operation": "device.management-event",
+                        "stream_position": 1,
+                        "event_id": "evt-enrolled",
+                        "event_type": "eidolon.device.enrolled.v1",
+                        "source": "eidolon-hub/device-management",
+                        "principal_id": "untrusted-device:device-local-1",
+                        "device_id": "device-local-1",
+                        "occurred_at": "2026-08-17T10:06:15Z",
+                        "data": {"manifest_revision": "sha256:" + "a" * 64},
+                    },
+                ],
+                "devices": self.directory or [],
+            }
+        )
 
     async def list_inventory(self, owner_id: str, controller_id: str):
         mounts = await self.list_mounts(owner_id)
@@ -1611,6 +1651,72 @@ async def test_an_owner_names_their_own_companion_and_only_their_own(
         # hold this Companion learns nothing about whether it exists.
         assert refused.status_code == 404
         assert runtime_client.renamed is None
+
+
+@pytest.mark.asyncio
+async def test_an_owner_can_see_what_happened_to_their_devices(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """The history is the session's own, and it is asked for by nobody's id."""
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+        devices_client,
+    ):
+        answered = await client.get("/api/local/v1/activity", headers=headers)
+
+        assert answered.status_code == 200
+        body = answered.json()
+        assert body["coverage"] == "device-lifecycle"
+        assert [(item["kind"], item["actor"]) for item in body["moments"]] == [
+            ("device-accepted", "owner"),
+            ("device-knocked", "device"),
+        ]
+        # A device is carried by the name its Owner knows it by.
+        assert body["moments"][0]["device_name"] == "客厅的 Box-3"
+
+        owner_id, controller_id, limit = devices_client.history_calls[-1]
+        assert owner_id == runtime_client.workspace.result.owner.owner_id
+        assert controller_id.startswith("ectrl-")
+        assert limit == 50
+
+        # An unbounded history is refused here rather than passed down.
+        assert (
+            await client.get(
+                "/api/local/v1/activity",
+                params={"limit": 500},
+                headers=headers,
+            )
+        ).status_code == 422
+        assert (await client.get("/api/local/v1/activity")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_a_history_that_could_not_be_read_never_reads_as_nothing_happened(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """The whole point of this screen: silence and absence are different answers."""
+
+    from eidolon_admin_server.local_api.devices import DeviceInventoryError
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        _runtime_client,
+        devices_client,
+    ):
+        devices_client.history_failure = DeviceInventoryError(
+            "Admin Device history control plane is unavailable"
+        )
+
+        answered = await client.get("/api/local/v1/activity", headers=headers)
+
+        assert answered.status_code == 503
+        assert "moments" not in answered.text
 
 
 @pytest.mark.asyncio

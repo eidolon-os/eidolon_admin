@@ -593,3 +593,93 @@ async def test_uds_directory_constructs_and_closes_owned_transport(
     assert subject._owns_client is True
     await subject.close()
     assert subject._client.is_closed is True
+
+
+def _hub_event(position: int) -> dict:
+    return {
+        "operation": "device.management-event",
+        "stream_position": position,
+        "event_id": f"evt-{position}",
+        "event_type": "eidolon.device.enrolled.v1",
+        "source": "eidolon-hub/device-management",
+        "principal_id": "untrusted-device:device-1",
+        "device_id": "device-1",
+        "occurred_at": datetime(2026, 8, 17, 10, 0, tzinfo=UTC).isoformat(),
+        "data": {},
+    }
+
+
+async def test_hub_events_are_read_forward_and_only_the_newest_are_kept() -> None:
+    """The ledger reads forward; a screen wants the end of it."""
+
+    requested: list[bytes] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.query)
+        after = int(dict(request.url.params)["after_stream_position"])
+        events = [_hub_event(after + offset) for offset in range(1, 4)]
+        # Three per page, three pages, then a short page ends the stream.
+        if after >= 9:
+            events = []
+        return httpx.Response(
+            200,
+            json={
+                "operation": "device.management-event-page",
+                "next_stream_position": events[-1]["stream_position"] if events else after,
+                "events": events,
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        newest = await subject.latest_events(
+            owner_id="owner-1",
+            authorization="Bearer admin",
+            keep=2,
+            page_size=3,
+        )
+    finally:
+        await http_client.aclose()
+
+    assert [event.stream_position for event in newest] == [8, 9]
+    assert requested[0] == b"after_stream_position=0&limit=3"
+
+
+async def test_a_history_too_long_to_reach_the_end_of_is_refused() -> None:
+    """Answering with the oldest window would be answering the wrong question."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        after = int(dict(request.url.params)["after_stream_position"])
+        events = [_hub_event(after + offset) for offset in range(1, 4)]
+        return httpx.Response(
+            200,
+            json={
+                "operation": "device.management-event-page",
+                "next_stream_position": events[-1]["stream_position"],
+                "events": events,
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as caught:
+            await subject.latest_events(
+                owner_id="owner-1",
+                authorization="Bearer admin",
+                keep=2,
+                page_size=3,
+                max_pages=4,
+            )
+    finally:
+        await http_client.aclose()
+    assert caught.value.kind == "upstream_failure"

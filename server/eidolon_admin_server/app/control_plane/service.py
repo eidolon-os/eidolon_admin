@@ -19,6 +19,7 @@ from .clients import (
 )
 from .contracts import (
     HubDevice,
+    OwnerDeviceHistory,
     BoundaryCapabilities,
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
@@ -39,6 +40,11 @@ from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
 from .hub_credentials import HubAdminCredentialIssuer
 
+
+#: The Hub's scope for devices nobody holds yet. A device enrols into it and
+#: leaves it when an Owner accepts the device, which is why both the pending
+#: queue and the history have to look there as well as at the Owner.
+UNCLAIMED_SCOPE = "unclaimed"
 
 _CONTROLLER_ADMISSION_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
 _CONTROLLER_REMOVAL_NAMESPACE = UUID("6c0a1f42-9b3e-5d77-8a41-0d2b6f9e5c18")
@@ -409,7 +415,7 @@ class ControlPlaneService:
                 503,
             )
         return await self.hub.list_devices(
-            owner_id="unclaimed",
+            owner_id=UNCLAIMED_SCOPE,
             authorization=self.hub_credentials.issue(controller_id=controller_id),
         )
 
@@ -431,6 +437,67 @@ class ControlPlaneService:
         return await self.inventory(
             owner_id=owner_id,
             hub_authorization=self.hub_credentials.issue(controller_id=controller_id),
+        )
+
+    async def local_owner_device_history(
+        self,
+        *,
+        owner_id: str,
+        controller_id: str,
+        limit: int,
+    ) -> OwnerDeviceHistory:
+        """What has happened to this Owner's devices, in one answer.
+
+        Four reads, and every one of them has to succeed. A history is read to
+        find out whether something happened, so an unreachable half must not
+        come back looking like a quiet stretch — the whole call fails, with
+        the authority that failed still named in it.
+        """
+
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "Hub Admin credential issuer is unavailable",
+                503,
+            )
+        authorization = self.hub_credentials.issue(controller_id=controller_id)
+        owned, unclaimed, directory, doorstep = await asyncio.gather(
+            self.hub.latest_events(
+                owner_id=owner_id,
+                authorization=authorization,
+                keep=limit,
+            ),
+            self.hub.latest_events(
+                owner_id=UNCLAIMED_SCOPE,
+                authorization=authorization,
+                keep=limit,
+            ),
+            self.hub.list_devices(owner_id=owner_id, authorization=authorization),
+            self.hub.list_devices(
+                owner_id=UNCLAIMED_SCOPE,
+                authorization=authorization,
+            ),
+        )
+        # Newest first, and only as many as were asked for. The two scopes
+        # interleave in time; the stream position that orders each one says
+        # nothing about the other.
+        events = sorted(
+            (*owned, *unclaimed),
+            key=lambda event: (event.occurred_at, event.stream_position),
+            reverse=True,
+        )[:limit]
+        named = {entry.device_id: entry for entry in (*directory.devices, *doorstep.devices)}
+        return OwnerDeviceHistory(
+            owner_id=owner_id,
+            events=tuple(events),
+            # Only the devices these events are about. The rest of the
+            # directory is another question, already answered elsewhere.
+            devices=tuple(
+                entry
+                for device_id, entry in named.items()
+                if any(event.device_id == device_id for event in events)
+            ),
         )
 
     async def rename_owner_device(

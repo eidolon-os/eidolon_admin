@@ -25,6 +25,7 @@ from .contracts import (
     DeviceRemovalResult,
     HubDevicePage,
     KernelMountPage,
+    OwnerDeviceHistory,
     OwnerIdentity,
     OwnerInventory,
     OwnerRecollections,
@@ -373,6 +374,36 @@ async def local_owner_device_inventory(
         return await _service(request).local_owner_inventory(
             owner_id=owner_id,
             controller_id=controller_id,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
+    "/owners/{owner_id}/device-history/{controller_id}",
+    response_model=OwnerDeviceHistory,
+)
+async def local_owner_device_history(
+    owner_id: str,
+    controller_id: str,
+    request: Request,
+    limit: int = 50,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> OwnerDeviceHistory:
+    """What has happened to this Owner's devices, for the Local API.
+
+    Beside the inventory route and for the same reason: Admin mints the Hub
+    credential for this Controller rather than taking one from a phone.
+    """
+
+    _authorize_local_api(request, authorization)
+    if not 1 <= limit <= 200:
+        raise HTTPException(422, "limit must be between 1 and 200")
+    try:
+        return await _service(request).local_owner_device_history(
+            owner_id=owner_id,
+            controller_id=controller_id,
+            limit=limit,
         )
     except AuthorityFailure as exc:
         _raise(exc)

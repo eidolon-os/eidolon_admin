@@ -187,6 +187,50 @@ class HubDevicePage(StrictModel):
         return tuple(value) if isinstance(value, list) else value
 
 
+class HubDeviceEvent(StrictModel):
+    """One thing the Hub recorded happening to a device."""
+
+    operation: Literal["device.management-event"]
+    stream_position: int = Field(ge=1)
+    event_id: str = Field(min_length=1, max_length=255)
+    event_type: str = Field(min_length=1, max_length=255)
+    source: str = Field(min_length=1, max_length=512)
+    principal_id: str = Field(min_length=1, max_length=255)
+    device_id: str = Field(min_length=1, max_length=255)
+    occurred_at: datetime
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class HubDeviceEventPage(StrictModel):
+    operation: Literal["device.management-event-page"]
+    next_stream_position: int = Field(ge=0)
+    events: tuple[HubDeviceEvent, ...] = Field(default=(), max_length=500)
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def _array(cls, value: Any) -> Any:
+        return tuple(value) if isinstance(value, list) else value
+
+
+class OwnerDeviceHistory(StrictModel):
+    """What has happened to this Owner's devices, and what those devices are called.
+
+    Two scopes, not one. A device enrols before anyone holds it, so the Hub
+    files that moment under `unclaimed`; only the approval that follows is
+    filed under the Owner. Answering from the Owner's scope alone would show
+    an Eidolon accepting devices that had never knocked — which is exactly the
+    half of the story someone watching a device arrive is waiting for.
+
+    The directory travels with the events because an event names a device by
+    identifier and a person does not know their devices by identifier.
+    """
+
+    operation: Literal["admin.owner-device-history"] = "admin.owner-device-history"
+    owner_id: str = Field(min_length=1, max_length=64)
+    events: tuple[HubDeviceEvent, ...] = Field(default=(), max_length=500)
+    devices: tuple[HubDevice, ...] = Field(default=(), max_length=200)
+
+
 class HubLifecycleStatus(StrictModel):
     operation: Literal["device.lifecycle-status"]
     device_id: str = Field(min_length=1, max_length=128)

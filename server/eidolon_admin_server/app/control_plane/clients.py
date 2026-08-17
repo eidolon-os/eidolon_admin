@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from typing import Any, TypeVar
 from urllib.parse import quote
 
@@ -13,6 +14,9 @@ from .contracts import (
     PersonaChapter,
     PersonaTimeline,
     CompanionIdentity,
+    HubDevice,
+    HubDeviceEvent,
+    HubDeviceEventPage,
     HubDevicePage,
     HubLifecycleStatus,
     KernelMountPage,
@@ -776,6 +780,74 @@ class HubManagementClient:
                 "hub", "Hub directory page crossed the requested owner scope"
             )
         return page
+
+    async def list_events(
+        self,
+        *,
+        owner_id: str,
+        authorization: str,
+        after_stream_position: int = 0,
+        limit: int = 500,
+    ) -> HubDeviceEventPage:
+        """One page of what the Hub recorded happening in this scope."""
+
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/device-management/v1/owners/{quote(owner_id, safe='')}"
+            f"/events",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            params={
+                "after_stream_position": str(after_stream_position),
+                "limit": str(limit),
+            },
+        )
+        return _parse("hub", response, HubDeviceEventPage)
+
+    async def latest_events(
+        self,
+        *,
+        owner_id: str,
+        authorization: str,
+        keep: int,
+        page_size: int = 500,
+        max_pages: int = 100,
+    ) -> tuple[HubDeviceEvent, ...]:
+        """The newest `keep` things recorded in this scope.
+
+        The Hub's ledger reads forward from a position and has no "latest"
+        query, so the newest is found by walking to the end. Only a trailing
+        window is held.
+
+        Walking has a bound, and reaching it is an error rather than an
+        answer. Past that many events the window would hold the oldest of what
+        was read instead of the newest of what exists, and a history quietly
+        showing the wrong end of itself is worse than one that says it could
+        not be read.
+        """
+
+        window: deque[HubDeviceEvent] = deque(maxlen=keep)
+        position = 0
+        for _ in range(max_pages):
+            page = await self.list_events(
+                owner_id=owner_id,
+                authorization=authorization,
+                after_stream_position=position,
+                limit=page_size,
+            )
+            window.extend(page.events)
+            if len(page.events) < page_size:
+                return tuple(window)
+            position = page.next_stream_position
+        raise AuthorityFailure(
+            "hub",
+            "upstream_failure",
+            "Hub device history is longer than this Host can project",
+            502,
+        )
 
 
 class KernelMountClient:

@@ -14,6 +14,7 @@ from ..app.control_plane.contracts import (
     HubDevice,
     KernelMount,
     KernelMountPage,
+    OwnerDeviceHistory,
     OwnerInventory,
 )
 
@@ -40,6 +41,13 @@ class AdminOwnerDevicesPort(Protocol):
         device_id: str,
         display_name: str,
     ) -> HubDevice: ...
+
+    async def list_history(
+        self,
+        owner_id: str,
+        controller_id: str,
+        limit: int,
+    ) -> OwnerDeviceHistory: ...
 
     async def close(self) -> None: ...
 
@@ -250,6 +258,58 @@ class AdminOwnerDevicesClient:
             raise DeviceInventoryError(
                 "Admin Device rename response violated its contract"
             ) from exc
+
+    async def list_history(
+        self,
+        owner_id: str,
+        controller_id: str,
+        limit: int,
+    ) -> OwnerDeviceHistory:
+        """What the Hub recorded happening to this Owner's devices."""
+
+        if not self._token:
+            raise DeviceInventoryError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/owners/"
+            f"{quote(owner_id, safe='')}/device-history/"
+            f"{quote(controller_id, safe='')}"
+        )
+        try:
+            response = await self._client.get(
+                url,
+                params={"limit": limit},
+                headers={"Authorization": f"Bearer {self._token}"},
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise DeviceInventoryError(
+                "Admin Device history control plane is unavailable"
+            ) from exc
+        if response.status_code != 200:
+            raise DeviceInventoryError(
+                "Admin Device history control plane is unavailable",
+                status_code=response.status_code
+                if response.status_code in {401, 403, 409}
+                else 503,
+            )
+        try:
+            history = OwnerDeviceHistory.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DeviceInventoryError(
+                "Admin Device history response violated its contract"
+            ) from exc
+        if history.owner_id != owner_id:
+            raise DeviceInventoryError(
+                "Admin Device history response returned another Owner",
+                status_code=409,
+            )
+        return history
 
     async def close(self) -> None:
         if self._owns_client:
