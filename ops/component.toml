@@ -1,0 +1,132 @@
+# How Admin is operated, stated by Admin.
+#
+# Admin runs three units on a Host and they are deliberately not equal: the
+# bootstrap daemon holds the Host's identity and runs as its own account, so a
+# compromise of the Owner-facing services cannot read the key material that
+# proves which Host this is.
+#
+# The schema is eidolon_ops's contracts/component-ops/v1.schema.json;
+# server/tests/test_operations_contract.py checks these claims against this
+# repository's own configuration.
+
+schema_version = 1
+component_id = "eidolon_admin"
+contract_version = "1"
+
+[[units]]
+id = "eidolon-bootstrapd"
+kind = "service"
+exec = ".venv/bin/eidolon-bootstrapd"
+user = "eidolon-bootstrap"
+after = ["local-fs.target", "dbus.service", "bluetooth.service", "NetworkManager.service"]
+requires = []
+# Its own account, and the only one that can read the Host identity. It also
+# needs BlueZ and NetworkManager, because commissioning a Host happens over
+# BLE before the Host has a network to be reached on.
+
+[[units]]
+id = "eidolon-admin"
+kind = "service"
+exec = ".venv/bin/eidolon-admin"
+user = "eidolon"
+serves = ["admin", "admin_web"]
+requires = ["eidolond"]
+after = ["local-fs.target"]
+
+[[units]]
+id = "eidolon-local-api"
+kind = "service"
+exec = ".venv/bin/eidolon-local-api"
+user = "eidolon"
+serves = ["local_api"]
+requires = ["eidolon-bootstrapd"]
+after = ["local-fs.target"]
+# The phone's only door. Owner-scoped and Controller-authenticated; every
+# projection an App sees comes through here rather than from the services
+# behind it.
+
+[ports.admin]
+default = 9000
+bind = "loopback"
+purpose = "control plane"
+
+[ports.admin_web]
+default = 9001
+bind = "loopback"
+purpose = "console assets"
+
+[ports.local_api]
+default = 9002
+bind = "lan"
+purpose = "Owner-facing Local API, reached by the App"
+
+[[inputs]]
+name = "admin_env"
+install_path = "/etc/eidolon/admin.env"
+kind = "secret"
+source = "operator"
+owner = "root"
+group = "root"
+mode = "0600"
+required_by = ["eidolon-admin"]
+
+[[inputs]]
+name = "local_api_env"
+install_path = "/etc/eidolon/local-api.env"
+kind = "secret"
+source = "operator"
+owner = "root"
+group = "root"
+mode = "0600"
+required_by = ["eidolon-local-api"]
+
+[[inputs]]
+name = "bootstrap_env"
+install_path = "/etc/eidolon/bootstrap.env"
+kind = "secret"
+source = "operator"
+owner = "root"
+group = "root"
+mode = "0600"
+required_by = ["eidolon-bootstrapd"]
+
+[[inputs]]
+name = "host_identity"
+install_path = "/var/lib/eidolon-bootstrap/host_identity.ed25519"
+kind = "identity"
+source = "operator"
+owner = "eidolon-bootstrap"
+group = "eidolon-bootstrap"
+mode = "0600"
+required_by = ["eidolon-bootstrapd"]
+# Not under /etc with the rest: it is material rather than configuration, and
+# it lives with the state it authenticates. Reinstalling this Host must leave
+# it alone — a Host that comes back with a new identity is, to every device
+# that trusted it, a different Host.
+
+[[state.authority]]
+path = "/var/lib/eidolon-bootstrap/bootstrap.sqlite3"
+owner = "eidolon-bootstrap"
+group = "eidolon-bootstrap"
+backup = "sqlite-online"
+# Which Controllers may speak for the Owner, and the reset epoch that revokes
+# them all at once.
+
+[state]
+runtime = ["/run/eidolon-bootstrap", "/var/lib/eidolon/audit"]
+# The audit index is a projection Admin rebuilds from the records it indexes,
+# so it is listed as disposable rather than as authority. It is under /var/lib
+# because it is expensive to rebuild, not because losing it loses anything.
+
+[reset]
+factory = [
+  "/var/lib/eidolon-bootstrap",
+  "/var/lib/eidolon/admin",
+  "/var/lib/eidolon/audit",
+  # Nothing writes this any more; it is removed so a Host that was installed
+  # before the move does not keep the old copy after a reset.
+  "/var/lib/eidolon-admin",
+]
+# A factory reset takes the identity with it. That is the difference between a
+# reset and a reinstall: after this, no device that trusted this Host still
+# does, which is the point.
