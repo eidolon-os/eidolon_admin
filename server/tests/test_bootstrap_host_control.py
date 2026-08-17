@@ -1675,8 +1675,22 @@ async def test_an_owner_can_see_what_happened_to_their_devices(
             ("device-accepted", "owner"),
             ("device-knocked", "device"),
         ]
-        # A device is carried by the name its Owner knows it by.
-        assert body["moments"][0]["device_name"] == "客厅的 Box-3"
+        # The whole shape, field for field. The client that reads it lives in
+        # another repository (eidolon_client_mobile, mission_control_test.dart
+        # pins this same body), so a field renamed on one side has to fail on
+        # one of the two rather than only on somebody's phone.
+        assert body["moments"][0] == {
+            "event_id": "evt-approved",
+            "occurred_at": "2026-08-17T10:14:40Z",
+            "kind": "device-accepted",
+            "actor": "owner",
+            "device_id": "device-local-1",
+            # A device is carried by the name its Owner knows it by.
+            "device_name": "客厅的 Box-3",
+            "device_kind": "esp32-box3",
+            "reason": "",
+            "event_type": "eidolon.device.approved.v1",
+        }
 
         owner_id, controller_id, limit = devices_client.history_calls[-1]
         assert owner_id == runtime_client.workspace.result.owner.owner_id
