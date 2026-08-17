@@ -16,6 +16,7 @@ from .contracts import (
     HubDevicePage,
     HubLifecycleStatus,
     KernelMountPage,
+    CompanionFace,
     KernelMutationResult,
     OwnerIdentity,
     WorkspaceInitializeRequest,
@@ -96,6 +97,7 @@ async def _request(
     timeout: float,
     headers: dict[str, str] | None = None,
     json: dict | None = None,
+    content: bytes | None = None,
 ) -> httpx.Response:
     try:
         return await client.request(
@@ -104,6 +106,7 @@ async def _request(
             timeout=timeout,
             headers=headers,
             json=json,
+            content=content,
         )
     except (
         httpx.TimeoutException,
@@ -227,6 +230,85 @@ class DataAuthorityClient:
             companion_id,
             PersonaChapter,
             json={"genome_id": genome_id, "change_summary": change_summary},
+        )
+
+    async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
+        return await self._companion_call(
+            "GET",
+            f"{companion_id}/face-state",
+            companion_id,
+            CompanionFace,
+        )
+
+    async def get_companion_face(self, companion_id: str) -> bytes | None:
+        """The face itself, or None when this Companion has none.
+
+        Bytes are returned as bytes. Every layer between Data and the phone
+        would otherwise have to encode and decode a photograph to say the same
+        thing, and none of them has any use for what is inside it.
+        """
+
+        response = await self._face_request("GET", companion_id)
+        if response.status_code == 204:
+            return None
+        if response.status_code == 404:
+            raise AuthorityFailure(
+                "data", "not-found", "companion not found", 404, retryable=False
+            )
+        if response.status_code != 200:
+            raise _contract_violation("data", "Data did not serve the Companion face")
+        return response.content
+
+    async def set_companion_face(self, companion_id: str, face: bytes) -> CompanionFace:
+        response = await self._face_request(
+            "PUT",
+            companion_id,
+            content=face,
+            headers={"Content-Type": "image/jpeg"},
+        )
+        if response.status_code in (413, 415, 422):
+            raise AuthorityFailure(
+                "data",
+                "rejected",
+                "companion face was refused",
+                response.status_code,
+                retryable=False,
+            )
+        return _parse("data", response, CompanionFace)
+
+    async def clear_companion_face(self, companion_id: str) -> CompanionFace:
+        return _parse("data", await self._face_request("DELETE", companion_id), CompanionFace)
+
+    async def _face_request(
+        self,
+        method: str,
+        companion_id: str,
+        *,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        return await _request(
+            "data",
+            self._client,
+            method,
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/companions/"
+            f"{quote(companion_id, safe='')}/face",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}", **(headers or {})},
+            content=content,
         )
 
     async def _companion_call(

@@ -10,6 +10,7 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..app.control_plane.contracts import (
+    CompanionFace,
     CompanionIdentity,
     OwnerIdentity,
     PersonaChapter,
@@ -44,6 +45,18 @@ class AdminOwnerRuntimePort(Protocol):
         owner_id: str,
         display_name: str,
     ) -> OwnerIdentity: ...
+
+    async def get_companion_face_state(self, companion_id: str) -> CompanionFace: ...
+
+    async def get_companion_face(self, companion_id: str) -> bytes | None: ...
+
+    async def set_companion_face(
+        self,
+        companion_id: str,
+        face: bytes,
+    ) -> CompanionFace: ...
+
+    async def clear_companion_face(self, companion_id: str) -> CompanionFace: ...
 
     async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline: ...
 
@@ -163,6 +176,25 @@ class CompanionNameView(BaseModel):
     contract_version: Literal["1"] = "1"
     companion_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(min_length=1, max_length=128)
+
+
+class CompanionFaceView(BaseModel):
+    """Whether this Eidolon has a face — never the face itself.
+
+    A screen asks this before deciding whether it is worth fetching a
+    photograph, and the answer is small enough to ask on every refresh.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["local.companion-face"] = "local.companion-face"
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    has_face: bool
+    #: Changes whenever the face does, which is what lets a client know its
+    #: copy is stale without comparing photographs.
+    sha256: str | None = None
+    updated_at: str | None = None
 
 
 class OwnerRenameCommand(CompanionRenameCommand):
@@ -422,6 +454,88 @@ class AdminOwnerRuntimeClient:
         except (ValueError, TypeError, ValidationError) as exc:
             raise WorkspaceRuntimeError(
                 "Admin Owner response violated its contract"
+            ) from exc
+
+    async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
+        return await self._companion_request(
+            "GET",
+            f"{companion_id}/face-state",
+            CompanionFace,
+        )
+
+    async def get_companion_face(self, companion_id: str) -> bytes | None:
+        response = await self._face_request("GET", companion_id)
+        if response.status_code == 204:
+            return None
+        if response.status_code == 404:
+            raise WorkspaceRuntimeError("Companion does not exist", status_code=404)
+        if response.status_code != 200:
+            raise WorkspaceRuntimeError("Admin Companion control plane is unavailable")
+        return response.content
+
+    async def set_companion_face(self, companion_id: str, face: bytes) -> CompanionFace:
+        response = await self._face_request(
+            "PUT",
+            companion_id,
+            content=face,
+            headers={"Content-Type": "image/jpeg"},
+        )
+        if response.status_code in (413, 415, 422):
+            raise WorkspaceRuntimeError(
+                "Companion face was refused",
+                status_code=response.status_code,
+            )
+        return self._face_state(response)
+
+    async def clear_companion_face(self, companion_id: str) -> CompanionFace:
+        return self._face_state(await self._face_request("DELETE", companion_id))
+
+    def _face_state(self, response: httpx.Response) -> CompanionFace:
+        if response.status_code == 404:
+            raise WorkspaceRuntimeError("Companion does not exist", status_code=404)
+        if response.status_code != 200:
+            raise WorkspaceRuntimeError("Admin Companion control plane is unavailable")
+        try:
+            return CompanionFace.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Companion response violated its contract"
+            ) from exc
+
+    async def _face_request(
+        self,
+        method: str,
+        companion_id: str,
+        *,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        if not self._token:
+            raise WorkspaceRuntimeError(
+                "Local API Admin service credential is not configured"
+            )
+        url = (
+            f"{self._base_url}/api/control-plane/v1/companions/"
+            f"{quote(companion_id, safe='')}/face"
+        )
+        try:
+            return await self._client.request(
+                method,
+                url,
+                headers={
+                    "Authorization": f"Bearer {self._token}",
+                    **(headers or {}),
+                },
+                content=content,
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise WorkspaceRuntimeError(
+                "Admin Companion control plane is unavailable"
             ) from exc
 
     async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline:

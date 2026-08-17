@@ -60,6 +60,18 @@ class CompanionRenameRequest(StrictModel):
     display_name: str = Field(min_length=1, max_length=128)
 
 
+class CompanionFace(StrictModel):
+    """Whether this Companion has a face, and which one — never the face."""
+
+    operation: Literal["companion.face"]
+    companion_id: str = Field(min_length=1, max_length=64)
+    has_face: bool
+    face_asset_id: str | None = None
+    sha256: str | None = None
+    size_bytes: int | None = None
+    updated_at: str | None = None
+
+
 class OwnerIdentity(StrictModel):
     operation: Literal["owner.identity"]
     owner_id: str = Field(min_length=1, max_length=64)

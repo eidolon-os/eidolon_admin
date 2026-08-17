@@ -10,6 +10,7 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 
 from .contracts import (
     BoundaryCapabilities,
+    CompanionFace,
     CompanionIdentity,
     CompanionRenameRequest,
     DeviceRenameCommand,
@@ -83,6 +84,48 @@ async def rename_companion(
             companion_id,
             payload.display_name,
         )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get("/companions/{companion_id}/face-state", response_model=CompanionFace)
+async def companion_face_state(companion_id: str, request: Request) -> CompanionFace:
+    try:
+        return await _service(request).data.get_companion_face_state(companion_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.get(
+    "/companions/{companion_id}/face",
+    response_class=Response,
+    responses={200: {"content": {"image/jpeg": {}}}, 204: {"description": "No face"}},
+)
+async def companion_face(companion_id: str, request: Request) -> Response:
+    try:
+        face = await _service(request).data.get_companion_face(companion_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+    if face is None:
+        return Response(status_code=204)
+    return Response(content=face, media_type="image/jpeg")
+
+
+@router.put("/companions/{companion_id}/face", response_model=CompanionFace)
+async def set_companion_face(companion_id: str, request: Request) -> CompanionFace:
+    try:
+        return await _service(request).data.set_companion_face(
+            companion_id,
+            await request.body(),
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.delete("/companions/{companion_id}/face", response_model=CompanionFace)
+async def clear_companion_face(companion_id: str, request: Request) -> CompanionFace:
+    try:
+        return await _service(request).data.clear_companion_face(companion_id)
     except AuthorityFailure as exc:
         _raise(exc)
 
