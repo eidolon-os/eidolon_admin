@@ -45,11 +45,14 @@ The development Pi drop-in also selects the real `bluez` and `networkmanager`
 adapters. Desktop/unit tests intentionally default to `disabled` + `memory`;
 production settings fail closed unless both real adapters are selected.
 
-Development may set `EIDOLON_BOOTSTRAP_DEV_SETUP_CODE` to one fixed six-digit
-code in root-owned `/etc/eidolon/bootstrap.env` (mode `0600`). Bootstrap keeps
-creating short-lived commissioning sessions for that code while the Host is
-unclaimed. The setting is rejected in production mode and must never be placed
-in the tracked systemd drop-in or a product image.
+Development may set `EIDOLON_BOOTSTRAP_DEV_SETUP_CODE` to one fixed eight-digit
+code in root-owned `/etc/eidolon/bootstrap.env` (mode `0600`). It must be a code
+the Host would have drawn itself: eight digits, not all the same, and not the
+plain run up or down. Bootstrap keeps creating short-lived commissioning
+sessions for that code while the Host is unclaimed, so the code itself never
+goes stale — but a claimed Host mints nothing until `dev reset`. The setting is
+rejected in production mode and must never be placed in the tracked systemd
+drop-in or a product image.
 
 To repeat commissioning tests without deleting the Host identity, development
 mode also exposes:

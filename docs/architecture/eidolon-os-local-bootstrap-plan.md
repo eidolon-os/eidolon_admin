@@ -333,14 +333,17 @@ EIDOLON_BOOTSTRAP_MODE=development
 `/etc/eidolon/bootstrap.env` 设置固定开发码：
 
 ```text
-EIDOLON_BOOTSTRAP_DEV_SETUP_CODE=<six-digit-development-code>
+EIDOLON_BOOTSTRAP_DEV_SETUP_CODE=<eight-digit-development-code>
 ```
 
+码值本身要过和随机码同一道校验：八位数字，不能全同，也不能是顺子或倒顺子。
+
 固定的是码值，不是授权 session：Bootstrap 会为未认领 Host 自动续建短期 session，
-DB 仍只保存 hash。也可以不配置固定码，继续按需签发随机、短期的 6 位 Setup 码：
+DB 仍只保存 hash。已认领的 Host 不再自动续建，要先 `dev reset` 回到未认领。
+也可以不配置固定码，继续按需签发随机、短期的 8 位 Setup 码：
 
 ```text
-eidolon-bootstrapctl dev code --ttl 600
+eidolon-bootstrapctl commissioning-code --ttl 600
 ```
 
 命令只向开发者显示：

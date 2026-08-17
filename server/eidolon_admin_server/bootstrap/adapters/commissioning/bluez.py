@@ -4,7 +4,6 @@
 # ruff: noqa: F722, F821
 
 import asyncio
-import json
 import uuid
 from collections.abc import Callable
 from contextlib import suppress
