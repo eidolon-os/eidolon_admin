@@ -98,6 +98,7 @@ async def _request(
     headers: dict[str, str] | None = None,
     json: dict | None = None,
     content: bytes | None = None,
+    params: dict[str, str] | None = None,
 ) -> httpx.Response:
     try:
         return await client.request(
@@ -107,6 +108,7 @@ async def _request(
             headers=headers,
             json=json,
             content=content,
+            params=params,
         )
     except (
         httpx.TimeoutException,
@@ -495,6 +497,115 @@ class DataWorkspaceAuthorityClient:
                 "data", "Data returned a different workspace operation"
             )
         return result
+
+
+class MemoryRecollectionsClient:
+    """What an Owner's Eidolon remembers, read through the memory service.
+
+    Two hops rather than one, because memory is addressed by space rather than
+    by service: discovery says which space belongs to this Owner and where it
+    answers, and the space itself answers the question. The System Directory is
+    not asked, because it maps services to endpoints and there is one endpoint
+    per space here, not per service.
+    """
+
+    def __init__(
+        self,
+        *,
+        discovery_url: str,
+        client: httpx.AsyncClient,
+        timeout_seconds: float,
+    ) -> None:
+        self._discovery_url = discovery_url.rstrip("/")
+        self._client = client
+        self._timeout = timeout_seconds
+
+    async def recollections(
+        self,
+        *,
+        owner_id: str,
+        query: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        space = await self._space_for(owner_id)
+        response = await _request(
+            "memory",
+            self._client,
+            "GET",
+            space,
+            timeout=self._timeout,
+            params={"q": query, "limit": str(limit)},
+        )
+        if response.status_code != 200:
+            raise AuthorityFailure(
+                "memory",
+                "unavailable",
+                "memory did not answer",
+                503,
+                upstream_status=response.status_code,
+                retryable=True,
+            )
+        try:
+            payload = response.json()
+            recollections = payload["recollections"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise _contract_violation(
+                "memory", "memory answered outside its contract"
+            ) from exc
+        if not isinstance(recollections, list):
+            raise _contract_violation("memory", "memory answered outside its contract")
+        return recollections
+
+    async def _space_for(self, owner_id: str) -> str:
+        response = await _request(
+            "memory",
+            self._client,
+            "GET",
+            f"{self._discovery_url}/api/discovery/agent-routing",
+            timeout=self._timeout,
+        )
+        if response.status_code != 200:
+            raise AuthorityFailure(
+                "memory",
+                "unavailable",
+                "memory discovery is unavailable",
+                503,
+                upstream_status=response.status_code,
+                retryable=True,
+            )
+        try:
+            realms = response.json()["memory_realms"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise _contract_violation(
+                "memory", "memory discovery answered outside its contract"
+            ) from exc
+        for realm in realms:
+            if not isinstance(realm, dict) or realm.get("owner_id") != owner_id:
+                continue
+            url = realm.get("recollections_url")
+            if not isinstance(url, str) or not url:
+                # A space that does not publish a read surface is one this
+                # Admin is too new or too old to read; saying so beats
+                # answering as though the Owner remembered nothing.
+                raise _contract_violation(
+                    "memory", "this memory space serves no read surface"
+                )
+            if not realm.get("enabled", True):
+                raise AuthorityFailure(
+                    "memory",
+                    "unavailable",
+                    "this memory space is not running",
+                    503,
+                    retryable=True,
+                )
+            return url
+        raise AuthorityFailure(
+            "memory",
+            "not-found",
+            "this Owner has no memory space",
+            404,
+            retryable=False,
+        )
 
 
 class HubManagementClient:

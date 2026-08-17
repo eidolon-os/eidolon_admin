@@ -72,6 +72,20 @@ class CompanionFace(StrictModel):
     updated_at: str | None = None
 
 
+class OwnerRecollections(StrictModel):
+    """What an Owner's Eidolon holds about a question.
+
+    The records themselves are passed through as memory shaped them rather
+    than re-modelled here: Admin is projecting a boundary, not deciding what a
+    memory is.
+    """
+
+    operation: Literal["owner.recollections"] = "owner.recollections"
+    owner_id: str = Field(min_length=1, max_length=64)
+    query: str
+    recollections: list[dict[str, Any]]
+
+
 class OwnerIdentity(StrictModel):
     operation: Literal["owner.identity"]
     owner_id: str = Field(min_length=1, max_length=64)

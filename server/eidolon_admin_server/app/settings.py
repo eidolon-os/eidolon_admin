@@ -166,6 +166,11 @@ class Settings(BaseSettings):
     esp32_tools_file: Path = _REPO_ROOT / "config" / "esp32_tools.yaml"
     state_dir: Path = _state_root() / "admin"
     system_directory_url: str = "http://127.0.0.1:8090"
+    #: Where the memory service says which realm belongs to whom, and where
+    #: each one answers. Memory is not in the System Directory — it routes by
+    #: memory space rather than by service, and this is the endpoint that
+    #: knows the mapping.
+    memory_discovery_url: str = "http://127.0.0.1:8020"
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     authority_timeout_seconds: float = Field(default=3.0, gt=0, le=30)

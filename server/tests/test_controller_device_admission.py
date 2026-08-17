@@ -253,6 +253,7 @@ def _service(hub: _Hub, kernel: _Kernel) -> ControlPlaneService:
         workspace=object(),  # type: ignore[arg-type]
         hub=hub,  # type: ignore[arg-type]
         kernel=kernel,  # type: ignore[arg-type]
+        memory=object(),  # type: ignore[arg-type]
         hub_credentials=HubAdminCredentialIssuer(secret=_SECRET),
     )
 
@@ -349,6 +350,7 @@ async def test_controller_admission_refuses_missing_internal_credential_source()
         workspace=object(),  # type: ignore[arg-type]
         hub=hub,  # type: ignore[arg-type]
         kernel=kernel,  # type: ignore[arg-type]
+        memory=object(),  # type: ignore[arg-type]
     )
 
     with pytest.raises(AuthorityFailure) as caught:

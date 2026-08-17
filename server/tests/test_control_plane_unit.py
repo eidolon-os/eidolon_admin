@@ -135,6 +135,7 @@ def service(hub: FakeHub, kernel: FakeKernel) -> ControlPlaneService:
         workspace=FakeWorkspace(),  # type: ignore[arg-type]
         hub=hub,  # type: ignore[arg-type]
         kernel=kernel,  # type: ignore[arg-type]
+        memory=object(),  # type: ignore[arg-type]
     )
 
 
@@ -305,6 +306,7 @@ async def test_close_releases_owned_directory_client() -> None:
         workspace=FakeWorkspace(),  # type: ignore[arg-type]
         hub=FakeHub(),  # type: ignore[arg-type]
         kernel=FakeKernel(),  # type: ignore[arg-type]
+        memory=object(),  # type: ignore[arg-type]
     )
     await subject.close()
     assert directory.closed is True

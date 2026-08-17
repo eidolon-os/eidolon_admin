@@ -14,7 +14,16 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
-from fastapi import FastAPI, Header, HTTPException, Path, Request, Response, status
+from fastapi import (
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
@@ -61,6 +70,8 @@ from .runtime import (
     CompanionFaceView,
     CompanionNameView,
     OwnerNameView,
+    RecollectionView,
+    RecollectionsView,
     OwnerRenameCommand,
     CompanionRenameCommand,
     PersonaHistoryView,
@@ -557,6 +568,36 @@ def create_app(
             display_name=renamed.display_name,
         )
 
+    @app.get(
+        "/api/local/v1/recollections",
+        response_model=RecollectionsView,
+    )
+    async def recollections(
+        q: Annotated[str, Query(min_length=1, max_length=256)],
+        limit: Annotated[int, Query(ge=1, le=50)] = 10,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> RecollectionsView:
+        """What this Eidolon remembers about something.
+
+        Owner-scoped by the session, like naming yourself: there is one memory
+        a session can ask about — its own Owner's — so none is named here.
+
+        What comes back is trimmed to a sentence and a time. The wings, rooms
+        and scores memory carries are how it found something, not what it
+        remembers, and a person asked the second question.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, _controller_id = _owner_principal(principal)
+        try:
+            found = await runtime.recollections(owner_id, q, limit)
+        except WorkspaceRuntimeError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return RecollectionsView(
+            query=q,
+            recollections=[_recollection_view(record) for record in found],
+        )
+
     @app.patch(
         "/api/local/v1/owner",
         response_model=OwnerNameView,
@@ -1008,6 +1049,19 @@ def create_app(
         }
 
     return app
+
+
+def _recollection_view(record: dict) -> RecollectionView:
+    text = record.get("text")
+    metadata = record.get("metadata")
+    remembered_at = None
+    if isinstance(metadata, dict):
+        raw = metadata.get("created_at") or metadata.get("occurred_at")
+        remembered_at = raw if isinstance(raw, str) and raw else None
+    return RecollectionView(
+        text=text if isinstance(text, str) else "",
+        remembered_at=remembered_at,
+    )
 
 
 def _face_view(state) -> CompanionFaceView:

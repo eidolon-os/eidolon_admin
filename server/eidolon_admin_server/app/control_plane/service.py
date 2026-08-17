@@ -15,6 +15,7 @@ from .clients import (
     DataWorkspaceAuthorityClient,
     HubManagementClient,
     KernelMountClient,
+    MemoryRecollectionsClient,
 )
 from .contracts import (
     HubDevice,
@@ -93,6 +94,7 @@ class ControlPlaneService:
         workspace: DataWorkspaceAuthorityClient,
         hub: HubManagementClient,
         kernel: KernelMountClient,
+        memory: MemoryRecollectionsClient,
         hub_credentials: HubAdminCredentialIssuer | None = None,
     ) -> None:
         self.directory = directory
@@ -100,6 +102,7 @@ class ControlPlaneService:
         self.workspace = workspace
         self.hub = hub
         self.kernel = kernel
+        self.memory = memory
         self.hub_credentials = hub_credentials
 
     @classmethod
@@ -136,6 +139,11 @@ class ControlPlaneService:
             ),
             kernel=KernelMountClient(
                 directory=directory,
+                client=http_client,
+                timeout_seconds=settings.authority_timeout_seconds,
+            ),
+            memory=MemoryRecollectionsClient(
+                discovery_url=settings.memory_discovery_url,
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
             ),

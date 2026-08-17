@@ -180,6 +180,7 @@ class _RuntimeClient:
         self.renamed: tuple[str, str] | None = None
         self.renamed_owner: tuple[str, str] | None = None
         self.face: bytes | None = None
+        self.recalled: tuple[str, str, int] | None = None
         self.restored: tuple[str, str] | None = None
         self.owner_of_companion: str | None = None
 
@@ -303,6 +304,26 @@ class _RuntimeClient:
             size_bytes=len(self.face),
             updated_at="2026-08-17T09:00:00Z",
         )
+
+    async def recollections(
+        self,
+        owner_id: str,
+        query: str,
+        limit: int,
+    ) -> list[dict]:
+        self.recalled = (owner_id, query, limit)
+        return [
+            {
+                "text": "他喜欢在下午散步",
+                "metadata": {
+                    "created_at": "2026-08-16T09:30:00Z",
+                    "wing": "episodic",
+                    "room": "walks",
+                    "score": 0.82,
+                },
+            },
+            {"text": "没有元数据的那一条"},
+        ]
 
     async def rename_owner(
         self,
@@ -1590,6 +1611,62 @@ async def test_an_owner_names_their_own_companion_and_only_their_own(
         # hold this Companion learns nothing about whether it exists.
         assert refused.status_code == 404
         assert runtime_client.renamed is None
+
+
+@pytest.mark.asyncio
+async def test_asking_what_it_remembers_answers_in_sentences(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """The memory asked about is the session's own, and never named by a client."""
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        runtime_client,
+        _devices_client,
+    ):
+        answered = await client.get(
+            "/api/local/v1/recollections",
+            params={"q": "散步"},
+            headers=headers,
+        )
+
+        assert answered.status_code == 200
+        body = answered.json()
+        assert body["query"] == "散步"
+        assert body["recollections"] == [
+            {
+                "text": "他喜欢在下午散步",
+                "remembered_at": "2026-08-16T09:30:00Z",
+            },
+            {"text": "没有元数据的那一条", "remembered_at": None},
+        ]
+        # Wings, rooms and scores are how memory found something, not what it
+        # remembers, and a person asked the second question.
+        assert "wing" not in answered.text
+        assert "score" not in answered.text
+
+        owner_id, query, limit = runtime_client.recalled
+        assert owner_id == runtime_client.workspace.result.owner.owner_id
+        assert (query, limit) == ("散步", 10)
+
+        # A question is required, and an unbounded one is refused rather than
+        # passed down to memory.
+        assert (
+            await client.get("/api/local/v1/recollections", headers=headers)
+        ).status_code == 422
+        assert (
+            await client.get(
+                "/api/local/v1/recollections",
+                params={"q": "x", "limit": 500},
+                headers=headers,
+            )
+        ).status_code == 422
+
+        assert (
+            await client.get("/api/local/v1/recollections", params={"q": "x"})
+        ).status_code == 401
 
 
 @pytest.mark.asyncio

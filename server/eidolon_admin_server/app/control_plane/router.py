@@ -27,6 +27,7 @@ from .contracts import (
     KernelMountPage,
     OwnerIdentity,
     OwnerInventory,
+    OwnerRecollections,
     OwnerRenameRequest,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
@@ -194,6 +195,31 @@ async def get_workspace_operation(
         return await _service(request).get_workspace_operation(str(operation_id))
     except AuthorityFailure as exc:
         _raise(exc)
+
+
+@router.get(
+    "/owners/{owner_id}/recollections",
+    response_model=OwnerRecollections,
+)
+async def owner_recollections(
+    owner_id: str,
+    request: Request,
+    q: str,
+    limit: int = 10,
+) -> OwnerRecollections:
+    try:
+        recollections = await _service(request).memory.recollections(
+            owner_id=owner_id,
+            query=q,
+            limit=limit,
+        )
+    except AuthorityFailure as exc:
+        _raise(exc)
+    return OwnerRecollections(
+        owner_id=owner_id,
+        query=q,
+        recollections=recollections,
+    )
 
 
 @router.get("/owners/{owner_id}", response_model=OwnerIdentity)
