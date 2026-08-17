@@ -43,6 +43,30 @@ class HostService(BaseModel):
     endpoints: tuple[HostServiceEndpoint, ...] = ()
 
 
+class HostMeasurement(BaseModel):
+    """One reading the Host took of itself, or the absence of one.
+
+    ``value`` is null when the Host could not take the reading. A consumer
+    that treats null as zero reports a healthy disk on a machine that could
+    not read its disk — which is the failure this whole shape exists to stop.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    value: float | None = None
+    unit: str = ""
+    capacity: float | None = None
+    unavailable_reason: str | None = None
+
+
+class HostVitals(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observed_at: str
+    measurements: tuple[HostMeasurement, ...] = ()
+
+
 class HostServicePage(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 

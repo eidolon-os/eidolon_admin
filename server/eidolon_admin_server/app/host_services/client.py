@@ -20,6 +20,7 @@ from .contracts import (
     HostService,
     HostServiceMutationResult,
     HostServicePage,
+    HostVitals,
     MutationOperation,
 )
 from .errors import HostServiceError
@@ -53,6 +54,18 @@ class HostServiceClient:
                 httpx.AsyncHTTPTransport(uds=str(uds_path)) if uds_path else None
             )
             self._client = httpx.AsyncClient(transport=transport, trust_env=False)
+
+    async def read_vitals(self) -> HostVitals:
+        document = await self._request("GET", "/api/system/v1/vitals")
+        try:
+            return HostVitals.model_validate(
+                {
+                    "observed_at": document["observed_at"],
+                    "measurements": document.get("measurements", []),
+                }
+            )
+        except (KeyError, ValidationError) as exc:
+            raise self._invalid("host vitals did not match the expected shape") from exc
 
     async def list_services(self) -> HostServicePage:
         document = await self._request("GET", "/api/system/v1/services")

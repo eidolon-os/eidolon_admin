@@ -17,7 +17,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .contracts import HostService, HostServiceMutationResult, HostServicePage
+from .contracts import (
+    HostService,
+    HostServiceMutationResult,
+    HostServicePage,
+    HostVitals,
+)
 from .errors import HostServiceError
 
 router = APIRouter(prefix="/host", tags=["host-services"])
@@ -58,6 +63,14 @@ async def list_capabilities(request: Request) -> dict[str, object]:
 
     capabilities = getattr(request.app.state, "workstation_capabilities", ())
     return {"workstation": [item.to_wire() for item in capabilities]}
+
+
+@router.get("/vitals", response_model=HostVitals)
+async def host_vitals(request: Request) -> HostVitals:
+    try:
+        return await _client(request).read_vitals()
+    except HostServiceError as exc:
+        _raise(exc)
 
 
 @router.get("/services", response_model=HostServicePage)

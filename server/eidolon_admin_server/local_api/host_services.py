@@ -30,6 +30,8 @@ class HostServiceControlError(RuntimeError):
 class AdminHostServicesPort(Protocol):
     async def list_services(self) -> dict: ...
 
+    async def read_vitals(self) -> dict: ...
+
     async def mutate(
         self,
         *,
@@ -57,6 +59,37 @@ class LocalHostServiceInventoryView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     services: tuple[LocalHostServiceView, ...] = ()
+
+
+class LocalVitalView(BaseModel):
+    """One thing about the machine, said the way a person reads it.
+
+    ``concern`` is decided here and nowhere below. The daemon that reads
+    /proc knows how many bytes are free; whether that is worth telling someone
+    about depends on what this Host is for — and this is the layer that faces
+    the person whose Eidolon lives on it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    #: Already phrased: "31.2 GB 可用，共 58.0 GB"、"48.6°C"。The App shows this
+    #: rather than doing arithmetic on raw bytes in a second place.
+    reading: str
+    #: none / watch / act. Absent readings are never a concern — not knowing
+    #: is not the same as being fine, and it is said separately.
+    concern: Literal["none", "watch", "act"] = "none"
+    #: Set when the Host could not take this reading at all.
+    unavailable_reason: str | None = None
+
+
+class LocalHostVitalsView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["local.host-vitals"] = "local.host-vitals"
+    contract_version: Literal["1"] = "1"
+    observed_at: str
+    vitals: tuple[LocalVitalView, ...] = ()
 
 
 class LocalHostServiceMutationView(BaseModel):
@@ -182,3 +215,141 @@ class AdminHostServicesClient:
                 "Host service response was not a JSON object", status_code=502
             )
         return document
+
+
+#: When a reading stops being a number and starts being something to do.
+#:
+#: These are judgements, not measurements, which is why they live here and not
+#: in the daemon: "a fifth of the disk left" means something different on a box
+#: that holds one household's memories than on a build server. They are stated
+#: as fractions of capacity so the same rule reads the same on a 32 GB card and
+#: a 2 TB disk.
+_DISK_WATCH = 0.20
+_DISK_ACT = 0.08
+_MEMORY_WATCH = 0.15
+_MEMORY_ACT = 0.05
+#: Load per core. Sustained above its core count, a machine is not keeping up.
+_LOAD_WATCH = 1.0
+_LOAD_ACT = 2.0
+#: A Pi throttles itself around 80°C; 70 is where someone should look at where
+#: the box is sitting.
+_TEMPERATURE_WATCH = 70.0
+_TEMPERATURE_ACT = 80.0
+
+_VITAL_LABELS = {
+    "disk.state": "存储空间",
+    "disk.root": "系统盘",
+    "memory.available": "内存",
+    "cpu.load1": "处理器负载",
+    "temperature": "温度",
+    "uptime": "已运行",
+}
+
+
+def host_vitals(document: dict) -> LocalHostVitalsView:
+    """Turn readings into sentences, and say which ones are worth acting on."""
+
+    raw = document.get("measurements")
+    measurements = raw if isinstance(raw, list) else []
+    shown: list[LocalVitalView] = []
+    for measurement in measurements:
+        if not isinstance(measurement, dict):
+            continue
+        name = measurement.get("name")
+        if not isinstance(name, str) or name not in _VITAL_LABELS:
+            continue
+        shown.append(_vital(name, measurement))
+    return LocalHostVitalsView(
+        observed_at=str(document.get("observed_at", "")),
+        vitals=tuple(shown),
+    )
+
+
+def _vital(name: str, measurement: dict) -> LocalVitalView:
+    label = _VITAL_LABELS[name]
+    value = measurement.get("value")
+    capacity = measurement.get("capacity")
+    if not isinstance(value, (int, float)):
+        # Not knowing is not the same as being fine, and it is not a concern
+        # either: nothing here is worth waking someone for, and pretending to
+        # a reading would be worse than admitting there is none.
+        return LocalVitalView(
+            name=label,
+            reading="读不到",
+            unavailable_reason=str(measurement.get("unavailable_reason") or ""),
+        )
+    if name.startswith("disk."):
+        return LocalVitalView(
+            name=label,
+            reading=f"{_bytes(value)} 可用，共 {_bytes(capacity)}",
+            concern=_ratio_concern(value, capacity, _DISK_WATCH, _DISK_ACT),
+        )
+    if name == "memory.available":
+        return LocalVitalView(
+            name=label,
+            reading=f"{_bytes(value)} 可用，共 {_bytes(capacity)}",
+            concern=_ratio_concern(value, capacity, _MEMORY_WATCH, _MEMORY_ACT),
+        )
+    if name == "cpu.load1":
+        cores = capacity if isinstance(capacity, (int, float)) and capacity else 1
+        per_core = value / cores
+        return LocalVitalView(
+            name=label,
+            reading=f"{value:.2f}（{int(cores)} 核）",
+            concern=(
+                "act"
+                if per_core >= _LOAD_ACT
+                else "watch"
+                if per_core >= _LOAD_WATCH
+                else "none"
+            ),
+        )
+    if name == "temperature":
+        return LocalVitalView(
+            name=label,
+            reading=f"{value:.1f}°C",
+            concern=(
+                "act"
+                if value >= _TEMPERATURE_ACT
+                else "watch"
+                if value >= _TEMPERATURE_WATCH
+                else "none"
+            ),
+        )
+    return LocalVitalView(name=label, reading=_duration(value))
+
+
+def _ratio_concern(
+    value: float,
+    capacity: object,
+    watch: float,
+    act: float,
+) -> Literal["none", "watch", "act"]:
+    if not isinstance(capacity, (int, float)) or capacity <= 0:
+        return "none"
+    free = value / capacity
+    if free <= act:
+        return "act"
+    if free <= watch:
+        return "watch"
+    return "none"
+
+
+def _bytes(value: object) -> str:
+    if not isinstance(value, (int, float)):
+        return "未知"
+    for unit, size in (("TB", 1024**4), ("GB", 1024**3), ("MB", 1024**2)):
+        if value >= size:
+            return f"{value / size:.1f} {unit}"
+    return f"{int(value)} B"
+
+
+def _duration(seconds: float) -> str:
+    days, rest = divmod(int(seconds), 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days} 天 {hours} 小时"
+    if hours:
+        return f"{hours} 小时 {minutes} 分"
+    return f"{minutes} 分"

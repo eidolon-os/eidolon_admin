@@ -9,6 +9,7 @@ from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettin
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
+from eidolon_admin_server.local_api.host_services import host_vitals
 
 pytestmark = pytest.mark.asyncio
 
@@ -173,3 +174,91 @@ async def test_an_unknown_operation_is_refused_before_reaching_admin(
 
     assert response.status_code == 422
     assert port.mutations == []
+
+
+def test_a_reading_the_host_could_not_take_is_not_reported_as_healthy() -> None:
+    """The whole point of carrying the absence this far.
+
+    A disk that could not be stat'ed is not an empty disk and not a fine one.
+    It gets the words "读不到" and no concern at all, because not knowing is
+    its own state — and the reason travels with it for whoever is diagnosing.
+    """
+
+    view = host_vitals(
+        {
+            "observed_at": "2026-08-18T00:00:00Z",
+            "measurements": [
+                {
+                    "name": "disk.state",
+                    "value": None,
+                    "unavailable_reason": "/var/lib/eidolon: No such file or directory",
+                }
+            ],
+        }
+    )
+
+    disk = view.vitals[0]
+    assert disk.reading == "读不到"
+    assert disk.concern == "none"
+    assert "No such file" in (disk.unavailable_reason or "")
+
+
+def test_the_judgement_is_made_here_and_reads_the_same_at_any_size() -> None:
+    """What counts as "too little" is a product decision, so it lives here.
+
+    Stated as fractions of capacity so a 32 GB card and a 2 TB disk are judged
+    by the same rule rather than by a number that suits one of them.
+    """
+
+    def concern(free: float, total: float) -> str:
+        view = host_vitals(
+            {
+                "observed_at": "2026-08-18T00:00:00Z",
+                "measurements": [
+                    {"name": "disk.state", "value": free, "capacity": total}
+                ],
+            }
+        )
+        return view.vitals[0].concern
+
+    assert concern(30e9, 60e9) == "none"
+    assert concern(9e9, 60e9) == "watch"
+    assert concern(2e9, 60e9) == "act"
+    # Same fractions, a card two orders of magnitude smaller.
+    assert concern(300e6, 600e6) == "none"
+    assert concern(30e6, 600e6) == "act"
+
+
+def test_load_is_read_against_the_cores_it_is_spread_over() -> None:
+    def concern(load: float, cores: int) -> str:
+        view = host_vitals(
+            {
+                "observed_at": "2026-08-18T00:00:00Z",
+                "measurements": [
+                    {"name": "cpu.load1", "value": load, "capacity": cores}
+                ],
+            }
+        )
+        return view.vitals[0].concern
+
+    # The same load number means opposite things on different machines, which
+    # is why a percentage would have thrown the useful half away.
+    assert concern(3.0, 4) == "none"
+    assert concern(3.0, 1) == "act"
+
+
+def test_readings_nobody_named_are_dropped_rather_than_shown_raw() -> None:
+    view = host_vitals(
+        {
+            "observed_at": "2026-08-18T00:00:00Z",
+            "measurements": [
+                {"name": "some.future.counter", "value": 1.0},
+                {"name": "temperature", "value": 48.6},
+            ],
+        }
+    )
+
+    # A Host that grows a new reading does not get to put its internal name on
+    # someone's screen; it waits until this layer has words for it.
+    assert [vital.name for vital in view.vitals] == ["温度"]
+    assert view.vitals[0].reading == "48.6°C"

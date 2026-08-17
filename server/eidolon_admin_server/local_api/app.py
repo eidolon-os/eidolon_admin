@@ -36,9 +36,11 @@ from .host_services import (
     AdminHostServicesPort,
     HostServiceControlError,
     LocalHostServiceInventoryView,
+    LocalHostVitalsView,
     LocalHostServiceMutationView,
     MutationOperation,
     host_service_inventory,
+    host_vitals,
     host_service_mutation,
 )
 from .activity import LocalActivityView, owner_activity_view
@@ -1028,6 +1030,27 @@ def create_app(
         except DeviceInventoryError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
         return owner_activity_view(history)
+
+    @app.get(
+        "/api/local/v1/host/vitals",
+        response_model=LocalHostVitalsView,
+    )
+    async def host_vitals_view(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalHostVitalsView:
+        """How the machine holding this Eidolon is doing.
+
+        Controller-authenticated like everything else on this boundary, and
+        Owner-independent on purpose: a Host's disk and temperature are facts
+        about the machine, not about whose Companion lives on it.
+        """
+
+        await authenticated_controller(authorization)
+        try:
+            document = await host_services.read_vitals()
+        except HostServiceControlError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return host_vitals(document)
 
     @app.get(
         "/api/local/v1/host/services",
