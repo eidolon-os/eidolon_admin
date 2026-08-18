@@ -10,8 +10,16 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.serialization import Encoding
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from eidolon_sdk.device_foundation.v1 import (
+    AuthorityEndpoint,
+    LogicalAuthority,
+    OwnerDomainDescriptor,
+    descriptor_key_id,
+    sign_descriptor,
+)
 
 from eidolon_admin_server.app.control_plane.contracts import (
     ControllerDeviceAdmissionRequest,
@@ -29,7 +37,7 @@ from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import (
     LocalApiSettings,
-    VerifiedHubOnboardingTarget,
+    VerifiedOwnerDomainOnboardingTarget,
     load_local_api_settings,
 )
 from eidolon_admin_server.local_api.device_admissions import (
@@ -47,24 +55,72 @@ _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 
 
 def _write_certificate(path: Path, hostname: str = "eidolon-hub.local") -> None:
-    key = ec.generate_private_key(ec.SECP256R1())
+    root_key = ec.generate_private_key(ec.SECP256R1())
+    authority_key = ec.generate_private_key(ec.SECP256R1())
     now = datetime.now(UTC)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
-    certificate = (
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test Owner Root")])
+    root = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
-        .public_key(key.public_key())
+        .public_key(root_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=30))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
+        .sign(root_key, hashes.SHA256())
+    )
+    authority = (
+        x509.CertificateBuilder()
+        .subject_name(
+            x509.Name(
+                [x509.NameAttribute(NameOID.COMMON_NAME, "Test Directory Signer")]
+            )
+        )
+        .issuer_name(name)
+        .public_key(authority_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(days=30))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(hostname)]),
-            critical=False,
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
         )
-        .sign(key, hashes.SHA256())
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CODE_SIGNING]), critical=True
+        )
+        .sign(root_key, hashes.SHA256())
     )
-    path.write_bytes(certificate.public_bytes(Encoding.PEM))
+    path.write_bytes(root.public_bytes(Encoding.PEM))
+    authority_path = path.with_name("authority-signing.pem")
+    authority_path.write_bytes(authority.public_bytes(Encoding.PEM))
+    public_pem = lambda key: key.public_key().public_bytes(
+        Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+    descriptor = sign_descriptor(
+        OwnerDomainDescriptor(
+            owner_domain_id="owner-local",
+            directory_revision=1,
+            trust_root_refs=(descriptor_key_id(public_pem(root_key)),),
+            endpoints=(
+                AuthorityEndpoint(
+                    authority=LogicalAuthority.ADMISSION,
+                    logical_audience="eidolon-admission",
+                    uri=f"https://{hostname}/api/device-onboarding/v1",
+                    transport_profile="https-json",
+                    priority=10,
+                ),
+            ),
+            issued_at=now - timedelta(minutes=1),
+            expires_at=now + timedelta(days=1),
+            signing_key_id=descriptor_key_id(public_pem(authority_key)),
+            signature="A" * 86,
+        ),
+        authority_key,
+    )
+    path.with_name("owner-directory.json").write_text(
+        descriptor.model_dump_json(), encoding="utf-8"
+    )
 
 
 def _bootstrap(tmp_path: Path) -> BootstrapSettings:
@@ -77,18 +133,24 @@ def _bootstrap(tmp_path: Path) -> BootstrapSettings:
     )
 
 
-def _target(certificate: Path) -> VerifiedHubOnboardingTarget:
+def _target(certificate: Path) -> VerifiedOwnerDomainOnboardingTarget:
     settings = load_local_api_settings(
         {
             "EIDOLON_BOOTSTRAP_MODE": "development",
             "EIDOLON_BOOTSTRAP_STATE_DIR": str(certificate.parent / "state"),
             "EIDOLON_BOOTSTRAP_RUNTIME_DIR": str(certificate.parent / "run"),
             "EIDOLON_BOOTSTRAP_CONTROL_SOCKET": "/tmp/eidolon-local-target-test.sock",
-            "EIDOLON_LOCAL_API_HUB_ID": "hub-local",
-            "EIDOLON_LOCAL_API_HUB_DESCRIPTOR_URI": (
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_ID": "owner-local",
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_DESCRIPTOR_URI": (
                 "https://eidolon-hub.local/api/device-onboarding/v1/descriptor"
             ),
-            "EIDOLON_LOCAL_API_HUB_TLS_CERTIFICATE": str(certificate),
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_DESCRIPTOR": str(
+                certificate.with_name("owner-directory.json")
+            ),
+            "EIDOLON_LOCAL_API_OWNER_ROOT_CERTIFICATE": str(certificate),
+            "EIDOLON_LOCAL_API_AUTHORITY_SIGNING_CERTIFICATE": str(
+                certificate.with_name("authority-signing.pem")
+            ),
         }
     )
     assert settings.device_onboarding_target is not None
@@ -148,7 +210,7 @@ def _removal(*, owner_id: str = "owner-1") -> DeviceRemovalResult:
     )
 
 
-def test_hub_target_spki_is_derived_from_hostname_bound_leaf_certificate(
+def test_owner_target_is_verified_from_portable_root_and_signed_directory(
     tmp_path: Path,
 ) -> None:
     certificate = tmp_path / "hub-leaf.pem"
@@ -156,20 +218,21 @@ def test_hub_target_spki_is_derived_from_hostname_bound_leaf_certificate(
 
     target = _target(certificate)
 
-    assert target.hub_id == "hub-local"
-    assert target.tls_certificate_path == certificate.resolve()
-    assert target.tls_spki_fingerprint.startswith("sha256:")
-    assert len(target.tls_spki_fingerprint) == 50
+    assert target.owner_domain_id == "owner-local"
+    assert target.owner_root_certificate_path == certificate.resolve()
+    assert target.descriptor.owner_domain_id == "owner-local"
 
 
-def test_hub_target_rejects_descriptor_hostname_not_in_certificate(
+def test_candidate_descriptor_uri_is_not_the_owner_identity(
     tmp_path: Path,
 ) -> None:
     certificate = tmp_path / "other-leaf.pem"
     _write_certificate(certificate, hostname="other.local")
 
-    with pytest.raises(ValueError, match="not present"):
-        _target(certificate)
+    target = _target(certificate)
+
+    assert target.descriptor.endpoints[0].uri.startswith("https://other.local/")
+    assert target.owner_domain_id == "owner-local"
 
 
 @pytest.mark.asyncio
@@ -493,14 +556,12 @@ async def test_mobile_contract_is_controller_authenticated_and_owner_derived(
     assert target_response.json() == {
         "operation": "local.device-onboarding-target",
         "contract_version": "1",
-        "hub_id": "hub-local",
-        "descriptor_uri": (
-            "https://eidolon-hub.local/api/device-onboarding/v1/descriptor"
+        "owner_domain_id": "owner-local",
+        "owner_domain_descriptor": target.descriptor.model_dump(mode="json"),
+        "owner_root_certificate": certificate.read_text(encoding="utf-8"),
+        "authority_signing_certificate": target.authority_signing_certificate_path.read_text(
+            encoding="utf-8"
         ),
-        "tls_spki_fingerprint": target.tls_spki_fingerprint,
-        # The Controller carries this to a device being set up: a device cannot
-        # obtain the Host's certificate from anywhere it could already trust.
-        "hub_certificate": certificate.read_text(encoding="utf-8"),
     }
     assert admitted.status_code == 200
     assert injected_owner.status_code == 422

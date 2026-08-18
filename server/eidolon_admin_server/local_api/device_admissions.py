@@ -7,6 +7,7 @@ from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.device_foundation.v1 import OwnerDomainDescriptor
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..app.control_plane.contracts import (
@@ -16,7 +17,7 @@ from ..app.control_plane.contracts import (
     DeviceRemovalResult,
     HubDevicePage,
 )
-from .config import VerifiedHubOnboardingTarget
+from .config import VerifiedOwnerDomainOnboardingTarget
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -147,29 +148,33 @@ class LocalDeviceOnboardingTarget(BaseModel):
         "local.device-onboarding-target"
     )
     contract_version: Literal["1"] = "1"
-    hub_id: str = Field(min_length=1, max_length=128)
-    descriptor_uri: str = Field(max_length=2048, pattern=r"^https://")
-    tls_spki_fingerprint: str = Field(pattern=r"^sha256:[A-Za-z0-9_-]{43}$")
-    #: The Host's own certificate, for a Controller to hand to a device it is
-    #: setting up. A device cannot pin a fingerprint it has no way to obtain,
-    #: and no public authority can vouch for a Host, so the certificate travels
-    #: with the Owner rather than being fetched off the network by the device.
-    hub_certificate: str = Field(
+    owner_domain_id: str = Field(min_length=1, max_length=128)
+    owner_domain_descriptor: OwnerDomainDescriptor
+    owner_root_certificate: str = Field(
         min_length=1,
-        max_length=8192,
+        max_length=4096,
+        pattern=r"^-----BEGIN CERTIFICATE-----",
+    )
+    authority_signing_certificate: str = Field(
+        min_length=1,
+        max_length=4096,
         pattern=r"^-----BEGIN CERTIFICATE-----",
     )
 
     @classmethod
     def from_verified(
         cls,
-        target: VerifiedHubOnboardingTarget,
+        target: VerifiedOwnerDomainOnboardingTarget,
     ) -> LocalDeviceOnboardingTarget:
         return cls(
-            hub_id=target.hub_id,
-            descriptor_uri=target.descriptor_uri,
-            tls_spki_fingerprint=target.tls_spki_fingerprint,
-            hub_certificate=target.tls_certificate_path.read_text(encoding="utf-8"),
+            owner_domain_id=target.owner_domain_id,
+            owner_domain_descriptor=target.descriptor,
+            owner_root_certificate=target.owner_root_certificate_path.read_text(
+                encoding="ascii"
+            ),
+            authority_signing_certificate=target.authority_signing_certificate_path.read_text(
+                encoding="ascii"
+            ),
         )
 
 

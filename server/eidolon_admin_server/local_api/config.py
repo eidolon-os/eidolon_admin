@@ -3,30 +3,30 @@
 from __future__ import annotations
 
 import os
-import re
-from base64 import urlsafe_b64encode
 from datetime import UTC, datetime
 from dataclasses import dataclass
-from hashlib import sha256
-from ipaddress import ip_address
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
 
-from cryptography import x509
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from eidolon_sdk.device_foundation.v1 import (
+    AuthorityLocator,
+    OwnerDomainDescriptor,
+    OwnerDomainTrustAnchor,
+)
 
 from ..bootstrap.config import BootstrapSettings, load_bootstrap_settings
 
 
 @dataclass(frozen=True, slots=True)
-class VerifiedHubOnboardingTarget:
-    """Hub product identity derived from installation-owned configuration."""
+class VerifiedOwnerDomainOnboardingTarget:
+    """Owner trust bundle derived from installation-owned public material."""
 
-    hub_id: str
+    owner_domain_id: str
     descriptor_uri: str
-    tls_spki_fingerprint: str
-    tls_certificate_path: Path
+    descriptor: OwnerDomainDescriptor
+    owner_root_certificate_path: Path
+    authority_signing_certificate_path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +38,7 @@ class LocalApiSettings:
     admin_base_url: str = "http://127.0.0.1:9000"
     admin_service_token: str = ""
     admin_timeout_seconds: float = 5.0
-    device_onboarding_target: VerifiedHubOnboardingTarget | None = None
+    device_onboarding_target: VerifiedOwnerDomainOnboardingTarget | None = None
 
 
 def load_local_api_settings(
@@ -108,14 +108,22 @@ def _load_hub_onboarding_target(
     env: Mapping[str, str],
     *,
     production: bool,
-) -> VerifiedHubOnboardingTarget | None:
+) -> VerifiedOwnerDomainOnboardingTarget | None:
     values = {
-        "hub_id": env.get("EIDOLON_LOCAL_API_HUB_ID", "").strip(),
-        "descriptor_uri": env.get(
-            "EIDOLON_LOCAL_API_HUB_DESCRIPTOR_URI", ""
+        "owner_domain_id": env.get(
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_ID", ""
         ).strip(),
-        "certificate": env.get(
-            "EIDOLON_LOCAL_API_HUB_TLS_CERTIFICATE", ""
+        "descriptor_uri": env.get(
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_DESCRIPTOR_URI", ""
+        ).strip(),
+        "descriptor": env.get(
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_DESCRIPTOR", ""
+        ).strip(),
+        "owner_root_certificate": env.get(
+            "EIDOLON_LOCAL_API_OWNER_ROOT_CERTIFICATE", ""
+        ).strip(),
+        "authority_signing_certificate": env.get(
+            "EIDOLON_LOCAL_API_AUTHORITY_SIGNING_CERTIFICATE", ""
         ).strip(),
     }
     configured = [bool(value) for value in values.values()]
@@ -123,13 +131,12 @@ def _load_hub_onboarding_target(
         return None
     if not all(configured):
         raise ValueError(
-            "Hub onboarding requires EIDOLON_LOCAL_API_HUB_ID, "
-            "EIDOLON_LOCAL_API_HUB_DESCRIPTOR_URI and "
-            "EIDOLON_LOCAL_API_HUB_TLS_CERTIFICATE together"
+            "Owner Domain onboarding requires its id, descriptor URI, signed "
+            "descriptor, root certificate and authority signing certificate together"
         )
-    hub_id = values["hub_id"]
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", hub_id) is None:
-        raise ValueError("EIDOLON_LOCAL_API_HUB_ID is invalid")
+    owner_domain_id = values["owner_domain_id"]
+    if not 1 <= len(owner_domain_id) <= 128:
+        raise ValueError("EIDOLON_LOCAL_API_OWNER_DOMAIN_ID is invalid")
     descriptor_uri = values["descriptor_uri"]
     parsed = urlparse(descriptor_uri)
     if (
@@ -143,61 +150,43 @@ def _load_hub_onboarding_target(
         or parsed.fragment
     ):
         raise ValueError(
-            "EIDOLON_LOCAL_API_HUB_DESCRIPTOR_URI must be the plain HTTPS "
-            "Hub v1 descriptor URI"
+            "EIDOLON_LOCAL_API_OWNER_DOMAIN_DESCRIPTOR_URI must be the plain "
+            "HTTPS descriptor URI"
         )
-    certificate_path = Path(values["certificate"]).expanduser()
-    if production and not certificate_path.is_absolute():
-        raise ValueError(
-            "EIDOLON_LOCAL_API_HUB_TLS_CERTIFICATE must be absolute in production"
+    paths = {
+        name: Path(values[name]).expanduser()
+        for name in (
+            "descriptor",
+            "owner_root_certificate",
+            "authority_signing_certificate",
         )
+    }
+    if production and any(not path.is_absolute() for path in paths.values()):
+        raise ValueError("Owner Domain trust paths must be absolute in production")
     try:
-        certificate = x509.load_pem_x509_certificate(certificate_path.read_bytes())
+        descriptor = OwnerDomainDescriptor.model_validate_json(
+            paths["descriptor"].read_text(encoding="utf-8")
+        )
+        anchor = OwnerDomainTrustAnchor(
+            owner_domain_id=owner_domain_id,
+            owner_root_certificate_pem=paths["owner_root_certificate"].read_text(
+                encoding="ascii"
+            ),
+            authority_signing_certificate_pem=paths[
+                "authority_signing_certificate"
+            ].read_text(encoding="ascii"),
+            trust_epoch=1,
+        )
+        locator = AuthorityLocator(anchor)
+        locator.accept(descriptor, now=datetime.now(UTC))
     except (OSError, ValueError) as exc:
-        raise ValueError(
-            "EIDOLON_LOCAL_API_HUB_TLS_CERTIFICATE must contain the Hub TLS leaf certificate"
-        ) from exc
-    now = datetime.now(UTC)
-    if not certificate.not_valid_before_utc <= now <= certificate.not_valid_after_utc:
-        raise ValueError("Hub TLS leaf certificate is not currently valid")
-    _verify_certificate_hostname(certificate, parsed.hostname)
-    spki = certificate.public_key().public_bytes(
-        Encoding.DER,
-        PublicFormat.SubjectPublicKeyInfo,
-    )
-    return VerifiedHubOnboardingTarget(
-        hub_id=hub_id,
+        raise ValueError("Owner Domain trust bundle is invalid") from exc
+    return VerifiedOwnerDomainOnboardingTarget(
+        owner_domain_id=owner_domain_id,
         descriptor_uri=descriptor_uri,
-        tls_spki_fingerprint=(
-            "sha256:"
-            + urlsafe_b64encode(sha256(spki).digest()).rstrip(b"=").decode()
-        ),
-        tls_certificate_path=certificate_path.resolve(),
+        descriptor=descriptor,
+        owner_root_certificate_path=paths["owner_root_certificate"].resolve(),
+        authority_signing_certificate_path=paths[
+            "authority_signing_certificate"
+        ].resolve(),
     )
-
-
-def _verify_certificate_hostname(certificate: x509.Certificate, hostname: str) -> None:
-    try:
-        san = certificate.extensions.get_extension_for_class(
-            x509.SubjectAlternativeName
-        ).value
-    except x509.ExtensionNotFound as exc:
-        raise ValueError("Hub TLS leaf certificate must contain subjectAltName") from exc
-    try:
-        expected_ip = ip_address(hostname)
-    except ValueError:
-        expected_dns = hostname.rstrip(".").lower()
-        dns_names = {
-            value.rstrip(".").lower()
-            for value in san.get_values_for_type(x509.DNSName)
-        }
-        if expected_dns not in dns_names:
-            raise ValueError(
-                "Hub descriptor hostname is not present in the TLS certificate SAN"
-            )
-        return
-    ip_names = set(san.get_values_for_type(x509.IPAddress))
-    if expected_ip not in ip_names:
-        raise ValueError(
-            "Hub descriptor IP is not present in the TLS certificate SAN"
-        )

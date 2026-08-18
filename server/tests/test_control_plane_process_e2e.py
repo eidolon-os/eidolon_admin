@@ -13,11 +13,17 @@ import sqlite3
 import subprocess
 import time
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
 import httpx
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from eidolon_sdk.device_foundation.v1.directory_tool import issue_descriptor
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 
@@ -53,6 +59,76 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
+
+
+def _write_owner_directory(root: Path) -> tuple[Path, Path, Path]:
+    root_key = ec.generate_private_key(ec.SECP256R1())
+    authority_key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "E2E Owner Root")])
+    root_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(root_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime(2020, 1, 1, tzinfo=UTC))
+        .not_valid_after(datetime(2040, 1, 1, tzinfo=UTC))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=1), critical=True)
+        .sign(root_key, hashes.SHA256())
+    )
+    authority_certificate = (
+        x509.CertificateBuilder()
+        .subject_name(
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "E2E Directory Signer")])
+        )
+        .issuer_name(name)
+        .public_key(authority_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime(2020, 1, 1, tzinfo=UTC))
+        .not_valid_after(datetime(2040, 1, 1, tzinfo=UTC))
+        .add_extension(
+            x509.BasicConstraints(ca=False, path_length=None), critical=True
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CODE_SIGNING]), critical=True
+        )
+        .sign(root_key, hashes.SHA256())
+    )
+    root_path = root / "owner-root.pem"
+    authority_path = root / "authority-signing.pem"
+    descriptor_path = root / "owner-directory.json"
+    root_pem = root_certificate.public_bytes(serialization.Encoding.PEM)
+    authority_pem = authority_certificate.public_bytes(serialization.Encoding.PEM)
+    root_path.write_bytes(root_pem)
+    authority_path.write_bytes(authority_pem)
+    private_pem = authority_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    descriptor = issue_descriptor(
+        {
+            "owner_domain_id": "owner-admin-e2e",
+            "trust_epoch": 1,
+            "directory_revision": 1,
+            "issued_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2036-01-01T00:00:00Z",
+            "endpoints": [
+                {
+                    "authority": "admission",
+                    "logical_audience": "eidolon-admission",
+                    "uri": "https://hub.admin-e2e.invalid/api/device-onboarding/v1",
+                    "transport_profile": "https-json",
+                    "priority": 10,
+                }
+            ],
+        },
+        owner_root_certificate_pem=root_pem.decode("ascii"),
+        authority_signing_certificate_pem=authority_pem.decode("ascii"),
+        authority_private_key_pem=private_pem,
+    )
+    descriptor_path.write_text(descriptor.model_dump_json(), encoding="utf-8")
+    return descriptor_path, root_path, authority_path
 
 
 def _stop(process: subprocess.Popen[str] | None) -> None:
@@ -297,10 +373,15 @@ async def test_real_process_workflow_idempotency_restart_and_data_outage(
     hub_settings = tmp_path / "hub.yaml"
     kernel_settings = tmp_path / "kernel.yaml"
     admin_services = tmp_path / "admin-services.yaml"
+    descriptor_path, root_path, authority_path = _write_owner_directory(tmp_path)
     hub_settings.write_text(
         f"""onboarding:
-  hub_id: eidolon-hub-admin-e2e
-  public_base_url: https://hub.admin-e2e.invalid
+  owner_domain_id: owner-admin-e2e
+  trust_epoch: 1
+  descriptor_uri: https://hub.admin-e2e.invalid/api/device-onboarding/v1/descriptor
+  descriptor_path: {descriptor_path}
+  owner_root_certificate_path: {root_path}
+  authority_signing_certificate_path: {authority_path}
   retrieval_window_seconds: 1800
 discovery:
   mdns:

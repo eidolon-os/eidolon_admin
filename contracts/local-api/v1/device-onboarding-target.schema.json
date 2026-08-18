@@ -4,12 +4,30 @@
   "title": "Local Device onboarding target",
   "type": "object",
   "additionalProperties": false,
-  "required": ["operation", "contract_version", "hub_id", "descriptor_uri", "tls_spki_fingerprint"],
+  "required": [
+    "operation",
+    "contract_version",
+    "owner_domain_id",
+    "owner_domain_descriptor",
+    "owner_root_certificate",
+    "authority_signing_certificate"
+  ],
   "properties": {
     "operation": {"const": "local.device-onboarding-target"},
     "contract_version": {"const": "1"},
-    "hub_id": {"type": "string", "minLength": 1, "maxLength": 128},
-    "descriptor_uri": {"type": "string", "format": "uri", "pattern": "^https://", "maxLength": 2048},
-    "tls_spki_fingerprint": {"type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$"}
+    "owner_domain_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "owner_domain_descriptor": {
+      "$ref": "https://contracts.eidolon.live/device-foundation/v1/common/schemas.schema.json#/$defs/OwnerDomainDescriptor"
+    },
+    "owner_root_certificate": {
+      "type": "string",
+      "pattern": "^-----BEGIN CERTIFICATE-----",
+      "maxLength": 4096
+    },
+    "authority_signing_certificate": {
+      "type": "string",
+      "pattern": "^-----BEGIN CERTIFICATE-----",
+      "maxLength": 4096
+    }
   }
 }
