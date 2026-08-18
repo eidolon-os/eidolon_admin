@@ -147,3 +147,13 @@ pnpm --dir web build
 本次主线的最终证据、失败记录、性能和启动判定见
 [Admin Data V2 / Kernel 边界主线结项报告](docs/testing/reports/2026-08-07-admin-data-v2-kernel-workspace-completion.md)。
 所有性能数据仅是当前环境诊断值，不是产品 SLA。
+
+## License
+
+Copyright © 2026 Li Jinsong.
+
+本项目允许依据 [PolyForm Noncommercial License 1.0.0](LICENSE) 进行许可范围内的
+非商业使用。商业使用需要另行取得书面授权，请联系
+[lijinsong@aimanthor.com](mailto:lijinsong@aimanthor.com)。
+
+许可范围、第三方例外和必要声明见 [LICENSING.md](LICENSING.md) 与 [NOTICE](NOTICE)。
