@@ -70,7 +70,7 @@ async def host_vitals(request: Request) -> HostVitals:
     try:
         return await _client(request).read_vitals()
     except HostServiceError as exc:
-        _raise(exc)
+        raise _fail(exc) from exc
 
 
 @router.get("/services", response_model=HostServicePage)

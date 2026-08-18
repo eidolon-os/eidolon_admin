@@ -214,6 +214,33 @@ async def test_rest_surface_reports_a_missing_system_manager_instead_of_guessing
     assert response.status_code == 503
 
 
+async def test_vitals_reports_a_failing_host_as_the_mapped_status() -> None:
+    """The vitals handler must translate the failure, not become one itself.
+
+    It once called an undefined helper, so every HostServiceError turned into a
+    NameError and the operator saw an unhandled 500 instead of 503/502.
+    """
+
+    def refuses(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    def answers_nonsense(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"measurements": []})
+
+    async def get_vitals(handler) -> httpx.Response:
+        transport = httpx.ASGITransport(app=_app(_client(handler)))
+        async with httpx.AsyncClient(transport=transport, base_url="http://admin") as api:
+            return await api.get("/api/host/vitals")
+
+    unreachable = await get_vitals(refuses)
+    malformed = await get_vitals(answers_nonsense)
+
+    assert unreachable.status_code == 503
+    assert unreachable.json()["detail"]
+    # A reply Admin cannot read is the Host's fault, reported as a bad gateway.
+    assert malformed.status_code == 502
+
+
 def test_a_unix_socket_host_gets_its_own_transport() -> None:
     """The Pi reaches eidolond over /run/eidolon/system.sock, not TCP."""
 
