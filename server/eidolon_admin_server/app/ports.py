@@ -3,9 +3,18 @@
 Sub-project ``config/settings.yaml`` files are the **source of truth** for how
 each service starts. This module never writes into those files.
 
-The Ops-owned ``config/ports.yaml`` is the host topology index used by Admin,
-health checks and the macOS executor. Refresh it with ``ports collect`` after
-changing a component port (``eidolon-ops start`` does this automatically).
+Admin is *told* where its registry is. Ops renders one per Host and names it in
+``EIDOLON_PORTS_FILE`` — ``/etc/eidolon/generated/ports.yaml`` on a product Host
+(via ``host.env``), the profile's ``settings/ports.yaml`` under macOS
+product-source. Admin never goes looking for one in a neighbouring checkout:
+on a Pi there is no such checkout, and a layout guessed at here rots the moment
+the other repository rearranges itself.
+
+When nothing names a registry — a bare checkout running ``pytest`` or
+``uvicorn`` — Admin falls back to its own ``config/ports.yaml``, the same
+standing ``config/services.yaml`` has against ``EIDOLON_ADMIN_SERVICES_FILE``.
+Refresh whichever file is in play with ``ports collect`` after changing a
+component port (``eidolon-ops start`` does this automatically).
 """
 
 from __future__ import annotations
@@ -21,23 +30,16 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
-
-def _default_ops_root() -> Path:
-    explicit = os.environ.get("EIDOLON_OPS_ROOT", "").strip()
-    return (
-        Path(explicit).expanduser().resolve()
-        if explicit
-        else (_REPO_ROOT.parent / "eidolon_ops").resolve()
-    )
-
-
-_DEFAULT_PORTS_FILE = _default_ops_root() / "config" / "ports.yaml"
+#: Where a checkout that nobody configured reads its ports from. Admin's own
+#: file, in Admin's own repository — see the module docstring for why this is
+#: not a path into ``eidolon_ops``.
+_DEVELOPMENT_PORTS_FILE = _REPO_ROOT / "config" / "ports.yaml"
 
 # Hard cap on array indices in dotted paths (legacy helper for unit tests).
 _MAX_LIST_INDEX = 64
 
 _PORTS_HEADER = """\
-# Eidolon dev stack — Ops-owned port registry for Admin and the host executor.
+# Eidolon dev stack — port registry for Admin and the host executor.
 #
 # Sub-project config/settings.yaml files are the source of truth for bind ports.
 # eidolon-ops start runs ``python -m eidolon_admin_server.app.ports collect`` to
@@ -50,17 +52,50 @@ _PORTS_HEADER = """\
 """
 
 
+class PortsRegistryError(RuntimeError):
+    """The port registry is absent, or is missing a section a caller needs.
+
+    Raised where the problem is discovered and named there, rather than left
+    for whichever ``EIDOLON_*`` export happens to be indexed first.
+    """
+
+
 def ports_file() -> Path:
     explicit = os.environ.get("EIDOLON_PORTS_FILE", "").strip()
     if explicit:
         return Path(explicit).expanduser().resolve()
-    return _DEFAULT_PORTS_FILE
+    return _DEVELOPMENT_PORTS_FILE
 
 
-def load_ports(path: Path | None = None) -> dict[str, Any]:
+def _describe(target: Path) -> str:
+    """How ``target`` came to be the registry — the half of a report a bare
+    path leaves out."""
+    if target != ports_file():
+        return str(target)
+    if os.environ.get("EIDOLON_PORTS_FILE", "").strip():
+        return f"{target} (named by EIDOLON_PORTS_FILE)"
+    return f"{target} (Admin's development default; EIDOLON_PORTS_FILE is unset)"
+
+
+def load_ports(path: Path | None = None, *, missing_ok: bool = False) -> dict[str, Any]:
+    """Read the port registry.
+
+    A missing registry is an error, not an empty dict: every caller but
+    ``collect`` immediately indexes sections out of the result, so returning
+    ``{}`` only defers the failure to a ``KeyError`` that names neither the
+    file nor why Admin expected it there. ``missing_ok`` is for ``collect``,
+    which is the one caller that legitimately runs before the file exists.
+    """
     target = path or ports_file()
     if not target.is_file():
-        return {}
+        if missing_ok:
+            return {}
+        raise PortsRegistryError(
+            f"port registry not found: {_describe(target)}. "
+            "Ops renders one per Host and names it in EIDOLON_PORTS_FILE; "
+            "in a checkout, `python -m eidolon_admin_server.app.ports collect` "
+            "writes one from the sub-project settings."
+        )
     raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{target} must be a mapping")
@@ -100,13 +135,15 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
     from .settings import default_eidolon_root
 
     root = root or default_eidolon_root()
-    ports = load_ports()
+    # The one caller that may legitimately run before a registry exists —
+    # writing it is the point. Whatever is already there supplies the defaults
+    # for anything a sub-project does not declare.
+    ports = load_ports(missing_ok=True)
 
     agent_y = _read_yaml(root / "eidolon_agent/config/settings.yaml")
     hub_y = _read_yaml(root / "eidolon_hub/config/settings.yaml")
     memory_y = _read_yaml(root / "eidolon_memory/config/settings.yaml")
     channel_y = _read_yaml(root / "eidolon_channel/config/settings.yaml")
-    lk_y = _read_yaml(_default_ops_root() / "deploy/livekit/livekit.yaml")
 
     http = agent_y.get("http") if isinstance(agent_y.get("http"), dict) else {}
     grpc = agent_y.get("grpc") if isinstance(agent_y.get("grpc"), dict) else {}
@@ -257,27 +294,19 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
         },
     }
 
-    rtc = lk_y.get("rtc") if isinstance(lk_y.get("rtc"), dict) else {}
-    turn = lk_y.get("turn") if isinstance(lk_y.get("turn"), dict) else {}
+    # LiveKit's livekit.yaml is rendered by Ops *from* the port assignment, so
+    # reading it back would be reading our own output through a path into
+    # another repository's layout. Hub says which signalling port it dials; the
+    # TURN and RTC ranges stay where they are declared, in the registry.
     ports["livekit"] = {
-        "port": int(lk_y.get("port", lk_port)),
+        "port": int(lk_port),
         "turn_udp_port": int(
-            turn.get(
-                "udp_port", _deep_get(ports, "livekit", "turn_udp_port", default=3478)
-            )
+            _deep_get(ports, "livekit", "turn_udp_port", default=3478)
         ),
         "rtc_port_start": int(
-            rtc.get(
-                "port_range_start",
-                _deep_get(ports, "livekit", "rtc_port_start", default=50000),
-            )
+            _deep_get(ports, "livekit", "rtc_port_start", default=50000)
         ),
-        "rtc_port_end": int(
-            rtc.get(
-                "port_range_end",
-                _deep_get(ports, "livekit", "rtc_port_end", default=60000),
-            )
-        ),
+        "rtc_port_end": int(_deep_get(ports, "livekit", "rtc_port_end", default=60000)),
     }
 
     ports.setdefault(
@@ -317,8 +346,14 @@ def _env(name: str, value: Any) -> None:
 
 
 def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str]:
-    """Set EIDOLON_* env vars from ports.yaml (never override existing values)."""
-    p = ports or load_ports()
+    """Set EIDOLON_* env vars from the registry (never override existing values)."""
+    if ports is None:
+        target = ports_file()
+        p = load_ports(target)
+        origin = f"port registry {_describe(target)}"
+    else:
+        p = ports
+        origin = "the port registry passed to apply_ports_to_environ()"
     exported: dict[str, str] = {}
 
     def put(name: str, value: Any) -> None:
@@ -326,7 +361,22 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
         exported[name] = text
         _env(name, text)
 
-    admin = p["admin"]
+    def section(name: str) -> Any:
+        """A registry that is present but short of a section says so here.
+
+        Every ``put`` below reads out of one of these, so an unguarded index
+        would report a bare ``KeyError`` for whichever section happens to come
+        first — naming neither the file it came from nor what was wanted.
+        """
+        try:
+            return p[name]
+        except KeyError:
+            raise PortsRegistryError(
+                f"{origin} has no '{name}' section, which Admin needs to "
+                f"export the EIDOLON_* variables for {name}"
+            ) from None
+
+    admin = section("admin")
     put("EIDOLON_ADMIN_API_HOST", admin["api"]["host"])
     put("EIDOLON_ADMIN_API_PORT", admin["api"]["port"])
     put(
@@ -335,30 +385,30 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     )
     put("EIDOLON_ADMIN_WEB_PORT", admin["web"]["port"])
 
-    hub = p["hub"]
+    hub = section("hub")
     put("EIDOLON_HUB_API_HOST", hub["api"]["host"])
     put("EIDOLON_HUB_API_PORT", hub["api"]["port"])
 
-    data = p["data"]
+    data = section("data")
     put("EIDOLON_DATA_API_HOST", data["api"]["host"])
     put("EIDOLON_DATA_API_PORT", data["api"]["port"])
     put("EIDOLON_DATA_WORKSPACE_API_HOST", data["workspace_api"]["host"])
     put("EIDOLON_DATA_WORKSPACE_API_PORT", data["workspace_api"]["port"])
 
-    kernel = p["kernel"]
+    kernel = section("kernel")
     put("EIDOLON_KERNEL_API_HOST", kernel["api"]["host"])
     put("EIDOLON_KERNEL_API_PORT", kernel["api"]["port"])
 
-    eidolond = p["eidolond"]
+    eidolond = section("eidolond")
     put("EIDOLON_SYSTEM_API_HOST", eidolond["api"]["host"])
     put("EIDOLON_SYSTEM_API_PORT", eidolond["api"]["port"])
 
-    agent = p["agent"]
+    agent = section("agent")
     put("EIDOLON_AGENT_HTTP_PORT", agent["http"]["port"])
     put("EIDOLON_AGENT_ADMIN_PORT", agent["admin"]["port"])
     put("EIDOLON_AGENT_GRPC_PORT", agent["grpc"]["port"])
 
-    memory = p["memory"]
+    memory = section("memory")
     put("EIDOLON_MEMORY_DISCOVERY_HOST", memory["discovery"]["host"])
     put("EIDOLON_MEMORY_DISCOVERY_PORT", memory["discovery"]["port"])
     put("EIDOLON_MEMORY_MCP_PORT", memory["mcp"]["port"])
@@ -366,16 +416,16 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
     put("EIDOLON_MEMORY_SUPERVISOR_HTTP_HOST", memory["supervisor_http"]["host"])
     put("EIDOLON_MEMORY_SUPERVISOR_HTTP_PORT", memory["supervisor_http"]["port"])
 
-    channel = p["channel"]
+    channel = section("channel")
     put("EIDOLON_CHANNEL_WORKER_PORT", channel["worker"]["port"])
 
-    put("EIDOLON_CLIENT_WEB_PORT", p["client_web"]["port"])
+    put("EIDOLON_CLIENT_WEB_PORT", section("client_web")["port"])
 
-    nats = p["nats"]
+    nats = section("nats")
     put("EIDOLON_NATS_PORT", nats["port"])
     put("EIDOLON_NATS_HTTP_PORT", nats["http_port"])
 
-    livekit = p["livekit"]
+    livekit = section("livekit")
     put("EIDOLON_LIVEKIT_PORT", livekit["port"])
     put("EIDOLON_LIVEKIT_TURN_UDP_PORT", livekit["turn_udp_port"])
     put("EIDOLON_LIVEKIT_RTC_PORT_START", livekit["rtc_port_start"])

@@ -1,0 +1,82 @@
+# Eidolon Admin — the port registry a *development* checkout falls back to.
+#
+# Admin does not discover this file by looking into a neighbouring repository.
+# A deployed Host is TOLD where its registry is, by Ops, through
+# ``EIDOLON_PORTS_FILE``:
+#
+#   product Host (Pi)   /etc/eidolon/generated/ports.yaml, named in host.env
+#   macOS product-source  <settings root>/ports.yaml, named in the supervisor
+#                         program environment
+#
+# In both cases Ops renders the registry from its own component contracts and
+# this file is never read. It exists so that ``pytest``, ``create_app()`` and a
+# bare ``uvicorn`` work in a checkout where nothing has told Admin anything —
+# exactly the standing this repository's config/services.yaml has against
+# EIDOLON_ADMIN_SERVICES_FILE.
+#
+# So: when these numbers and the operator's registry disagree, the operator's
+# registry is right. Sub-project config/settings.yaml files remain the source
+# of truth for bind ports; ``python -m eidolon_admin_server.app.ports collect``
+# aggregates them into whatever EIDOLON_PORTS_FILE names (aggregation only —
+# child settings are never modified).
+
+admin:
+  api:
+    host: 127.0.0.1
+    port: 9000
+  web:
+    port: 9001
+hub:
+  api:
+    host: 0.0.0.0
+    port: 8082
+data:
+  api:
+    host: 127.0.0.1
+    port: 8084
+  workspace_api:
+    host: 127.0.0.1
+    port: 8085
+kernel:
+  api:
+    host: 127.0.0.1
+    port: 8083
+eidolond:
+  api:
+    host: 127.0.0.1
+    port: 8090
+agent:
+  http:
+    port: 8180
+  admin:
+    port: 8081
+  grpc:
+    port: 45051
+memory:
+  discovery:
+    host: 127.0.0.1
+    port: 8020
+  mcp:
+    port: 10030
+  supervisor_http:
+    host: 127.0.0.1
+    port: 8019
+channel:
+  worker:
+    port: 8766
+client_web:
+  port: 3001
+nats:
+  port: 4222
+  http_port: 8222
+livekit:
+  port: 7880
+  turn_udp_port: 3478
+  rtc_port_start: 50000
+  rtc_port_end: 60000
+mementos:
+  sidecar:
+    host: 127.0.0.1
+    port: 18765
+  # This optional non-Eidolon project is host-specific. Export
+  # EIDOLON_MEMENTOS_DIR before enabling its Ops executor config.

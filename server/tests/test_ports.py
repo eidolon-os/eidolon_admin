@@ -3,16 +3,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
 import yaml
 
 from eidolon_admin_server.app.ports import (
     _MAX_LIST_INDEX,
+    PortsRegistryError,
     _set_nested,
     _sync_yaml,
     apply_ports_to_environ,
     collect_ports_from_subprojects,
     collect_ports_registry,
     load_ports,
+    ports_file,
 )
 from eidolon_admin_server.app.settings import Settings, load_gateway_config
 
@@ -243,3 +246,91 @@ def test_set_nested_allows_index_at_cap() -> None:
     assert isinstance(models, list)
     assert len(models) == _MAX_LIST_INDEX + 1
     assert models[_MAX_LIST_INDEX] == {"api_base": "ok"}
+
+
+def test_the_registry_admin_falls_back_to_is_its_own(monkeypatch) -> None:
+    """Nothing here may depend on a sibling checkout's layout.
+
+    A deployed Host has no ``eidolon_ops`` working tree to read, so the
+    development fallback has to be a file this repository owns. Pointing
+    EIDOLON_OPS_ROOT at somewhere that does not exist must change nothing.
+    """
+    monkeypatch.delenv("EIDOLON_PORTS_FILE", raising=False)
+    monkeypatch.setenv("EIDOLON_OPS_ROOT", "/nonexistent/eidolon_ops")
+
+    target = ports_file()
+    admin_root = Path(__file__).resolve().parents[2]
+    assert target == admin_root / "config" / "ports.yaml"
+    assert load_ports()["admin"]["api"]["port"] == 9000
+
+
+def test_a_host_that_was_told_where_its_registry_is_reads_that_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """How every deployed Host learns its ports: Ops names the file."""
+    registry = tmp_path / "generated" / "ports.yaml"
+    registry.parent.mkdir()
+    registry.write_text(
+        yaml.safe_dump({"admin": {"api": {"host": "127.0.0.1", "port": 9500}}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EIDOLON_PORTS_FILE", str(registry))
+
+    assert ports_file() == registry.resolve()
+    assert load_ports()["admin"]["api"]["port"] == 9500
+
+
+def test_an_absent_registry_says_which_file_and_who_named_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    missing = tmp_path / "generated" / "ports.yaml"
+    monkeypatch.setenv("EIDOLON_PORTS_FILE", str(missing))
+
+    with pytest.raises(PortsRegistryError) as error:
+        load_ports()
+
+    message = str(error.value)
+    assert str(missing) in message
+    assert "EIDOLON_PORTS_FILE" in message
+
+
+def test_an_absent_default_registry_says_nothing_named_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("EIDOLON_PORTS_FILE", raising=False)
+    monkeypatch.setattr(
+        "eidolon_admin_server.app.ports._DEVELOPMENT_PORTS_FILE",
+        tmp_path / "ports.yaml",
+    )
+
+    with pytest.raises(PortsRegistryError) as error:
+        load_ports()
+
+    assert "EIDOLON_PORTS_FILE is unset" in str(error.value)
+
+
+def test_a_registry_short_of_a_section_names_the_section(monkeypatch) -> None:
+    """The failure this replaces was a bare ``KeyError: 'admin'``.
+
+    It named neither the file it came from nor that a file was the problem.
+    """
+    with pytest.raises(PortsRegistryError) as error:
+        apply_ports_to_environ({"hub": {"api": {"host": "127.0.0.1", "port": 8082}}})
+
+    assert "'admin'" in str(error.value)
+
+
+def test_collect_still_runs_before_any_registry_exists(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """``collect`` writes the registry, so it is the one caller allowed to
+    start without one."""
+    monkeypatch.setenv("EIDOLON_PORTS_FILE", str(tmp_path / "ports.yaml"))
+    monkeypatch.setattr(
+        "eidolon_admin_server.app.settings.default_eidolon_root", lambda: tmp_path
+    )
+
+    ports = collect_ports_from_subprojects(tmp_path)
+
+    assert ports["admin"]["api"]["port"] == 9000
+    assert ports["livekit"]["rtc_port_end"] == 60000
