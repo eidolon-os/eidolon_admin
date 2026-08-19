@@ -16,6 +16,7 @@ from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .control_plane import ControlPlaneService
 from .control_plane import router as control_plane_router
+from .mission_control.router import router as mission_control_router
 from .host_services.client import HostServiceClient
 from .host_services.router import router as host_services_router
 from .gateway.registry import ServiceRegistry
@@ -131,6 +132,10 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(control_plane_router, prefix="/api")
+    # Read-only and second-hand: it asks the same authorities every other
+    # surface here asks. Registered rather than merely present, because a
+    # module nothing routes to is one nobody can tell is broken.
+    app.include_router(mission_control_router, prefix="/api")
     app.include_router(system_health_router, prefix="/api")
     if esp32.available:
         app.include_router(esp32_tools_router, prefix="/api")

@@ -59,6 +59,7 @@ export const navigation: NavGroup[] = [
     icon: 'Operation',
     collapsible: true,
     items: [
+      { id: 'mission-control', label: 'Mission Control', hint: 'Read-only cockpit over the authorities', icon: 'Aim', route: { name: 'mission-control' } },
       { id: 'host-services', label: 'Host Services', hint: 'eidolond: Mac and Pi', icon: 'Cpu', route: { name: 'host-services' } },
       { id: 'supervisor', label: 'Supervisor', hint: 'macOS supervisord only', icon: 'Monitor', route: { name: 'supervisor' } },
       { id: 'configs', label: 'Service Configs', hint: 'Declared config files', icon: 'Document', route: { name: 'configs' } },

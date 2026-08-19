@@ -344,8 +344,35 @@ def test_removed_legacy_route_prefixes_are_not_registered() -> None:
         "data_router",
         "devices_router",
         "memory_router",
-        "mission_control_router",
         "onboarding_router",
         "resolve_router",
     ):
         assert removed not in main_source
+
+
+def test_mission_control_is_registered_only_while_it_stays_second_hand() -> None:
+    """Why one name left this list, and the condition it left on.
+
+    Every other entry was removed because its subject moved: Data owns owners
+    and companions, Hub owns devices and their events, Memory owns
+    recollections. Serving those from here again would give a Host two answers
+    to one question and no way to say which is true. That rule is unchanged.
+
+    Mission Control is not an authority for anything — it is a read-only view
+    that composes what the authorities answer. It was removed for a different
+    reason: it opened the product database directly, which is what
+    ``test_admin_operator_tree_has_no_database_or_orm_dependency`` forbids, and
+    why it could not simply be checked back out. It now asks the same HTTP
+    clients every other surface here asks, so the reason no longer describes
+    it — and this test holds it to that.
+    """
+
+    # Whether it is reachable is asserted by a request in
+    # test_control_plane_component.py: this FastAPI defers route
+    # materialisation, so neither a source grep nor a walk of app.routes can
+    # tell. What is checked here is the condition it was let back in on.
+    mission_control = ADMIN_ROOT / "server/eidolon_admin_server/app/mission_control"
+    for path in mission_control.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for forbidden in ("import eidolon_data", "from eidolon_data", "sqlalchemy"):
+            assert forbidden not in text, f"{path.name} went back to the database"

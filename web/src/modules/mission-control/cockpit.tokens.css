@@ -1,0 +1,106 @@
+/*
+ * Cockpit design tokens — the cyber-neon direction, extracted from the former
+ * MissionControlCyber SFC into one reusable source of truth so every primitive
+ * and component shares identical glow/state colours and motion (A3.5/A3.6).
+ * Scope: any element under `.cockpit`.
+ */
+.cockpit {
+  /* Core neon palette (direction kept; craft elevated). */
+  --cy-cyan: #00eaff;
+  --cy-mag: #ff2e88;
+  --cy-yellow: #f7ff4a;
+  --cy-purple: #a44bff;
+  --cy-green: #37f5b3;
+  /* Sovereignty core — the one incandescent point (owner sun + master
+     companion). Aliased to magenta so identity/sovereignty reads as one hue,
+     freeing yellow for agent/warn only. */
+  --cy-sun: var(--cy-mag);
+
+  /* Surfaces & ink. */
+  --cy-bg: #060210;
+  --cy-panel: rgba(6, 4, 18, 0.55);
+  --cy-txt: #d9e6ff;
+  --cy-txt-dim: #8b88ba;
+  --cy-hair: rgba(0, 234, 255, 0.14);
+  --cy-hair-strong: rgba(0, 234, 255, 0.4);
+
+  /* Source-colour legend — one stable hue per runtime source, so glow and
+     status coding read consistently across bus / crawl / drawer. */
+  --src-hub: var(--cy-cyan);
+  --src-channel: #38bdf8;
+  --src-agent: var(--cy-yellow);
+  --src-memory: var(--cy-green);
+  --src-data: var(--cy-txt-dim);
+  --src-admin: var(--cy-purple);
+  --src-permission: var(--cy-mag);
+
+  /* Semantic state tones. */
+  --st-ok: var(--cy-green);
+  --st-warn: var(--cy-yellow);
+  --st-bad: var(--cy-mag);
+  --st-idle: var(--cy-txt-dim);
+
+  /* Motion tokens — mirror motion.ts so CSS and JS stay in lockstep. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 160ms;
+  --dur-base: 260ms;
+  --dur-slow: 420ms;
+  /* One shared "breath" for every idle/hot node pulse, so nothing drifts out
+     of phase against its neighbours (tempo grid). */
+  --dur-breath: 1.6s;
+
+  /* Typography — data uses mono + tabular figures for precise instruments. */
+  --cy-mono: var(--eid-font-mono, ui-monospace, monospace);
+  --cy-sans: var(--eid-font-sans, system-ui, sans-serif);
+}
+
+/*
+ * Shared atom classes. Declared globally (not in a scoped SFC block) under the
+ * `.cockpit` root so every child component inherits one definition of the tone
+ * classes and the LED dot — no per-component duplication. `statusClass()`
+ * returns exactly ok/warn/bad/idle.
+ */
+.cockpit .ok { color: var(--st-ok); }
+.cockpit .warn { color: var(--st-warn); }
+.cockpit .bad { color: var(--st-bad); }
+.cockpit .idle { color: var(--st-idle); }
+.cockpit .dim { color: var(--cy-txt-dim) !important; }
+.cockpit .cyan { color: var(--cy-cyan); }
+.cockpit .yellow { color: var(--cy-yellow); }
+.cockpit .mag { color: var(--cy-mag); }
+.cockpit .num { font-family: var(--cy-mono); font-variant-numeric: tabular-nums; }
+.cockpit .led {
+  width: 8px; height: 8px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 10px currentColor; flex: 0 0 auto; display: inline-block;
+}
+.cockpit .led.st-online { color: var(--st-ok); }
+.cockpit .led.st-offline { color: var(--st-bad); }
+.cockpit .led.st-unknown { color: var(--st-warn); }
+
+/*
+ * Popover skin. Element Plus teleports popovers to <body>, OUTSIDE `.cockpit`,
+ * so these rules are top-level and self-contained (cannot inherit tokens).
+ */
+.cy-pop.el-popover.el-popper {
+  background: rgba(8, 5, 20, 0.97) !important; border: 1px solid rgba(0, 234, 255, 0.4) !important;
+  border-radius: 0 !important; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+  box-shadow: 0 0 30px rgba(0, 234, 255, 0.25) !important; color: #d9e6ff;
+  font-family: var(--eid-font-mono, monospace); padding: 12px 14px !important;
+}
+.cy-pop.el-popper .el-popper__arrow::before { background: rgba(8, 5, 20, 0.97) !important; border-color: rgba(0, 234, 255, 0.4) !important; }
+.cy-pop .pop-h { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
+.cy-pop .pop-h b { font: 800 15px/1 var(--eid-font-sans); color: #fff; }
+.cy-pop .pop-h em { font: 700 10px/1 var(--eid-font-mono); color: #00eaff; font-style: normal; }
+.cy-pop .pop-role { margin: 0 0 10px; font: 400 12px/1.55 var(--eid-font-sans); color: #b9c4e0; }
+.cy-pop .pop-role.dim { color: #8b88ba; }
+.cy-pop .pop-rows { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid rgba(0, 234, 255, 0.14); border-bottom: 1px solid rgba(0, 234, 255, 0.14); }
+.cy-pop .pop-rows > div { display: flex; justify-content: space-between; gap: 12px; }
+.cy-pop .pop-rows dt { font: 700 10px/1.5 var(--eid-font-mono); color: #8b88ba; letter-spacing: 0.05em; flex: 0 0 auto; }
+.cy-pop .pop-rows dd { margin: 0; font: 700 11px/1.5 var(--eid-font-mono); color: #d9e6ff; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cy-pop .pop-rows dd.ok { color: #37f5b3; } .cy-pop .pop-rows dd.idle { color: #8b88ba; } .cy-pop .pop-rows dd.warn { color: #f7ff4a; } .cy-pop .pop-rows dd.bad { color: #ff2e88; }
+.cy-pop .pop-ev { margin-top: 9px; }
+.cy-pop .pop-ev-h { font: 700 9px/1 var(--eid-font-mono); color: #ff2e88; letter-spacing: 0.1em; }
+.cy-pop .pop-ev p { display: flex; gap: 7px; margin: 5px 0 0; font-size: 11px; line-height: 1.4; color: #b9c4e0; }
+.cy-pop .pop-ev em { font: 700 9px/1.4 var(--eid-font-mono); color: #8b88ba; font-style: normal; flex: 0 0 auto; }

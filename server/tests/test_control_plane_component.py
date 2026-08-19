@@ -503,14 +503,42 @@ async def test_local_approval_workflow_requires_service_auth_and_matching_device
         "/api/devices",
         "/api/events",
         "/api/memory/users",
-        "/api/mission-control/snapshot",
         "/api/onboarding/initialize",
         "/api/resolve/companion",
     ],
 )
 async def test_removed_cross_database_routes_are_unavailable(app, path: str) -> None:
+    """Admin does not answer for what another component owns.
+
+    /api/mission-control/snapshot used to be on this list and is not any more.
+    It is not an authority for anything — it composes what the authorities
+    answer — and it was removed because it read the product database, not
+    because its subject moved. It goes through the HTTP clients now, and
+    test_mission_control_answers_without_opening_a_database holds it there.
+    """
+
     response = await request(app, "GET", path)
     assert response.status_code == 404
+
+
+async def test_mission_control_answers_without_opening_a_database(app) -> None:
+    """Reachable, and honest about what it cannot reach.
+
+    Asked as a request rather than by reading main.py or walking app.routes:
+    this FastAPI defers route materialisation, so an enumeration finds nothing
+    and a source grep passes on an import line while the include_router call is
+    missing. Both of those happened here before this test was written this way.
+    """
+
+    response = await request(app, "GET", "/api/mission-control/snapshot")
+
+    assert response.status_code == 200
+    body = response.json()
+    sources = {row["source"]: row for row in body["source_status"]}
+    # No Owner was named and no authority publishes a list of them, so it says
+    # so instead of picking one.
+    assert sources["data.owners"]["ok"] is False
+    assert "ask for one Owner by id" in sources["data.owners"]["detail"]
 
 
 async def test_invalid_request_is_rejected_before_orchestration(app) -> None:
