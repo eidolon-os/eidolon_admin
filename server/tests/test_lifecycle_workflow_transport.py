@@ -304,7 +304,7 @@ async def test_request_cannot_self_report_peer_uid(location: str) -> None:
     assert service.calls == []
 
 
-@pytest.mark.parametrize("drift", ["owner", "actor", "scope", "deadline"])
+@pytest.mark.parametrize("drift", ["owner", "actor", "deadline"])
 async def test_authorization_context_drift_is_denied_before_workflow(
     drift: str,
 ) -> None:
@@ -317,8 +317,6 @@ async def test_authorization_context_drift_is_denied_before_workflow(
         context["target_device_ref"]["owner_domain_id"] = "owner-2"
     elif drift == "actor":
         context["actor"]["principal_id"] = "ectrl-fedcba9876543210abcd"
-    elif drift == "scope":
-        context["scopes"] = ["device.read"]
     else:
         context["issued_at"] = (datetime.now(UTC) - timedelta(minutes=2)).isoformat()
         context["expires_at"] = (datetime.now(UTC) - timedelta(minutes=1)).isoformat()
@@ -332,6 +330,25 @@ async def test_authorization_context_drift_is_denied_before_workflow(
 
     assert reply.problem is not None
     assert reply.problem.code == "AUTHZ_DENIED"
+    assert service.calls == []
+
+
+async def test_removal_context_missing_revoke_scope_is_invalid_before_workflow() -> None:
+    uid = 41001
+    document = _call().model_dump(mode="json")
+    document["authorization_context"]["owner_authorization_context"]["scopes"] = [
+        "device.read"
+    ]
+    body = json.dumps(document, separators=(",", ":")).encode()
+
+    reply, service = await _handle(
+        peer_reader=_StaticPeerReader(UnixPeerCredential(123, uid, 41000)),
+        allowed_uid=uid,
+        request_bytes=struct.pack("!I", len(body)) + body,
+    )
+
+    assert reply.problem is not None
+    assert reply.problem.code == "INVALID_REQUEST"
     assert service.calls == []
 
 
