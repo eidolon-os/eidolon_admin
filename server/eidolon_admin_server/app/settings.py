@@ -186,6 +186,8 @@ class Settings(BaseSettings):
     # never exposed through Admin or the Local API.
     hub_management_jwt_secret: SecretStr = SecretStr("")
     hub_management_jwt_ttl_seconds: int = Field(default=60, ge=30, le=300)
+    removal_capability_socket: Path | None = None
+    removal_capability_workflow_user: str = "eidolon-lifecycle"
     # Admin consumes the executor owned and configured by Eidolon Ops.
     supervisor_socket: Path = _runtime_root() / "ops" / "supervisor.sock"
     supervisor_available_dir: Path = _ops_root() / "deploy" / "supervisor" / "available"

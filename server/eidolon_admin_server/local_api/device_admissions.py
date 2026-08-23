@@ -2,22 +2,39 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
 from eidolon_sdk.device_foundation.v1 import OwnerDomainDescriptor
+from eidolon_sdk.device_foundation.v1.lifecycle import (
+    ActorRef,
+    OwnerAuthorizationContext,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..app.control_plane.contracts import (
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
     DeviceAdmissionResult,
+    DeviceRef,
     DeviceRemovalResult,
     HubDevicePage,
+    RemovalCondition,
 )
 from .config import VerifiedOwnerDomainOnboardingTarget
+from ..lifecycle_workflow.protocol import (
+    LifecycleRemovalCall,
+    LifecycleWorkflowReply,
+    RemovalOwnerAuthorizationContext,
+    read_frame,
+    removal_intent_id,
+    write_frame,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -297,11 +314,9 @@ class LocalDeviceRemovalProgress(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
+    intent_id: str = Field(min_length=1, max_length=128)
     outcome: ActOutcome
-    #: ``hub-revoked`` with ``unfinished`` is the state worth reading twice:
-    #: the grant is gone, so the device is already off, and what is left to
-    #: retry is the unmount.
-    stopped_after: Literal["hub-revoked", "kernel-unmounted"]
+    conditions: tuple[RemovalCondition, ...]
 
 
 class AdminDeviceAdmissionPort(Protocol):
@@ -321,6 +336,9 @@ class AdminDeviceAdmissionPort(Protocol):
         self,
         *,
         payload: ControllerDeviceRemovalRequest,
+        controller_reset_epoch: int,
+        authorization_expires_at: datetime,
+        target_device_ref: DeviceRef,
     ) -> DeviceRemovalResult: ...
 
     async def close(self) -> None: ...
@@ -333,11 +351,13 @@ class AdminDeviceAdmissionClient:
         base_url: str,
         service_token: str,
         timeout_seconds: float,
+        workflow_socket_path: Path = Path("/run/eidolon-lifecycle/workflow.sock"),
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = service_token.strip()
         self._timeout = timeout_seconds
+        self._workflow_socket_path = workflow_socket_path
         self._client = client or httpx.AsyncClient(trust_env=False)
         self._owns_client = client is None
 
@@ -433,53 +453,79 @@ class AdminDeviceAdmissionClient:
         self,
         *,
         payload: ControllerDeviceRemovalRequest,
+        controller_reset_epoch: int,
+        authorization_expires_at: datetime,
+        target_device_ref: DeviceRef,
     ) -> DeviceRemovalResult:
-        if not self._token:
-            raise DeviceAdmissionError(
-                "Local API Admin service credential is not configured"
-            )
+        intent_id = removal_intent_id(
+            ingress_request_id=payload.request_id,
+            owner_domain_id=payload.owner_id,
+        )
         try:
-            response = await self._client.put(
-                f"{self._base_url}/api/control-plane/v1/local-device-removals/"
-                f"{quote(payload.device_id, safe='')}",
-                headers={"Authorization": f"Bearer {self._token}"},
-                json=payload.model_dump(mode="json"),
+            reply = await asyncio.wait_for(
+                self._remove_over_workflow_socket(
+                    LifecycleRemovalCall(
+                        payload=payload,
+                        authorization_context=RemovalOwnerAuthorizationContext(
+                            # Bootstrap's reset epoch is the monotonic generation
+                            # of the Controller grant accepted by this Local session.
+                            controller_grant_generation=controller_reset_epoch,
+                            reset_epoch=controller_reset_epoch,
+                            owner_authorization_context=OwnerAuthorizationContext(
+                                workload_principal_id="eidolon-lifecycle-workflow",
+                                actor=ActorRef(
+                                    principal_id=payload.controller_id,
+                                    principal_type="controller",
+                                    owner_domain_id=payload.owner_id,
+                                    granted_scopes=("device.read", "device.claim.revoke"),
+                                    authentication_strength="software",
+                                ),
+                                authorized_owner_domain_id=payload.owner_id,
+                                scopes=("device.read", "device.claim.revoke"),
+                                intent_id=intent_id,
+                                target_device_ref=target_device_ref,
+                                issued_at=datetime.now(UTC),
+                                expires_at=authorization_expires_at,
+                            ),
+                        ),
+                    )
+                ),
                 timeout=self._timeout,
             )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
+        except (TimeoutError, OSError, ValueError, asyncio.IncompleteReadError) as exc:
             raise DeviceAdmissionError(
-                "Admin Device removal control plane is unavailable"
+                "Lifecycle Workflow is unavailable"
             ) from exc
-        if response.status_code != 200:
-            status_code = (
-                response.status_code
-                if response.status_code in {403, 404, 409, 422, 502, 503}
-                else 503
-            )
-            raise _refusal(
-                response,
-                operation="removal",
-                fallback=(
-                    "Admin Device removal did not complete the requested transition"
-                ),
-                status_code=status_code,
-            )
-        try:
-            result = DeviceRemovalResult.model_validate(response.json())
-        except (ValueError, TypeError, ValidationError) as exc:
+        if reply.problem is not None:
             raise DeviceAdmissionError(
-                "Admin Device removal response violated its contract"
-            ) from exc
+                reply.problem.detail,
+                status_code=reply.problem.status_code,
+            )
+        result = reply.result
+        if result is None:
+            raise DeviceAdmissionError("Lifecycle Workflow violated its contract")
         if result.request_id != payload.request_id:
             raise DeviceAdmissionError(
-                "Admin Device removal response returned another request",
+                "Lifecycle Workflow returned another request",
                 status_code=409,
             )
         return result
+
+    async def _remove_over_workflow_socket(
+        self, call: LifecycleRemovalCall
+    ) -> LifecycleWorkflowReply:
+        reader, writer = await asyncio.open_unix_connection(
+            path=str(self._workflow_socket_path)
+        )
+        try:
+            await write_frame(writer, call)
+            return LifecycleWorkflowReply.model_validate(await read_frame(reader))
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionError, OSError):
+                pass
 
     async def close(self) -> None:
         if self._owns_client:
@@ -494,28 +540,33 @@ def device_removal_progress(
 ) -> LocalDeviceRemovalProgress:
     hub = result.hub
     if hub is not None and (
-        hub.device_id != device_id or hub.lifecycle_state != "revoked"
+        hub.device_ref.device_instance_id != device_id
+        or hub.device_ref.owner_domain_id != owner_id
+        or hub.lifecycle_state != "revoked"
     ):
         raise DeviceAdmissionError(
             "Admin Device removal did not confirm the requested device",
             status_code=502,
         )
-    stage = {
-        "received": "hub-revoked",
-        "hub_revoked": "hub-revoked",
-        "kernel_unmounted": "kernel-unmounted",
-    }.get(result.completed_stage)
-    if stage is None:
+    condition_names = {condition.name for condition in result.conditions}
+    required = {
+        "platform_access_revoked",
+        "mount_removed",
+        "channel_access_revoked",
+        "device_erase_acknowledged",
+    }
+    if condition_names != required:
         raise DeviceAdmissionError(
-            "Admin Device removal returned an unsupported stage",
+            "Admin Device removal returned an incomplete condition projection",
             status_code=502,
         )
     return LocalDeviceRemovalProgress(
         request_id=result.request_id,
         device_id=device_id,
         owner_id=owner_id,
+        intent_id=result.intent_id,
         outcome=_act_outcome(result.outcome),
-        stopped_after=stage,
+        conditions=result.conditions,
     )
 
 
@@ -577,7 +628,7 @@ def _act_outcome(outcome: str) -> ActOutcome:
 
     if outcome == "completed":
         return "done"
-    if outcome == "retry_required":
+    if outcome in {"retry_required", "accepted"}:
         return "unfinished"
     return "refused"
 

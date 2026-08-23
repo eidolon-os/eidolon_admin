@@ -9,6 +9,7 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.contracts import (
     DeviceAdmissionRequest,
+    DeviceRef,
     HubDeviceEvent,
     HubDevicePage,
     HubLifecycleStatus,
@@ -31,6 +32,13 @@ def mount(*, revision: int = 1, replayed_request: str = "request") -> KernelMoun
         operation="kernel.device-mount",
         device_id="device-1",
         owner_id="owner-1",
+        device_ref=DeviceRef(
+            device_instance_id="device-1",
+            owner_domain_id="owner-1",
+            claim_generation=1,
+            trust_epoch=1,
+            accepted_manifest_digest="sha256:" + "a" * 64,
+        ),
         attached_companion_id=None,
         revision=revision,
         created_at=now,

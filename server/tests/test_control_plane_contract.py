@@ -14,6 +14,7 @@ from referencing import Registry, Resource
 
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
+    DeviceRef,
     HubDevicePage,
     HubLifecycleStatus,
     KernelMount,
@@ -67,6 +68,13 @@ def _mount() -> KernelMount:
         operation="kernel.device-mount",
         device_id="device-1",
         owner_id="owner-1",
+        device_ref=DeviceRef(
+            device_instance_id="device-1",
+            owner_domain_id="owner-1",
+            claim_generation=1,
+            trust_epoch=1,
+            accepted_manifest_digest="sha256:" + "a" * 64,
+        ),
         attached_companion_id=None,
         revision=1,
         created_at=_now(),
@@ -231,18 +239,18 @@ def test_kernel_publishes_workspace_authority_at_c711238() -> None:
         ),
     ],
 )
-def test_kernel_consumed_response_matches_baseline_66e61c9(
+def test_kernel_consumed_response_matches_current_producer_contract(
     schema_name: str, document: dict
 ) -> None:
     prefix = "eidolon_kernel/contracts/schemas/device-mount"
-    schema = _json_at_commit(KERNEL_ROOT, "66e61c9", f"{prefix}/{schema_name}")
+    schema = json.loads((KERNEL_ROOT / prefix / schema_name).read_text(encoding="utf-8"))
     store: dict[str, dict] = {}
     for name in (
         "mount.schema.json",
         "page.schema.json",
         "mutation-result.schema.json",
     ):
-        candidate = _json_at_commit(KERNEL_ROOT, "66e61c9", f"{prefix}/{name}")
+        candidate = json.loads((KERNEL_ROOT / prefix / name).read_text(encoding="utf-8"))
         store[candidate["$id"]] = candidate
     validator = jsonschema.Draft202012Validator(
         schema, registry=_registry(list(store.values()))
@@ -287,7 +295,7 @@ def test_current_hub_consumed_page_and_mutation_match_producer_schemas() -> None
     )
 
 
-def test_admin_operator_tree_has_no_database_or_orm_dependency() -> None:
+def test_admin_operator_tree_has_only_its_bounded_removal_intent_database() -> None:
     production_roots = (
         ADMIN_ROOT / "server/eidolon_admin_server/app",
         ADMIN_ROOT / "server/eidolon_admin_server/local_api",
@@ -307,6 +315,11 @@ def test_admin_operator_tree_has_no_database_or_orm_dependency() -> None:
             text = path.read_text(encoding="utf-8")
             for needle in forbidden:
                 if needle in text:
+                    if (
+                        needle == "import sqlite3"
+                        and path.name == "removal_intents.py"
+                    ):
+                        continue
                     violations.append(f"{path.relative_to(ADMIN_ROOT)}: {needle}")
     assert violations == []
 

@@ -6,6 +6,18 @@ Kernel through `/run/eidolon/system.sock`; it does not receive Bootstrap socket
 access or open producer databases. Product remote access requires a separately
 authenticated ingress and is deliberately not supplied by this unit.
 
+Device removal is not sent to that loopback API. `eidolon-local-api.service`
+runs as the dedicated `eidolon-local-api` principal and calls the single-purpose
+`eidolon-lifecycle-workflow.service`, running as `eidolon-lifecycle`, through
+`/run/eidolon-lifecycle/workflow.sock`. The runtime directory is
+`eidolon-lifecycle:eidolon-lifecycle-client` mode `2750`; the socket is mode
+`0660`. Local receives only the dedicated client group through
+`SupplementaryGroups=`. The Workflow state directory is separately mode `0700`
+and its SQLite/WAL files are created under `UMask=0077`, so socket access never
+grants ledger access. The Workflow also
+checks the accepted connection's Linux `SO_PEERCRED` UID against the installed
+Local account before reading the request. Socket ACLs are not authentication.
+
 `eidolon-bootstrapd.service` is intentionally outside the supervisord-managed
 application stack. It starts before `eidolon-stack.service`, does not depend on
 `network-online.target`, and uses `Restart=always` with systemd as the only
@@ -14,7 +26,10 @@ loop stops responding rather than only when the process exits.
 
 The product image/provisioner must create:
 
-- system user and group `eidolon-bootstrap`;
+- system users and primary groups `eidolon-bootstrap`, `eidolon-local-api`, and
+  `eidolon-lifecycle`;
+- the socket-only system group `eidolon-lifecycle-client`; it is not an owner of
+  Workflow state;
 - no persistent membership of the shared `eidolon` user in `eidolon-bootstrap`;
   only `eidolon-local-api.service` receives that group through its unit-scoped
   `SupplementaryGroups=` setting, so the Admin/supervisord stack does not inherit
@@ -82,9 +97,12 @@ development venv is not sufficient; validate imports as the `eidolon` service
 user before enabling the unit.
 
 The product provisioner must also create root-owned `admin.env` and
-`local-api.env` files with mode `0600`. `EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN`
-and `EIDOLON_LOCAL_API_ADMIN_SERVICE_TOKEN` contain the same randomly generated
-loopback credential. `admin.env` separately contains
+`local-api.env` files with mode `0600`. The legacy Local-to-Admin credential
+remains limited to non-removal routes during the wider P6 cutover; the removal
+path never reads or transmits it. Lifecycle Workflow has no static Local or Hub
+credential. Its only Hub authority is the peer-authenticated, fixed-operation
+broker socket owned by Admin; Hub's generic management signer never enters the
+Workflow process. `admin.env` separately contains
 `EIDOLON_ADMIN_DATA_WORKSPACE_AUTHORITY_TOKEN`, matching only Data's
 `EIDOLON_DATA_WORKSPACE_AUTHORITY_TOKEN`; neither credential is a Controller
 session token or a Data read token.

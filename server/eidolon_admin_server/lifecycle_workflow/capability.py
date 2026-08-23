@@ -1,0 +1,331 @@
+"""Peer-authenticated, removal-only Hub capability broker.
+
+The Workflow never receives Hub's generic management signing key.  The Admin
+process already owns that key for unrelated approval operations and exposes
+only these three generation-bound removal operations over this UDS.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import socket
+from contextlib import suppress
+from pathlib import Path
+from typing import Annotated, Literal, Union
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+
+from ..app.control_plane.contracts import (
+    DeviceRef,
+    HubClaimRevocationResult,
+    HubDevice,
+    HubDeviceControlOperationStatus,
+)
+from ..app.control_plane.errors import AuthorityFailure
+from .daemon import _bind_socket, _unlink_owned_socket
+from .peercred import ExactUidWorkloadAuthorizer, LinuxSoPeerCredentialAdapter
+from .protocol import read_frame, write_frame
+
+
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RemovalCapabilityReady(_StrictModel):
+    operation: Literal["hub.removal-capability.ready"] = (
+        "hub.removal-capability.ready"
+    )
+
+
+class ResolveRemovalTarget(_StrictModel):
+    operation: Literal["hub.removal-target.resolve"] = "hub.removal-target.resolve"
+    owner_id: str = Field(min_length=1, max_length=64)
+    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+    device_id: str = Field(min_length=1, max_length=128)
+
+
+class RevokeRemovalTarget(_StrictModel):
+    operation: Literal["hub.removal-target.revoke"] = "hub.removal-target.revoke"
+    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+    intent_id: str = Field(pattern=r"^removal-intent-[0-9a-f]{32}$")
+    device_ref: DeviceRef
+    reason: str = Field(min_length=1, max_length=128)
+    command_id: str = Field(min_length=1, max_length=128)
+
+
+class ObserveRemovalDelivery(_StrictModel):
+    operation: Literal["hub.removal-delivery.observe"] = "hub.removal-delivery.observe"
+    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+    intent_id: str = Field(pattern=r"^removal-intent-[0-9a-f]{32}$")
+    device_ref: DeviceRef
+    event_id: str = Field(min_length=1, max_length=255)
+
+
+RemovalCapabilityCall = Annotated[
+    Union[
+        RemovalCapabilityReady,
+        ResolveRemovalTarget,
+        RevokeRemovalTarget,
+        ObserveRemovalDelivery,
+    ],
+    Field(discriminator="operation"),
+]
+_CALL_ADAPTER = TypeAdapter(RemovalCapabilityCall)
+
+
+class RemovalCapabilityProblem(_StrictModel):
+    kind: str = Field(min_length=1, max_length=64)
+    detail: str = Field(min_length=1, max_length=512)
+    status_code: int = Field(ge=400, le=599)
+
+
+class RemovalCapabilityReply(_StrictModel):
+    operation: Literal["hub.removal-capability-reply"] = (
+        "hub.removal-capability-reply"
+    )
+    ready: Literal[True] | None = None
+    device: HubDevice | None = None
+    revocation: HubClaimRevocationResult | None = None
+    delivery: HubDeviceControlOperationStatus | None = None
+    problem: RemovalCapabilityProblem | None = None
+
+    def model_post_init(self, __context: object) -> None:
+        values = (self.ready, self.device, self.revocation, self.delivery, self.problem)
+        if sum(value is not None for value in values) != 1:
+            raise ValueError("capability reply must contain exactly one result")
+
+
+class RemovalCapabilityBroker:
+    def __init__(self, *, socket_path: Path, allowed_workflow_uid: int, service) -> None:
+        self._path = socket_path
+        self._service = service
+        self._reader = LinuxSoPeerCredentialAdapter()
+        self._authorizer = ExactUidWorkloadAuthorizer(
+            expected_uid=allowed_workflow_uid,
+            principal_id="eidolon-lifecycle-workflow",
+        )
+        self._server: asyncio.AbstractServer | None = None
+        self._listener: socket.socket | None = None
+        self._identity: tuple[int, int] | None = None
+
+    async def start(self) -> None:
+        listener = _bind_socket(self._path)
+        state = self._path.stat()
+        identity = (state.st_dev, state.st_ino)
+        try:
+            self._server = await asyncio.start_unix_server(
+                self._handle, sock=listener, start_serving=True
+            )
+        except Exception:
+            listener.close()
+            _unlink_owned_socket(self._path, expected_identity=identity)
+            raise
+        self._listener = listener
+        self._identity = identity
+
+    async def close(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+        if self._listener is not None:
+            self._listener.close()
+        _unlink_owned_socket(self._path, expected_identity=self._identity)
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            connection = writer.get_extra_info("socket")
+            if connection is None:
+                raise PermissionError("accepted socket unavailable")
+            principal = self._authorizer.authorize(self._reader.read(connection))
+            if principal.principal_id != "eidolon-lifecycle-workflow":
+                raise PermissionError("workflow principal is not authorized")
+            call = _CALL_ADAPTER.validate_python(
+                await asyncio.wait_for(read_frame(reader), timeout=5)
+            )
+            reply = await self._dispatch(call)
+        except (PermissionError, OSError, RuntimeError):
+            reply = RemovalCapabilityReply(
+                problem=RemovalCapabilityProblem(
+                    kind="unauthorized",
+                    detail="Lifecycle Workflow authentication failed",
+                    status_code=401,
+                )
+            )
+        except (ValidationError, ValueError, asyncio.IncompleteReadError, TimeoutError):
+            reply = RemovalCapabilityReply(
+                problem=RemovalCapabilityProblem(
+                    kind="invalid_request",
+                    detail="Removal capability request is invalid",
+                    status_code=422,
+                )
+            )
+        except AuthorityFailure as exc:
+            reply = RemovalCapabilityReply(
+                problem=RemovalCapabilityProblem(
+                    kind=exc.kind,
+                    detail=str(exc),
+                    status_code=exc.status_code,
+                )
+            )
+        except Exception:
+            reply = RemovalCapabilityReply(
+                problem=RemovalCapabilityProblem(
+                    kind="unavailable",
+                    detail="Removal capability broker is unavailable",
+                    status_code=503,
+                )
+            )
+        with suppress(Exception):
+            await write_frame(writer, reply)
+        writer.close()
+        with suppress(BrokenPipeError, ConnectionError, OSError):
+            await writer.wait_closed()
+
+    async def _dispatch(self, call: RemovalCapabilityCall) -> RemovalCapabilityReply:
+        if isinstance(call, RemovalCapabilityReady):
+            return RemovalCapabilityReply(ready=True)
+        credentials = self._service.hub_credentials
+        if credentials is None:
+            raise AuthorityFailure("hub", "configuration", "Hub issuer unavailable", 503)
+        if isinstance(call, ResolveRemovalTarget):
+            authorization = credentials.issue_removal_discovery(
+                controller_id=call.controller_id,
+                owner_id=call.owner_id,
+                device_id=call.device_id,
+            )
+            return RemovalCapabilityReply(
+                device=await self._service.hub.get_device(
+                    owner_id=call.owner_id,
+                    device_id=call.device_id,
+                    authorization=authorization,
+                )
+            )
+        authorization = credentials.issue_removal_intent(
+            controller_id=call.controller_id,
+            intent_id=call.intent_id,
+            device_ref=call.device_ref,
+        )
+        if isinstance(call, RevokeRemovalTarget):
+            return RemovalCapabilityReply(
+                revocation=await self._service.hub.revoke(
+                    device_ref=call.device_ref,
+                    reason=call.reason,
+                    command_id=call.command_id,
+                    correlation_id=call.intent_id,
+                    authorization=authorization,
+                )
+            )
+        return RemovalCapabilityReply(
+            delivery=await self._service.hub.get_device_control_operation(
+                device_ref=call.device_ref,
+                event_id=call.event_id,
+                authorization=authorization,
+            )
+        )
+
+
+class BrokeredRemovalHubClient:
+    """Hub adapter whose only authority is the broker's fixed protocol."""
+
+    def __init__(self, *, socket_path: Path, timeout_seconds: float) -> None:
+        self._path = socket_path
+        self._timeout = timeout_seconds
+
+    async def ready(self) -> None:
+        reply = await self._exchange(RemovalCapabilityReady())
+        if reply.ready is not True:
+            raise AuthorityFailure(
+                "hub", "unavailable", "Removal capability broker is not ready", 503
+            )
+
+    async def get_device(self, *, owner_id, device_id, authorization) -> HubDevice:
+        reply = await self._exchange(
+            ResolveRemovalTarget(
+                owner_id=owner_id,
+                controller_id=_controller(authorization),
+                device_id=device_id,
+            )
+        )
+        assert reply.device is not None
+        return reply.device
+
+    async def revoke(
+        self, *, device_ref, reason, command_id, correlation_id, authorization
+    ) -> HubClaimRevocationResult:
+        reply = await self._exchange(
+            RevokeRemovalTarget(
+                controller_id=_controller(authorization),
+                intent_id=correlation_id,
+                device_ref=device_ref,
+                reason=reason,
+                command_id=command_id,
+            )
+        )
+        assert reply.revocation is not None
+        return reply.revocation
+
+    async def get_device_control_operation(
+        self, *, device_ref, event_id, authorization
+    ) -> HubDeviceControlOperationStatus:
+        controller_id, intent_id = _controller_and_intent(authorization)
+        reply = await self._exchange(
+            ObserveRemovalDelivery(
+                controller_id=controller_id,
+                intent_id=intent_id,
+                device_ref=device_ref,
+                event_id=event_id,
+            )
+        )
+        assert reply.delivery is not None
+        return reply.delivery
+
+    async def _exchange(self, call: BaseModel) -> RemovalCapabilityReply:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(str(self._path)), timeout=self._timeout
+            )
+            try:
+                await write_frame(writer, call)
+                reply = RemovalCapabilityReply.model_validate(
+                    await asyncio.wait_for(read_frame(reader), timeout=self._timeout)
+                )
+            finally:
+                writer.close()
+                with suppress(BrokenPipeError, ConnectionError, OSError):
+                    await writer.wait_closed()
+        except (OSError, TimeoutError, ValueError, asyncio.IncompleteReadError) as exc:
+            raise AuthorityFailure(
+                "hub", "unavailable", "Removal capability broker is unavailable", 503
+            ) from exc
+        if reply.problem is not None:
+            raise AuthorityFailure(
+                "hub",
+                reply.problem.kind,
+                reply.problem.detail,
+                reply.problem.status_code,
+            )
+        return reply
+
+
+class BrokerMarkerIssuer:
+    """Non-credential correlation marker consumed only by the broker adapter."""
+
+    def issue_removal_discovery(self, *, controller_id, **_kwargs) -> str:
+        return f"broker:{controller_id}"
+
+    def issue_removal_intent(self, *, controller_id, intent_id, **_kwargs) -> str:
+        return f"broker:{controller_id}:{intent_id}"
+
+
+def _controller(marker: str) -> str:
+    parts = marker.split(":")
+    if len(parts) < 2 or parts[0] != "broker":
+        raise AuthorityFailure("hub", "configuration", "Broker marker is invalid", 503)
+    return parts[1]
+
+
+def _controller_and_intent(marker: str) -> tuple[str, str]:
+    parts = marker.split(":")
+    if len(parts) != 3 or parts[0] != "broker":
+        raise AuthorityFailure("hub", "configuration", "Broker marker is invalid", 503)
+    return parts[1], parts[2]

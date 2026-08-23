@@ -15,6 +15,9 @@ from .contracts import (
     PersonaTimeline,
     CompanionIdentity,
     HubDevice,
+    DeviceRef,
+    HubClaimRevocationResult,
+    HubDeviceControlOperationStatus,
     HubDeviceEvent,
     HubDeviceEventPage,
     HubDevicePage,
@@ -680,20 +683,16 @@ class HubManagementClient:
     async def revoke(
         self,
         *,
-        device_id: str,
-        owner_scope: str | None,
+        device_ref: DeviceRef,
         reason: str,
-        request_id: str,
+        command_id: str,
+        correlation_id: str,
         authorization: str,
-    ) -> HubLifecycleStatus:
-        """Withdraw a device's grant on behalf of the owner who names it.
-
-        `owner_scope` has no default here either. The Hub refuses a revocation
-        naming an owner that does not hold the device, and this call site is
-        where Admin has to decide what it is claiming.
-        """
+    ) -> HubClaimRevocationResult:
+        """Submit one generation-bound Claim command."""
 
         base_url = await self._base_url()
+        device_id = device_ref.device_instance_id
         response = await _request(
             "hub",
             self._client,
@@ -702,17 +701,79 @@ class HubManagementClient:
             timeout=self._timeout,
             headers=self._headers(authorization),
             json={
-                "operation": "device.revocation",
-                "request_id": request_id,
+                "operation": "device.claim-revocation",
+                "command_id": command_id,
+                "correlation_id": correlation_id,
+                "device_ref": device_ref.model_dump(mode="json"),
                 "reason": reason,
-                **({"owner_scope": owner_scope} if owner_scope else {}),
             },
         )
-        result = _parse("hub", response, HubLifecycleStatus)
-        if result.device_id != device_id or result.lifecycle_state != "revoked":
+        result = _parse("hub", response, HubClaimRevocationResult)
+        if (
+            result.command_id != command_id
+            or result.device_ref != device_ref
+            or result.lifecycle_state != "revoked"
+        ):
             raise _contract_violation(
                 "hub",
-                "Hub revocation response did not confirm the requested device",
+                "Hub revocation response did not confirm the requested Claim",
+            )
+        return result
+
+    async def get_device(
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        authorization: str,
+    ) -> HubDevice:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/device-management/v1/owners/{quote(owner_id, safe='')}"
+            f"/devices/{quote(device_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=None,
+        )
+        result = _parse("hub", response, HubDevice)
+        if (
+            result.device_id != device_id
+            or result.owner_scope != owner_id
+            or result.device_ref is None
+            or result.device_ref.device_instance_id != device_id
+            or result.device_ref.owner_domain_id != owner_id
+        ):
+            raise _contract_violation(
+                "hub", "Hub exact query crossed its requested Claim scope"
+            )
+        return result
+
+    async def get_device_control_operation(
+        self,
+        *,
+        device_ref: DeviceRef,
+        event_id: str,
+        authorization: str,
+    ) -> HubDeviceControlOperationStatus:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/device-management/v1/owners/"
+            f"{quote(device_ref.owner_domain_id, safe='')}/devices/"
+            f"{quote(device_ref.device_instance_id, safe='')}/control-operations/"
+            f"{quote(event_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+        )
+        result = _parse("hub", response, HubDeviceControlOperationStatus)
+        if result.event_id != event_id or result.device_ref != device_ref:
+            raise _contract_violation(
+                "hub", "Device Control status crossed its requested event/Claim scope"
             )
         return result
 
@@ -954,40 +1015,6 @@ class KernelMountClient:
             raise _contract_violation(
                 "kernel",
                 "Kernel Attachment response did not confirm the requested identities",
-            )
-        return result
-
-    async def unmount(
-        self,
-        *,
-        owner_id: str,
-        device_id: str,
-        request_id: str,
-        expected_revision: int,
-    ) -> KernelMutationResult:
-        response = await _request(
-            "kernel",
-            self._client,
-            "POST",
-            f"{await self._base_url()}/api/kernel/v1/device-mounts/devices/"
-            f"{quote(device_id, safe='')}/unmount",
-            timeout=self._timeout,
-            headers=self._headers(owner_id),
-            json={
-                "operation": "device.unmount",
-                "request_id": request_id,
-                "expected_revision": expected_revision,
-            },
-        )
-        result = _parse("kernel", response, KernelMutationResult)
-        if (
-            result.mount.device_id != device_id
-            or result.mount.owner_id != owner_id
-            or result.mount.active
-        ):
-            raise _contract_violation(
-                "kernel",
-                "Kernel Unmount response did not confirm the device is no longer mounted",
             )
         return result
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
+from datetime import UTC, datetime
 from uuid import UUID, uuid5
 
 import httpx
@@ -31,6 +34,7 @@ from .contracts import (
     KernelMount,
     KernelMountPage,
     OwnerInventory,
+    RemovalCondition,
     SourceStatus,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
@@ -39,6 +43,7 @@ from .contracts import (
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
 from .hub_credentials import HubAdminCredentialIssuer
+from ...lifecycle_workflow.protocol import RemovalOwnerAuthorizationContext
 
 
 #: The Hub's scope for devices nobody holds yet. A device enrols into it and
@@ -47,7 +52,6 @@ from .hub_credentials import HubAdminCredentialIssuer
 UNCLAIMED_SCOPE = "unclaimed"
 
 _CONTROLLER_ADMISSION_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
-_CONTROLLER_REMOVAL_NAMESPACE = UUID("6c0a1f42-9b3e-5d77-8a41-0d2b6f9e5c18")
 
 
 def _child_request_id(workflow_id: str, suffix: str) -> str:
@@ -79,18 +83,6 @@ def _controller_admission_workflow_id(
     return f"device-admission-{operation.hex}"
 
 
-def _controller_removal_workflow_id(payload: ControllerDeviceRemovalRequest) -> str:
-    """Same naming rule as admission; the Hub fingerprints a revocation too."""
-
-    operation = uuid5(
-        _CONTROLLER_REMOVAL_NAMESPACE,
-        "eidolon-controller-device-removal-v1:"
-        f"{payload.device_id}:{payload.request_id}:"
-        f"{payload.owner_id}:{payload.controller_id}:{payload.reason}",
-    )
-    return f"device-removal-{operation.hex}"
-
-
 class ControlPlaneService:
     def __init__(
         self,
@@ -102,6 +94,8 @@ class ControlPlaneService:
         kernel: KernelMountClient,
         memory: MemoryRecollectionsClient,
         hub_credentials: HubAdminCredentialIssuer | None = None,
+        removal_intents=None,
+        removal_observation_timeout_seconds: float = 0.0,
     ) -> None:
         self.directory = directory
         self.data = data
@@ -110,6 +104,12 @@ class ControlPlaneService:
         self.kernel = kernel
         self.memory = memory
         self.hub_credentials = hub_credentials
+        if removal_intents is None:
+            from .removal_intents import InMemoryRemovalIntentStore
+
+            removal_intents = InMemoryRemovalIntentStore()
+        self.removal_intents = removal_intents
+        self.removal_observation_timeout_seconds = removal_observation_timeout_seconds
 
     @classmethod
     def build(
@@ -181,6 +181,9 @@ class ControlPlaneService:
 
     async def close(self) -> None:
         await self.directory.close()
+        close = getattr(self.removal_intents, "close", None)
+        if close is not None:
+            close()
 
     async def admit_device(
         self,
@@ -276,15 +279,10 @@ class ControlPlaneService:
         self,
         *,
         payload: ControllerDeviceRemovalRequest,
+        workload_principal_id: str,
+        authorization_context: RemovalOwnerAuthorizationContext,
     ) -> DeviceRemovalResult:
-        """Withdraw a device's grant, then drop its mount.
-
-        The order is the one that holds under interruption: once the Hub has
-        revoked, the device can no longer obtain channel credentials, so a
-        Kernel step that fails leaves something inert and listed rather than
-        something invisible and live. Same forward-only, deterministic child
-        request IDs as admission — retrying resumes, it does not duplicate.
-        """
+        """Create/resume a durable intent and observe independent authorities."""
 
         if self.hub_credentials is None:
             raise AuthorityFailure(
@@ -293,25 +291,84 @@ class ControlPlaneService:
                 "Hub Owner credential issuer is unavailable",
                 503,
             )
-        workflow_id = _controller_removal_workflow_id(payload)
-        revoke_request_id = _child_request_id(workflow_id, "hub-revoke")
-        unmount_request_id = _child_request_id(workflow_id, "kernel-unmount")
-        authorization = self.hub_credentials.issue(controller_id=payload.controller_id)
-        try:
-            hub = await self.hub.revoke(
-                device_id=payload.device_id,
-                # The Owner this removal is carried out for. The Hub checks it
-                # against its own record, so a request that arrived here with
-                # mismatched parts is refused at the authority as well.
-                owner_scope=payload.owner_id,
-                reason=payload.reason,
-                request_id=revoke_request_id,
-                authorization=authorization,
+        discovery_authorization = self.hub_credentials.issue_removal_discovery(
+            controller_id=payload.controller_id,
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+        )
+        device = await self.hub.get_device(
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+            authorization=discovery_authorization,
+        )
+        if device.device_ref is None:
+            raise AuthorityFailure(
+                "hub", "conflict", "Hub device has no active Claim reference", 409
             )
+        if device.device_ref != authorization_context.target_device_ref:
+            raise AuthorityFailure(
+                "hub",
+                "conflict",
+                "Hub Claim reference changed after Local authorization",
+                409,
+            )
+        authorization_context_json = json.dumps(
+            authorization_context.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        canonical_authorization_context = authorization_context_json.encode("utf-8")
+        authorization_context_sha256 = hashlib.sha256(
+            canonical_authorization_context
+        ).hexdigest()
+        now = datetime.now(UTC)
+        try:
+            intent = self.removal_intents.get_or_create(
+                ingress_request_id=payload.request_id,
+                owner_domain_id=payload.owner_id,
+                device_ref=device.device_ref,
+                actor_controller_id=payload.controller_id,
+                workload_principal_id=workload_principal_id,
+                controller_reset_epoch=authorization_context.reset_epoch,
+                authorization_context_json=authorization_context_json,
+                authorization_context_sha256=authorization_context_sha256,
+                reason=payload.reason,
+                now=now,
+            )
+        except ValueError as exc:
+            raise AuthorityFailure("hub", "conflict", str(exc), 409) from exc
+        if intent.intent_id != authorization_context.intent_id:
+            raise AuthorityFailure(
+                "hub", "conflict", "Removal intent identity changed", 409
+            )
+
+        authorization = self.hub_credentials.issue_removal_intent(
+            controller_id=payload.controller_id,
+            intent_id=intent.intent_id,
+            device_ref=intent.device_ref,
+        )
+        hub = intent.hub_result
+        try:
+            if hub is None:
+                hub = await self.hub.revoke(
+                    device_ref=intent.device_ref,
+                    reason=intent.reason,
+                    command_id=intent.hub_command_id,
+                    correlation_id=intent.intent_id,
+                    authorization=authorization,
+                )
+                intent = self.removal_intents.mark_hub_committed(
+                    intent_id=intent.intent_id,
+                    result=hub,
+                    now=datetime.now(UTC),
+                )
         except AuthorityFailure as exc:
             return DeviceRemovalResult(
                 request_id=payload.request_id,
-                outcome="retry_required" if exc.retryable else "blocked",
+                intent_id=intent.intent_id,
+                device_ref=intent.device_ref,
+                outcome="accepted" if exc.retryable else "blocked",
                 completed_stage="received",
                 recovery=(
                     "retry-forward-same-request-id"
@@ -322,75 +379,153 @@ class ControlPlaneService:
                     WorkflowStep(
                         name="hub_revocation",
                         state="failed",
-                        request_id=revoke_request_id,
+                        request_id=intent.hub_command_id,
                         failure=exc.to_wire(),
                     ),
-                    WorkflowStep(name="kernel_unmount", state="not_attempted"),
+                ),
+                conditions=(
+                    RemovalCondition(
+                        name="platform_access_revoked",
+                        state="false",
+                        authority="hub",
+                        authority_ref=intent.hub_command_id,
+                        observed_at=datetime.now(UTC),
+                    ),
+                    RemovalCondition(
+                        name="mount_removed",
+                        state="unknown",
+                        authority="kernel",
+                        observed_at=datetime.now(UTC),
+                    ),
+                    RemovalCondition(
+                        name="channel_access_revoked",
+                        state="unknown",
+                        authority="device-control",
+                        observed_at=datetime.now(UTC),
+                    ),
+                    RemovalCondition(
+                        name="device_erase_acknowledged",
+                        state="unknown",
+                        authority="device-control",
+                        observed_at=datetime.now(UTC),
+                    ),
                 ),
             )
         steps = [
             WorkflowStep(
                 name="hub_revocation",
-                state="committed",
-                request_id=revoke_request_id,
+                state=hub.outcome,
+                request_id=intent.hub_command_id,
             )
         ]
-        mount = await self._owner_mount(owner_id=payload.owner_id, device_id=payload.device_id)
-        if mount is None:
-            # Nothing to drop: the device was never mounted, or a previous
-            # attempt already dropped it. Either way the end state is the one
-            # asked for.
-            steps.append(WorkflowStep(name="kernel_unmount", state="not_requested"))
-            return DeviceRemovalResult(
-                request_id=payload.request_id,
-                outcome="completed",
-                completed_stage="kernel_unmounted",
-                steps=tuple(steps),
-                hub=hub,
-            )
         try:
-            await self.kernel.unmount(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
-                request_id=unmount_request_id,
-                expected_revision=mount.revision,
+            mount = await self._wait_for_mount_removal(
+                owner_id=payload.owner_id, device_id=payload.device_id
             )
-        except AuthorityFailure as exc:
-            steps.append(
-                WorkflowStep(
-                    name="kernel_unmount",
-                    state="failed",
-                    request_id=unmount_request_id,
-                    revision=mount.revision,
-                    failure=exc.to_wire(),
-                )
-            )
+        except AuthorityFailure:
             return DeviceRemovalResult(
                 request_id=payload.request_id,
-                outcome="retry_required" if exc.retryable else "blocked",
-                completed_stage="hub_revoked",
-                recovery=(
-                    "retry-forward-same-request-id"
-                    if exc.retryable
-                    else "operator-action-required"
-                ),
+                intent_id=intent.intent_id,
+                device_ref=intent.device_ref,
+                outcome="accepted",
+                completed_stage="claim_revoked",
+                recovery="retry-forward-same-request-id",
                 steps=tuple(steps),
                 hub=hub,
+                conditions=self._removal_conditions(
+                    intent=intent, mount_state="unknown"
+                ),
             )
-        steps.append(
-            WorkflowStep(
-                name="kernel_unmount",
-                state="committed",
-                request_id=unmount_request_id,
-                revision=mount.revision,
-            )
+        removed = mount is None or not mount.active
+        channel_state, channel_ref = await self._observe_channel_revocation(
+            intent=intent,
+            authorization=authorization,
         )
+        platform_converged = removed and channel_state == "true"
         return DeviceRemovalResult(
             request_id=payload.request_id,
-            outcome="completed",
-            completed_stage="kernel_unmounted",
+            intent_id=intent.intent_id,
+            device_ref=intent.device_ref,
+            outcome="completed" if platform_converged else "accepted",
+            completed_stage="converged" if platform_converged else "claim_revoked",
+            recovery=(
+                "none" if platform_converged else "retry-forward-same-request-id"
+            ),
             steps=tuple(steps),
             hub=hub,
+            conditions=self._removal_conditions(
+                intent=intent,
+                mount_state="true" if removed else "false",
+                channel_state=channel_state,
+                channel_ref=channel_ref,
+            ),
+        )
+
+    async def _observe_channel_revocation(self, *, intent, authorization: str):
+        event_id = intent.hub_result.event_id
+        if event_id is None:
+            return "unknown", None
+        try:
+            operation = await self.hub.get_device_control_operation(
+                device_ref=intent.device_ref,
+                event_id=event_id,
+                authorization=authorization,
+            )
+        except AuthorityFailure:
+            return "unknown", event_id
+        return (
+            "true" if operation.state == "delivered" else "false",
+            operation.operation_id,
+        )
+
+    async def _wait_for_mount_removal(self, *, owner_id: str, device_id: str):
+        deadline = time.monotonic() + self.removal_observation_timeout_seconds
+        while True:
+            mount = await self._owner_mount(
+                owner_id=owner_id, device_id=device_id, active_only=False
+            )
+            if mount is None or not mount.active or time.monotonic() >= deadline:
+                return mount
+            await asyncio.sleep(0.1)
+
+    @staticmethod
+    def _removal_conditions(
+        *,
+        intent,
+        mount_state: str,
+        channel_state: str = "unknown",
+        channel_ref: str | None = None,
+    ):
+        observed_at = datetime.now(UTC)
+        return (
+            RemovalCondition(
+                name="platform_access_revoked",
+                state="true",
+                authority="hub",
+                authority_ref=(
+                    intent.hub_result.event_id or intent.hub_result.command_id
+                ),
+                observed_at=observed_at,
+            ),
+            RemovalCondition(
+                name="mount_removed",
+                state=mount_state,
+                authority="kernel",
+                observed_at=observed_at,
+            ),
+            RemovalCondition(
+                name="channel_access_revoked",
+                state=channel_state,
+                authority="device-control",
+                authority_ref=channel_ref,
+                observed_at=observed_at,
+            ),
+            RemovalCondition(
+                name="device_erase_acknowledged",
+                state="unknown",
+                authority="device-control",
+                observed_at=observed_at,
+            ),
         )
 
     async def _owner_mount(self, *, owner_id: str, device_id: str, active_only: bool = True):

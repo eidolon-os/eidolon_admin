@@ -101,6 +101,10 @@ def test_local_api_and_admin_have_distinct_entrypoints() -> None:
     )
     assert 'eidolon-local-api = "eidolon_admin_server.local_api.cli:main"' in pyproject
     assert 'eidolon-admin = "eidolon_admin_server.app.cli:main"' in pyproject
+    assert (
+        'eidolon-lifecycle-workflow = '
+        '"eidolon_admin_server.lifecycle_workflow.daemon:main"' in pyproject
+    )
 
 
 def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
@@ -108,11 +112,14 @@ def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
 
     assert "User=eidolon\n" in unit
     assert "Group=eidolon\n" in unit
+    assert "SupplementaryGroups=eidolon-lifecycle-client\n" in unit
     assert "EIDOLON_ADMIN_API_HOST=127.0.0.1\n" in unit
     assert "EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon/admin\n" in unit
     assert "EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS=/run/eidolon/system.sock\n" in unit
     assert "StateDirectory=eidolon/admin\n" in unit
-    assert "StateDirectoryMode=0750\n" in unit
+    assert "StateDirectoryMode=0700\n" in unit
+    assert "RuntimeDirectory=eidolon-removal-capability\n" in unit
+    assert "RuntimeDirectoryMode=2750\n" in unit
     assert "SupplementaryGroups=eidolon-bootstrap" not in unit
     assert "CapabilityBoundingSet=\n" in unit
     assert (
@@ -127,12 +134,35 @@ def test_local_api_socket_access_is_scoped_to_its_systemd_process() -> None:
     ).read_text()
     deployment_notes = (_PROJECT_ROOT / "deploy" / "systemd" / "README.md").read_text()
 
-    assert "User=eidolon\n" in unit
-    assert "SupplementaryGroups=eidolon-bootstrap\n" in unit
+    assert "User=eidolon-local-api\n" in unit
+    assert "Group=eidolon-local-api\n" in unit
+    assert "SupplementaryGroups=eidolon-bootstrap eidolon-lifecycle-client\n" in unit
+    assert "EIDOLON_LOCAL_API_LIFECYCLE_WORKFLOW_SOCKET=" in unit
     assert "Environment=EIDOLON_LOCAL_API_HOST=0.0.0.0\n" in unit
     assert "ReadOnlyPaths=/var/lib/eidolon-bootstrap/commissioning_tls.pem\n" in unit
     assert "no persistent membership" in deployment_notes
     assert "cannot list" in deployment_notes
+
+
+def test_lifecycle_workflow_is_a_distinct_hardened_principal() -> None:
+    unit = (
+        _PROJECT_ROOT
+        / "deploy"
+        / "systemd"
+        / "eidolon-lifecycle-workflow.service"
+    ).read_text()
+
+    assert "Type=notify\n" in unit
+    assert "User=eidolon-lifecycle\n" in unit
+    assert "Group=eidolon-lifecycle\n" in unit
+    assert "SupplementaryGroups=eidolon-lifecycle-client eidolon\n" in unit
+    assert "RuntimeDirectory=eidolon-lifecycle\n" in unit
+    assert "RuntimeDirectoryMode=2750\n" in unit
+    assert "StateDirectory=eidolon-lifecycle\n" in unit
+    assert "StateDirectoryMode=0700\n" in unit
+    assert "UMask=0077\n" in unit
+    assert "EIDOLON_LIFECYCLE_ALLOWED_LOCAL_API_USER=eidolon-local-api" in unit
+    assert "EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN" not in unit
 
 
 def test_local_api_is_discoverable_only_as_a_pinned_https_candidate() -> None:

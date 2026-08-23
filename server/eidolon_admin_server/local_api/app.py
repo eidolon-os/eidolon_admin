@@ -190,6 +190,7 @@ def create_app(
         base_url=resolved.admin_base_url,
         service_token=resolved.admin_service_token,
         timeout_seconds=resolved.admin_timeout_seconds,
+        workflow_socket_path=resolved.lifecycle_workflow_socket,
     )
     owns_device_admission_client = device_admission_client is None
     host_services = host_services_client or AdminHostServicesClient(
@@ -883,7 +884,7 @@ def create_app(
     async def _owned_device(
         device_id: str,
         authorization: str | None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, Any, Any]:
         """This session's Owner and Controller, having proved the device is theirs.
 
         The device-scoped twin of _owned_companion, and added for the same
@@ -900,20 +901,39 @@ def create_app(
         again.
         """
 
-        principal, _session = await authenticated_controller(authorization)
+        principal, session = await authenticated_controller(authorization)
         owner_id, controller_id = _owner_principal(principal)
         try:
             inventory = await devices.list_inventory(owner_id, controller_id)
         except DeviceInventoryError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
-        if not any(mount.device_id == device_id for mount in inventory.mounts):
-            # Absent rather than forbidden: whose devices exist is not
-            # something a stranger's session gets to learn.
+        device = next(
+            (candidate for candidate in inventory.devices if candidate.device_id == device_id),
+            None,
+        )
+        if device is None:
             raise HTTPException(
-                status.HTTP_404_NOT_FOUND,
-                "Device does not exist",
+                (
+                    status.HTTP_503_SERVICE_UNAVAILABLE
+                    if inventory.degraded
+                    else status.HTTP_404_NOT_FOUND
+                ),
+                (
+                    "Device authority is unavailable"
+                    if inventory.degraded
+                    else "Device does not exist"
+                ),
             )
-        return owner_id, controller_id
+        if (
+            device.device_ref is None
+            or device.device_ref.owner_domain_id != owner_id
+            or device.device_ref.device_instance_id != device_id
+        ):
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Device authority did not provide an exact Claim reference",
+            )
+        return owner_id, controller_id, session, device.device_ref
 
     @app.patch(
         "/api/local/v1/devices/{device_id}",
@@ -934,7 +954,9 @@ def create_app(
         record its Owner decides.
         """
 
-        owner_id, controller_id = await _owned_device(device_id, authorization)
+        owner_id, controller_id, _session, _device_ref = await _owned_device(
+            device_id, authorization
+        )
         try:
             renamed = await devices.rename(
                 owner_id,
@@ -986,7 +1008,9 @@ def create_app(
         has no way back until its grant here is withdrawn.
         """
 
-        owner_id, controller_id = await _owned_device(device_id, authorization)
+        owner_id, controller_id, session, device_ref = await _owned_device(
+            device_id, authorization
+        )
         try:
             result = await device_admission.remove(
                 payload=payload.to_admin(
@@ -994,6 +1018,9 @@ def create_app(
                     owner_id=owner_id,
                     controller_id=controller_id,
                 ),
+                controller_reset_epoch=session.reset_epoch,
+                authorization_expires_at=session.expires_at,
+                target_device_ref=device_ref,
             )
             return device_removal_progress(
                 owner_id=owner_id,

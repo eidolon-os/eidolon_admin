@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import pwd
 
 import logging
 
@@ -32,6 +33,7 @@ from .tools.esp32 import Esp32ToolService, router as esp32_tools_router
 from .tools.mobile import MobileToolService, router as mobile_tools_router
 from .tools.mobile.service import DEFAULT_CLIENT_ROOT as MOBILE_CLIENT_ROOT
 from .workstation import esp32_capability, mobile_capability
+from ..lifecycle_workflow.capability import RemovalCapabilityBroker
 
 
 def create_app(
@@ -43,9 +45,27 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        broker = None
         try:
+            if settings.removal_capability_socket is not None:
+                try:
+                    workflow_uid = pwd.getpwnam(
+                        settings.removal_capability_workflow_user
+                    ).pw_uid
+                except KeyError as exc:
+                    raise RuntimeError(
+                        "Lifecycle Workflow service account is unavailable"
+                    ) from exc
+                broker = RemovalCapabilityBroker(
+                    socket_path=settings.removal_capability_socket,
+                    allowed_workflow_uid=workflow_uid,
+                    service=app.state.control_plane,
+                )
+                await broker.start()
             yield
         finally:
+            if broker is not None:
+                await broker.close()
             await app.state.control_plane.close()
             await app.state.host_services.close()
             await app.state.http_client.aclose()

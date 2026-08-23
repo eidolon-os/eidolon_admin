@@ -24,12 +24,15 @@ from eidolon_sdk.device_foundation.v1 import (
 from eidolon_admin_server.app.control_plane.contracts import (
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
+    DeviceRef,
     DeviceAdmissionResult,
     DeviceRemovalResult,
     HubDevicePage,
     HubLifecycleStatus,
+    HubClaimRevocationResult,
     KernelMount,
     OwnerInventory,
+    RemovalCondition,
     WorkflowStep,
 )
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
@@ -163,6 +166,13 @@ def _result(*, owner_id: str = "owner-1") -> DeviceAdmissionResult:
         operation="kernel.device-mount",
         device_id="device-authoritative",
         owner_id=owner_id,
+        device_ref=DeviceRef(
+            device_instance_id="device-authoritative",
+            owner_domain_id=owner_id,
+            claim_generation=1,
+            trust_epoch=1,
+            accepted_manifest_digest="sha256:" + "a" * 64,
+        ),
         attached_companion_id="companion-1",
         revision=2,
         created_at=now,
@@ -193,19 +203,59 @@ def _result(*, owner_id: str = "owner-1") -> DeviceAdmissionResult:
 
 
 def _removal(*, owner_id: str = "owner-1") -> DeviceRemovalResult:
+    now = datetime.now(UTC)
+    ref = DeviceRef(
+        device_instance_id="device-authoritative",
+        owner_domain_id=owner_id,
+        claim_generation=1,
+        trust_epoch=1,
+        accepted_manifest_digest="sha256:" + "a" * 64,
+    )
     return DeviceRemovalResult(
         request_id="device-removal-1",
+        intent_id="removal-intent-1",
+        device_ref=ref,
         outcome="completed",
-        completed_stage="kernel_unmounted",
+        completed_stage="converged",
         steps=(
             WorkflowStep(name="hub_revocation", state="committed"),
-            WorkflowStep(name="kernel_unmount", state="committed", revision=2),
         ),
-        hub=HubLifecycleStatus(
-            operation="device.lifecycle-status",
-            device_id="device-authoritative",
-            owner_id=owner_id,
+        hub=HubClaimRevocationResult(
+            operation="device.claim-revocation-result",
+            command_id="revoke-claim-1",
+            outcome="committed",
+            device_ref=ref,
+            aggregate_revision=3,
+            occurred_at=now,
+            event_id="claim-event-1",
             lifecycle_state="revoked",
+        ),
+        conditions=(
+            RemovalCondition(
+                name="platform_access_revoked",
+                state="true",
+                authority="hub",
+                authority_ref="claim-event-1",
+                observed_at=now,
+            ),
+            RemovalCondition(
+                name="mount_removed",
+                state="true",
+                authority="kernel",
+                observed_at=now,
+            ),
+            RemovalCondition(
+                name="channel_access_revoked",
+                state="true",
+                authority="device-control",
+                observed_at=now,
+            ),
+            RemovalCondition(
+                name="device_erase_acknowledged",
+                state="unknown",
+                authority="device-control",
+                observed_at=now,
+            ),
         ),
     )
 
@@ -402,12 +452,46 @@ class _OwnedDevicesPort:
                 "degraded": False,
                 "hub": {"state": "ok", "latency_ms": 1.0},
                 "kernel": {"state": "ok", "latency_ms": 1.0},
-                "devices": [],
+                "devices": [
+                    {
+                        "operation": "device.directory-entry",
+                        "device_id": self.device_id,
+                        "owner_scope": owner_id,
+                        "display_name": "Device",
+                        "device_kind": "generic",
+                        "manifest": {
+                            "schema_version": 1,
+                            "title": "Device",
+                            "properties": [],
+                            "actions": [],
+                            "events": [],
+                            "media": [],
+                        },
+                        "manifest_revision": "sha256:" + "a" * 64,
+                        "lifecycle_state": "approved",
+                        "enrolled_at": "2026-08-09T08:00:00Z",
+                        "updated_at": "2026-08-09T08:00:00Z",
+                        "device_ref": {
+                            "device_instance_id": self.device_id,
+                            "owner_domain_id": owner_id,
+                            "claim_generation": 1,
+                            "trust_epoch": 1,
+                            "accepted_manifest_digest": "sha256:" + "a" * 64,
+                        },
+                    }
+                ],
                 "mounts": [
                     {
                         "operation": "kernel.device-mount",
                         "device_id": self.device_id,
                         "owner_id": owner_id,
+                        "device_ref": {
+                            "device_instance_id": self.device_id,
+                            "owner_domain_id": owner_id,
+                            "claim_generation": 1,
+                            "trust_epoch": 1,
+                            "accepted_manifest_digest": "sha256:" + "a" * 64,
+                        },
                         "attached_companion_id": None,
                         "revision": 1,
                         "created_at": "2026-08-09T08:00:00Z",
@@ -432,7 +516,18 @@ class _AdmissionPort:
         self.payload = payload
         return _result(owner_id=payload.owner_id)
 
-    async def remove(self, *, payload: ControllerDeviceRemovalRequest):
+    async def remove(
+        self,
+        *,
+        payload: ControllerDeviceRemovalRequest,
+        controller_reset_epoch: int,
+        authorization_expires_at: datetime,
+        target_device_ref: DeviceRef,
+    ):
+        assert controller_reset_epoch == 0
+        assert authorization_expires_at.tzinfo is not None
+        assert target_device_ref.device_instance_id == payload.device_id
+        assert target_device_ref.owner_domain_id == payload.owner_id
         self.removal = payload
         return _removal(owner_id=payload.owner_id)
 
@@ -663,18 +758,8 @@ async def test_only_a_graded_reason_leaves_the_host_tagged_for_a_screen(
 
 @pytest.mark.asyncio
 async def test_removal_forwards_the_exact_controller_contract() -> None:
-    observed: dict = {}
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        observed.update(json.loads(request.content))
-        assert request.method == "PUT"
-        assert request.url.raw_path == (
-            b"/api/control-plane/v1/local-device-removals/device-authoritative"
-        )
-        assert request.headers["authorization"] == "Bearer local-service-token"
-        return httpx.Response(200, json=_removal().model_dump(mode="json"))
-
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    observed = {}
+    http_client = httpx.AsyncClient()
     subject = AdminDeviceAdmissionClient(
         base_url="http://127.0.0.1:9000",
         service_token="local-service-token",
@@ -688,14 +773,45 @@ async def test_removal_forwards_the_exact_controller_contract() -> None:
         controller_id=_CONTROLLER_ID,
         device_id="device-authoritative",
     )
+
+    async def call_workflow(call):
+        observed.update(call.model_dump(mode="json"))
+        from eidolon_admin_server.lifecycle_workflow.protocol import (
+            LifecycleWorkflowReply,
+        )
+
+        return LifecycleWorkflowReply(result=_removal())
+
+    subject._remove_over_workflow_socket = call_workflow
     try:
-        result = await subject.remove(payload=payload)
+        result = await subject.remove(
+            payload=payload,
+            controller_reset_epoch=7,
+            authorization_expires_at=datetime.now(UTC) + timedelta(minutes=1),
+            target_device_ref=DeviceRef(
+                device_instance_id=payload.device_id,
+                owner_domain_id=payload.owner_id,
+                claim_generation=3,
+                trust_epoch=4,
+                accepted_manifest_digest="sha256:" + "a" * 64,
+            ),
+        )
     finally:
         await http_client.aclose()
 
     assert result.hub is not None
     assert result.hub.lifecycle_state == "revoked"
-    assert observed["reason"] == "owner-removed"
+    assert observed["payload"]["reason"] == "owner-removed"
+    assert observed["authorization_context"]["reset_epoch"] == 7
+    assert observed["authorization_context"]["issuer_workload_principal_id"] == (
+        "eidolon-local-api"
+    )
+    assert observed["authorization_context"]["owner_authorization_context"][
+        "target_device_ref"
+    ][
+        "claim_generation"
+    ] == 3
+    assert "Authorization" not in observed
 
 
 def test_a_removal_that_only_revoked_is_not_reported_as_removed() -> None:
@@ -704,18 +820,49 @@ def test_a_removal_that_only_revoked_is_not_reported_as_removed() -> None:
     # is supposed to be gone.
     partial = DeviceRemovalResult(
         request_id="device-removal-1",
-        outcome="retry_required",
-        completed_stage="hub_revoked",
+        intent_id="removal-intent-1",
+        device_ref=_removal().device_ref,
+        outcome="accepted",
+        completed_stage="claim_revoked",
         recovery="retry-forward-same-request-id",
         steps=(
             WorkflowStep(name="hub_revocation", state="committed"),
-            WorkflowStep(name="kernel_unmount", state="failed"),
         ),
-        hub=HubLifecycleStatus(
-            operation="device.lifecycle-status",
-            device_id="device-authoritative",
-            owner_id="owner-1",
+        hub=HubClaimRevocationResult(
+            operation="device.claim-revocation-result",
+            command_id="revoke-claim-1",
+            outcome="committed",
+            device_ref=_removal().device_ref,
+            aggregate_revision=3,
+            occurred_at=datetime.now(UTC),
+            event_id="claim-event-1",
             lifecycle_state="revoked",
+        ),
+        conditions=(
+            RemovalCondition(
+                name="platform_access_revoked",
+                state="true",
+                authority="hub",
+                observed_at=datetime.now(UTC),
+            ),
+            RemovalCondition(
+                name="mount_removed",
+                state="false",
+                authority="kernel",
+                observed_at=datetime.now(UTC),
+            ),
+            RemovalCondition(
+                name="channel_access_revoked",
+                state="unknown",
+                authority="device-control",
+                observed_at=datetime.now(UTC),
+            ),
+            RemovalCondition(
+                name="device_erase_acknowledged",
+                state="unknown",
+                authority="device-control",
+                observed_at=datetime.now(UTC),
+            ),
         ),
     )
 
@@ -729,7 +876,11 @@ def test_a_removal_that_only_revoked_is_not_reported_as_removed() -> None:
     # is the unmount. One outcome says "ask again", one detail says how far it
     # got, and the screen no longer has to infer that from three fields.
     assert progress.outcome == "unfinished"
-    assert progress.stopped_after == "hub-revoked"
+    assert next(
+        condition
+        for condition in progress.conditions
+        if condition.name == "platform_access_revoked"
+    ).state == "true"
 
 
 @pytest.mark.asyncio

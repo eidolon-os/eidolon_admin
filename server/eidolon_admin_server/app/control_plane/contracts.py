@@ -6,6 +6,10 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from eidolon_sdk.device_foundation.v1 import (
+    DeviceRef,
+    RevokeClaimResult as HubClaimRevocationResult,
+)
 
 
 class StrictModel(BaseModel):
@@ -174,6 +178,7 @@ class HubDevice(StrictModel):
     lifecycle_state: Literal["pending-approval", "approved", "revoked"]
     enrolled_at: datetime
     updated_at: datetime
+    device_ref: DeviceRef | None = None
 
 
 class HubDevicePage(StrictModel):
@@ -238,10 +243,24 @@ class HubLifecycleStatus(StrictModel):
     lifecycle_state: Literal["pending-approval", "approved", "revoked"]
 
 
+class HubDeviceControlOperationStatus(StrictModel):
+    operation: Literal["device-control.operation-status"]
+    event_id: str = Field(min_length=3, max_length=128)
+    operation_id: str = Field(min_length=3, max_length=255)
+    operation_type: Literal["channel.device-access.revoke"]
+    device_ref: DeviceRef
+    state: Literal["pending", "delivered"]
+    attempt_count: int = Field(ge=0)
+    next_attempt_at: datetime
+    delivered_at: datetime | None = None
+    last_error: str = Field(default="", max_length=512)
+
+
 class KernelMount(StrictModel):
     operation: Literal["kernel.device-mount"]
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
+    device_ref: DeviceRef
     attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     revision: int = Field(ge=1)
     created_at: datetime
@@ -340,7 +359,6 @@ class WorkflowStep(StrictModel):
         "kernel_mount",
         "companion_attachment",
         "hub_revocation",
-        "kernel_unmount",
     ]
     state: Literal["committed", "replayed", "failed", "not_requested", "not_attempted"]
     request_id: str | None = None
@@ -368,24 +386,33 @@ class DeviceAdmissionResult(StrictModel):
 
 
 class DeviceRemovalResult(StrictModel):
-    """What removing a device actually accomplished, stage by stage.
-
-    Removal is the reverse of admission and just as distributed: the grant is
-    withdrawn at the Hub, then the mount is dropped at the Kernel. The Hub step
-    is the one that matters — after it the device cannot obtain credentials —
-    so a Kernel step that fails leaves a device that is off but still listed,
-    and says so rather than reporting success.
-    """
+    """A durable intent result plus observations from independent authorities."""
 
     operation: Literal["admin.device-removal-workflow"] = "admin.device-removal-workflow"
     request_id: str
-    outcome: Literal["completed", "retry_required", "blocked"]
-    completed_stage: Literal["received", "hub_revoked", "kernel_unmounted"]
+    intent_id: str = Field(min_length=1, max_length=128)
+    device_ref: DeviceRef
+    outcome: Literal["completed", "accepted", "blocked"]
+    completed_stage: Literal["received", "claim_revoked", "converged"]
     distributed_atomic: Literal[False] = False
     compensation: Literal["none-safe-intermediate"] = "none-safe-intermediate"
     recovery: Literal["none", "retry-forward-same-request-id", "operator-action-required"] = "none"
     steps: tuple[WorkflowStep, ...]
-    hub: HubLifecycleStatus | None = None
+    hub: HubClaimRevocationResult | None = None
+    conditions: tuple["RemovalCondition", ...] = ()
+
+
+class RemovalCondition(StrictModel):
+    name: Literal[
+        "platform_access_revoked",
+        "mount_removed",
+        "channel_access_revoked",
+        "device_erase_acknowledged",
+    ]
+    state: Literal["true", "false", "unknown"]
+    authority: Literal["hub", "kernel", "device-control"]
+    authority_ref: str | None = Field(default=None, max_length=255)
+    observed_at: datetime
 
 
 class SourceStatus(StrictModel):

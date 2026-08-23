@@ -24,6 +24,13 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "operation": "kernel.device-mount",
                     "device_id": "device-ready",
                     "owner_id": owner_id,
+                    "device_ref": {
+                        "device_instance_id": "device-ready",
+                        "owner_domain_id": owner_id,
+                        "claim_generation": 1,
+                        "trust_epoch": 1,
+                        "accepted_manifest_digest": "sha256:" + "a" * 64,
+                    },
                     "attached_companion_id": "companion-1",
                     "revision": 3,
                     "created_at": now.isoformat(),
@@ -36,6 +43,13 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "operation": "kernel.device-mount",
                     "device_id": "device-mounted",
                     "owner_id": owner_id,
+                    "device_ref": {
+                        "device_instance_id": "device-mounted",
+                        "owner_domain_id": owner_id,
+                        "claim_generation": 1,
+                        "trust_epoch": 1,
+                        "accepted_manifest_digest": "sha256:" + "b" * 64,
+                    },
                     "attached_companion_id": None,
                     "revision": 1,
                     "created_at": now.isoformat(),
@@ -48,6 +62,13 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "operation": "kernel.device-mount",
                     "device_id": "device-removed",
                     "owner_id": owner_id,
+                    "device_ref": {
+                        "device_instance_id": "device-removed",
+                        "owner_domain_id": owner_id,
+                        "claim_generation": 1,
+                        "trust_epoch": 1,
+                        "accepted_manifest_digest": "sha256:" + "c" * 64,
+                    },
                     "attached_companion_id": None,
                     "revision": 5,
                     "created_at": now.isoformat(),
@@ -66,12 +87,12 @@ async def test_admin_device_client_uses_exact_owner_route_and_service_token() ->
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.raw_path == (
-            b"/api/control-plane/v1/owners/owner%2Fone/device-mounts"
+            b"/api/control-plane/v1/owners/owner%3Aone/device-mounts"
         )
         assert request.headers["authorization"] == "Bearer local-service-token"
         return httpx.Response(
             200,
-            json=_mount_page(owner_id="owner/one").model_dump(mode="json"),
+            json=_mount_page(owner_id="owner:one").model_dump(mode="json"),
         )
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -82,10 +103,10 @@ async def test_admin_device_client_uses_exact_owner_route_and_service_token() ->
         client=http_client,
     )
     try:
-        result = await subject.list_mounts("owner/one")
+        result = await subject.list_mounts("owner:one")
     finally:
         await http_client.aclose()
-    assert result.mounts[0].owner_id == "owner/one"
+    assert result.mounts[0].owner_id == "owner:one"
 
 
 def test_mobile_device_projection_is_sanitized_and_explicitly_mount_scoped() -> None:

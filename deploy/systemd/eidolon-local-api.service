@@ -1,14 +1,16 @@
 [Unit]
 Description=Eidolon OS authenticated local product API
 Wants=eidolon-bootstrapd.service
-After=local-fs.target eidolon-bootstrapd.service
+Requires=eidolon-lifecycle-workflow.service
+PartOf=eidolon-lifecycle-workflow.service
+After=local-fs.target eidolon-bootstrapd.service eidolon-lifecycle-workflow.service
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-User=eidolon
-Group=eidolon
-SupplementaryGroups=eidolon-bootstrap
+User=eidolon-local-api
+Group=eidolon-local-api
+SupplementaryGroups=eidolon-bootstrap eidolon-lifecycle-client
 EnvironmentFile=-/etc/eidolon/local-api.env
 EnvironmentFile=/etc/eidolon/host.env
 Environment=EIDOLON_BOOTSTRAP_MODE=production
@@ -18,6 +20,7 @@ Environment=EIDOLON_LOCAL_API_HOST=0.0.0.0
 Environment=EIDOLON_LOCAL_API_PORT=9002
 Environment=EIDOLON_LOCAL_API_SESSION_TTL_SECONDS=900
 Environment=EIDOLON_LOCAL_API_ADMIN_BASE_URL=http://127.0.0.1:9000
+Environment=EIDOLON_LOCAL_API_LIFECYCLE_WORKFLOW_SOCKET=/run/eidolon-lifecycle/workflow.sock
 ExecStart=/opt/eidolon/current/eidolon_admin/.venv/bin/eidolon-local-api
 Restart=always
 RestartSec=3s
@@ -33,6 +36,7 @@ ProtectControlGroups=yes
 LockPersonality=yes
 CapabilityBoundingSet=
 RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadOnlyPaths=/var/lib/eidolon-bootstrap/commissioning_tls.pem
 
 [Install]

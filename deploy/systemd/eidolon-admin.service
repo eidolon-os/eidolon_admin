@@ -8,6 +8,7 @@ StartLimitIntervalSec=0
 Type=simple
 User=eidolon
 Group=eidolon
+SupplementaryGroups=eidolon-lifecycle-client
 WorkingDirectory=/opt/eidolon/current/eidolon_admin
 EnvironmentFile=-/etc/eidolon/admin.env
 EnvironmentFile=/etc/eidolon/host.env
@@ -15,6 +16,8 @@ Environment=EIDOLON_WORKSPACE_ROOT=/opt/eidolon/current
 Environment=EIDOLON_ROOT=/opt/eidolon/current
 Environment=EIDOLON_ADMIN_SERVICES_FILE=/opt/eidolon/current/eidolon_admin/config/services.yaml
 Environment=EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon/admin
+Environment=EIDOLON_ADMIN_REMOVAL_CAPABILITY_SOCKET=/run/eidolon-removal-capability/broker.sock
+Environment=EIDOLON_ADMIN_REMOVAL_CAPABILITY_WORKFLOW_USER=eidolon-lifecycle
 Environment=EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS=/run/eidolon/system.sock
 Environment=EIDOLON_ADMIN_API_HOST=127.0.0.1
 Environment=EIDOLON_ADMIN_API_PORT=9000
@@ -24,7 +27,12 @@ RestartSec=3s
 KillSignal=SIGTERM
 TimeoutStopSec=20s
 StateDirectory=eidolon/admin
-StateDirectoryMode=0750
+StateDirectoryMode=0700
+RuntimeDirectory=eidolon-removal-capability
+RuntimeDirectoryMode=2750
+ExecStartPre=/usr/bin/chgrp eidolon-lifecycle-client /run/eidolon-removal-capability
+ExecStartPre=/usr/bin/chmod 2750 /run/eidolon-removal-capability
+UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

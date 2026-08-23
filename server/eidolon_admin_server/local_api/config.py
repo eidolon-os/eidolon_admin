@@ -38,6 +38,7 @@ class LocalApiSettings:
     admin_base_url: str = "http://127.0.0.1:9000"
     admin_service_token: str = ""
     admin_timeout_seconds: float = 5.0
+    lifecycle_workflow_socket: Path = Path("/run/eidolon-lifecycle/workflow.sock")
     device_onboarding_target: VerifiedOwnerDomainOnboardingTarget | None = None
 
 
@@ -100,8 +101,22 @@ def load_local_api_settings(
         admin_base_url=admin_base_url,
         admin_service_token=env.get("EIDOLON_LOCAL_API_ADMIN_SERVICE_TOKEN", ""),
         admin_timeout_seconds=admin_timeout,
+        lifecycle_workflow_socket=_absolute_path(
+            env.get(
+                "EIDOLON_LOCAL_API_LIFECYCLE_WORKFLOW_SOCKET",
+                "/run/eidolon-lifecycle/workflow.sock",
+            ),
+            name="EIDOLON_LOCAL_API_LIFECYCLE_WORKFLOW_SOCKET",
+        ),
         device_onboarding_target=target,
     )
+
+
+def _absolute_path(value: str, *, name: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"{name} must be absolute")
+    return path
 
 
 def _load_hub_onboarding_target(

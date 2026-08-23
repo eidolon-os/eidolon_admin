@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 
 import jwt
 import pytest
+from eidolon_sdk.device_foundation.v1.lifecycle import (
+    ActorRef,
+    OwnerAuthorizationContext,
+)
 
 from eidolon_admin_server.app.control_plane.contracts import (
     ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
+    DeviceRef,
+    HubClaimRevocationResult,
+    HubDeviceControlOperationStatus,
+    HubDevice,
     HubDevicePage,
     HubLifecycleStatus,
     KernelMount,
@@ -21,6 +29,10 @@ from eidolon_admin_server.app.control_plane.hub_credentials import (
     HubAdminCredentialIssuer,
 )
 from eidolon_admin_server.app.control_plane.service import ControlPlaneService
+from eidolon_admin_server.lifecycle_workflow.protocol import (
+    RemovalOwnerAuthorizationContext,
+    removal_intent_id,
+)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.unit]
 
@@ -33,6 +45,7 @@ class _Hub:
     def __init__(self) -> None:
         self.calls = []
         self.revoke_failure: AuthorityFailure | None = None
+        self.control_state = "delivered"
 
     async def approve(self, **kwargs) -> HubLifecycleStatus:
         self.calls.append(kwargs)
@@ -43,15 +56,33 @@ class _Hub:
             lifecycle_state="approved",
         )
 
-    async def revoke(self, **kwargs) -> HubLifecycleStatus:
+    async def get_device(self, **kwargs) -> HubDevice:
+        self.calls.append(kwargs)
+        return _hub_device(
+            device_id=kwargs["device_id"], owner_id=kwargs["owner_id"]
+        )
+
+    async def revoke(self, **kwargs) -> HubClaimRevocationResult:
         self.calls.append(kwargs)
         if self.revoke_failure:
             raise self.revoke_failure
-        return HubLifecycleStatus(
-            operation="device.lifecycle-status",
-            device_id=kwargs["device_id"],
-            owner_id="owner-1",
+        return HubClaimRevocationResult(
+            operation="device.claim-revocation-result",
+            command_id=kwargs["command_id"],
+            outcome="committed",
+            device_ref=kwargs["device_ref"],
+            aggregate_revision=3,
+            occurred_at=datetime.now(UTC),
+            event_id="claim-event-1",
             lifecycle_state="revoked",
+        )
+
+    async def get_device_control_operation(
+        self, **kwargs
+    ) -> HubDeviceControlOperationStatus:
+        self.calls.append(kwargs)
+        return _control_operation(
+            kwargs["device_ref"], kwargs["event_id"], state=self.control_state
         )
 
     async def list_devices(self, **kwargs) -> HubDevicePage:
@@ -79,6 +110,12 @@ class _LedgerHub:
         self.calls: list[dict] = []
         self._ledger: dict[str, tuple[str, str]] = {}
 
+    async def get_device(self, **kwargs) -> HubDevice:
+        self.calls.append(kwargs)
+        return _hub_device(
+            device_id=kwargs["device_id"], owner_id=kwargs["owner_id"]
+        )
+
     async def approve(self, **kwargs) -> HubLifecycleStatus:
         self.calls.append(kwargs)
         self._record(
@@ -95,21 +132,24 @@ class _LedgerHub:
             lifecycle_state="approved",
         )
 
-    async def revoke(self, **kwargs) -> HubLifecycleStatus:
+    async def revoke(self, **kwargs) -> HubClaimRevocationResult:
         self.calls.append(kwargs)
-        self._record(
-            operation="device.revoke",
-            device_id=kwargs["device_id"],
-            request_id=kwargs["request_id"],
-            values={"reason": kwargs["reason"]},
-            authorization=kwargs["authorization"],
-        )
-        return HubLifecycleStatus(
-            operation="device.lifecycle-status",
-            device_id=kwargs["device_id"],
-            owner_id="owner-1",
+        return HubClaimRevocationResult(
+            operation="device.claim-revocation-result",
+            command_id=kwargs["command_id"],
+            outcome="committed",
+            device_ref=kwargs["device_ref"],
+            aggregate_revision=3,
+            occurred_at=datetime.now(UTC),
+            event_id="claim-event-1",
             lifecycle_state="revoked",
         )
+
+    async def get_device_control_operation(
+        self, **kwargs
+    ) -> HubDeviceControlOperationStatus:
+        self.calls.append(kwargs)
+        return _control_operation(kwargs["device_ref"], kwargs["event_id"])
 
     def _record(
         self,
@@ -124,7 +164,7 @@ class _LedgerHub:
             authorization.removeprefix("Bearer "),
             _SECRET,
             algorithms=["HS256"],
-            audience="eidolon-hub",
+            audience="eidolon-admission",
         )
         document = json.dumps(
             {
@@ -222,6 +262,13 @@ def _mount(
         operation="kernel.device-mount",
         device_id=device_id,
         owner_id=owner_id,
+        device_ref=DeviceRef(
+            device_instance_id=device_id,
+            owner_domain_id=owner_id,
+            claim_generation=1,
+            trust_epoch=1,
+            accepted_manifest_digest="sha256:" + "a" * 64,
+        ),
         attached_companion_id=companion_id,
         revision=revision,
         created_at=now,
@@ -229,6 +276,54 @@ def _mount(
         request_id=request_id,
         fingerprint="sha256:" + "0" * 64,
         active=True,
+    )
+
+
+def _hub_device(*, device_id: str, owner_id: str) -> HubDevice:
+    return HubDevice.model_validate(
+        {
+            "operation": "device.directory-entry",
+            "device_id": device_id,
+            "owner_scope": owner_id,
+            "display_name": "Device",
+            "device_kind": "generic",
+            "manifest": {
+                "schema_version": 1,
+                "title": "Device",
+                "properties": [],
+                "actions": [],
+                "events": [],
+                "media": [],
+            },
+            "manifest_revision": "sha256:" + "a" * 64,
+            "lifecycle_state": "approved",
+            "enrolled_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+            "device_ref": {
+                "device_instance_id": device_id,
+                "owner_domain_id": owner_id,
+                "claim_generation": 1,
+                "trust_epoch": 1,
+                "accepted_manifest_digest": "sha256:" + "a" * 64,
+            },
+        }
+    )
+
+
+def _control_operation(
+    device_ref: DeviceRef, event_id: str, *, state: str = "delivered"
+) -> HubDeviceControlOperationStatus:
+    now = datetime.now(UTC)
+    return HubDeviceControlOperationStatus(
+        operation="device-control.operation-status",
+        event_id=event_id,
+        operation_id=f"channel-revoke:{event_id}",
+        operation_type="channel.device-access.revoke",
+        device_ref=device_ref,
+        state=state,
+        attempt_count=0,
+        next_attempt_at=now,
+        delivered_at=now if state == "delivered" else None,
     )
 
 
@@ -270,7 +365,9 @@ async def test_controller_admission_mints_admin_credential_and_binds_device() ->
     assert kernel.mount_calls[0]["device_id"] == "device-1"
     assert kernel.attach_calls[0]["device_id"] == "device-1"
     encoded = hub.calls[0]["authorization"].removeprefix("Bearer ")
-    claims = jwt.decode(encoded, _SECRET, algorithms=["HS256"], audience="eidolon-hub")
+    claims = jwt.decode(
+        encoded, _SECRET, algorithms=["HS256"], audience="eidolon-admission"
+    )
     assert "owner_id" not in claims
     assert claims["roles"] == ["hub-admin"]
     assert claims["sub"] == "eidolon-local-api/ectrl-0123456789abcdefabcd"
@@ -321,25 +418,24 @@ async def test_a_second_phone_can_claim_a_device_the_first_phone_already_claimed
 
 
 async def test_a_second_phone_can_remove_a_device_the_first_phone_removed() -> None:
-    # Same collision on the way out: App's removal request ID is stable per
-    # device too, and the Hub fingerprints a revocation by its caller.
+    # A new confirmation creates a new intent, while Hub still transitions the
+    # same Claim generation at most once.
     hub, kernel = _LedgerHub(), _Kernel()
     service = _service(hub, kernel)  # type: ignore[arg-type]
-    stable = "device-removal-device-1"
-
-    first = await service.remove_controller_device(
-        payload=_removal_request(request_id=stable)
+    first = await _remove(
+        service, _removal_request(request_id="device-removal-one")
     )
-    second = await service.remove_controller_device(
-        payload=_removal_request(
-            request_id=stable,
+    second = await _remove(
+        service,
+        _removal_request(
+            request_id="device-removal-two",
             controller_id="ectrl-fedcba98765432100000",
-        )
+        ),
     )
 
     assert first.outcome == "completed"
     assert second.outcome == "completed"
-    assert hub.calls[0]["request_id"] != hub.calls[1]["request_id"]
+    assert first.intent_id != second.intent_id
 
 
 async def test_controller_admission_refuses_missing_internal_credential_source() -> None:
@@ -372,7 +468,9 @@ async def test_pending_directory_uses_admin_credential_and_unclaimed_scope() -> 
     assert hub.calls[0]["owner_id"] == "unclaimed"
     assert hub.calls[0]["lifecycle_state"] == "pending-approval"
     encoded = hub.calls[0]["authorization"].removeprefix("Bearer ")
-    claims = jwt.decode(encoded, _SECRET, algorithms=["HS256"], audience="eidolon-hub")
+    claims = jwt.decode(
+        encoded, _SECRET, algorithms=["HS256"], audience="eidolon-admission"
+    )
     assert claims["roles"] == ["hub-admin"]
     assert "owner_id" not in claims
 
@@ -390,31 +488,97 @@ def _removal_request(**overrides) -> ControllerDeviceRemovalRequest:
     )
 
 
-async def test_removal_revokes_the_grant_then_drops_the_mount() -> None:
+def _removal_context(
+    payload: ControllerDeviceRemovalRequest,
+) -> RemovalOwnerAuthorizationContext:
+    device_ref = DeviceRef(
+        device_instance_id=payload.device_id,
+        owner_domain_id=payload.owner_id,
+        claim_generation=1,
+        trust_epoch=1,
+        accepted_manifest_digest="sha256:" + "a" * 64,
+    )
+    return RemovalOwnerAuthorizationContext(
+        controller_grant_generation=0,
+        reset_epoch=0,
+        owner_authorization_context=OwnerAuthorizationContext(
+            workload_principal_id="eidolon-lifecycle-workflow",
+            actor=ActorRef(
+                principal_id=payload.controller_id,
+                principal_type="controller",
+                owner_domain_id=payload.owner_id,
+                granted_scopes=("device.read", "device.claim.revoke"),
+                authentication_strength="software",
+            ),
+            authorized_owner_domain_id=payload.owner_id,
+            scopes=("device.read", "device.claim.revoke"),
+            intent_id=removal_intent_id(
+                ingress_request_id=payload.request_id,
+                owner_domain_id=payload.owner_id,
+            ),
+            target_device_ref=device_ref,
+            issued_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(minutes=1),
+        ),
+    )
+
+
+async def _remove(
+    service: ControlPlaneService,
+    payload: ControllerDeviceRemovalRequest,
+):
+    return await service.remove_controller_device(
+        payload=payload,
+        workload_principal_id="eidolon-local-api",
+        authorization_context=_removal_context(payload),
+    )
+
+
+async def test_removal_commits_claim_then_waits_for_kernel_event_convergence() -> None:
     hub, kernel = _Hub(), _Kernel()
     kernel.mounted = (
         _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=3),
     )
 
-    result = await _service(hub, kernel).remove_controller_device(payload=_removal_request())
+    result = await _remove(_service(hub, kernel), _removal_request())
 
-    assert result.outcome == "completed"
-    assert result.completed_stage == "kernel_unmounted"
-    assert [step.name for step in result.steps] == ["hub_revocation", "kernel_unmount"]
-    assert hub.calls[0]["reason"] == "owner-removed"
-    # The mount is dropped at the revision that was read, so a mount that moved
-    # underneath fails the compare instead of removing the wrong state.
-    assert kernel.unmount_calls[0]["expected_revision"] == 3
+    assert result.outcome == "accepted"
+    assert result.completed_stage == "claim_revoked"
+    assert [step.name for step in result.steps] == ["hub_revocation"]
+    revoke_calls = [call for call in hub.calls if "command_id" in call]
+    assert revoke_calls[0]["reason"] == "owner-removed"
+    assert kernel.unmount_calls == []
+    assert next(c for c in result.conditions if c.name == "mount_removed").state == "false"
 
 
 async def test_removal_is_idempotent_when_nothing_is_mounted() -> None:
     hub, kernel = _Hub(), _Kernel()
 
-    result = await _service(hub, kernel).remove_controller_device(payload=_removal_request())
+    result = await _remove(_service(hub, kernel), _removal_request())
 
     assert result.outcome == "completed"
     assert kernel.unmount_calls == []
-    assert result.steps[-1].state == "not_requested"
+    assert result.completed_stage == "converged"
+
+
+async def test_channel_delivery_is_an_independent_completion_condition() -> None:
+    hub, kernel = _Hub(), _Kernel()
+    hub.control_state = "pending"
+
+    result = await _remove(_service(hub, kernel), _removal_request())
+
+    assert result.outcome == "accepted"
+    assert result.completed_stage == "claim_revoked"
+    assert next(
+        condition
+        for condition in result.conditions
+        if condition.name == "channel_access_revoked"
+    ).state == "false"
+    assert next(
+        condition
+        for condition in result.conditions
+        if condition.name == "device_erase_acknowledged"
+    ).state == "unknown"
 
 
 async def test_a_hub_that_refuses_leaves_the_mount_alone() -> None:
@@ -424,7 +588,7 @@ async def test_a_hub_that_refuses_leaves_the_mount_alone() -> None:
         _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=3),
     )
 
-    result = await _service(hub, kernel).remove_controller_device(payload=_removal_request())
+    result = await _remove(_service(hub, kernel), _removal_request())
 
     assert result.outcome == "blocked"
     assert result.completed_stage == "received"
@@ -438,12 +602,24 @@ async def test_repeating_a_removal_reuses_the_same_child_request_ids() -> None:
         _mount(device_id="device-1", owner_id="owner-1", request_id="r", revision=3),
     )
     service = _service(hub, kernel)
+    payload = _removal_request()
+    context = _removal_context(payload)
 
-    first = await service.remove_controller_device(payload=_removal_request())
-    second = await service.remove_controller_device(payload=_removal_request())
+    first = await service.remove_controller_device(
+        payload=payload,
+        workload_principal_id="eidolon-local-api",
+        authorization_context=context,
+    )
+    second = await service.remove_controller_device(
+        payload=payload,
+        workload_principal_id="eidolon-local-api",
+        authorization_context=context,
+    )
 
     assert first.steps[0].request_id == second.steps[0].request_id
-    assert kernel.unmount_calls[0]["request_id"] == kernel.unmount_calls[1]["request_id"]
+    assert first.intent_id == second.intent_id
+    assert len([call for call in hub.calls if "command_id" in call]) == 1
+    assert kernel.unmount_calls == []
 
 
 async def test_re_admitting_a_removed_device_mounts_at_its_current_revision() -> None:
@@ -523,15 +699,27 @@ async def test_removal_tells_the_hub_whose_device_it_is() -> None:
     hub, kernel = _Hub(), _Kernel()
     service = _service(hub, kernel)  # type: ignore[arg-type]
 
-    await service.remove_controller_device(
-        payload=ControllerDeviceRemovalRequest(
-            contract_version="1",
-            request_id="mobile-removal-1",
-            owner_id="owner-1",
-            controller_id="ectrl-0123456789abcdefabcd",
-            device_id="device-1",
-            reason="owner-removed",
-        )
+    payload = ControllerDeviceRemovalRequest(
+        contract_version="1",
+        request_id="mobile-removal-1",
+        owner_id="owner-1",
+        controller_id="ectrl-0123456789abcdefabcd",
+        device_id="device-1",
+        reason="owner-removed",
     )
+    await _remove(service, payload)
 
-    assert hub.calls[0]["owner_scope"] == "owner-1"
+    exact_query = next(call for call in hub.calls if "owner_id" in call)
+    revoke = next(call for call in hub.calls if "device_ref" in call)
+    assert exact_query["owner_id"] == "owner-1"
+    assert revoke["device_ref"].owner_domain_id == "owner-1"
+    claims = jwt.decode(
+        revoke["authorization"].removeprefix("Bearer "),
+        _SECRET,
+        algorithms=["HS256"],
+        audience="eidolon-admission",
+    )
+    assert claims["scopes"] == ["device.claim.revoke"]
+    assert claims["target_claim_generation"] == 1
+    assert claims["target_trust_epoch"] == 1
+    assert claims["target_manifest_digest"] == "sha256:" + "a" * 64

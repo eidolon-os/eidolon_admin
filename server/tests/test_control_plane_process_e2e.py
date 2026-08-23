@@ -258,7 +258,7 @@ def _management_credential() -> str:
         json.dumps(
             {
                 "sub": "admin-e2e-operator",
-                "aud": "eidolon-hub",
+                "aud": "eidolon-admission",
                 "roles": ["hub-admin"],
                 "exp": int(time.time()) + 300,
             },
