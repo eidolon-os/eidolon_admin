@@ -68,6 +68,7 @@ class HubAdminCredentialIssuer:
             scopes=["device.claim.revoke"],
             target_device_id=device_ref.device_instance_id,
             intent_id=intent_id,
+            target_owner_domain_generation=device_ref.owner_domain_generation,
             target_claim_generation=device_ref.claim_generation,
             target_trust_epoch=device_ref.trust_epoch,
             target_manifest_digest=device_ref.accepted_manifest_digest,
@@ -81,6 +82,7 @@ class HubAdminCredentialIssuer:
         scopes: list[str],
         target_device_id: str,
         intent_id: str | None = None,
+        target_owner_domain_generation: int | None = None,
         target_claim_generation: int | None = None,
         target_trust_epoch: int | None = None,
         target_manifest_digest: str | None = None,
@@ -108,6 +110,10 @@ class HubAdminCredentialIssuer:
         }
         if intent_id is not None:
             claims["intent_id"] = intent_id
+        if target_owner_domain_generation is not None:
+            claims["target_owner_domain_generation"] = (
+                target_owner_domain_generation
+            )
         if target_claim_generation is not None:
             claims["target_claim_generation"] = target_claim_generation
         if target_trust_epoch is not None:

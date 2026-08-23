@@ -109,6 +109,7 @@ def _write_owner_directory(root: Path) -> tuple[Path, Path, Path]:
     descriptor = issue_descriptor(
         {
             "owner_domain_id": "owner-admin-e2e",
+            "owner_domain_generation": 1,
             "trust_epoch": 1,
             "directory_revision": 1,
             "issued_at": "2026-01-01T00:00:00Z",

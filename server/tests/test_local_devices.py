@@ -27,6 +27,7 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "device_ref": {
                         "device_instance_id": "device-ready",
                         "owner_domain_id": owner_id,
+                        "owner_domain_generation": 1,
                         "claim_generation": 1,
                         "trust_epoch": 1,
                         "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -46,6 +47,7 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "device_ref": {
                         "device_instance_id": "device-mounted",
                         "owner_domain_id": owner_id,
+                        "owner_domain_generation": 1,
                         "claim_generation": 1,
                         "trust_epoch": 1,
                         "accepted_manifest_digest": "sha256:" + "b" * 64,
@@ -65,6 +67,7 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                     "device_ref": {
                         "device_instance_id": "device-removed",
                         "owner_domain_id": owner_id,
+                        "owner_domain_generation": 1,
                         "claim_generation": 1,
                         "trust_epoch": 1,
                         "accepted_manifest_digest": "sha256:" + "c" * 64,

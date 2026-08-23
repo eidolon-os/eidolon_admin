@@ -57,6 +57,7 @@ def _result() -> DeviceRemovalResult:
     ref = DeviceRef(
         device_instance_id="device-linux-peer",
         owner_domain_id="owner-linux-peer",
+        owner_domain_generation=1,
         claim_generation=1,
         trust_epoch=1,
         accepted_manifest_digest="sha256:" + "b" * 64,

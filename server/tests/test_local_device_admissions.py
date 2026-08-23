@@ -103,6 +103,7 @@ def _write_certificate(path: Path, hostname: str = "eidolon-hub.local") -> None:
     descriptor = sign_descriptor(
         OwnerDomainDescriptor(
             owner_domain_id="owner-local",
+            owner_domain_generation=1,
             directory_revision=1,
             trust_root_refs=(descriptor_key_id(public_pem(root_key)),),
             endpoints=(
@@ -169,6 +170,7 @@ def _result(*, owner_id: str = "owner-1") -> DeviceAdmissionResult:
         device_ref=DeviceRef(
             device_instance_id="device-authoritative",
             owner_domain_id=owner_id,
+            owner_domain_generation=1,
             claim_generation=1,
             trust_epoch=1,
             accepted_manifest_digest="sha256:" + "a" * 64,
@@ -207,6 +209,7 @@ def _removal(*, owner_id: str = "owner-1") -> DeviceRemovalResult:
     ref = DeviceRef(
         device_instance_id="device-authoritative",
         owner_domain_id=owner_id,
+        owner_domain_generation=1,
         claim_generation=1,
         trust_epoch=1,
         accepted_manifest_digest="sha256:" + "a" * 64,
@@ -474,6 +477,7 @@ class _OwnedDevicesPort:
                         "device_ref": {
                             "device_instance_id": self.device_id,
                             "owner_domain_id": owner_id,
+                            "owner_domain_generation": 1,
                             "claim_generation": 1,
                             "trust_epoch": 1,
                             "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -488,6 +492,7 @@ class _OwnedDevicesPort:
                         "device_ref": {
                             "device_instance_id": self.device_id,
                             "owner_domain_id": owner_id,
+                            "owner_domain_generation": 1,
                             "claim_generation": 1,
                             "trust_epoch": 1,
                             "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -791,6 +796,7 @@ async def test_removal_forwards_the_exact_controller_contract() -> None:
             target_device_ref=DeviceRef(
                 device_instance_id=payload.device_id,
                 owner_domain_id=payload.owner_id,
+                owner_domain_generation=1,
                 claim_generation=3,
                 trust_epoch=4,
                 accepted_manifest_digest="sha256:" + "a" * 64,

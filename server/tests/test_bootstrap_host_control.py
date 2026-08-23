@@ -380,6 +380,7 @@ class _DevicesClient:
                 "device_ref": {
                     "device_instance_id": "device-local-1",
                     "owner_domain_id": "owner_workspace_authority",
+                    "owner_domain_generation": 1,
                     "claim_generation": 1,
                     "trust_epoch": 1,
                     "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -472,6 +473,7 @@ class _DevicesClient:
                         "device_ref": {
                             "device_instance_id": "device-local-1",
                             "owner_domain_id": owner_id,
+                            "owner_domain_generation": 1,
                             "claim_generation": 1,
                             "trust_epoch": 1,
                             "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -491,6 +493,7 @@ class _DevicesClient:
                         "device_ref": {
                             "device_instance_id": "device-local-removed",
                             "owner_domain_id": owner_id,
+                            "owner_domain_generation": 1,
                             "claim_generation": 1,
                             "trust_epoch": 1,
                             "accepted_manifest_digest": "sha256:" + "b" * 64,

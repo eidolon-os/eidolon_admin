@@ -110,6 +110,7 @@ class StubControlPlane:
                     device_ref=DeviceRef(
                         device_instance_id="device-mounted-1",
                         owner_domain_id=owner_id,
+                        owner_domain_generation=1,
                         claim_generation=1,
                         trust_epoch=1,
                         accepted_manifest_digest="sha256:" + "a" * 64,
@@ -135,6 +136,7 @@ class StubControlPlane:
             device_ref=DeviceRef(
                 device_instance_id=payload.device_id,
                 owner_domain_id=payload.owner_id,
+                owner_domain_generation=1,
                 claim_generation=1,
                 trust_epoch=1,
                 accepted_manifest_digest="sha256:" + "a" * 64,
@@ -196,6 +198,7 @@ class StubControlPlane:
             device_ref=DeviceRef(
                 device_instance_id=payload.device_id,
                 owner_domain_id=payload.owner_id,
+                owner_domain_generation=1,
                 claim_generation=1,
                 trust_epoch=1,
                 accepted_manifest_digest="sha256:" + "a" * 64,

@@ -265,6 +265,7 @@ def _mount(
         device_ref=DeviceRef(
             device_instance_id=device_id,
             owner_domain_id=owner_id,
+            owner_domain_generation=1,
             claim_generation=1,
             trust_epoch=1,
             accepted_manifest_digest="sha256:" + "a" * 64,
@@ -302,6 +303,7 @@ def _hub_device(*, device_id: str, owner_id: str) -> HubDevice:
             "device_ref": {
                 "device_instance_id": device_id,
                 "owner_domain_id": owner_id,
+                "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
                 "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -494,6 +496,7 @@ def _removal_context(
     device_ref = DeviceRef(
         device_instance_id=payload.device_id,
         owner_domain_id=payload.owner_id,
+        owner_domain_generation=1,
         claim_generation=1,
         trust_epoch=1,
         accepted_manifest_digest="sha256:" + "a" * 64,
@@ -720,6 +723,7 @@ async def test_removal_tells_the_hub_whose_device_it_is() -> None:
         audience="eidolon-admission",
     )
     assert claims["scopes"] == ["device.claim.revoke"]
+    assert claims["target_owner_domain_generation"] == 1
     assert claims["target_claim_generation"] == 1
     assert claims["target_trust_epoch"] == 1
     assert claims["target_manifest_digest"] == "sha256:" + "a" * 64

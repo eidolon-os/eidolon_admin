@@ -56,6 +56,7 @@ class ProducerState:
             "device_ref": {
                 "device_instance_id": "device-1",
                 "owner_domain_id": "owner-1",
+                "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
                 "accepted_manifest_digest": "sha256:" + "a" * 64,
@@ -75,6 +76,7 @@ class ProducerState:
             "device_ref": {
                 "device_instance_id": "device-1",
                 "owner_domain_id": "owner-1",
+                "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
                 "accepted_manifest_digest": "sha256:" + "a" * 64,

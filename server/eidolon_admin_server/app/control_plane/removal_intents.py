@@ -66,6 +66,7 @@ def _hub_command_id(intent_id: str, device_ref: DeviceRef) -> str:
         _COMMAND_NAMESPACE,
         "eidolon-revoke-claim-v1:"
         f"{intent_id}:{device_ref.device_instance_id}:"
+        f"{device_ref.owner_domain_generation}:"
         f"{device_ref.claim_generation}:{device_ref.trust_epoch}",
     )
     return f"revoke-claim-{value.hex}"
@@ -137,6 +138,7 @@ class SqliteRemovalIntentStore:
         "ingress_request_id",
         "owner_domain_id",
         "device_id",
+        "owner_domain_generation",
         "claim_generation",
         "trust_epoch",
         "device_ref_json",
@@ -184,7 +186,10 @@ class SqliteRemovalIntentStore:
             if existed is not None and version == 2:
                 self._migrate_authorization_context_bytes()
                 version = 3
-            if existed is not None and version != 3:
+            if existed is not None and version == 3:
+                self._migrate_owner_domain_generation()
+                version = 4
+            if existed is not None and version != 4:
                 raise RuntimeError("Admin RemovalIntent schema version is unknown")
             self._connection.executescript(
                 """
@@ -193,6 +198,7 @@ class SqliteRemovalIntentStore:
                     ingress_request_id TEXT NOT NULL,
                     owner_domain_id TEXT NOT NULL,
                     device_id TEXT NOT NULL,
+                    owner_domain_generation INTEGER NOT NULL,
                     claim_generation INTEGER NOT NULL,
                     trust_epoch INTEGER NOT NULL,
                     device_ref_json TEXT NOT NULL,
@@ -212,7 +218,7 @@ class SqliteRemovalIntentStore:
                 """
             )
             if existed is None:
-                self._connection.execute("PRAGMA user_version=3")
+                self._connection.execute("PRAGMA user_version=4")
             columns = {
                 row[1]
                 for row in self._connection.execute(
@@ -258,6 +264,7 @@ class SqliteRemovalIntentStore:
             "ingress_request_id",
         )
         legacy_columns = self._COLUMNS - {
+            "owner_domain_generation",
             "workload_principal_id",
             "controller_reset_epoch",
             "authorization_context_sha256",
@@ -298,6 +305,7 @@ class SqliteRemovalIntentStore:
             for row in self._connection.execute("PRAGMA table_info(removal_intents)")
         }
         legacy_columns = self._COLUMNS - {
+            "owner_domain_generation",
             "workload_principal_id",
             "controller_reset_epoch",
             "authorization_context_sha256",
@@ -331,7 +339,10 @@ class SqliteRemovalIntentStore:
             row[1]
             for row in self._connection.execute("PRAGMA table_info(removal_intents)")
         }
-        legacy_columns = self._COLUMNS - {"authorization_context_json"}
+        legacy_columns = self._COLUMNS - {
+            "owner_domain_generation",
+            "authorization_context_json",
+        }
         if columns != legacy_columns:
             raise RuntimeError("Admin RemovalIntent schema version is unknown")
         legacy_rows = self._connection.execute(
@@ -348,6 +359,26 @@ class SqliteRemovalIntentStore:
             ALTER TABLE removal_intents ADD COLUMN authorization_context_json
                 TEXT NOT NULL DEFAULT '';
             PRAGMA user_version=3;
+            COMMIT;
+            """
+        )
+
+    def _migrate_owner_domain_generation(self) -> None:
+        columns = {
+            row[1]
+            for row in self._connection.execute("PRAGMA table_info(removal_intents)")
+        }
+        if columns != self._COLUMNS - {"owner_domain_generation"}:
+            raise RuntimeError("Admin RemovalIntent schema version is unknown")
+        self._connection.executescript(
+            """
+            BEGIN IMMEDIATE;
+            ALTER TABLE removal_intents ADD COLUMN owner_domain_generation
+                INTEGER NOT NULL DEFAULT 1;
+            UPDATE removal_intents SET device_ref_json = json_set(
+                device_ref_json, '$.owner_domain_generation', 1
+            );
+            PRAGMA user_version=4;
             COMMIT;
             """
         )
@@ -435,18 +466,20 @@ class SqliteRemovalIntentStore:
                 self._connection.execute(
                     """INSERT INTO removal_intents(
                         intent_id, ingress_request_id, owner_domain_id, device_id,
-                        claim_generation, trust_epoch, device_ref_json,
+                        owner_domain_generation, claim_generation, trust_epoch,
+                        device_ref_json,
                         actor_controller_id, workload_principal_id,
                         controller_reset_epoch, authorization_context_json,
                         authorization_context_sha256,
                         reason, hub_command_id, state,
                         hub_result_json, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)""",
                     (
                         intent_id,
                         ingress_request_id,
                         owner_domain_id,
                         device_ref.device_instance_id,
+                        device_ref.owner_domain_generation,
                         device_ref.claim_generation,
                         device_ref.trust_epoch,
                         device_ref.model_dump_json(),
