@@ -336,7 +336,10 @@ class ControllerDeviceRemovalRequest(StrictModel):
 
 
 class WorkflowFailure(StrictModel):
-    authority: Literal["directory", "data", "hub", "kernel"]
+    #: Kept in step with ``errors.FailureKind`` and ``errors.AuthorityFailure``:
+    #: a value this model rejects raises inside the router's exception handler,
+    #: which turns a chosen status into an unexplained 500.
+    authority: Literal["directory", "data", "hub", "kernel", "memory"]
     kind: Literal[
         "unauthorized",
         "forbidden",
@@ -344,6 +347,7 @@ class WorkflowFailure(StrictModel):
         "conflict",
         "invalid_request",
         "unavailable",
+        "runtime_missing",
         "upstream_failure",
         "contract_violation",
         "configuration",

@@ -7,12 +7,16 @@ export type FailureKind =
   | 'conflict'
   | 'invalid_request'
   | 'unavailable'
+  // The authority answers, but the one Realm/instance this request needs is
+  // not running. Distinct from 'unavailable' because the next action differs:
+  // nothing is wrong with the service, this one space has to be brought up.
+  | 'runtime_missing'
   | 'upstream_failure'
   | 'contract_violation'
   | 'configuration'
 
 export interface WorkflowFailure {
-  authority: 'directory' | 'data' | 'hub' | 'kernel'
+  authority: 'directory' | 'data' | 'hub' | 'kernel' | 'memory'
   kind: FailureKind
   detail: string
   upstream_status: number | null

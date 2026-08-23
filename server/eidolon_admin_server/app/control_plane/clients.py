@@ -262,7 +262,7 @@ class DataAuthorityClient:
             return None
         if response.status_code == 404:
             raise AuthorityFailure(
-                "data", "not-found", "companion not found", 404, retryable=False
+                "data", "not_found", "companion not found", 404, retryable=False
             )
         if response.status_code != 200:
             raise _contract_violation("data", "Data did not serve the Companion face")
@@ -506,6 +506,15 @@ class DataWorkspaceAuthorityClient:
         return result
 
 
+def _realm_name(realm: dict) -> str:
+    """How a Realm is named in a failure: by its id, never by its address."""
+    for key in ("memory_realm_id", "memory_space_id"):
+        value = realm.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "unidentified"
+
+
 class MemoryRecollectionsClient:
     """What an Owner's Eidolon remembers, read through the memory service.
 
@@ -564,6 +573,15 @@ class MemoryRecollectionsClient:
         return recollections
 
     async def _space_for(self, owner_id: str) -> str:
+        """The one memory space this Owner has, or a failure naming why not.
+
+        Memory is Owner-level: one Owner, one Realm, read by every Companion
+        that Owner has (docs/跨系统/多Companion记忆隔离机制裁决.md). So this is a
+        uniqueness check, not a search. Two matches mean the Owner-level
+        migration is incomplete or the data is wrong, and either answer would
+        be a coin flip between two Companions' memories — so it refuses rather
+        than taking whichever sorted first.
+        """
         response = await _request(
             "memory",
             self._client,
@@ -577,7 +595,6 @@ class MemoryRecollectionsClient:
                 "unavailable",
                 "memory discovery is unavailable",
                 503,
-                upstream_status=response.status_code,
                 retryable=True,
             )
         try:
@@ -586,33 +603,59 @@ class MemoryRecollectionsClient:
             raise _contract_violation(
                 "memory", "memory discovery answered outside its contract"
             ) from exc
-        for realm in realms:
-            if not isinstance(realm, dict) or realm.get("owner_id") != owner_id:
-                continue
-            url = realm.get("recollections_url")
-            if not isinstance(url, str) or not url:
-                # A space that does not publish a read surface is one this
-                # Admin is too new or too old to read; saying so beats
-                # answering as though the Owner remembered nothing.
-                raise _contract_violation(
-                    "memory", "this memory space serves no read surface"
-                )
-            if not realm.get("enabled", True):
-                raise AuthorityFailure(
-                    "memory",
-                    "unavailable",
-                    "this memory space is not running",
-                    503,
-                    retryable=True,
-                )
-            return url
-        raise AuthorityFailure(
-            "memory",
-            "not-found",
-            "this Owner has no memory space",
-            404,
-            retryable=False,
-        )
+        if not isinstance(realms, list):
+            raise _contract_violation(
+                "memory", "memory discovery answered outside its contract"
+            )
+        owned = [
+            realm
+            for realm in realms
+            if isinstance(realm, dict) and realm.get("owner_id") == owner_id
+        ]
+        if not owned:
+            raise AuthorityFailure(
+                "memory",
+                "not_found",
+                "this Owner has no memory space",
+                404,
+                retryable=False,
+            )
+        if len(owned) > 1:
+            named = ", ".join(sorted(_realm_name(realm) for realm in owned))
+            raise AuthorityFailure(
+                "memory",
+                "conflict",
+                (
+                    "this Owner has more than one memory space "
+                    f"({named}); one Owner is one Realm, so which of these "
+                    "answers cannot be decided here"
+                ),
+                409,
+                retryable=False,
+            )
+        realm = owned[0]
+        url = realm.get("recollections_url")
+        if not isinstance(url, str) or not url:
+            # A space that does not publish a read surface is one this Admin is
+            # too new or too old to read; saying so beats answering as though
+            # the Owner remembered nothing.
+            raise _contract_violation(
+                "memory", "this memory space serves no read surface"
+            )
+        # Discovery derives this URL from the port and reports liveness
+        # separately, so a published URL says nothing about whether anything
+        # is listening. Dialling it anyway turns "this Realm is not running"
+        # into "memory is unreachable" — the wrong problem, and it sent people
+        # to look at the wrong service.
+        if not realm.get("enabled", True) or realm.get("agent_reachable") is False:
+            raise AuthorityFailure(
+                "memory",
+                "runtime_missing",
+                f"this Owner's memory space ({_realm_name(realm)}) is not running",
+                503,
+                retryable=True,
+            )
+        return url
 
 
 class HubManagementClient:

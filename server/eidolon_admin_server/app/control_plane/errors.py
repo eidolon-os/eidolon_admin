@@ -14,6 +14,12 @@ FailureKind = Literal[
     "conflict",
     "invalid_request",
     "unavailable",
+    #: The authority answers, but the specific Realm/instance the request needs
+    #: is not running. Distinct from ``unavailable`` because the next action
+    #: differs: nothing is wrong with Memory, this one space has to be brought
+    #: up. Reporting it as ``unavailable`` sent people to look at the wrong
+    #: service.
+    "runtime_missing",
     "upstream_failure",
     "contract_violation",
     "configuration",
@@ -22,7 +28,7 @@ FailureKind = Literal[
 
 @dataclass(slots=True)
 class AuthorityFailure(Exception):
-    authority: Literal["directory", "data", "hub", "kernel"]
+    authority: Literal["directory", "data", "hub", "kernel", "memory"]
     kind: FailureKind
     detail: str
     status_code: int
