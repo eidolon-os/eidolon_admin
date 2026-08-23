@@ -542,15 +542,26 @@ class MemoryRecollectionsClient:
         owner_id: str,
         query: str,
         limit: int,
+        companion_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        """What this Owner's memory holds about a query.
+
+        ``companion_id`` selects an audience, not a scope: the space is the
+        Owner's either way, and naming a Companion adds that Companion's own
+        statements to the Owner-layer ones. Omitting it answers with the Owner
+        layer, which is what an Owner-level question wants.
+        """
         space = await self._space_for(owner_id)
+        params = {"q": query, "limit": str(limit)}
+        if companion_id:
+            params["companion_id"] = companion_id
         response = await _request(
             "memory",
             self._client,
             "GET",
             space,
             timeout=self._timeout,
-            params={"q": query, "limit": str(limit)},
+            params=params,
         )
         if response.status_code != 200:
             raise AuthorityFailure(
