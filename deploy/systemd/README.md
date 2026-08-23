@@ -28,7 +28,12 @@ is `eidolon:eidolon-lifecycle-client` mode `0750`, while Admin retains its
 ordinary `eidolon` group only as a supplementary group. `NoNewPrivileges`, an
 empty capability bounding set, and `RestrictSUIDSGID` stay enabled; shared
 socket setup must never require a privileged `ExecStartPre` or a target-only
-drop-in.
+drop-in. Admin is a systemd `Type=notify` service and declares readiness only
+after this broker has bound its socket. Lifecycle Workflow's `Requires=` and
+`After=` dependency therefore waits on an application-level readiness boundary,
+not merely the creation of the Admin process. This keeps cold start independent
+of release-tool ordering and avoids retry delays that could conceal a broken
+broker.
 
 `eidolon-bootstrapd.service` is intentionally outside the supervisord-managed
 application stack. It starts before `eidolon-stack.service`, does not depend on

@@ -5,7 +5,8 @@ After=local-fs.target eidolond.service
 StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=eidolon
 Group=eidolon-lifecycle-client
 SupplementaryGroups=eidolon
@@ -25,6 +26,7 @@ ExecStart=/opt/eidolon/current/eidolon_admin/.venv/bin/eidolon-admin
 Restart=on-failure
 RestartSec=3s
 KillSignal=SIGTERM
+TimeoutStartSec=20s
 TimeoutStopSec=20s
 StateDirectory=eidolon/admin
 StateDirectoryMode=0700

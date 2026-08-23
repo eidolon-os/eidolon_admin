@@ -20,6 +20,7 @@ from eidolon_admin_server.lifecycle_workflow.capability import (
     ResolveRemovalTarget,
     RevokeRemovalTarget,
 )
+from eidolon_admin_server.app.settings import GatewayConfig, get_settings
 
 
 pytestmark = pytest.mark.unit
@@ -155,3 +156,55 @@ def test_workflow_unit_has_no_hub_or_local_static_secret() -> None:
     assert "EnvironmentFile=/etc/eidolon/lifecycle.env" not in unit
     assert "HUB_MANAGEMENT_JWT_SECRET" not in unit + settings
     assert "LOCAL_API_SERVICE_TOKEN" not in unit + settings
+
+
+@pytest.mark.asyncio
+async def test_admin_notifies_ready_only_after_capability_broker_is_bound(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from eidolon_admin_server.app import main as main_module
+
+    events: list[str] = []
+
+    class _Broker:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        async def start(self) -> None:
+            events.append("broker-bound")
+
+        async def close(self) -> None:
+            events.append("broker-closed")
+
+    class _Notifier:
+        @classmethod
+        def from_environ(cls):
+            return cls()
+
+        def ready(self, _status: str) -> None:
+            events.append("admin-ready")
+
+        def stopping(self, _status: str) -> None:
+            events.append("admin-stopping")
+
+    monkeypatch.setattr(main_module, "RemovalCapabilityBroker", _Broker)
+    monkeypatch.setattr(main_module, "SystemdNotifier", _Notifier)
+    monkeypatch.setattr(
+        main_module.pwd,
+        "getpwnam",
+        lambda _name: SimpleNamespace(pw_uid=41002),
+    )
+    settings = get_settings().model_copy(
+        update={"removal_capability_socket": tmp_path / "broker.sock"}
+    )
+    app = main_module.create_app(config=GatewayConfig(), settings=settings)
+
+    async with app.router.lifespan_context(app):
+        assert events == ["broker-bound", "admin-ready"]
+
+    assert events == [
+        "broker-bound",
+        "admin-ready",
+        "admin-stopping",
+        "broker-closed",
+    ]

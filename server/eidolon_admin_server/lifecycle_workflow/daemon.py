@@ -28,6 +28,7 @@ from .protocol import (
     write_frame,
 )
 from .settings import LifecycleWorkflowSettings, load_lifecycle_workflow_settings
+from ..systemd_notify import SystemdNotifier
 
 
 class LifecycleWorkflowDaemon:
@@ -70,10 +71,10 @@ class LifecycleWorkflowDaemon:
             raise
         self._listener = listener
         self._socket_identity = socket_identity
-        _systemd_notify("READY=1\nSTATUS=Lifecycle Workflow socket ready")
+        SystemdNotifier.from_environ().ready("Lifecycle Workflow socket ready")
 
     async def close(self) -> None:
-        _systemd_notify("STOPPING=1\nSTATUS=Lifecycle Workflow stopping")
+        SystemdNotifier.from_environ().stopping("Lifecycle Workflow stopping")
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -267,20 +268,6 @@ def _unlink_owned_socket(
             and (expected_identity is None or identity == expected_identity)
         ):
             path.unlink()
-
-
-def _systemd_notify(message: str) -> None:
-    address = os.environ.get("NOTIFY_SOCKET", "")
-    if not address:
-        return
-    if address.startswith("@"):
-        address = "\0" + address[1:]
-    notification = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    try:
-        notification.connect(address)
-        notification.sendall(message.encode("utf-8"))
-    finally:
-        notification.close()
 
 
 def _build_service(settings: LifecycleWorkflowSettings) -> ControlPlaneService:

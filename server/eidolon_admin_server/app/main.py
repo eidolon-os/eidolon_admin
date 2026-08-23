@@ -34,6 +34,7 @@ from .tools.mobile import MobileToolService, router as mobile_tools_router
 from .tools.mobile.service import DEFAULT_CLIENT_ROOT as MOBILE_CLIENT_ROOT
 from .workstation import esp32_capability, mobile_capability
 from ..lifecycle_workflow.capability import RemovalCapabilityBroker
+from ..systemd_notify import SystemdNotifier
 
 
 def create_app(
@@ -42,6 +43,7 @@ def create_app(
 ) -> FastAPI:
     settings = settings or get_settings()
     cfg = config or load_gateway_config(settings.services_file)
+    systemd = SystemdNotifier.from_environ()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -62,8 +64,15 @@ def create_app(
                     service=app.state.control_plane,
                 )
                 await broker.start()
+            status = (
+                "Admin removal capability broker ready"
+                if broker is not None
+                else "Admin control plane ready"
+            )
+            systemd.ready(status)
             yield
         finally:
+            systemd.stopping("Admin control plane stopping")
             if broker is not None:
                 await broker.close()
             await app.state.control_plane.close()

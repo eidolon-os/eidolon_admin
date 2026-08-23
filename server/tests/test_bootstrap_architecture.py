@@ -111,6 +111,9 @@ def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
     unit = (_PROJECT_ROOT / "deploy" / "systemd" / "eidolon-admin.service").read_text()
 
     assert "User=eidolon\n" in unit
+    assert "Type=notify\n" in unit
+    assert "NotifyAccess=main\n" in unit
+    assert "TimeoutStartSec=20s\n" in unit
     assert "Group=eidolon-lifecycle-client\n" in unit
     assert "SupplementaryGroups=eidolon\n" in unit
     assert "EIDOLON_ADMIN_API_HOST=127.0.0.1\n" in unit
@@ -155,6 +158,8 @@ def test_lifecycle_workflow_is_a_distinct_hardened_principal() -> None:
     ).read_text()
 
     assert "Type=notify\n" in unit
+    assert "Requires=eidolon-admin.service\n" in unit
+    assert "After=local-fs.target eidolond.service eidolon-admin.service\n" in unit
     assert "User=eidolon-lifecycle\n" in unit
     assert "Group=eidolon-lifecycle-client\n" in unit
     assert "SupplementaryGroups=eidolon-lifecycle eidolon\n" in unit
