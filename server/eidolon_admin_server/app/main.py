@@ -15,8 +15,8 @@ from .benchmarks import router as benchmarks_router
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
-from .control_plane import ControlPlaneService
-from .control_plane import router as control_plane_router
+from .control_plane.router import router as control_plane_router
+from .control_plane.service import ControlPlaneService
 from .mission_control.router import router as mission_control_router
 from .host_services.client import HostServiceClient
 from .host_services.router import router as host_services_router

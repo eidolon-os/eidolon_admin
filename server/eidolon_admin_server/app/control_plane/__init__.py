@@ -1,6 +1,7 @@
-"""Admin-owned adapters and orchestration for Eidolon control authorities."""
+"""Admin-owned adapters and orchestration for Eidolon control authorities.
 
-from .router import router
-from .service import ControlPlaneService
-
-__all__ = ["ControlPlaneService", "router"]
+The package deliberately has no eager exports.  The independent lifecycle
+process imports the protocol and shared contracts without constructing the
+Admin router/service graph; applications import those concrete modules
+explicitly at their composition root.
+"""
