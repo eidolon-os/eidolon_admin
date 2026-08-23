@@ -424,6 +424,41 @@ async def test_hub_approval_uses_exact_contract_and_confirms_device_id() -> None
     assert result.device_id == "device-1"
 
 
+async def test_pending_directory_uses_authority_clock() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == (
+            "/api/device-management/v1/owners/unclaimed/devices"
+        )
+        assert dict(request.url.params) == {
+            "limit": "100",
+            "lifecycle_state": "pending-approval",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "operation": "device.directory-page",
+                "next_cursor": None,
+                "devices": [],
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        await subject.list_devices(
+            owner_id="unclaimed",
+            authorization="Bearer admin",
+            lifecycle_state="pending-approval",
+        )
+    finally:
+        await http_client.aclose()
+
+
 async def test_timeout_is_unavailable_not_not_found() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow", request=request)

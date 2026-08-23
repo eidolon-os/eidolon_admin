@@ -417,6 +417,7 @@ class ControlPlaneService:
         return await self.hub.list_devices(
             owner_id=UNCLAIMED_SCOPE,
             authorization=self.hub_credentials.issue(controller_id=controller_id),
+            lifecycle_state="pending-approval",
         )
 
     async def local_owner_inventory(

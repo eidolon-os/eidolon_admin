@@ -370,6 +370,7 @@ async def test_pending_directory_uses_admin_credential_and_unclaimed_scope() -> 
 
     assert result.devices == ()
     assert hub.calls[0]["owner_id"] == "unclaimed"
+    assert hub.calls[0]["lifecycle_state"] == "pending-approval"
     encoded = hub.calls[0]["authorization"].removeprefix("Bearer ")
     claims = jwt.decode(encoded, _SECRET, algorithms=["HS256"], audience="eidolon-hub")
     assert claims["roles"] == ["hub-admin"]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
 import httpx
@@ -762,6 +762,8 @@ class HubManagementClient:
         owner_id: str,
         authorization: str,
         limit: int = 100,
+        lifecycle_state: Literal["pending-approval", "approved", "revoked"]
+        | None = None,
     ) -> HubDevicePage:
         base_url = await self._base_url()
         response = await _request(
@@ -769,10 +771,18 @@ class HubManagementClient:
             self._client,
             "GET",
             f"{base_url}/api/device-management/v1/owners/{quote(owner_id, safe='')}"
-            f"/devices?limit={limit}",
+            "/devices",
             timeout=self._timeout,
             headers=self._headers(authorization),
             json=None,
+            params={
+                "limit": str(limit),
+                **(
+                    {"lifecycle_state": lifecycle_state}
+                    if lifecycle_state is not None
+                    else {}
+                ),
+            },
         )
         page = _parse("hub", response, HubDevicePage)
         if any(device.owner_scope != owner_id for device in page.devices):
