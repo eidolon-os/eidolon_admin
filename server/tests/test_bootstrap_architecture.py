@@ -111,17 +111,19 @@ def test_admin_systemd_unit_is_loopback_only_and_unprivileged() -> None:
     unit = (_PROJECT_ROOT / "deploy" / "systemd" / "eidolon-admin.service").read_text()
 
     assert "User=eidolon\n" in unit
-    assert "Group=eidolon\n" in unit
-    assert "SupplementaryGroups=eidolon-lifecycle-client\n" in unit
+    assert "Group=eidolon-lifecycle-client\n" in unit
+    assert "SupplementaryGroups=eidolon\n" in unit
     assert "EIDOLON_ADMIN_API_HOST=127.0.0.1\n" in unit
     assert "EIDOLON_ADMIN_STATE_DIR=/var/lib/eidolon/admin\n" in unit
     assert "EIDOLON_ADMIN_SYSTEM_DIRECTORY_UDS=/run/eidolon/system.sock\n" in unit
     assert "StateDirectory=eidolon/admin\n" in unit
     assert "StateDirectoryMode=0700\n" in unit
     assert "RuntimeDirectory=eidolon-removal-capability\n" in unit
-    assert "RuntimeDirectoryMode=2750\n" in unit
+    assert "RuntimeDirectoryMode=0750\n" in unit
+    assert "ExecStartPre=" not in unit
     assert "SupplementaryGroups=eidolon-bootstrap" not in unit
     assert "CapabilityBoundingSet=\n" in unit
+    assert "RestrictSUIDSGID=yes\n" in unit
     assert (
         "ExecStart=/opt/eidolon/current/eidolon_admin/.venv/bin/eidolon-admin\n" in unit
     )
@@ -154,13 +156,15 @@ def test_lifecycle_workflow_is_a_distinct_hardened_principal() -> None:
 
     assert "Type=notify\n" in unit
     assert "User=eidolon-lifecycle\n" in unit
-    assert "Group=eidolon-lifecycle\n" in unit
-    assert "SupplementaryGroups=eidolon-lifecycle-client eidolon\n" in unit
+    assert "Group=eidolon-lifecycle-client\n" in unit
+    assert "SupplementaryGroups=eidolon-lifecycle eidolon\n" in unit
     assert "RuntimeDirectory=eidolon-lifecycle\n" in unit
-    assert "RuntimeDirectoryMode=2750\n" in unit
+    assert "RuntimeDirectoryMode=0750\n" in unit
+    assert "ExecStartPre=" not in unit
     assert "StateDirectory=eidolon-lifecycle\n" in unit
     assert "StateDirectoryMode=0700\n" in unit
     assert "UMask=0077\n" in unit
+    assert "RestrictSUIDSGID=yes\n" in unit
     assert "EIDOLON_LIFECYCLE_ALLOWED_LOCAL_API_USER=eidolon-local-api" in unit
     assert "EIDOLON_ADMIN_LOCAL_API_SERVICE_TOKEN" not in unit
 

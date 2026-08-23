@@ -10,13 +10,25 @@ Device removal is not sent to that loopback API. `eidolon-local-api.service`
 runs as the dedicated `eidolon-local-api` principal and calls the single-purpose
 `eidolon-lifecycle-workflow.service`, running as `eidolon-lifecycle`, through
 `/run/eidolon-lifecycle/workflow.sock`. The runtime directory is
-`eidolon-lifecycle:eidolon-lifecycle-client` mode `2750`; the socket is mode
-`0660`. Local receives only the dedicated client group through
-`SupplementaryGroups=`. The Workflow state directory is separately mode `0700`
+`eidolon-lifecycle:eidolon-lifecycle-client` mode `0750`; the socket is mode
+`0660`. The unit selects the socket-only group as its process primary group, so
+systemd creates the directory with its final ACL and the socket inherits that
+group at bind time. The account's own primary group remains unchanged and is
+added only to the unit's supplementary groups. No startup hook changes owner,
+group, or mode after the service sandbox is active. Local receives only the
+dedicated client group through `SupplementaryGroups=`. The Workflow state
+directory is separately mode `0700`
 and its SQLite/WAL files are created under `UMask=0077`, so socket access never
 grants ledger access. The Workflow also
 checks the accepted connection's Linux `SO_PEERCRED` UID against the installed
 Local account before reading the request. Socket ACLs are not authentication.
+
+Admin's removal-capability broker follows the same rule: its runtime directory
+is `eidolon:eidolon-lifecycle-client` mode `0750`, while Admin retains its
+ordinary `eidolon` group only as a supplementary group. `NoNewPrivileges`, an
+empty capability bounding set, and `RestrictSUIDSGID` stay enabled; shared
+socket setup must never require a privileged `ExecStartPre` or a target-only
+drop-in.
 
 `eidolon-bootstrapd.service` is intentionally outside the supervisord-managed
 application stack. It starts before `eidolon-stack.service`, does not depend on
