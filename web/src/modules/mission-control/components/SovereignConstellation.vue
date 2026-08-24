@@ -373,14 +373,14 @@ function deviceOnline(d: RuntimeDevice) {
 
     <el-popover v-for="n in galaxy.nodes" :key="'c' + n.c.id" placement="top" :width="300" trigger="hover" popper-class="cy-pop" :show-after="60">
       <template #reference>
-        <div class="gx-comp" :class="{ primary: n.c.isPrimary, active: n.active, focused: n.c.id === focusedId }" :style="ptStyle(n.x, n.y)" @click.stop="$emit('open-companion', n.c)">
+        <div class="gx-comp" :class="{ primary: n.c.isDefault, active: n.active, focused: n.c.id === focusedId }" :style="ptStyle(n.x, n.y)" @click.stop="$emit('open-companion', n.c)">
           <i class="led" :class="statusClass(n.c.status)" />
-          <b>{{ n.c.isPrimary ? '★ ' : '' }}{{ n.c.name }}</b>
+          <b>{{ n.c.isDefault ? '★ ' : '' }}{{ n.c.name }}</b>
           <span class="c-rt" :class="'t-' + runtime(n.c).cls">{{ runtime(n.c).text }}</span>
         </div>
       </template>
       <div class="pop">
-        <div class="pop-h"><b>{{ n.c.name }}</b><em>{{ n.c.isPrimary ? 'PRIMARY' : 'companion' }}</em></div>
+        <div class="pop-h"><b>{{ n.c.name }}</b><em>{{ n.c.isDefault ? 'DEFAULT' : 'companion' }}</em></div>
         <p class="pop-role">虚拟伙伴（agent），归属于主人 {{ ownerName }}。它拥有自己的身体、记忆与活动。</p>
         <div class="pop-rows">
           <div><dt>状态</dt><dd :class="statusClass(n.c.status)">{{ n.c.status }}</dd></div>

@@ -30,7 +30,7 @@ const activeActivities = computed(() => props.companion.activities.filter(isActi
     <header class="ci-head">
       <div>
         <span class="ci-kick"><i class="led" :class="statusClass(companion.status)" />COMPANION FOCUS</span>
-        <h3>{{ companion.name }}<em v-if="companion.isPrimary">★ 主伙伴</em></h3>
+        <h3>{{ companion.name }}<em v-if="companion.isDefault">★ 默认</em></h3>
         <p>{{ companion.kind }} · {{ companion.status }}</p>
       </div>
       <button class="ci-close" type="button" title="取消聚焦" aria-label="取消聚焦" @click="$emit('close')">×</button>

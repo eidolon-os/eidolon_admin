@@ -54,9 +54,13 @@ export interface RuntimeCompanion {
   companion_id: string
   display_name: string
   kind: string
-  status: string
-  is_master?: boolean
-  companion_type?: 'master' | 'slave' | string
+  // Was `status`, plus is_master / companion_type: 'master' | 'slave'. The
+  // master/slave language is out (plan §Phase 2) and those two values always
+  // lied anyway — the Host read them from attributes a Companion does not
+  // have, so every Companion came back a "slave". `status` was read the same
+  // way and was always empty; this is the Companion's own lifecycle, named for
+  // the column it comes from.
+  lifecycle_state: string
   genome_id: string | null
   memory_realm_id: string | null
 }
@@ -336,6 +340,9 @@ export interface RuntimeSnapshot {
   owner: RuntimeOwner | null
   companion: RuntimeCompanion | null
   companions: RuntimeCompanion[]
+  // Said once. A row marking itself the default could contradict this; a
+  // comparison cannot.
+  default_companion_id: string | null
   devices: RuntimeDevice[]
   services: RuntimeService[]
   activities: RuntimeActivity[]

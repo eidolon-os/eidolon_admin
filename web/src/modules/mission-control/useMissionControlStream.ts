@@ -163,7 +163,10 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     return voice ? runtimeTurns.value.find((turn) => turn.turn_id === voice.turn_id) || null : null
   })
   const pipelineActive = computed(() => activeActivities.value.length > 0)
-  const primaryCompanionId = computed(() => snapshot.value?.companion?.companion_id || '')
+  // The Owner's pointer, as the Host reports it. Read from the snapshot's own
+  // field rather than from whichever Companion the Host happened to expand:
+  // one of those is the answer, the other is a consequence of it.
+  const defaultCompanionId = computed(() => snapshot.value?.default_companion_id || '')
   const privacyMode = computed(() =>
     privacyModeLabel(memory.value?.privacy_mode || primaryActiveVoiceTurn.value?.privacy_mode || 'safe'),
   )
@@ -223,7 +226,10 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         id: c.companion_id || 'unknown',
         name: c.display_name || c.companion_id || '未命名伙伴',
         kind: c.kind || 'companion',
-        status: c.status || 'idle',
+        // The Companion's own lifecycle. 'idle' stands in when the Host said
+        // nothing — it used to be the *only* value, because the field the Host
+        // filled was read from an attribute that does not exist.
+        status: c.lifecycle_state || 'idle',
         genome: c.genome_id || '',
         realm: c.memory_realm_id || '',
         isActiveRealm,
@@ -237,9 +243,10 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
         turn,
         turns: cTurns,
         jobs: cJobs,
-        // The master companion is authoritative when the snapshot carries the
-        // flag; fall back to the "default companion" heuristic otherwise.
-        isPrimary: c.is_master || c.companion_id === primaryCompanionId.value,
+        // A comparison, never a flag off the row. is_master used to be OR'd in
+        // here and was always false, so this comparison was already doing all
+        // the work.
+        isDefault: c.companion_id === defaultCompanionId.value,
       }
     })
   })
@@ -499,7 +506,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     ownerName, onlineDevices, onlineServices, activeJobs, degradedSources,
     primaryActiveVoiceTurn, runtimeTurns, selectedTurn, selectedTurnId, selectedEventId,
     highlightedEvent, hoveredEventId,
-    pipelineActive, primaryCompanionId, privacyMode, deviceRatio,
+    pipelineActive, defaultCompanionId, privacyMode, deviceRatio,
     recentEvents, traceId, traceSpans, evidenceChains, permissionLedger, demoMode,
     // sovereign-domain view
     companionUnits, unboundDevices,

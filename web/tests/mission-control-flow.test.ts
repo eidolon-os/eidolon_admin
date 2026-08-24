@@ -62,7 +62,7 @@ function companion(over: Partial<CompanionUnit> = {}): CompanionUnit {
     id: 'c1', name: 'Aria', kind: 'companion', status: 'active', genome: '',
     realm: '', isActiveRealm: false, recall: null, runners: '', write: '',
     devices: [], activities: [], activeActivity: null,
-    activeVoiceTurn: null, turn: null, turns: [], jobs: [], isPrimary: false, ...over,
+    activeVoiceTurn: null, turn: null, turns: [], jobs: [], isDefault: false, ...over,
   }
 }
 function activity(over: Partial<RuntimeActivity> = {}): RuntimeActivity {

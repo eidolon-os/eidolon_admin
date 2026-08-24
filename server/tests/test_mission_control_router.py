@@ -39,6 +39,9 @@ class _Owner:
     operation = "owner.identity"
     owner_id = _OWNER_ID
     display_name = "曼森"
+    #: The pointer. It is the only thing that says which Companion is the
+    #: default, so the fake carries it and nothing else infers it.
+    default_companion_id: str | None = None
     lifecycle_state = "active"
 
 
@@ -57,9 +60,14 @@ class _DevicePage:
 
 
 class _WorkspaceAuthority:
+    def __init__(self, default_companion_id: str | None = None) -> None:
+        self._default_companion_id = default_companion_id
+
     async def get_owner(self, owner_id: str) -> _Owner:
         assert owner_id == _OWNER_ID
-        return _Owner()
+        owner = _Owner()
+        owner.default_companion_id = self._default_companion_id
+        return owner
 
 
 class _DataAuthority:
@@ -82,10 +90,26 @@ class _HubManagement:
 
 
 class _ControlPlane:
-    def __init__(self, devices: list[_Device] | None = None) -> None:
-        self.workspace_authority = _WorkspaceAuthority()
-        self.data_authority = _DataAuthority()
-        self.hub_management = _HubManagement(devices)
+    """Shaped like the real ControlPlaneService, which it was not.
+
+    This stub used to expose ``workspace_authority`` / ``data_authority`` /
+    ``hub_management``. The composed service has ``workspace`` / ``data`` /
+    ``hub``, so these tests were green while the cockpit answered every real
+    request with an empty snapshot. The attribute names here are the contract
+    now, and test_mission_control_composition.py checks them against the real
+    thing.
+    """
+
+    def __init__(
+        self,
+        devices: list[_Device] | None = None,
+        *,
+        snapshot: Any = None,
+        default_companion_id: str | None = None,
+    ) -> None:
+        self.workspace = _WorkspaceAuthority(default_companion_id)
+        self.data = _DataAuthority(snapshot)
+        self.hub = _HubManagement(devices)
 
 
 class _State:
@@ -188,3 +212,63 @@ async def test_an_event_is_enriched_from_hub_only_when_it_says_whose_it_is() -> 
 
     owned = event(event_id="e2", device_id="dev-a", owner_id=_OWNER_ID)
     assert (await service.enrich_runtime_event(request, owned)).companion_id == "cmp-1"
+
+
+async def test_the_default_companion_is_the_one_the_owner_points_at() -> None:
+    """Not "the first active row", which is what this used to pick.
+
+    With one Companion those agree, which is why the old code looked fine. The
+    pointer is the only thing that decides, and this projection now reads it
+    instead of choosing.
+    """
+
+    class _Companion:
+        companion_id = "cmp-1"
+        display_name = "小忆"
+        kind = "conversational"
+        lifecycle_state = "active"
+        current_genome_id = "g-1"
+
+    class _Snapshot:
+        companion = _Companion()
+
+    control_plane = _ControlPlane(
+        snapshot=_Snapshot(), default_companion_id="cmp-1"
+    )
+    snapshot = await service.build_snapshot(
+        _Request(control_plane), owner_id=_OWNER_ID
+    )
+
+    assert snapshot.default_companion_id == "cmp-1"
+    assert snapshot.companion is not None
+    assert snapshot.companion.companion_id == "cmp-1"
+    # Read from the column it comes from, so it is no longer always empty.
+    assert snapshot.companion.lifecycle_state == "active"
+    # And no row carries a flag that could contradict the pointer.
+    assert not hasattr(snapshot.companions[0], "is_master")
+
+
+async def test_an_owner_with_no_default_is_shown_as_having_none() -> None:
+    """A real state — every Companion archived, or only a guard.
+
+    Picking a row anyway would make the cockpit disagree with every other
+    surface about which Eidolon answers.
+    """
+
+    class _Companion:
+        companion_id = "cmp-1"
+        display_name = "守卫"
+        kind = "guard"
+        lifecycle_state = "active"
+
+    class _Snapshot:
+        companion = _Companion()
+
+    control_plane = _ControlPlane(snapshot=_Snapshot(), default_companion_id=None)
+    snapshot = await service.build_snapshot(
+        _Request(control_plane), owner_id=_OWNER_ID
+    )
+
+    assert snapshot.default_companion_id is None
+    assert snapshot.companion is None
+    assert [row.companion_id for row in snapshot.companions] == ["cmp-1"]

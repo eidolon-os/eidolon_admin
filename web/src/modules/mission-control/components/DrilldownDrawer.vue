@@ -69,7 +69,7 @@ function hopLabel(hop: RuntimeRouteHop): string {
 
         <template v-else-if="drawerComp">
           <span class="dw-kick">COMPANION · 虚拟伙伴</span>
-          <h3>{{ drawerComp.name }}<i v-if="drawerComp.isPrimary" class="dw-pri">★ 主</i></h3>
+          <h3>{{ drawerComp.name }}<i v-if="drawerComp.isDefault" class="dw-pri">★ 默认</i></h3>
           <p class="dw-role">{{ drawerComp.kind }} · {{ drawerComp.status }} · 归属 {{ ownerName }}</p>
           <div class="dw-grid">
             <div><span>基因 genome</span><b :class="drawerComp.genome ? 'ok' : 'idle'" :title="drawerComp.genome || undefined">{{ genomeStateLabel(drawerComp.genome) }}</b></div>

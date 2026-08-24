@@ -103,19 +103,19 @@ async def build_snapshot(
         _safe(
             statuses,
             "data.companions",
-            control_plane.data_authority.get_owner_default_runtime(owner_id),
+            data_authority_of(control_plane).get_owner_default_runtime(owner_id),
             None,
         ),
         _safe(
             statuses,
             "hub.devices",
-            control_plane.hub_management.list_devices(owner_id=owner_id),
+            hub_authority_of(control_plane).list_devices(owner_id=owner_id),
             [],
         ),
         _safe(
             statuses,
             "hub.events",
-            control_plane.hub_management.list_events(owner_id=owner_id, limit=240),
+            hub_authority_of(control_plane).list_events(owner_id=owner_id, limit=240),
             [],
         ),
     )
@@ -149,7 +149,8 @@ async def build_snapshot(
         "the Guard runtime does not exist yet, so nothing binds a face to a device",
     )
 
-    companion = _default_companion(companions)
+    default_companion_id = getattr(owner, "default_companion_id", None)
+    companion = _default_companion(companions, default_companion_id)
     guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
     runtime_blackboard = await _runtime_blackboard(request, owner_id, statuses)
     hub_devices = await _hub_devices(request, statuses)
@@ -228,6 +229,7 @@ async def build_snapshot(
         ),
         companion=_runtime_companion(companion) if companion is not None else None,
         companions=[_runtime_companion(row) for row in companions],
+        default_companion_id=default_companion_id,
         devices=runtime_devices,
         services=services,
         activities=activities,
@@ -344,7 +346,7 @@ async def enrich_runtime_event(
             # per device — so an event that does not say whose it is cannot be
             # enriched, and is returned as it arrived rather than guessed at.
             try:
-                page = await control_plane.hub_management.list_devices(
+                page = await hub_authority_of(control_plane).list_devices(
                     owner_id=event.owner_id
                 )
             except Exception:  # noqa: BLE001 - enrichment is best effort
@@ -384,6 +386,31 @@ def _companions_from_snapshot(snapshot: Any) -> list[Any]:
     return [companion] if getattr(companion, "companion_id", None) else []
 
 
+#: The three authorities this projection reads, named once each.
+#:
+#: They used to be spelled inline as ``control_plane.data_authority``,
+#: ``.hub_management`` and ``.workspace_authority`` — none of which exist on the
+#: composed service. Owner selection swallowed its AttributeError and reported
+#: "no Owner", so this whole cockpit answered with an empty snapshot on every
+#: real Host while its tests stayed green against a differently-shaped stub.
+#:
+#: Accessors rather than inline attributes so that a single test can hand them
+#: the real service and find out (see test_mission_control_composition.py).
+def data_authority_of(control_plane: Any) -> Any:
+    """Companion runtime and identity."""
+    return control_plane.data
+
+
+def workspace_authority_of(control_plane: Any) -> Any:
+    """The Owner aggregate, including which Companion is the default."""
+    return control_plane.workspace
+
+
+def hub_authority_of(control_plane: Any) -> Any:
+    """Devices and their events."""
+    return control_plane.hub
+
+
 def _control_plane(request: Request) -> Any | None:
     """The HTTP client layer every other Admin surface already goes through.
 
@@ -416,7 +443,7 @@ async def _select_owner(
         )
         return None
     try:
-        return await control_plane.workspace_authority.get_owner(owner_id)
+        return await workspace_authority_of(control_plane).get_owner(owner_id)
     except Exception as exc:  # noqa: BLE001
         statuses.append(SourceStatus(source="data.owners", ok=False, detail=str(exc)))
         return None
@@ -899,14 +926,15 @@ def _device_presence(runtime: Any, hub: Any) -> tuple[str, bool, str]:
 
 
 def _is_guard_companion(companion: Any) -> bool:
-    """Guard is a companion role, never a device/hardware attribute. Mirrors
-    resolve.orchestrator._is_guard_companion so both read the same signal."""
+    """Guard is what a Companion *is*, never a property of its hardware.
+
+    One signal: ``kind``. The second clause here read ``companion_type``, which
+    no Companion has — it was a fallback for a field that was itself derived
+    from a non-existent one, so it could only ever be false.
+    """
     if companion is None:
         return False
-    return (
-        str(getattr(companion, "kind", "") or "") == "guard"
-        or str(getattr(companion, "companion_type", "") or "") == "guard"
-    )
+    return str(getattr(companion, "kind", "") or "") == "guard"
 
 
 def _device_role(bound_companion: Any, is_guard: bool) -> tuple[str, str]:
@@ -2144,11 +2172,27 @@ def _capability_cards(
     ]
 
 
-def _default_companion(companions: list[Any]) -> Any | None:
+def _default_companion(companions: list[Any], default_companion_id: str | None) -> Any | None:
+    """The Companion the Owner's pointer names, or nothing.
+
+    It used to be "the first row whose status is active", falling back to the
+    first row. Two things were wrong with that: the attribute it read does not
+    exist on a Companion row (so the loop never matched), and picking a row at
+    all made this a *second* place deciding which Companion is the default. It
+    happened to be right while there was one Companion, which is the worst way
+    for it to be wrong.
+
+    Returning None when the pointer names nothing is deliberate: an Owner with
+    no default is a real state, and a cockpit that showed one anyway would
+    disagree with every other surface.
+    """
+
+    if not default_companion_id:
+        return None
     for row in companions:
-        if getattr(row, "status", "") == "active":
+        if getattr(row, "companion_id", None) == default_companion_id:
             return row
-    return companions[0] if companions else None
+    return None
 
 
 def _runtime_companion(row: Any) -> RuntimeCompanion:
@@ -2156,16 +2200,7 @@ def _runtime_companion(row: Any) -> RuntimeCompanion:
         companion_id=getattr(row, "companion_id", "") or "",
         display_name=getattr(row, "display_name", "") or "",
         kind=getattr(row, "kind", "") or "",
-        status=getattr(row, "status", "") or "",
-        is_master=bool(getattr(row, "is_master", False)),
-        companion_type=str(
-            getattr(
-                row,
-                "companion_type",
-                "master" if bool(getattr(row, "is_master", False)) else "slave",
-            )
-            or ("master" if bool(getattr(row, "is_master", False)) else "slave")
-        ),
+        lifecycle_state=getattr(row, "lifecycle_state", "") or "",
         genome_id=getattr(row, "current_genome_id", None),
         memory_realm_id=getattr(row, "default_memory_realm_id", None),
     )

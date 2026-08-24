@@ -84,12 +84,26 @@ class RuntimeOwner(BaseModel):
 
 
 class RuntimeCompanion(BaseModel):
+    """One Companion in the cockpit.
+
+    No ``is_master`` and no ``companion_type``. Those said "master"/"slave" —
+    language the plan removes (§Phase 2) — and they also always lied: both were
+    read with ``getattr`` from attributes the Companion row does not have, so
+    every Companion came back as ``is_master=False, companion_type="slave"``.
+
+    Nor is there an ``is_default`` here. Which Companion is the default is one
+    field on the Owner, carried once on the snapshot; a flag per row would let
+    two rows claim it, and this projection is exactly where that would happen
+    silently.
+    """
+
     companion_id: str = ""
     display_name: str = ""
     kind: str = ""
-    status: str = ""
-    is_master: bool = False
-    companion_type: str = "slave"
+    #: The Companion's own lifecycle: active / retiring / archived / deleting.
+    #: Named for the column it comes from — it used to be called ``status`` and
+    #: read from an attribute that does not exist, so it was always empty.
+    lifecycle_state: str = ""
     genome_id: str | None = None
     memory_realm_id: str | None = None
 
@@ -322,8 +336,14 @@ class PermissionLedgerItem(BaseModel):
 class RuntimeSnapshot(BaseModel):
     generated_at: datetime
     owner: RuntimeOwner | None = None
+    #: The Owner's default Companion, resolved from their pointer — not "the
+    #: first active row", which is what this used to be and which stops being
+    #: right the moment there is more than one row.
     companion: RuntimeCompanion | None = None
     companions: list[RuntimeCompanion] = Field(default_factory=list)
+    #: Said once for the whole snapshot. A consumer marks a row by comparing;
+    #: no row carries a flag it could contradict.
+    default_companion_id: str | None = None
     devices: list[RuntimeDevice] = Field(default_factory=list)
     services: list[RuntimeService] = Field(default_factory=list)
     activities: list[RuntimeActivity] = Field(default_factory=list)

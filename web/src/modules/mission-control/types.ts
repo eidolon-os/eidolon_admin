@@ -62,7 +62,11 @@ export interface CompanionUnit {
   turn: RuntimeTurn | null
   turns: RuntimeTurn[]
   jobs: RuntimeJob[]
-  isPrimary: boolean
+  // "the Owner's default", not "the primary/master one". The old word came
+  // from a model where one Companion outranked the others; what is true now is
+  // that the Owner points at one of them, and Mobile calls it 默认 too — two
+  // clients using different words for one fact is how they drift.
+  isDefault: boolean
 }
 
 export type SatKind = 'body' | 'mem' | 'act'
