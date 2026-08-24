@@ -268,6 +268,29 @@ def _unlink_owned_socket(
             path.unlink()
 
 
+class _UnreachableAuthority:
+    """An authority this daemon must never reach, named so a slip says which.
+
+    The removal workflow needs a ControlPlaneService, but it performs one
+    workflow and speaks to three authorities. The others used to be bare
+    `object()`, which turns "the removal daemon called Data" into an
+    AttributeError about `object`. Naming them means the traceback says what
+    boundary was crossed, and means a new collaborator on the service is a
+    decision made here rather than a keyword nobody noticed.
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __getattr__(self, attribute: str):
+        raise AttributeError(
+            f"the device lifecycle workflow does not reach {self._name} "
+            f"(asked for {attribute!r})"
+        )
+
+
 def _build_service(settings: LifecycleWorkflowSettings) -> ControlPlaneService:
     from .capability import BrokeredRemovalHubClient, BrokerMarkerIssuer
 
@@ -282,8 +305,8 @@ def _build_service(settings: LifecycleWorkflowSettings) -> ControlPlaneService:
     )
     service = ControlPlaneService(
         directory=directory,
-        data=object(),  # not reachable from the removal-only daemon
-        workspace=object(),  # not reachable from the removal-only daemon
+        data=_UnreachableAuthority("Data"),
+        workspace=_UnreachableAuthority("the Data workspace"),
         hub=BrokeredRemovalHubClient(
             socket_path=settings.removal_capability_socket,
             timeout_seconds=settings.authority_timeout_seconds,
@@ -293,7 +316,8 @@ def _build_service(settings: LifecycleWorkflowSettings) -> ControlPlaneService:
             client=http_client,
             timeout_seconds=settings.authority_timeout_seconds,
         ),
-        memory=object(),  # not reachable from the removal-only daemon
+        memory=_UnreachableAuthority("Memory"),
+        activity=_UnreachableAuthority("Agent activity"),
         hub_credentials=BrokerMarkerIssuer(),
         removal_intents=SqliteRemovalIntentStore(
             settings.state_dir / "lifecycle-workflows.sqlite3"
