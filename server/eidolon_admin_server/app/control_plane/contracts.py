@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
 from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
     RevokeClaimResult as HubClaimRevocationResult,
@@ -47,7 +48,7 @@ class CompanionIdentity(StrictModel):
     #: Four states, not two. A consumer must be able to tell "the Owner
     #: archived it" from "it cannot run right now"; folding them was the
     #: conflation the identity schema was changed to remove.
-    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    lifecycle_state: CompanionLifecycleState
     #: The product type (standard, guard, ...), independent of which Companion
     #: is the Owner's default. Deliberately not a Literal: this is a consumer,
     #: and a kind it has never heard of must not fail the parse of an identity
@@ -71,7 +72,7 @@ class CompanionSummary(StrictModel):
     #: Plain string for the same reason as ``CompanionIdentity.kind``: the set
     #: of product types is the producer's to grow.
     kind: str = Field(min_length=1, max_length=32)
-    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    lifecycle_state: CompanionLifecycleState
     revision: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
@@ -96,7 +97,7 @@ class ProvisionedCompanion(StrictModel):
     companion_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     kind: str = Field(min_length=1, max_length=32)
-    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    lifecycle_state: CompanionLifecycleState
     revision: int = Field(ge=1)
 
 

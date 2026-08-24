@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Generic, Literal, TypeVar
 
+from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
 from eidolon_sdk.biz.contracts import mission_control as contract
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -100,7 +101,11 @@ class MissionControlCompanion(BaseModel):
     companion_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     is_primary: bool = False
-    lifecycle_state: Literal["active", "pending", "suspended", "removed"]
+    #: The Companion authority's vocabulary, imported rather than restated. This
+    #: line said active/pending/suspended/removed, which no Host can send: an
+    #: archived Companion had no representable value, so the first real roster
+    #: through here would have failed to validate.
+    lifecycle_state: CompanionLifecycleState
     # Ownership of a persona, not whether one is loaded. Null means unbound.
     genome_id: str | None = Field(default=None, max_length=64)
     memory_realm_id: str | None = Field(default=None, max_length=64)
