@@ -35,6 +35,11 @@ from .management.backend import AdminManagementClient
 from .management.router import ManagementBackendPort, register_management_routes
 from ..app.control_plane.contracts import KernelMountPage
 from .config import LocalApiSettings, load_local_api_settings
+from .mission_control import (
+    MissionControlCompanion,
+    MissionControlSnapshotView,
+    owner_mission_control_view,
+)
 from .host_services import (
     AdminHostServicesClient,
     AdminHostServicesPort,
@@ -1105,6 +1110,96 @@ def create_app(
             return host_service_inventory(await host_services.list_services())
         except HostServiceControlError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @app.get(
+        "/api/local/v1/mission-control/snapshot",
+        response_model=MissionControlSnapshotView,
+    )
+    async def get_mission_control_snapshot(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MissionControlSnapshotView:
+        """This Owner's runtime, in one read, lane by lane.
+
+        No owner_id in the request: there is exactly one Owner a session can
+        speak for, and letting a client name another would create a question
+        this boundary would then have to answer.
+
+        Every authority is asked independently and a failure costs its own lane
+        rather than the response. That is the difference between a Host whose
+        memory service is down and a Host nobody can see at all, and it is the
+        reason this returns 200 with lanes marked unavailable instead of a 503
+        that blacks out devices and companions which read perfectly well.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+
+        owner_display_name: str | None = None
+        companion: MissionControlCompanion | None = None
+        companion_detail = ""
+        try:
+            operation_id = await operation_id_for_host()
+            workspace_operation = await workspace.get(operation_id)
+            owner = getattr(workspace_operation, "owner", None)
+            owner_display_name = getattr(owner, "display_name", None)
+        except (WorkspaceSetupError, WorkspaceRuntimeError) as exc:
+            companion_detail = f"读不到 Workspace：{exc}"
+
+        try:
+            runtime_snapshot = await runtime.get_owner_default_runtime(owner_id)
+            if runtime_snapshot.owner_id != owner_id:
+                # An authority that answered about a different Owner is not a
+                # degraded read; it is a boundary failure, and rendering any of
+                # it would show this person somebody else's domain.
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Companion authority returned another Owner",
+                )
+            identity = await runtime.get_companion(runtime_snapshot.companion_id)
+            companion = MissionControlCompanion(
+                companion_id=runtime_snapshot.companion_id,
+                display_name=identity.display_name,
+                is_primary=True,
+                lifecycle_state=runtime_snapshot.lifecycle_state,
+                genome_id=runtime_snapshot.persona_genome.genome_id,
+                memory_realm_id=runtime_snapshot.memory_realm.realm_id,
+            )
+        except HTTPException:
+            raise
+        except WorkspaceRuntimeError as exc:
+            companion_detail = f"读不到伙伴：{exc}"
+
+        inventory = None
+        inventory_detail = ""
+        try:
+            inventory = await devices.list_inventory(owner_id, controller_id)
+            if any(mount.owner_id != owner_id for mount in inventory.mounts):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Host Owner scope does not match Kernel Device membership",
+                )
+        except HTTPException:
+            raise
+        except DeviceInventoryError as exc:
+            inventory_detail = f"读不到身体：{exc}"
+
+        services = None
+        services_detail = ""
+        try:
+            services = host_service_inventory(await host_services.list_services())
+        except HostServiceControlError as exc:
+            services_detail = f"读不到主机在跑什么：{exc}"
+
+        return owner_mission_control_view(
+            bound_owner_id=owner_id,
+            owner_display_name=owner_display_name,
+            companion=companion,
+            companion_detail=companion_detail,
+            inventory=inventory,
+            inventory_detail=inventory_detail,
+            services=services,
+            services_detail=services_detail,
+        )
 
     @app.post(
         "/api/local/v1/host/services/{service_id}/{operation}",
