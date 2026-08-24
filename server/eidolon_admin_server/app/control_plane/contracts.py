@@ -16,6 +16,7 @@ from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
     EnrollmentProposalQuery,
     EnrollmentRecoveryProjection,
+    OwnerDomainId,
     RevokeClaimResult as HubClaimRevocationResult,
 )
 
@@ -555,6 +556,31 @@ class ControllerEnrollmentQuery(StrictModel):
             raise ValueError("Enrollment query actor and Owner Domain do not match")
         if "device.read" not in self.actor.granted_scopes:
             raise ValueError("Enrollment query actor lacks device.read")
+        return self
+
+
+class ControllerEnrollmentRecoveryQuery(StrictModel):
+    """One Enrollment's projection, read in the Controller's own Owner Domain.
+
+    A page query answers "what is waiting"; this answers "what happened to the
+    one I am setting up". Keeping it a separate command means the single-resource
+    read cannot be reached by widening a page query's scope.
+    """
+
+    contract_version: Literal["1"]
+    actor: ControllerActorRef
+    business_owner_id: BusinessOwnerId
+    owner_domain_id: OwnerDomainId
+    enrollment_id: str = Field(
+        min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+
+    @model_validator(mode="after")
+    def _scope(self) -> "ControllerEnrollmentRecoveryQuery":
+        if self.actor.owner_domain_id != self.owner_domain_id:
+            raise ValueError("Enrollment recovery actor and Owner Domain do not match")
+        if "device.read" not in self.actor.granted_scopes:
+            raise ValueError("Enrollment recovery actor lacks device.read")
         return self
 
 

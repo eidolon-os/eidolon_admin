@@ -21,6 +21,7 @@ from eidolon_admin_server.app.control_plane.admission_intents import (
 )
 from eidolon_admin_server.app.control_plane.contracts import (
     ControllerEnrollmentDecisionIntent,
+    ControllerEnrollmentRecoveryQuery,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.control_plane.hub_credentials import HubAdminCredentialIssuer
@@ -238,3 +239,43 @@ async def test_hub_unavailable_leaves_recoverable_intent_recorded(tmp_path) -> N
     ).fetchone()
     store.close()
     assert tuple(row) == ("intent_recorded", None)
+
+
+def _recovery_query(*, owner_domain_id=DOMAIN):
+    return ControllerEnrollmentRecoveryQuery(
+        contract_version="1",
+        actor=ControllerActorRef(
+            principal_id="ectrl-0123456789abcdef0123",
+            owner_domain_id=owner_domain_id,
+            granted_scopes=("device.read",),
+            authentication_strength="software",
+        ),
+        business_owner_id=BUSINESS_OWNER,
+        owner_domain_id=owner_domain_id,
+        enrollment_id="enrollment-a",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reading_one_enrollment_decides_nothing() -> None:
+    """Watching an Enrollment progress must not require submitting an intent.
+
+    The device drives Grant collection, so a Controller learns the outcome by
+    reading. If the only way to read were the Decision workflow, every refresh
+    would be an approval attempt.
+    """
+
+    hub = Hub()
+    projection = await _service(hub).get_enrollment_recovery(payload=_recovery_query())
+    assert projection.proposal.enrollment_id == "enrollment-a"
+    assert projection.approval_decision is None
+    assert hub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_recovery_read_refuses_another_owner_domain() -> None:
+    hub = Hub()
+    query = _recovery_query(owner_domain_id=OwnerDomainId("owner-domain-b"))
+    with pytest.raises(AuthorityFailure) as refusal:
+        await _service(hub).get_enrollment_recovery(payload=query)
+    assert refusal.value.status_code == 502

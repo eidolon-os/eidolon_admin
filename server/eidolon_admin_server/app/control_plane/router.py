@@ -6,7 +6,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
-from eidolon_sdk.device_foundation.v1 import ClaimPage, EnrollmentProposalPage
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimPage,
+    EnrollmentProposalPage,
+    EnrollmentRecoveryProjection,
+)
 
 from .contracts import (
     BoundaryCapabilities,
@@ -14,6 +18,7 @@ from .contracts import (
     ControllerClaimQuery,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
+    ControllerEnrollmentRecoveryQuery,
     CompanionFace,
     CompanionIdentity,
     CompanionRenameRequest,
@@ -249,6 +254,19 @@ async def query_enrollment_recovery(
 ) -> EnrollmentProposalPage:
     try:
         return await _service(request).list_enrollment_recovery(payload=payload)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.post(
+    "/admission/enrollment-recoveries",
+    response_model=EnrollmentRecoveryProjection,
+)
+async def read_enrollment_recovery(
+    payload: ControllerEnrollmentRecoveryQuery, request: Request
+) -> EnrollmentRecoveryProjection:
+    try:
+        return await _service(request).get_enrollment_recovery(payload=payload)
     except AuthorityFailure as exc:
         _raise(exc)
 

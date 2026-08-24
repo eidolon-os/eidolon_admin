@@ -14,6 +14,7 @@ from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
     EnrollmentProposalPage,
     EnrollmentProposalState,
+    EnrollmentRecoveryProjection,
 )
 
 from ..settings import Settings
@@ -31,6 +32,7 @@ from .contracts import (
     ControllerClaimQuery,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
+    ControllerEnrollmentRecoveryQuery,
     BoundaryCapabilities,
     ControllerDeviceRemovalRequest,
     DeviceRemovalResult,
@@ -191,6 +193,34 @@ class ControlPlaneService:
                 business_owner_id=payload.business_owner_id,
             ),
         )
+
+    async def get_enrollment_recovery(
+        self, *, payload: ControllerEnrollmentRecoveryQuery
+    ) -> EnrollmentRecoveryProjection:
+        """Read one Enrollment's projection without deciding anything.
+
+        The Decision workflow reads recovery too, but a Controller watching a
+        device it just commissioned must be able to observe Hub's own
+        progression — PendingReview, then Grant delivery, then Claim — without
+        submitting an intent to learn it.
+        """
+
+        issuer = self._admission_issuer()
+        projection = await self.hub.get_enrollment_recovery(
+            enrollment_id=payload.enrollment_id,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+            ),
+        )
+        if projection.proposal.requested_owner_domain_id != payload.owner_domain_id:
+            raise AuthorityFailure(
+                "hub",
+                "contract_violation",
+                "Hub Enrollment recovery crossed its requested Owner Domain",
+                502,
+            )
+        return projection
 
     async def list_claims(self, *, payload: ControllerClaimQuery) -> ClaimPage:
         issuer = self._admission_issuer()

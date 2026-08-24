@@ -43,6 +43,8 @@ def _local_request() -> LocalEnrollmentDecisionRequest:
         expected_proposal_revision=1,
         decision="approve",
         reviewed_manifest_ref=MANIFEST,
+        expected_owner_domain_id=str(DOMAIN),
+        expected_business_owner_id=str(BUSINESS_OWNER),
     )
 
 
@@ -53,6 +55,33 @@ def _admin_payload():
         business_owner_id=BUSINESS_OWNER,
         controller_id="ectrl-0123456789abcdef0123",
     )
+
+
+def test_local_decision_refuses_an_owner_this_session_does_not_hold() -> None:
+    """The phone showed an Owner; the session holds one. They must be the same.
+
+    Approving into whatever Owner the session happens to carry would let a Host
+    that changed Owner underneath an open confirmation screen collect a consent
+    the user never gave.
+    """
+
+    request = LocalEnrollmentDecisionRequest(
+        contract_version="1",
+        request_id="local-decision-1",
+        expected_proposal_revision=1,
+        decision="approve",
+        reviewed_manifest_ref=MANIFEST,
+        expected_owner_domain_id="owner-domain-b",
+        expected_business_owner_id=str(BUSINESS_OWNER),
+    )
+    with pytest.raises(DeviceAdmissionError) as refusal:
+        request.to_admin(
+            enrollment_id="enrollment-a",
+            owner_domain_id=DOMAIN,
+            business_owner_id=BUSINESS_OWNER,
+            controller_id="ectrl-0123456789abcdef0123",
+        )
+    assert refusal.value.status_code == 409
 
 
 def test_local_decision_derives_explicit_actor_and_owner_context() -> None:

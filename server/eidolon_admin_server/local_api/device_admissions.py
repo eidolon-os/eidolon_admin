@@ -20,6 +20,7 @@ from eidolon_sdk.device_foundation.v1 import (
     DeviceRef,
     EnrollmentProposalPage,
     EnrollmentProposalQuery,
+    EnrollmentRecoveryProjection,
     ManifestRef,
     OwnerAuthorizationContext,
     OwnerDomainDescriptor,
@@ -33,6 +34,7 @@ from ..app.control_plane.contracts import (
     ControllerDeviceRemovalRequest,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
+    ControllerEnrollmentRecoveryQuery,
     DeviceRemovalResult,
     RemovalCondition,
 )
@@ -143,6 +145,12 @@ class LocalEnrollmentDecisionRequest(BaseModel):
     expected_proposal_revision: int = Field(ge=1)
     decision: Literal["approve", "reject"]
     reviewed_manifest_ref: ManifestRef
+    #: The Owner the confirming screen said this device was joining. The session
+    #: is what authorizes the Decision, but the phone must still say which Owner
+    #: it showed: a Controller whose Host changed Owner underneath it would
+    #: otherwise approve a device into an Owner the user never saw.
+    expected_owner_domain_id: str = Field(min_length=1, max_length=128)
+    expected_business_owner_id: str = Field(min_length=1, max_length=64)
     target_space_id: str | None = Field(default=None, min_length=3, max_length=128)
     initial_assignment_intent: dict[str, Any] | None = None
     initial_capability_policy_refs: tuple[str, ...] = ()
@@ -155,6 +163,13 @@ class LocalEnrollmentDecisionRequest(BaseModel):
         business_owner_id: BusinessOwnerId,
         controller_id: str,
     ) -> ControllerEnrollmentDecisionIntent:
+        expected = (self.expected_owner_domain_id, self.expected_business_owner_id)
+        if expected != (str(owner_domain_id), str(business_owner_id)):
+            raise DeviceAdmissionError(
+                "Decision named an Owner this session does not hold",
+                status_code=409,
+                reason=_REFUSAL_REASONS["conflict"],
+            )
         actor = admission_actor(
             controller_id=controller_id, owner_domain_id=owner_domain_id, approve=True
         )
@@ -202,6 +217,24 @@ def enrollment_query(
         ),
         business_owner_id=business_owner_id,
         query=query,
+    )
+
+
+def enrollment_recovery_query(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    enrollment_id: str,
+) -> ControllerEnrollmentRecoveryQuery:
+    return ControllerEnrollmentRecoveryQuery(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        owner_domain_id=owner_domain_id,
+        enrollment_id=enrollment_id,
     )
 
 
@@ -258,6 +291,9 @@ class AdminDeviceAdmissionPort(Protocol):
     async def query_enrollments(
         self, *, payload: ControllerEnrollmentQuery
     ) -> EnrollmentProposalPage: ...
+    async def recover_enrollment(
+        self, *, payload: ControllerEnrollmentRecoveryQuery
+    ) -> EnrollmentRecoveryProjection: ...
     async def query_claims(self, *, payload: ControllerClaimQuery) -> ClaimPage: ...
     async def decide(
         self, *, payload: ControllerEnrollmentDecisionIntent
@@ -333,6 +369,22 @@ class AdminDeviceAdmissionClient:
                 "Admin enrollment query returned another Owner Domain", status_code=502
             )
         return page
+
+    async def recover_enrollment(
+        self, *, payload: ControllerEnrollmentRecoveryQuery
+    ) -> EnrollmentRecoveryProjection:
+        projection = await self._post(
+            "admission/enrollment-recoveries", payload, EnrollmentRecoveryProjection
+        )
+        if (
+            projection.proposal.requested_owner_domain_id != payload.owner_domain_id
+            or projection.proposal.enrollment_id != payload.enrollment_id
+        ):
+            raise DeviceAdmissionError(
+                "Admin Enrollment recovery answered about another Enrollment",
+                status_code=502,
+            )
+        return projection
 
     async def query_claims(self, *, payload: ControllerClaimQuery) -> ClaimPage:
         page = await self._post("admission/claim-queries", payload, ClaimPage)

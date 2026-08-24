@@ -20,9 +20,11 @@ from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
     ClaimQuery,
     ClaimState,
+    AdmissionListCursor,
     EnrollmentProposalPage,
     EnrollmentProposalQuery,
     EnrollmentProposalState,
+    EnrollmentRecoveryProjection,
     OwnerDomainId,
 )
 
@@ -77,6 +79,7 @@ from .device_admissions import (
     device_admission_detail,
     device_removal_progress,
     enrollment_query,
+    enrollment_recovery_query,
 )
 from .runtime import (
     AdminOwnerRuntimeClient,
@@ -777,6 +780,35 @@ def create_app(
             )
         return LocalDeviceOnboardingTarget.from_verified(target)
 
+    def _admission_cursor(
+        owner_domain_id: OwnerDomainId,
+        after_sort_key: str | None,
+        after_resource_id: str | None,
+    ) -> AdmissionListCursor | None:
+        """The caller's page position, or nothing — never half of one.
+
+        A cursor with one half missing would silently read page one again, so a
+        client that lost a field learns it here instead of looping forever.
+        """
+
+        if after_sort_key is None and after_resource_id is None:
+            return None
+        if after_sort_key is None or after_resource_id is None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "A page cursor needs both its sort key and its resource ID",
+            )
+        try:
+            return AdmissionListCursor(
+                owner_domain_id=owner_domain_id,
+                sort_key=after_sort_key,
+                resource_id=after_resource_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "Page cursor is invalid"
+            ) from exc
+
     @app.get(
         "/api/local/v1/device-enrollments",
         response_model=EnrollmentProposalPage,
@@ -786,13 +818,17 @@ def create_app(
             EnrollmentProposalState.PENDING_REVIEW,
             EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
             EnrollmentProposalState.GRANT_DELIVERED,
+            EnrollmentProposalState.GRANT_ACKNOWLEDGED,
         ],
         limit: Annotated[int, Query(ge=1, le=200)] = 100,
+        after_sort_key: Annotated[str | None, Query(max_length=64)] = None,
+        after_resource_id: Annotated[str | None, Query(max_length=128)] = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> EnrollmentProposalPage:
         principal, _session = await authenticated_controller(authorization)
         owner_id, controller_id = _owner_principal(principal)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        cursor = _admission_cursor(owner_domain_id, after_sort_key, after_resource_id)
         try:
             return await device_admission.query_enrollments(
                 payload=enrollment_query(
@@ -802,9 +838,48 @@ def create_app(
                     query=EnrollmentProposalQuery(
                         owner_domain_id=owner_domain_id,
                         states=tuple(states),
-                        cursor=None,
+                        cursor=cursor,
                         limit=limit,
                     ),
+                )
+            )
+        except DeviceAdmissionError as exc:
+            raise HTTPException(
+                exc.status_code, device_admission_detail(exc)
+            ) from exc
+
+    @app.get(
+        "/api/local/v1/device-enrollments/{enrollment_id}",
+        response_model=EnrollmentRecoveryProjection,
+    )
+    async def read_device_enrollment(
+        enrollment_id: Annotated[
+            str,
+            Path(
+                min_length=1,
+                max_length=128,
+                pattern=r"^[A-Za-z0-9._:-]+$",
+            ),
+        ],
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> EnrollmentRecoveryProjection:
+        """What became of one Enrollment, as the Admission Authority holds it.
+
+        A Controller that commissioned a device watches this rather than its own
+        local guess: the device, not the phone, drives Grant collection, and the
+        phone may have been closed while it happened.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        try:
+            return await device_admission.recover_enrollment(
+                payload=enrollment_recovery_query(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    enrollment_id=enrollment_id,
                 )
             )
         except DeviceAdmissionError as exc:
@@ -823,11 +898,14 @@ def create_app(
             ClaimState.REVOKED,
         ],
         limit: Annotated[int, Query(ge=1, le=200)] = 100,
+        after_sort_key: Annotated[str | None, Query(max_length=64)] = None,
+        after_resource_id: Annotated[str | None, Query(max_length=128)] = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> ClaimPage:
         principal, _session = await authenticated_controller(authorization)
         owner_id, controller_id = _owner_principal(principal)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        cursor = _admission_cursor(owner_domain_id, after_sort_key, after_resource_id)
         try:
             return await device_admission.query_claims(
                 payload=claim_query(
@@ -837,7 +915,7 @@ def create_app(
                     query=ClaimQuery(
                         owner_domain_id=owner_domain_id,
                         states=tuple(states),
-                        cursor=None,
+                        cursor=cursor,
                         limit=limit,
                     ),
                 )
