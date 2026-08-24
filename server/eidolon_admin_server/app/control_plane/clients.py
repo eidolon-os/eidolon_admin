@@ -753,10 +753,15 @@ class MemoryRecollectionsClient:
         discovery_url: str,
         client: httpx.AsyncClient,
         timeout_seconds: float,
+        service_token: str = "",
     ) -> None:
         self._discovery_url = discovery_url.rstrip("/")
         self._client = client
         self._timeout = timeout_seconds
+        #: The realm surface's own credential. Discovery stays unauthenticated —
+        #: it publishes where a space lives, which is not the space's contents —
+        #: and only the read of what a person remembers presents this.
+        self._service_token = service_token.strip()
 
     async def recollections(
         self,
@@ -773,6 +778,14 @@ class MemoryRecollectionsClient:
         statements to the Owner-layer ones. Omitting it answers with the Owner
         layer, which is what an Owner-level question wants.
         """
+        if not self._service_token:
+            raise AuthorityFailure(
+                "memory",
+                "configuration",
+                "Admin memory service credential is not configured",
+                503,
+                retryable=False,
+            )
         space = await self._space_for(owner_id)
         params = {"q": query, "limit": str(limit)}
         if companion_id:
@@ -782,6 +795,7 @@ class MemoryRecollectionsClient:
             self._client,
             "GET",
             space,
+            headers={"Authorization": f"Bearer {self._service_token}"},
             timeout=self._timeout,
             params=params,
         )

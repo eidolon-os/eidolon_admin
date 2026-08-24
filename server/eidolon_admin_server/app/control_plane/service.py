@@ -155,6 +155,7 @@ class ControlPlaneService:
                 discovery_url=settings.memory_discovery_url,
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
+                service_token=settings.memory_api_service_token,
             ),
             memory_supervisor=MemorySupervisorClient(
                 base_url=settings.memory_supervisor_url,

@@ -51,10 +51,23 @@ def _realm(
     }
 
 
-def _client(realms: list[dict], *, recollections: dict | None = None):
+#: The realm surface requires this Host's credential, so the client must hold
+#: one to get as far as any of the routing behaviour below.
+SERVICE_TOKEN = "memory-api-token"
+
+
+def _client(
+    realms: list[dict],
+    *,
+    recollections: dict | None = None,
+    service_token: str = SERVICE_TOKEN,
+    seen: list[httpx.Request] | None = None,
+):
     """A discovery answering ``realms``, and Realms answering ``recollections``."""
 
     async def handler(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
         if request.url.path == "/api/discovery/agent-routing":
             return httpx.Response(200, json={"memory_realms": realms})
         if recollections is None:
@@ -66,6 +79,7 @@ def _client(realms: list[dict], *, recollections: dict | None = None):
         discovery_url=DISCOVERY,
         client=httpx.AsyncClient(transport=transport),
         timeout_seconds=1.0,
+        service_token=service_token,
     )
 
 
@@ -160,3 +174,43 @@ async def test_every_memory_failure_survives_the_wire() -> None:
         wire = failure.to_wire()
         assert wire.authority == "memory"
         assert wire.kind == failure.kind
+
+
+async def test_the_realm_read_presents_this_hosts_credential() -> None:
+    """And discovery does not.
+
+    Discovery publishes *where* a space lives, which is not the space's
+    contents; the read of what a person remembers is the part that has to prove
+    who is asking. Sending the credential to both would widen where the secret
+    travels for nothing.
+    """
+    seen: list[httpx.Request] = []
+    client = _client(
+        [_realm("r_a")],
+        recollections={"recollections": [{"text": "他喜欢乌龙茶"}]},
+        seen=seen,
+    )
+
+    await client.recollections(owner_id=OWNER, query="茶", limit=1)
+
+    by_path = {request.url.path: request for request in seen}
+    assert by_path["/api/discovery/agent-routing"].headers.get("authorization") is None
+    realm_request = next(
+        request for path, request in by_path.items() if path != "/api/discovery/agent-routing"
+    )
+    assert realm_request.headers["authorization"] == f"Bearer {SERVICE_TOKEN}"
+
+
+async def test_a_host_without_the_credential_says_so_instead_of_asking() -> None:
+    """Named as configuration, not as memory being unavailable.
+
+    An unauthenticated read would be refused at the realm anyway, and the
+    person would be told their memory is down. The Host knows better than that
+    before it dials.
+    """
+    client = _client([_realm("r_a")], service_token="")
+
+    failure = await _failure(client)
+
+    assert failure.kind == "configuration"
+    assert failure.retryable is False

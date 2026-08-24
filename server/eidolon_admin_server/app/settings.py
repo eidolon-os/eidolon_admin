@@ -178,6 +178,12 @@ class Settings(BaseSettings):
     #: the supervisor re-reads the roster on its own — so a Host that has this
     #: wrong is slow to converge, not broken.
     memory_supervisor_url: str = "http://127.0.0.1:8019"
+    #: The credential the per-realm memory surface requires
+    #: (``EIDOLON_MEMORY_API_TOKEN`` on the memory side). Empty makes this Host
+    #: refuse the read rather than send an unauthenticated one that will be
+    #: refused anyway — the failure then names the missing credential instead of
+    #: looking like memory being down.
+    memory_api_service_token: str = ""
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     authority_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
