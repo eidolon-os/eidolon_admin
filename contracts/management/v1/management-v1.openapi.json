@@ -1,6 +1,96 @@
 {
   "components": {
     "schemas": {
+      "CompanionCreateRequest": {
+        "additionalProperties": false,
+        "description": "Ask for another Eidolon.\n\n``operation_id`` is the client's, and it is what makes asking twice safe:\nevery identifier the Host derives comes from it, so a retry addresses the\nsame Eidolon rather than creating a second one. A client that generates a\nfresh id per attempt has opted out of that protection, which is why it is\nrequired rather than defaulted here.",
+        "properties": {
+          "display_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind": {
+            "default": "conversational",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 36,
+            "minLength": 36,
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "display_name"
+        ],
+        "title": "CompanionCreateRequest",
+        "type": "object"
+      },
+      "CompanionCreatedView": {
+        "additionalProperties": false,
+        "description": "The Eidolon that now exists, and whether its memory is up yet.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "memory_ready": {
+            "title": "Memory Ready",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "kind",
+          "lifecycle_state",
+          "revision",
+          "created",
+          "memory_ready"
+        ],
+        "title": "CompanionCreatedView",
+        "type": "object"
+      },
       "CompanionDetailView": {
         "additionalProperties": false,
         "description": "One Eidolon, opened.\n\n``is_default`` is here and *not* on a roster row on purpose. A single answer\nabout a single Companion is a comparison the Host just made against the\nOwner's one pointer; a flag repeated across a list would let two rows claim\nit. Same fact, and only one shape of it can be self-contradictory.",
@@ -415,6 +505,64 @@
           }
         },
         "summary": "List Companions",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "description": "Add another Eidolon for whoever is signed in.\n\nPUT with the client's operation id in the body rather than POST: the\nrequest states an end (\"this operation has produced an Eidolon\"), so a\nphone that lost the answer asks again and gets the same one. A POST here\nwould make a second Eidolon the normal consequence of a dropped\nresponse.",
+        "operationId": "create_companion_api_management_v1_companions_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionCreatedView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Companion",
         "tags": [
           "management"
         ]

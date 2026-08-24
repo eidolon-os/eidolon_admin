@@ -92,6 +92,31 @@ class CompanionRosterPage(StrictModel):
     next_cursor: str | None = Field(default=None, max_length=256)
 
 
+class ProvisionedCompanion(StrictModel):
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    kind: str = Field(min_length=1, max_length=32)
+    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    revision: int = Field(ge=1)
+
+
+class CompanionProvision(StrictModel):
+    """What one create produced, identically on a retry."""
+
+    contract_version: Literal["1"]
+    operation: Literal["companion.provision"]
+    operation_id: str = Field(min_length=1, max_length=64)
+    request_fingerprint: str = Field(min_length=1, max_length=128)
+    companion: ProvisionedCompanion
+    persona_genome_id: str = Field(min_length=1, max_length=64)
+    memory_realm_id: str = Field(min_length=1, max_length=64)
+    #: The one field that changes what the caller does next: a realm that was
+    #: just catalogued has no running process yet, and one that already existed
+    #: needs nothing.
+    memory_realm_created: bool
+    replayed: bool
+
+
 class PersonaChapter(StrictModel):
     genome_id: str = Field(min_length=1, max_length=64)
     version: int = Field(ge=1)

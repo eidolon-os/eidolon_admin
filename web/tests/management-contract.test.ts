@@ -12,6 +12,8 @@
 
 import { describe, expect, it } from 'vitest'
 import type {
+  CompanionCreateRequest,
+  CompanionCreatedView,
   CompanionDetailView,
   DefaultCompanionRequest,
   DefaultCompanionView,
@@ -252,5 +254,80 @@ describe('management v1 default companion', () => {
     expect(Object.keys(answer)).toEqual(['contract_version', 'default_companion_id'])
     const view: DefaultCompanionView = answer
     expect(view.default_companion_id).toBe('companion-b')
+  })
+})
+
+describe('management v1 create', () => {
+  it('requires the client\'s own operation id', () => {
+    const request: CompanionCreateRequest = {
+      operation_id: '32c421a3-e0df-40f9-8f75-68745ae39d81',
+      display_name: '阿力',
+    }
+    expect(request.operation_id).toHaveLength(36)
+
+    // @ts-expect-error - without it, a dropped response means a second Eidolon
+    const unsafe: CompanionCreateRequest = { display_name: '阿力' }
+    expect(unsafe).toBeTruthy()
+  })
+
+  it('does not make a client name a kind for the ordinary case', () => {
+    // kind is optional, so a large screen can offer "add an Eidolon" without
+    // first teaching the person that guards exist.
+    const request: CompanionCreateRequest = {
+      operation_id: '32c421a3-e0df-40f9-8f75-68745ae39d81',
+      display_name: '阿力',
+    }
+    expect(request.kind).toBeUndefined()
+  })
+
+  it('separates "it exists" from "I just made it"', () => {
+    const replay: CompanionCreatedView = {
+      contract_version: '1',
+      companion_id: 'cp-1',
+      display_name: '阿力',
+      kind: 'conversational',
+      lifecycle_state: 'active',
+      revision: 1,
+      created: false,
+      memory_ready: true,
+    }
+    // A screen that says "created!" on a replay is reporting something that did
+    // not happen; the Eidolon is there either way.
+    expect(replay.created).toBe(false)
+    expect(replay.companion_id).toBe('cp-1')
+  })
+
+  it('reads memory_ready false as "not yet", not as a failure', () => {
+    const pending: CompanionCreatedView = {
+      contract_version: '1',
+      companion_id: 'cp-1',
+      display_name: '阿力',
+      kind: 'conversational',
+      lifecycle_state: 'active',
+      revision: 1,
+      created: true,
+      memory_ready: false,
+    }
+    // The Eidolon exists and is active; only its memory is still coming up. A
+    // screen that treated this as an error would offer a retry that would make
+    // a second Eidolon if the operation id were regenerated.
+    expect(pending.created).toBe(true)
+    expect(pending.lifecycle_state).toBe('active')
+    const label = pending.memory_ready ? '就绪' : '记忆还在启动'
+    expect(label).toBe('记忆还在启动')
+  })
+
+  it('keys the create response by the operation a client calls', () => {
+    const answer: ManagementResponses['PUT /api/management/v1/companions'] = {
+      contract_version: '1',
+      companion_id: 'cp-1',
+      display_name: '阿力',
+      kind: 'conversational',
+      lifecycle_state: 'active',
+      revision: 1,
+      created: true,
+      memory_ready: true,
+    }
+    expect(answer.companion_id).toBe('cp-1')
   })
 })

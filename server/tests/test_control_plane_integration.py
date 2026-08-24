@@ -212,6 +212,48 @@ def producer_app(state: ProducerState) -> FastAPI:
             raise HTTPException(404, "owner not found")
         return owner_body(owner_id)
 
+    #: Provisions this fake has already carried out, keyed by operation id, so
+    #: a retry is answered the way the authority answers one.
+    provisions: dict[str, dict] = {}
+
+    @app.put(
+        "/api/workspace-authority/v1/owners/{owner_id}/companion-provisions/{operation_id}"
+    )
+    async def provision_companion(
+        owner_id: str,
+        operation_id: str,
+        payload: dict,
+        authorization: str = Header(alias="Authorization"),
+    ):
+        if authorization != "Bearer workspace-token":
+            raise HTTPException(401, "bad Data workspace credential")
+        first = operation_id not in provisions
+        if first:
+            provisions[operation_id] = {
+                "companion_id": f"cp-{operation_id[:8]}",
+                "display_name": payload["companion_display_name"],
+            }
+        stored = provisions[operation_id]
+        return {
+            "contract_version": "1",
+            "operation": "companion.provision",
+            "operation_id": operation_id,
+            "request_fingerprint": "sha256:" + "0" * 64,
+            "companion": {
+                "companion_id": stored["companion_id"],
+                "display_name": stored["display_name"],
+                "kind": payload.get("kind", "conversational"),
+                "lifecycle_state": "active",
+                "revision": 1,
+            },
+            "persona_genome_id": f"gp-{operation_id[:8]}",
+            "memory_realm_id": "realm-1",
+            # This Owner already had a realm, which is the case the plan's exit
+            # condition is about.
+            "memory_realm_created": False,
+            "replayed": not first,
+        }
+
     @app.put("/api/workspace-authority/v1/owners/{owner_id}/default-companion")
     async def set_default(
         owner_id: str,
@@ -696,3 +738,39 @@ async def test_making_one_the_default_moves_the_owners_pointer_over_http(
     # And the caller still holding revision 3 loses, with a status a client can
     # act on rather than a generic failure.
     assert stale.status_code == 409, stale.text
+
+
+async def test_adding_a_companion_over_http_creates_no_second_realm(
+    tmp_path: Path,
+) -> None:
+    """Phase 2's exit condition, through the real clients.
+
+    Also the retry: the same operation id twice yields one Companion and, the
+    second time, ``created: false``. And because the Owner already had a realm,
+    no reconcile is owed — memory_ready is true without anyone being told.
+    """
+    state = ProducerState()
+    app, producer_client = await admin_app(tmp_path, producer_app(state))
+    headers = {"Authorization": "Bearer local-api-token"}
+    operation = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+    path = (
+        f"/api/internal/v1/management/companion-provisions/{operation}"
+        "?owner_id=owner-1"
+    )
+    try:
+        first = await call_admin(
+            app, "PUT", path, headers=headers, json={"display_name": "阿力"}
+        )
+        again = await call_admin(
+            app, "PUT", path, headers=headers, json={"display_name": "阿力"}
+        )
+    finally:
+        await app.state.control_plane.close()
+        await producer_client.aclose()
+
+    assert first.status_code == 200, first.text
+    assert first.json()["created"] is True
+    assert first.json()["memory_ready"] is True
+    assert again.status_code == 200, again.text
+    assert again.json()["companion_id"] == first.json()["companion_id"]
+    assert again.json()["created"] is False

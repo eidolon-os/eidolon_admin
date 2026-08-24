@@ -6,6 +6,23 @@
 // No operation takes an owner_id: the Owner comes from the authenticated
 // Controller session, so it is not expressible from a client.
 
+export interface CompanionCreateRequest {
+  display_name: string
+  kind?: string
+  operation_id: string
+}
+
+export interface CompanionCreatedView {
+  companion_id: string
+  contract_version?: "1"
+  created: boolean
+  display_name?: string
+  kind: string
+  lifecycle_state: string
+  memory_ready: boolean
+  revision: number
+}
+
 export interface CompanionDetailView {
   companion_id: string
   contract_version?: "1"
@@ -72,6 +89,7 @@ export interface ValidationError {
 /** Response type per operation, keyed as it is called. */
 export interface ManagementResponses {
   'GET /api/management/v1/companions': CompanionRosterView
+  'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/context': ManagementContextView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView

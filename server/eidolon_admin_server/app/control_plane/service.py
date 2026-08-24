@@ -19,6 +19,7 @@ from .clients import (
     HubManagementClient,
     KernelMountClient,
     MemoryRecollectionsClient,
+    MemorySupervisorClient,
 )
 from .contracts import (
     HubDevice,
@@ -93,6 +94,7 @@ class ControlPlaneService:
         hub: HubManagementClient,
         kernel: KernelMountClient,
         memory: MemoryRecollectionsClient,
+        memory_supervisor: MemorySupervisorClient | None = None,
         hub_credentials: HubAdminCredentialIssuer | None = None,
         removal_intents=None,
         removal_observation_timeout_seconds: float = 0.0,
@@ -103,6 +105,7 @@ class ControlPlaneService:
         self.hub = hub
         self.kernel = kernel
         self.memory = memory
+        self.memory_supervisor = memory_supervisor
         self.hub_credentials = hub_credentials
         if removal_intents is None:
             from .removal_intents import InMemoryRemovalIntentStore
@@ -150,6 +153,11 @@ class ControlPlaneService:
             ),
             memory=MemoryRecollectionsClient(
                 discovery_url=settings.memory_discovery_url,
+                client=http_client,
+                timeout_seconds=settings.authority_timeout_seconds,
+            ),
+            memory_supervisor=MemorySupervisorClient(
+                base_url=settings.memory_supervisor_url,
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
             ),

@@ -17,6 +17,10 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.service import ControlPlaneService
 from eidolon_admin_server.app.management.context import OwnerReader
+from eidolon_admin_server.app.management.creation import (
+    CompanionProvisioner,
+    MemoryReconciler,
+)
 from eidolon_admin_server.app.management.roster import (
     DefaultCompanionWriter,
     RosterReader,
@@ -58,6 +62,29 @@ async def test_the_default_writer_the_route_reaches_for_can_write_it() -> None:
     service = _service()
     try:
         assert isinstance(service.workspace, DefaultCompanionWriter)
+    finally:
+        await service.close()
+
+
+async def test_the_provisioner_the_route_reaches_for_can_provision() -> None:
+    """A Companion is created through the workspace authority's write path."""
+    service = _service()
+    try:
+        assert isinstance(service.workspace, CompanionProvisioner)
+    finally:
+        await service.close()
+
+
+async def test_the_reconciler_the_route_reaches_for_can_be_asked() -> None:
+    """And it is a different thing from the memory *read* client.
+
+    Both are "memory" to a reader skimming the composition; only one of them can
+    bring a Realm up, and the create path reaches for that one.
+    """
+    service = _service()
+    try:
+        assert isinstance(service.memory_supervisor, MemoryReconciler)
+        assert not isinstance(service.memory, MemoryReconciler)
     finally:
         await service.close()
 

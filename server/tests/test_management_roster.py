@@ -210,6 +210,23 @@ class _Backend:
             "default_companion_id": companion_id,
         }
 
+    async def create_companion(
+        self, *, owner_id: str, operation_id: str, display_name: str, kind: str
+    ) -> dict:
+        self.asked.append((owner_id, operation_id, display_name, kind))
+        already = self.asked.count((owner_id, operation_id, display_name, kind)) > 1
+        return {
+            "contract_version": "1",
+            "operation": "companion.created",
+            "companion_id": f"cp-{operation_id[:8]}",
+            "display_name": display_name,
+            "kind": kind,
+            "lifecycle_state": "active",
+            "revision": 1,
+            "created": not already,
+            "memory_ready": True,
+        }
+
     async def close(self) -> None:
         return None
 
@@ -525,3 +542,109 @@ async def test_no_owner_may_be_named_in_the_write(tmp_path, monkeypatch) -> None
     # must find out that it did not.
     assert answered.status_code == 422
     assert backend.asked == []
+
+
+# --- adding one ------------------------------------------------------------
+
+_COMPANIONS_WRITE = "/api/management/v1/companions"
+_OPERATION = "32c421a3-e0df-40f9-8f75-68745ae39d81"
+
+
+async def test_adding_one_is_for_the_session_owner(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.put(
+            _COMPANIONS_WRITE,
+            json={"operation_id": _OPERATION, "display_name": "阿力"},
+        )
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={"operation_id": _OPERATION, "display_name": "阿力"},
+        )
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", _OPERATION, "阿力", "conversational")]
+    assert answered.status_code == 200
+    assert answered.json()["created"] is True
+    assert answered.json()["memory_ready"] is True
+
+
+async def test_asking_twice_with_one_operation_id_creates_one(
+    tmp_path, monkeypatch
+) -> None:
+    """The property PUT exists for: a lost answer is asked for again.
+
+    The second response says ``created: false`` — the Eidolon exists either way,
+    and a client that showed "created!" twice for one intent would be telling
+    the person something that did not happen.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = {"operation_id": _OPERATION, "display_name": "阿力"}
+        first = await client.put(_COMPANIONS_WRITE, headers=headers, json=body)
+        second = await client.put(_COMPANIONS_WRITE, headers=headers, json=body)
+
+    assert first.json()["companion_id"] == second.json()["companion_id"]
+    assert (first.json()["created"], second.json()["created"]) == (True, False)
+
+
+async def test_an_operation_id_is_required(tmp_path, monkeypatch) -> None:
+    """Not generated here.
+
+    A Host that made one up would make every retry a new operation, so the
+    protection would exist in the contract and not in fact.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _COMPANIONS_WRITE, headers=headers, json={"display_name": "阿力"}
+        )
+
+    assert answered.status_code == 422
+    assert backend.asked == []
+
+
+async def test_no_owner_may_be_named_when_adding(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={
+                "operation_id": _OPERATION,
+                "display_name": "阿力",
+                "owner_id": "owner-2",
+            },
+        )
+
+    assert answered.status_code == 422
+    assert backend.asked == []
+
+
+async def test_the_ordinary_case_needs_no_kind(tmp_path, monkeypatch) -> None:
+    """A person adding an Eidolon should not have to know guards exist."""
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={"operation_id": _OPERATION, "display_name": "阿力"},
+        )
+
+    assert backend.asked[0][3] == "conversational"

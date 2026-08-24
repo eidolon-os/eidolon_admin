@@ -57,6 +57,21 @@ class AdminManagementClient:
             {"companion_id": companion_id, "expected_revision": expected_revision},
         )
 
+    async def create_companion(
+        self,
+        *,
+        owner_id: str,
+        operation_id: str,
+        display_name: str,
+        kind: str,
+    ) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/companion-provisions/"
+            f"{quote(operation_id, safe='')}",
+            {"owner_id": owner_id},
+            {"display_name": display_name, "kind": kind},
+        )
+
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         return await self._call("GET", path, params, None)
 

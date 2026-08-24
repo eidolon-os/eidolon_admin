@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
+from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
@@ -112,6 +113,27 @@ class DefaultCompanionResponseInternal(BaseModel):
     contract_version: Literal["1"] = "1"
     operation: Literal["owner.default-companion"] = "owner.default-companion"
     default_companion_id: str | None = Field(default=None, max_length=64)
+
+
+class CompanionCreateRequestInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=128)
+    kind: str = Field(default="conversational", min_length=1, max_length=32)
+
+
+class CompanionCreateResponseInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.created"] = "companion.created"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    kind: str = Field(min_length=1, max_length=32)
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    revision: int = Field(ge=1)
+    created: bool
+    memory_ready: bool
 
 
 @router.get("/context", response_model=ManagementContextInternal)
@@ -245,4 +267,40 @@ async def put_default_companion(
         ) from exc
     return DefaultCompanionResponseInternal(
         default_companion_id=default_companion_id
+    )
+
+
+@router.put(
+    "/companion-provisions/{operation_id}",
+    response_model=CompanionCreateResponseInternal,
+)
+async def put_companion_provision(
+    operation_id: str,
+    request: Request,
+    owner_id: str,
+    payload: CompanionCreateRequestInternal,
+) -> CompanionCreateResponseInternal:
+    """Add a Companion to this Owner, exactly once per operation id."""
+    control_plane = request.app.state.control_plane
+    try:
+        created = await create_companion(
+            owner_id=owner_id,
+            operation_id=operation_id,
+            display_name=payload.display_name,
+            kind=payload.kind,
+            companions=control_plane.workspace,
+            memory=getattr(control_plane, "memory_supervisor", None),
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return CompanionCreateResponseInternal(
+        companion_id=created.companion_id,
+        display_name=created.display_name,
+        kind=created.kind,
+        lifecycle_state=created.lifecycle_state,
+        revision=created.revision,
+        created=created.created,
+        memory_ready=created.memory_ready,
     )

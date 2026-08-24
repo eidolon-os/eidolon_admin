@@ -157,6 +157,46 @@ class DefaultCompanionView(BaseModel):
     default_companion_id: str | None = Field(default=None, max_length=64)
 
 
+class CompanionCreateRequest(BaseModel):
+    """Ask for another Eidolon.
+
+    ``operation_id`` is the client's, and it is what makes asking twice safe:
+    every identifier the Host derives comes from it, so a retry addresses the
+    same Eidolon rather than creating a second one. A client that generates a
+    fresh id per attempt has opted out of that protection, which is why it is
+    required rather than defaulted here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str = Field(min_length=36, max_length=36)
+    display_name: str = Field(min_length=1, max_length=128)
+    #: Absent means an ordinary conversational Eidolon. A client should not have
+    #: to know the other values exist to create the normal thing.
+    kind: str = Field(default="conversational", min_length=1, max_length=32)
+
+
+class CompanionCreatedView(BaseModel):
+    """The Eidolon that now exists, and whether its memory is up yet."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    kind: str = Field(min_length=1, max_length=32)
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    revision: int = Field(ge=1)
+    #: False when this request found the Eidolon already created by the same
+    #: operation. It exists either way; a client that shows "created!" twice for
+    #: one intent is telling the person something that did not happen.
+    created: bool
+    #: False means "its memory is not running yet", not "something is wrong".
+    #: The Host converges on its own; a client should say "still coming up"
+    #: rather than either hiding it or calling it a failure.
+    memory_ready: bool
+
+
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
@@ -168,6 +208,15 @@ class ManagementBackendPort(Protocol):
 
     async def set_default_companion(
         self, *, owner_id: str, companion_id: str, expected_revision: int
+    ) -> dict: ...
+
+    async def create_companion(
+        self,
+        *,
+        owner_id: str,
+        operation_id: str,
+        display_name: str,
+        kind: str,
     ) -> dict: ...
 
 
@@ -281,6 +330,39 @@ def register_management_routes(
             raise HTTPException(exc.status_code, str(exc)) from exc
         return DefaultCompanionView(
             default_companion_id=answer["default_companion_id"]
+        )
+
+    @router.put("/companions", response_model=CompanionCreatedView)
+    async def create_companion(
+        payload: CompanionCreateRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionCreatedView:
+        """Add another Eidolon for whoever is signed in.
+
+        PUT with the client's operation id in the body rather than POST: the
+        request states an end ("this operation has produced an Eidolon"), so a
+        phone that lost the answer asks again and gets the same one. A POST here
+        would make a second Eidolon the normal consequence of a dropped
+        response.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.create_companion(
+                owner_id=owner_id,
+                operation_id=payload.operation_id,
+                display_name=payload.display_name,
+                kind=payload.kind,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return CompanionCreatedView(
+            companion_id=answer["companion_id"],
+            display_name=answer["display_name"],
+            kind=answer["kind"],
+            lifecycle_state=answer["lifecycle_state"],
+            revision=answer["revision"],
+            created=answer["created"],
+            memory_ready=answer["memory_ready"],
         )
 
     app.include_router(router)

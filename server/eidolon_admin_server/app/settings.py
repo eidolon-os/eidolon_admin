@@ -171,6 +171,13 @@ class Settings(BaseSettings):
     #: memory space rather than by service, and this is the endpoint that
     #: knows the mapping.
     memory_discovery_url: str = "http://127.0.0.1:8020"
+    #: The memory supervisor's own admin surface, where a reconcile can be
+    #: asked for. Separate from discovery because they are different processes'
+    #: jobs: discovery answers "where does this space live", the supervisor
+    #: answers "bring the roster's spaces up". Asking is only an accelerator —
+    #: the supervisor re-reads the roster on its own — so a Host that has this
+    #: wrong is slow to converge, not broken.
+    memory_supervisor_url: str = "http://127.0.0.1:8019"
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     authority_timeout_seconds: float = Field(default=3.0, gt=0, le=30)

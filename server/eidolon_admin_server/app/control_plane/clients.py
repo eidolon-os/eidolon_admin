@@ -14,6 +14,7 @@ from .contracts import (
     PersonaChapter,
     PersonaTimeline,
     CompanionIdentity,
+    CompanionProvision,
     CompanionRosterPage,
     HubDevice,
     DeviceRef,
@@ -564,6 +565,42 @@ class DataWorkspaceAuthorityClient:
             "PATCH", owner_id, json={"display_name": display_name}
         )
 
+    async def provision_companion(
+        self,
+        owner_id: str,
+        *,
+        operation_id: str,
+        companion_display_name: str,
+        kind: str,
+    ) -> CompanionProvision:
+        """Add a Companion to this Owner, exactly once per operation id.
+
+        The operation id is the caller's, not ours: it is what makes a retry
+        idempotent, and generating one here would make every retry a new
+        operation. The authority derives every identifier from it.
+        """
+
+        response = await _request(
+            "data",
+            self._client,
+            "PUT",
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/companion-provisions/"
+            f"{quote(operation_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers,
+            json={
+                "companion_display_name": companion_display_name,
+                "kind": kind,
+            },
+        )
+        result = _parse("data", response, CompanionProvision)
+        if result.operation_id != operation_id:
+            raise _contract_violation(
+                "data", "Data returned a different provision operation"
+            )
+        return result
+
     async def set_default_companion(
         self,
         owner_id: str,
@@ -651,6 +688,53 @@ def _realm_name(realm: dict) -> str:
         if isinstance(value, str) and value:
             return value
     return "unidentified"
+
+
+class MemorySupervisorClient:
+    """Asks the memory supervisor to bring the roster's Realms up.
+
+    This is an **accelerator, not the guarantee**. The supervisor re-reads the
+    authority roster on its own schedule, so a Realm catalogued while it was
+    running converges without anyone telling it (that control loop is what
+    `eidolon_memory@c47f8de` fixed). Asking just removes the wait.
+
+    Which is why every failure here is reported and swallowed by the caller
+    rather than failing the create: a Companion that exists in the authority
+    with its Realm not yet running is a correct intermediate state, and undoing
+    the create because a notification did not land would be worse than being
+    slow.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        client: httpx.AsyncClient,
+        timeout_seconds: float,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+        self._timeout = timeout_seconds
+
+    async def request_reconcile(self) -> bool:
+        """True when the supervisor accepted; False when it could not be told.
+
+        A bool rather than an exception: the caller has nothing to decide, only
+        something to report, and an exception here would invite someone to make
+        it fatal.
+        """
+
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/api/admin/reconcile", timeout=self._timeout
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ):
+            return False
+        return response.status_code == 200
 
 
 class MemoryRecollectionsClient:
