@@ -334,6 +334,7 @@ class _RuntimeClient:
         self.renamed_owner = (owner_id, display_name)
         return OwnerIdentity(
             operation="owner.identity",
+            revision=1,
             owner_id=owner_id,
             display_name=display_name,
             lifecycle_state="active",

@@ -16,6 +16,7 @@ from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .control_plane.router import router as control_plane_router
+from .management.router import router as management_router
 from .control_plane.service import ControlPlaneService
 from .mission_control.router import router as mission_control_router
 from .host_services.client import HostServiceClient
@@ -161,6 +162,9 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(control_plane_router, prefix="/api")
+    # Its own prefix, not another branch of control-plane: that family already
+    # answers to two audiences and a third meaning is how this got confusing.
+    app.include_router(management_router, prefix="/api")
     # Read-only and second-hand: it asks the same authorities every other
     # surface here asks. Registered rather than merely present, because a
     # module nothing routes to is one nobody can tell is broken.

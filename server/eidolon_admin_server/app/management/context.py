@@ -1,0 +1,99 @@
+"""The one read two management clients make before anything else.
+
+``/context`` answers "who is this, what may they do here, and what are the
+limits" in a single call, so neither client has to assemble a dozen requests and
+guess whether a feature exists. Three rules shape it:
+
+**Owner scope is not an input.** The Owner comes from the authenticated
+Controller at the Local API boundary and is passed down; a client cannot name a
+different one, and this layer never chooses one.
+
+**Capabilities are discovery, not permission.** ``true`` means the Host can do
+this at all — the code exists and its authority answers. Whether *this*
+Controller may do it is a separate question, answered per action. A client that
+treats a capability as an entitlement will get a 403 and should.
+
+**A capability is false until its whole slice is closed.** Not "the route
+exists", not "it mostly works" — false until authority, application, public
+route, generated client and tests are all in place. False is what keeps a button
+from appearing before the thing behind it works, and appearing-then-failing is
+worse than absent.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from eidolon_admin_server.app.control_plane.contracts import OwnerIdentity
+
+
+class OwnerReader(Protocol):
+    """The Owner facts this read needs, and nothing else."""
+
+    async def get_owner(self, owner_id: str) -> OwnerIdentity: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ManagementContext:
+    """What a client learns before it draws anything.
+
+    ``default_companion_id`` is carried verbatim from the Owner aggregate.
+    ``None`` is a real answer — an Owner whose only Companion is a guard, or
+    whose default was archived — and no layer above may resolve it by picking a
+    Companion.
+    """
+
+    owner_id: str
+    owner_display_name: str
+    owner_revision: int
+    default_companion_id: str | None
+    capabilities: dict[str, bool]
+    limits: dict[str, int | None]
+
+
+#: Everything the plan's v1 surface will eventually offer, declared here so a
+#: client discovers the shape of the API rather than the shape of today's build.
+#: A name missing from this map is a name the client has never heard of; a name
+#: present and false is a thing this Host cannot do yet. The difference matters:
+#: the first is a version skew, the second is a feature gate.
+_CAPABILITIES: tuple[str, ...] = (
+    "companion.read",
+    "companion.create",
+    "companion.rename",
+    "companion.set_default",
+    "companion.archive",
+    "companion.restore",
+    "persona.read",
+    "persona.govern",
+    "memory.read",
+    "memory.govern",
+    "memory.export",
+    "device.read",
+    "device.manage",
+    "conversation.read",
+    "task.read",
+    "task.manage",
+    "host.read",
+    "host.operate",
+    "controller.manage",
+)
+
+#: Closed slices. Everything else in ``_CAPABILITIES`` is false, and stays false
+#: until its authority, application, route, client and tests are all in place.
+_ENABLED: frozenset[str] = frozenset()
+
+
+async def read_context(*, owner_id: str, owners: OwnerReader) -> ManagementContext:
+    owner = await owners.get_owner(owner_id)
+    return ManagementContext(
+        owner_id=owner.owner_id,
+        owner_display_name=owner.display_name,
+        owner_revision=owner.revision,
+        default_companion_id=owner.default_companion_id,
+        capabilities={name: name in _ENABLED for name in _CAPABILITIES},
+        # Null rather than a number the client could hard-code. A limit nobody
+        # has measured is not a limit; ``max_active_companions`` waits on a
+        # capacity result, and until then the client must not invent one.
+        limits={"max_active_companions": None},
+    )

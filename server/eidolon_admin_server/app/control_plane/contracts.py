@@ -95,7 +95,14 @@ class OwnerIdentity(StrictModel):
     owner_id: str = Field(min_length=1, max_length=64)
     #: What this person is called. Given at first use; correctable since.
     display_name: str = Field(default="", max_length=128)
-    lifecycle_state: Literal["active", "inactive"]
+    lifecycle_state: Literal["active", "archived", "deleting"]
+    #: Which Companion answers when nothing named one. Read here, from the Owner
+    #: aggregate that owns it, rather than derived by scanning a Companion list —
+    #: one field, one answer. ``None`` is real: no default-eligible Companion,
+    #: and this layer must not resolve it by choosing one.
+    default_companion_id: str | None = Field(default=None, max_length=64)
+    #: Owner aggregate version, for the If-Match a writer sends.
+    revision: int = Field(ge=1)
 
 
 class OwnerRenameRequest(StrictModel):

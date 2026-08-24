@@ -14,6 +14,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
+import httpx
+
 from fastapi import (
     FastAPI,
     Header,
@@ -29,6 +31,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
+from .management.backend import AdminManagementClient
+from .management.router import ManagementBackendPort, register_management_routes
 from ..app.control_plane.contracts import KernelMountPage
 from .config import LocalApiSettings, load_local_api_settings
 from .host_services import (
@@ -166,6 +170,7 @@ def create_app(
     devices_client: AdminOwnerDevicesPort | None = None,
     device_admission_client: AdminDeviceAdmissionPort | None = None,
     host_services_client: AdminHostServicesPort | None = None,
+    management_backend: ManagementBackendPort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -199,6 +204,13 @@ def create_app(
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_host_services_client = host_services_client is None
+    management = management_backend or AdminManagementClient(
+        base_url=resolved.admin_base_url,
+        service_token=resolved.admin_service_token,
+        client=httpx.AsyncClient(),
+        timeout_seconds=resolved.admin_timeout_seconds,
+    )
+    owns_management_client = management_backend is None
 
     owned_clients = [
         client
@@ -208,6 +220,7 @@ def create_app(
             (owns_devices_client, devices),
             (owns_device_admission_client, device_admission),
             (owns_host_services_client, host_services),
+            (owns_management_client, management),
         )
         if owned
     ]
@@ -1124,6 +1137,25 @@ def create_app(
             "mode": result["mode"],
             "state": result["state"],
         }
+
+    async def management_owner(authorization: str | None) -> str:
+        """The Owner this Controller session speaks for, and only that one.
+
+        The public management surface never accepts an ``owner_id``; it is
+        derived here, once, from a session Bootstrap has just re-validated.
+        """
+        principal, _session = await authenticated_controller(authorization)
+        owner_id = principal.get("owner_id")
+        if not isinstance(owner_id, str) or not owner_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Host Workspace is not initialized",
+            )
+        return owner_id
+
+    register_management_routes(
+        app, backend=management, authenticated_owner=management_owner
+    )
 
     return app
 
