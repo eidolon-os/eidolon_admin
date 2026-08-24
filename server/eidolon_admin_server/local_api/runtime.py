@@ -46,13 +46,6 @@ class AdminOwnerRuntimePort(Protocol):
         display_name: str,
     ) -> OwnerIdentity: ...
 
-    async def recollections(
-        self,
-        owner_id: str,
-        query: str,
-        limit: int,
-    ) -> list[dict]: ...
-
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace: ...
 
     async def get_companion_face(self, companion_id: str) -> bytes | None: ...
@@ -202,31 +195,6 @@ class CompanionFaceView(BaseModel):
     #: copy is stale without comparing photographs.
     sha256: str | None = None
     updated_at: str | None = None
-
-
-class RecollectionView(BaseModel):
-    """One thing an Eidolon remembers, as its Owner reads it.
-
-    Deliberately not the stored record. What memory holds carries wings,
-    rooms, scores and provenance — the machinery by which it was found. A
-    person asked what it remembers, and the answer to that is the sentence.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    text: str
-    #: When it was laid down, when memory knows. Absent is left absent rather
-    #: than filled in with the time of asking.
-    remembered_at: str | None = None
-
-
-class RecollectionsView(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    operation: Literal["local.recollections"] = "local.recollections"
-    contract_version: Literal["1"] = "1"
-    query: str
-    recollections: list[RecollectionView]
 
 
 class OwnerRenameCommand(CompanionRenameCommand):
@@ -569,51 +537,6 @@ class AdminOwnerRuntimeClient:
             raise WorkspaceRuntimeError(
                 "Admin Companion control plane is unavailable"
             ) from exc
-
-    async def recollections(
-        self,
-        owner_id: str,
-        query: str,
-        limit: int,
-    ) -> list[dict]:
-        if not self._token:
-            raise WorkspaceRuntimeError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}/recollections"
-        )
-        try:
-            response = await self._client.get(
-                url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                params={"q": query, "limit": limit},
-                timeout=self._timeout,
-            )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise WorkspaceRuntimeError("Memory is unavailable") from exc
-        if response.status_code == 404:
-            raise WorkspaceRuntimeError(
-                "This Eidolon has no memory yet", status_code=404
-            )
-        if response.status_code != 200:
-            # Never an empty list on failure: that reads as "it remembers
-            # nothing about you", which is a different and much worse answer.
-            raise WorkspaceRuntimeError("Memory is unavailable")
-        try:
-            recollections = response.json()["recollections"]
-        except (ValueError, KeyError, TypeError) as exc:
-            raise WorkspaceRuntimeError(
-                "Admin memory response violated its contract"
-            ) from exc
-        if not isinstance(recollections, list):
-            raise WorkspaceRuntimeError("Admin memory response violated its contract")
-        return recollections
 
     async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline:
         return await self._companion_request(

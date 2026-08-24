@@ -185,6 +185,17 @@ export interface OwnerContextView {
   revision: number
 }
 
+export interface RecollectionView {
+  remembered_at?: string | null
+  text?: string
+}
+
+export interface RecollectionsView {
+  contract_version?: "1"
+  query: string
+  recollections: Array<RecollectionView>
+}
+
 export interface ValidationError {
   ctx?: Record<string, unknown>
   input?: unknown
@@ -205,5 +216,6 @@ export interface ManagementResponses {
   'POST /api/management/v1/memory/forget/confirm': ForgetResultView
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView
+  'GET /api/management/v1/memory/recollections': RecollectionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
 }

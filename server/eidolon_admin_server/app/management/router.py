@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
@@ -24,6 +24,7 @@ from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
 from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
+from eidolon_admin_server.app.management.recollecting import recall
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
@@ -191,6 +192,26 @@ class MemoryDayInternal(BaseModel):
     more_in_window: bool
     undated_count: int = Field(ge=0)
     truncated: bool
+
+
+class RecollectionInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(default="", max_length=8192)
+    #: Absent stays absent. Filling it in with the time of asking would put a
+    #: date on a memory that never had one.
+    remembered_at: str | None = Field(default=None, max_length=64)
+
+
+class RecollectionsInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.recollections"] = "memory.recollections"
+    #: Echoed: an empty answer with no question attached cannot be told apart
+    #: from an answer to a different one.
+    query: str = Field(min_length=1, max_length=256)
+    recollections: list[RecollectionInternal]
 
 
 class MemoryAudienceInternal(BaseModel):
@@ -595,6 +616,46 @@ async def put_memory_entry_audience(
         entry_id=result.entry_id,
         companion_id=result.companion_id,
         status=result.status,
+    )
+
+
+@router.get("/memory/recollections", response_model=RecollectionsInternal)
+async def get_memory_recollections(
+    request: Request,
+    owner_id: str,
+    # The same bounds the public route declares. Repeated rather than trusted:
+    # this ABI has one caller today, and "the caller validates it" is the
+    # assumption that stops being true when a second one arrives.
+    q: str = Query(min_length=1, max_length=256),
+    limit: int = Query(default=10, ge=1, le=50),
+    companion_id: str | None = None,
+) -> RecollectionsInternal:
+    """What this Eidolon remembers about something.
+
+    A sentence and a time. The wings, rooms and scores memory carries are how it
+    found something rather than what it remembers, and dropping them here means
+    no client has to decide that again.
+    """
+    try:
+        found = await recall(
+            owner_id=owner_id,
+            query=q,
+            limit=limit,
+            companion_id=companion_id,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return RecollectionsInternal(
+        query=found.query,
+        recollections=[
+            RecollectionInternal(
+                text=entry.text, remembered_at=entry.remembered_at
+            )
+            for entry in found.recollections
+        ],
     )
 
 

@@ -103,6 +103,16 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/export", params)
 
+    async def recollections(
+        self, *, owner_id: str, query: str, limit: int, companion_id: str | None
+    ) -> dict:
+        params = {"owner_id": owner_id, "q": query, "limit": str(limit)}
+        if companion_id:
+            params["companion_id"] = companion_id
+        return await self._get(
+            "/api/internal/v1/management/memory/recollections", params
+        )
+
     async def assign_memory_audience(
         self, *, owner_id: str, entry_id: str, companion_id: str
     ) -> dict:

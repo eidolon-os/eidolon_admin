@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 
 MANAGEMENT_PREFIX = "/api/management/v1"
@@ -324,6 +324,34 @@ class MemoryCopyView(BaseModel):
     truncated: bool
 
 
+class RecollectionView(BaseModel):
+    """One thing my Eidolon remembers, as I read it.
+
+    Not the stored record. What memory holds carries wings, rooms, scores and
+    provenance — that is how it found something, not what it remembers, and I
+    asked the second question.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(default="", max_length=8192)
+    #: Absent when memory does not know. Left absent rather than filled in with
+    #: the time I asked.
+    remembered_at: str | None = Field(default=None, max_length=64)
+
+
+class RecollectionsView(BaseModel):
+    """What it remembers about what I asked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: Echoed back: an empty answer with no question attached cannot be told
+    #: apart from an answer to a different one.
+    query: str = Field(min_length=1, max_length=256)
+    recollections: list[RecollectionView]
+
+
 class MemoryAudienceRequest(BaseModel):
     """Which of my Eidolons this memory is for."""
 
@@ -460,6 +488,10 @@ class ManagementBackendPort(Protocol):
 
     async def memory_export(
         self, *, owner_id: str, companion_id: str | None
+    ) -> dict: ...
+
+    async def recollections(
+        self, *, owner_id: str, query: str, limit: int, companion_id: str | None
     ) -> dict: ...
 
     async def assign_memory_audience(
@@ -729,6 +761,40 @@ def register_management_routes(
             entry_id=answer["entry_id"],
             companion_id=answer.get("companion_id", ""),
             status=answer["status"],
+        )
+
+    @router.get("/memory/recollections", response_model=RecollectionsView)
+    async def get_memory_recollections(
+        # Bounded here, exactly as the deleted ``/api/local/v1/recollections``
+        # bounded them: a question is required and an unbounded answer is refused
+        # rather than passed down to memory. Carried across the migration on
+        # purpose — a limit that quietly became unlimited is the sort of thing a
+        # move like this loses.
+        q: str = Query(min_length=1, max_length=256),
+        limit: int = Query(default=10, ge=1, le=50),
+        companion_id: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> RecollectionsView:
+        """"你还记得…吗" — the question a person actually arrives with.
+
+        Owner-scoped by the session, like every other read here: there is one
+        memory a session can ask about, so none is named.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.recollections(
+                owner_id=owner_id,
+                query=q,
+                limit=limit,
+                companion_id=companion_id,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return RecollectionsView(
+            query=answer["query"],
+            recollections=[
+                RecollectionView(**entry) for entry in answer["recollections"]
+            ],
         )
 
     @router.get("/memory/export", response_model=MemoryCopyView)

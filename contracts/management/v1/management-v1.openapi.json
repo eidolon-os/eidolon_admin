@@ -967,6 +967,63 @@
         "title": "OwnerContextView",
         "type": "object"
       },
+      "RecollectionView": {
+        "additionalProperties": false,
+        "description": "One thing my Eidolon remembers, as I read it.\n\nNot the stored record. What memory holds carries wings, rooms, scores and\nprovenance — that is how it found something, not what it remembers, and I\nasked the second question.",
+        "properties": {
+          "remembered_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remembered At"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 8192,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "RecollectionView",
+        "type": "object"
+      },
+      "RecollectionsView": {
+        "additionalProperties": false,
+        "description": "What it remembers about what I asked.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "query": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "recollections": {
+            "items": {
+              "$ref": "#/components/schemas/RecollectionView"
+            },
+            "title": "Recollections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query",
+          "recollections"
+        ],
+        "title": "RecollectionsView",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1655,6 +1712,95 @@
           }
         },
         "summary": "Get Memory Library",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/memory/recollections": {
+      "get": {
+        "description": "\"你还记得…吗\" — the question a person actually arrives with.\n\nOwner-scoped by the session, like every other read here: there is one\nmemory a session can ask about, so none is named.",
+        "operationId": "get_memory_recollections_api_management_v1_memory_recollections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 256,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "companion_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Companion Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecollectionsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory Recollections",
         "tags": [
           "management"
         ]

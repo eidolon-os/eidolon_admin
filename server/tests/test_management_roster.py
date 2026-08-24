@@ -296,6 +296,20 @@ class _Backend:
             "status": "applied" if companion_id else "accepted",
         }
 
+    async def recollections(
+        self, *, owner_id: str, query: str, limit: int, companion_id: str | None
+    ) -> dict:
+        self.asked.append((owner_id, query, limit, companion_id))
+        return {
+            "contract_version": "1",
+            "operation": "memory.recollections",
+            "query": query,
+            "recollections": [
+                {"text": "他喜欢在下午散步", "remembered_at": "2026-08-16T09:30:00Z"},
+                {"text": "没有时间的那一条", "remembered_at": None},
+            ],
+        }
+
     async def memory_export(self, *, owner_id: str, companion_id: str | None) -> dict:
         self.asked.append((owner_id, companion_id))
         return {
@@ -1234,3 +1248,77 @@ async def test_a_memory_that_is_not_there_is_relayed_as_not_found(
         )
 
     assert answered.status_code == 404
+
+
+# --- 你还记得…吗 ------------------------------------------------------------
+
+_RECOLLECTIONS = "/api/management/v1/memory/recollections"
+
+
+async def test_asking_what_it_remembers_answers_in_sentences(
+    tmp_path, monkeypatch
+) -> None:
+    """Migrated from ``/api/local/v1/recollections``, which is now deleted.
+
+    What travels is a sentence and a time. The wings, rooms and scores memory
+    carries are how it found something rather than what it remembers, and a
+    person asked the second question.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get(_RECOLLECTIONS, params={"q": "散步"})
+        headers = await _authenticate(client)
+        answered = await client.get(
+            _RECOLLECTIONS, params={"q": "散步"}, headers=headers
+        )
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", "散步", 10, None)]
+    body = answered.json()
+    assert body["query"] == "散步"
+    assert body["recollections"][0]["remembered_at"] == "2026-08-16T09:30:00Z"
+    # Nothing about how it was found.
+    assert "wing" not in answered.text
+    assert "score" not in answered.text
+
+
+async def test_a_question_is_required_and_an_unbounded_one_is_refused(
+    tmp_path, monkeypatch
+) -> None:
+    """Refused here rather than passed down to memory."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        empty = await client.get(_RECOLLECTIONS, headers=headers)
+        huge = await client.get(
+            _RECOLLECTIONS, params={"q": "x", "limit": 500}, headers=headers
+        )
+
+    assert empty.status_code == 422
+    assert huge.status_code == 422
+    assert backend.asked == []
+
+
+async def test_a_recollection_may_be_asked_of_one_companions_audience(
+    tmp_path, monkeypatch
+) -> None:
+    """As with the library: an audience, never a scope."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.get(
+            _RECOLLECTIONS,
+            params={"q": "茶", "limit": 3, "companion_id": "c-a"},
+            headers=headers,
+        )
+
+    assert backend.asked == [("owner-1", "茶", 3, "c-a")]
