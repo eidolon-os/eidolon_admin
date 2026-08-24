@@ -47,12 +47,24 @@ def _filter_response_headers(headers: httpx.Headers) -> dict[str, str]:
     return {k: v for k, v in headers.items() if k.lower() not in _RESPONSE_DROP}
 
 
+def upstream_auth_headers(service: ServiceConfig) -> dict[str, str]:
+    """How this Host presents itself to one proxied service.
+
+    Public because the gateway is no longer the only caller: Mission Control
+    reads two of the Agent's routes directly, and the Agent now requires a
+    credential. One function decides how a service's credential is presented, so
+    a service whose auth changes does not have to be found in two places.
+    """
+
+    if service.auth.type != "bearer":
+        return {}
+    env = service.auth.token_env
+    token = os.environ.get(env) if env else None
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def _inject_upstream_auth(service: ServiceConfig, headers: dict[str, str]) -> None:
-    if service.auth.type == "bearer":
-        env = service.auth.token_env
-        token = os.environ.get(env) if env else None
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
+    headers.update(upstream_auth_headers(service))
 
 
 def _apply_passthrough_auth(

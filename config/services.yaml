@@ -122,8 +122,13 @@ services:
     integration: proxy
     base_url: http://127.0.0.1:$EIDOLON_AGENT_ADMIN_PORT
     upstream_prefix: /api/admin
-    auth: { type: none }
-    health: /api/admin/conversations/turns?limit=1
+    # The Agent's admin surface requires this Host's credential: it holds every
+    # Owner's conversation text, and until 2026-08-25 it required nothing at all.
+    auth: { type: bearer, token_env: EIDOLON_AGENT_ADMIN_API_TOKEN }
+    # Liveness asks the health app, not a data route. Proving a process is up by
+    # reading somebody's conversation turn was the wrong shape before it needed
+    # a credential, and it needs one now.
+    health: http://127.0.0.1:$EIDOLON_AGENT_HTTP_PORT/readyz
     supervisor:
       config_file: $EIDOLON_OPS_ROOT/deploy/supervisor/available/agent.conf
       group: agent

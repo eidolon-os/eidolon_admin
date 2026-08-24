@@ -26,6 +26,7 @@ import httpx
 from fastapi import Request
 
 from ..control_plane.contracts import OwnerIdentity
+from ..gateway.proxy import upstream_auth_headers
 from eidolon_sdk.biz.body import (
     DEVICE_BLACKBOARD_BUCKET,
     OwnerDeviceBlackboardSnapshot,
@@ -745,7 +746,11 @@ async def _service_json(
     suffix = path if path.startswith("/") else f"/{path}"
     url = f"{service.base_url.rstrip('/')}{prefix}{suffix}"
     http_client: httpx.AsyncClient = request.app.state.http_client
-    resp = await http_client.get(url, params=params, timeout=timeout, headers={"Connection": "close"})
+    # The credential the registry says this service wants. The Agent's surface
+    # holds every Owner's conversation text and it requires one now; without this
+    # the two Agent lanes below would report "unavailable" on a healthy Host.
+    headers = {"Connection": "close", **upstream_auth_headers(service)}
+    resp = await http_client.get(url, params=params, timeout=timeout, headers=headers)
     resp.raise_for_status()
     return resp.json()
 
