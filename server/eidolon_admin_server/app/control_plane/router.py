@@ -16,6 +16,7 @@ from .contracts import (
     BoundaryCapabilities,
     AdmissionDecisionWorkflowResult,
     ControllerClaimQuery,
+    ControllerCompanionAttachment,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
     ControllerEnrollmentRecoveryQuery,
@@ -25,6 +26,7 @@ from .contracts import (
     PersonaChapter,
     PersonaRestoreRequest,
     PersonaTimeline,
+    KernelMount,
     KernelMountPage,
     OwnerIdentity,
     OwnerRenameRequest,
@@ -244,6 +246,24 @@ async def get_owner_device_mounts(
 
     try:
         return await _service(request).list_owner_device_mounts(owner_id)
+    except AuthorityFailure as exc:
+        _raise(exc)
+
+
+@router.put(
+    "/owners/{owner_id}/device-mounts/{device_id}/companion",
+    response_model=KernelMount,
+)
+async def set_device_companion(
+    owner_id: str,
+    device_id: str,
+    payload: ControllerCompanionAttachment,
+    request: Request,
+) -> KernelMount:
+    if payload.owner_id != owner_id or payload.device_id != device_id:
+        raise HTTPException(409, "Attachment path and command do not match")
+    try:
+        return await _service(request).set_device_companion(payload=payload)
     except AuthorityFailure as exc:
         _raise(exc)
 

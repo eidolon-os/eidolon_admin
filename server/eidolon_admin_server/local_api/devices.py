@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
 from eidolon_sdk.device_foundation.v1 import ClaimPage, ClaimRecord
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..app.control_plane.contracts import KernelMount, KernelMountPage
+from ..app.control_plane.contracts import (
+    ControllerCompanionAttachment,
+    KernelMount,
+    KernelMountPage,
+)
 
 
 class DeviceInventoryError(RuntimeError):
@@ -19,8 +23,39 @@ class DeviceInventoryError(RuntimeError):
         self.status_code = status_code
 
 
+class LocalCompanionAttachmentRequest(BaseModel):
+    """The Owner's choice of which Companion answers through one device.
+
+    One command with two values rather than two commands: `companion_id: null`
+    is "nothing answers through it". `expected_revision` is what the phone was
+    looking at, so two Controllers changing the same device do not take turns
+    without noticing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    contract_version: Literal["1"]
+    request_id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9._:-]+$")
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1)
+
+    def to_admin(
+        self, *, owner_id: str, device_id: str
+    ) -> ControllerCompanionAttachment:
+        return ControllerCompanionAttachment(
+            contract_version="1",
+            request_id=self.request_id,
+            owner_id=owner_id,
+            device_id=device_id,
+            companion_id=self.companion_id,
+            expected_revision=self.expected_revision,
+        )
+
+
 class AdminOwnerDevicesPort(Protocol):
     async def list_mounts(self, owner_id: str) -> KernelMountPage: ...
+    async def set_companion(
+        self, *, payload: ControllerCompanionAttachment
+    ) -> KernelMount: ...
     async def close(self) -> None: ...
 
 
@@ -83,6 +118,50 @@ class AdminOwnerDevicesClient:
         if any(mount.owner_id != owner_id for mount in page.mounts):
             raise DeviceInventoryError("Admin Device membership response returned another Owner", status_code=409)
         return page
+
+    async def set_companion(
+        self, *, payload: ControllerCompanionAttachment
+    ) -> KernelMount:
+        if not self._token:
+            raise DeviceInventoryError(
+                "Local API Admin service credential is not configured"
+            )
+        try:
+            response = await self._client.put(
+                f"{self._base_url}/api/control-plane/v1/owners/"
+                f"{quote(payload.owner_id, safe='')}/device-mounts/"
+                f"{quote(payload.device_id, safe='')}/companion",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=payload.model_dump(mode="json"),
+                timeout=self._timeout,
+            )
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            raise DeviceInventoryError(
+                "Admin Device membership control plane is unavailable"
+            ) from exc
+        if response.status_code != 200:
+            raise DeviceInventoryError(
+                "Admin Device Companion attachment did not complete",
+                status_code=response.status_code
+                if response.status_code in {401, 403, 404, 409}
+                else 503,
+            )
+        try:
+            mount = KernelMount.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DeviceInventoryError(
+                "Admin Device Companion attachment response violated its contract"
+            ) from exc
+        if mount.device_id != payload.device_id or mount.owner_id != payload.owner_id:
+            raise DeviceInventoryError(
+                "Admin Device Companion attachment answered about another device",
+                status_code=502,
+            )
+        return mount
 
     async def close(self) -> None:
         if self._owns_client:

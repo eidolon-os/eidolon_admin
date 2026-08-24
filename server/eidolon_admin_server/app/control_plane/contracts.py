@@ -638,6 +638,23 @@ class AdmissionDecisionWorkflowResult(StrictModel):
         return self
 
 
+class ControllerCompanionAttachment(StrictModel):
+    """Which Companion answers through one device, or none.
+
+    Attaching and detaching are the same decision with two values, so they are
+    one command: `companion_id = None` is "nothing answers through it". The
+    expected revision is the Owner's compare-and-swap — two phones changing the
+    same device's Companion must not silently take turns.
+    """
+
+    contract_version: Literal["1"]
+    request_id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9._:-]+$")
+    owner_id: str = Field(min_length=1, max_length=64)
+    device_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1)
+
+
 class ControllerDeviceRemovalRequest(StrictModel):
     """Internal service input derived from explicit Controller confirmation."""
 

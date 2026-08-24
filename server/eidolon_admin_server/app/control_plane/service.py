@@ -32,10 +32,12 @@ from .contracts import (
     ControllerClaimQuery,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
+    ControllerCompanionAttachment,
     ControllerEnrollmentRecoveryQuery,
     BoundaryCapabilities,
     ControllerDeviceRemovalRequest,
     DeviceRemovalResult,
+    KernelMount,
     KernelMountPage,
     RemovalCondition,
     WorkspaceInitializeRequest,
@@ -618,6 +620,33 @@ class ControlPlaneService:
             if mount.device_id == device_id and (mount.active or not active_only):
                 return mount
         return None
+
+    async def set_device_companion(
+        self, *, payload: ControllerCompanionAttachment
+    ) -> KernelMount:
+        """Bind a device to one Companion, or to none.
+
+        Kernel owns the mount and validates the Companion against its own
+        authority; this only carries the Owner's decision to it, under the
+        revision the Owner was looking at.
+        """
+
+        if payload.companion_id is None:
+            result = await self.kernel.detach(
+                owner_id=payload.owner_id,
+                device_id=payload.device_id,
+                request_id=payload.request_id,
+                expected_revision=payload.expected_revision,
+            )
+        else:
+            result = await self.kernel.attach(
+                owner_id=payload.owner_id,
+                device_id=payload.device_id,
+                companion_id=payload.companion_id,
+                request_id=payload.request_id,
+                expected_revision=payload.expected_revision,
+            )
+        return result.mount
 
     async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
         """Return Kernel-owned membership without requiring Hub operator authority.

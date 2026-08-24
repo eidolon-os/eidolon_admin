@@ -63,6 +63,7 @@ from .devices import (
     AdminOwnerDevicesClient,
     AdminOwnerDevicesPort,
     DeviceInventoryError,
+    LocalCompanionAttachmentRequest,
     LocalDeviceInventoryView,
     LocalDeviceView,
     owner_device_inventory_view,
@@ -761,6 +762,53 @@ def create_app(
         )
         if device is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Device is not mounted")
+        return device
+
+    @app.put(
+        "/api/local/v1/devices/{device_id}/companion",
+        response_model=LocalDeviceView,
+    )
+    async def set_device_companion(
+        device_id: Annotated[
+            str,
+            Path(
+                min_length=1,
+                max_length=128,
+                pattern=r"^[A-Za-z0-9._:-]+$",
+            ),
+        ],
+        payload: LocalCompanionAttachmentRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> LocalDeviceView:
+        """Say which Companion answers through this device, or that none does.
+
+        A device can be mounted and answer as nobody — that is what it is
+        between being claimed and being put to use — so this is the other half
+        of adding one, and the only way back from it. Kernel validates the
+        Companion against its own authority; the revision is the Owner's
+        compare-and-swap over what this phone was looking at.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, _controller_id = _owner_principal(principal)
+        inventory = await owner_device_inventory(authorization)
+        if all(item.device_id != device_id for item in inventory.devices):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Device is not mounted")
+        try:
+            await devices.set_companion(
+                payload=payload.to_admin(owner_id=owner_id, device_id=device_id)
+            )
+        except DeviceInventoryError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        refreshed = await owner_device_inventory(authorization)
+        device = next(
+            (item for item in refreshed.devices if item.device_id == device_id),
+            None,
+        )
+        if device is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Device stopped being mounted"
+            )
         return device
 
     @app.get(

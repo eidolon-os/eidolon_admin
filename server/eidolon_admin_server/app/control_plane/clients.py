@@ -1629,6 +1629,40 @@ class KernelMountClient:
             )
         return result
 
+    async def detach(
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        request_id: str,
+        expected_revision: int,
+    ) -> KernelMutationResult:
+        response = await _request(
+            "kernel",
+            self._client,
+            "POST",
+            f"{await self._base_url()}/api/kernel/v1/device-mounts/devices/"
+            f"{quote(device_id, safe='')}/attachment/detach",
+            timeout=self._timeout,
+            headers=self._headers(owner_id),
+            json={
+                "operation": "companion.detach",
+                "request_id": request_id,
+                "expected_revision": expected_revision,
+            },
+        )
+        result = _parse("kernel", response, KernelMutationResult)
+        if (
+            result.mount.device_id != device_id
+            or result.mount.owner_id != owner_id
+            or result.mount.attached_companion_id is not None
+        ):
+            raise _contract_violation(
+                "kernel",
+                "Kernel Detachment response did not confirm the requested identities",
+            )
+        return result
+
     async def list_mounts(self, *, owner_id: str, limit: int = 100) -> KernelMountPage:
         response = await _request(
             "kernel",
