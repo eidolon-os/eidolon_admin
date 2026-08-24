@@ -33,6 +33,7 @@ from eidolon_admin_server.app.management.activity import (
 )
 from eidolon_admin_server.app.management.persona import read_history, restore_chapter
 from eidolon_admin_server.app.management.recollecting import recall
+from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
@@ -200,6 +201,17 @@ class MemoryDayInternal(BaseModel):
     more_in_window: bool
     undated_count: int = Field(ge=0)
     truncated: bool
+
+
+class RevokedSessionsInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["owner.runtime-sessions-revoked"] = "owner.runtime-sessions-revoked"
+    #: The instant the runtime compares tokens against. Relayed, not re-stamped:
+    #: a second clock's "now" would be a different answer to the only question
+    #: that matters here.
+    revoked_at: str = Field(min_length=1, max_length=64)
 
 
 class ConversationInternal(BaseModel):
@@ -708,6 +720,34 @@ async def put_memory_entry_audience(
         companion_id=result.companion_id,
         status=result.status,
     )
+
+
+@router.post(
+    "/owner/runtime-session-revocations",
+    response_model=RevokedSessionsInternal,
+)
+async def post_runtime_session_revocation(
+    request: Request,
+    owner_id: str,
+) -> RevokedSessionsInternal:
+    """Sign every one of this Owner's devices out.
+
+    Their Controller access is untouched: a runtime session is what a device uses
+    to talk to a Companion, and a Controller grant is what a phone uses to manage
+    the Host. Ending the first does not end the second, and the copy above this
+    has to say so — "sign every device out" reads like it might lock someone out
+    of their own management app.
+    """
+    try:
+        revoked = await revoke_runtime_sessions(
+            owner_id=owner_id,
+            sessions=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return RevokedSessionsInternal(revoked_at=revoked.revoked_at)
 
 
 @router.get(

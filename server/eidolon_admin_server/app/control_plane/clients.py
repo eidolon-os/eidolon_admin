@@ -29,6 +29,7 @@ from .contracts import (
     MemoryEntries,
     MemoryExport,
     PersonaChapter,
+    RuntimeSessionRevocation,
     TaskRow,
     TaskRows,
     PersonaTimeline,
@@ -1203,6 +1204,23 @@ class AgentActivityClient:
             params={"owner_id": owner_id},
         )
         return _parse("agent", response, TaskRow)
+
+    async def revoke_runtime_sessions(self, *, owner_id: str) -> RuntimeSessionRevocation:
+        """Stop every runtime token this Owner had until now.
+
+        A watermark, not a switch: the runtime records the instant and refuses
+        tokens issued before it, so devices come back with a fresh one. That is
+        the only reason this is offerable from a management surface at all —
+        until ``eidolon_sdk@6c24516`` the same call locked an Owner's whole
+        namespace out permanently.
+        """
+
+        response = await self._call(
+            "POST",
+            f"/owners/{quote(owner_id, safe='')}/revoke-sessions",
+            params=None,
+        )
+        return _parse("agent", response, RuntimeSessionRevocation)
 
     async def _call(
         self,

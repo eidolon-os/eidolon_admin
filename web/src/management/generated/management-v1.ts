@@ -229,6 +229,11 @@ export interface RecollectionsView {
   recollections: Array<RecollectionView>
 }
 
+export interface RevokedSessionsView {
+  contract_version?: "1"
+  revoked_at: string
+}
+
 export interface TaskPageView {
   companion_id: string
   contract_version?: "1"
@@ -280,5 +285,6 @@ export interface ManagementResponses {
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'GET /api/management/v1/memory/recollections': RecollectionsView
+  'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
 }

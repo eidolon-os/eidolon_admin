@@ -103,6 +103,14 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/export", params)
 
+    async def revoke_runtime_sessions(self, *, owner_id: str) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/owner/runtime-session-revocations",
+            {"owner_id": owner_id},
+            {},
+            method="POST",
+        )
+
     async def conversations(
         self,
         *,

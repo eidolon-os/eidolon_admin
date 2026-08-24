@@ -78,6 +78,11 @@ _CAPABILITIES: tuple[str, ...] = (
     "host.read",
     "host.operate",
     "controller.manage",
+    #: Ending every runtime session an Owner has. Its own name rather than part
+    #: of ``controller.manage``: that one is about which phones may *manage* this
+    #: Host, and this is about which sessions may *talk* to a Companion. A person
+    #: who signs their devices out must not lose their management app with them.
+    "session.revoke",
 )
 
 #: Closed slices. Everything else in ``_CAPABILITIES`` is false, and stays false
@@ -95,6 +100,23 @@ _ENABLED: frozenset[str] = frozenset(
         "companion.set_default",
         "memory.read",
         "memory.govern",
+        # Persona history and going back to a chapter: Data answers, the
+        # projection drops proposals, both boundaries expose it, both clients are
+        # generated, and Mobile has the screen.
+        "persona.read",
+        "persona.govern",
+        # The copy a person keeps, as distinct from the Host backup.
+        "memory.export",
+        # The Agent answers these and owns the task state machine; this side
+        # relays, including its refusals.
+        "conversation.read",
+        "task.read",
+        "task.manage",
+        # Signing every device out. Only safe to advertise since owner
+        # revocation became a watermark rather than a permanent lockout
+        # (eidolon_sdk@6c24516) — before that this flag would have been a button
+        # that bricked every device an Owner has.
+        "session.revoke",
     }
 )
 

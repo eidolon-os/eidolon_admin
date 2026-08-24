@@ -331,6 +331,18 @@ class ConsumedModel(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 
+class RuntimeSessionRevocation(ConsumedModel):
+    """What the runtime did when asked to sign every device out."""
+
+    owner_id: str = Field(min_length=1, max_length=64)
+    revoked: bool
+    #: The instant everything issued before it stopped being valid. Carried
+    #: because it *is* the mechanism — a token minted after it works — so a
+    #: person can be told when, and a client can tell "signed out at 21:04" from
+    #: "signed out, apparently forever".
+    revoked_at: str = Field(min_length=1, max_length=64)
+
+
 class ConversationRow(ConsumedModel):
     """One conversation, as the runtime holds it."""
 

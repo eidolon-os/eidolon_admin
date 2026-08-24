@@ -47,6 +47,7 @@ from eidolon_admin_server.app.management.memory import MemoryBrowser
 from eidolon_admin_server.app.management.activity import CompanionActivityReader
 from eidolon_admin_server.app.management.persona import PersonaHistorian
 from eidolon_admin_server.app.management.recollecting import MemoryRecollector
+from eidolon_admin_server.app.management.sessions import RuntimeSessionRevoker
 from eidolon_admin_server.app.management.roster import (
     DefaultCompanionWriter,
     RosterReader,
@@ -79,6 +80,9 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # Conversations and long tasks are the Agent's, including their state
     # machine: this port reads them and relays two actions.
     "CompanionActivityReader": (CompanionActivityReader, "activity"),
+    # Same client as the reads above: the runtime that holds the sessions is the
+    # one that ends them.
+    "RuntimeSessionRevoker": (RuntimeSessionRevoker, "activity"),
     # Admin's own store, constructed by the service rather than reached for on
     # it: there is no authority behind it and nothing to mis-wire.
     "RemovalIntentStore": (None, None),

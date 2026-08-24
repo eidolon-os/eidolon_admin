@@ -271,8 +271,12 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
     # that turned true *without* being added there still fails here.
     assert {name for name, value in context.capabilities.items() if value} == set(_ENABLED)
     assert context.capabilities["companion.read"] is True, "the first closed slice"
-    for still_open in ("companion.archive", "memory.export", "task.manage"):
-        assert context.capabilities[still_open] is False
+    # Named examples on both sides, so the assertion above cannot pass by
+    # everything being true or everything being false.
+    for closed in ("memory.export", "task.manage", "persona.govern", "session.revoke"):
+        assert context.capabilities[closed] is True, closed
+    for still_open in ("companion.archive", "companion.restore", "host.operate"):
+        assert context.capabilities[still_open] is False, still_open
 
 
 async def test_limits_are_null_rather_than_a_number_nobody_measured(

@@ -1208,6 +1208,29 @@
         "title": "RecollectionsView",
         "type": "object"
       },
+      "RevokedSessionsView": {
+        "additionalProperties": false,
+        "description": "When every device was signed out.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "revoked_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Revoked At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revoked_at"
+        ],
+        "title": "RevokedSessionsView",
+        "type": "object"
+      },
       "TaskPageView": {
         "additionalProperties": false,
         "properties": {
@@ -2656,6 +2679,56 @@
           }
         },
         "summary": "Get Memory Recollections",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner/actions/revoke-runtime-sessions": {
+      "post": {
+        "description": "让所有设备重新登录 — sign every device out, now.\n\nThe action for a phone that went missing. Every device has to get a new\nsession before it can talk to an Eidolon again; they do that on their own,\nso this is recoverable rather than a lockout.\n\nIt does **not** remove any phone's access to managing this Host — that is\na Controller grant, revoked from the devices screen — and it does not\nunpair anything.",
+        "operationId": "post_revoke_runtime_sessions_api_management_v1_owner_actions_revoke_runtime_sessions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokedSessionsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Revoke Runtime Sessions",
         "tags": [
           "management"
         ]

@@ -324,6 +324,18 @@ class MemoryCopyView(BaseModel):
     truncated: bool
 
 
+class RevokedSessionsView(BaseModel):
+    """When every device was signed out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: The instant the Host compares against. Anything a device was using before
+    #: it stops working; anything it gets afterwards is fine, which is why this
+    #: is something I can do and then keep using my Eidolon.
+    revoked_at: str = Field(min_length=1, max_length=64)
+
+
 class ConversationView(BaseModel):
     """One time we talked, and what it was called."""
 
@@ -592,6 +604,8 @@ class ManagementBackendPort(Protocol):
     async def memory_export(
         self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
+
+    async def revoke_runtime_sessions(self, *, owner_id: str) -> dict: ...
 
     async def conversations(
         self,
@@ -917,6 +931,30 @@ def register_management_routes(
             companion_id=answer.get("companion_id", ""),
             status=answer["status"],
         )
+
+    @router.post(
+        "/owner/actions/revoke-runtime-sessions",
+        response_model=RevokedSessionsView,
+    )
+    async def post_revoke_runtime_sessions(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> RevokedSessionsView:
+        """让所有设备重新登录 — sign every device out, now.
+
+        The action for a phone that went missing. Every device has to get a new
+        session before it can talk to an Eidolon again; they do that on their own,
+        so this is recoverable rather than a lockout.
+
+        It does **not** remove any phone's access to managing this Host — that is
+        a Controller grant, revoked from the devices screen — and it does not
+        unpair anything.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.revoke_runtime_sessions(owner_id=owner_id)
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return RevokedSessionsView(revoked_at=answer["revoked_at"])
 
     @router.get(
         "/companions/{companion_id}/conversations",

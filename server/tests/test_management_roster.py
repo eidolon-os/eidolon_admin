@@ -297,6 +297,18 @@ class _Backend:
             "status": "applied" if companion_id else "accepted",
         }
 
+    async def revoke_runtime_sessions(self, *, owner_id: str) -> dict:
+        self.asked.append((owner_id, "revoke-runtime-sessions"))
+        if owner_id == "owner-no-kv":
+            raise ManagementBackendError(
+                "revocation_kv not configured on agent", status_code=503
+            )
+        return {
+            "contract_version": "1",
+            "operation": "owner.runtime-sessions-revoked",
+            "revoked_at": "2026-08-24T21:04:00+00:00",
+        }
+
     async def conversations(
         self, *, owner_id: str, companion_id: str, limit: int | None, cursor: str | None
     ) -> dict:
@@ -1696,3 +1708,62 @@ async def test_another_owners_task_is_not_readable_here_either(
         answered = await client.get(f"{_tasks()}/j-theirs", headers=headers)
 
     assert answered.status_code == 404
+
+
+# --- 让所有设备重新登录 -----------------------------------------------------
+
+_REVOKE = "/api/management/v1/owner/actions/revoke-runtime-sessions"
+
+
+async def test_signing_every_device_out_says_when(tmp_path, monkeypatch) -> None:
+    """The instant is the mechanism, not a detail: anything issued before it
+    stops working and anything after it is fine, which is what makes this
+    something a person can do and then keep using their Eidolon."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.post(_REVOKE)
+        headers = await _authenticate(client)
+        answered = await client.post(_REVOKE, headers=headers)
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", "revoke-runtime-sessions")]
+    assert answered.json()["revoked_at"] == "2026-08-24T21:04:00+00:00"
+
+
+async def test_it_names_no_owner_and_takes_no_body(tmp_path, monkeypatch) -> None:
+    """The subject comes from the session, and there is nothing to choose: this
+    action is "all of them, now"."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        operation = _app(tmp_path, _Backend()).openapi()["paths"][_REVOKE]["post"]
+        answered = await client.post(_REVOKE, headers=headers)
+
+    assert answered.status_code == 200
+    assert "requestBody" not in operation
+    # The Authorization header is how the subject arrives; nothing else is
+    # declared, so no client can name whose sessions to end.
+    assert [
+        (parameter["in"], parameter["name"])
+        for parameter in operation.get("parameters", [])
+    ] == [("header", "Authorization")]
+
+
+async def test_a_host_that_cannot_do_it_says_so_rather_than_claiming_success(
+    tmp_path, monkeypatch
+) -> None:
+    """The Agent's revocation bucket failed to initialise. Reporting "signed out"
+    would leave a person believing a missing phone had been cut off."""
+
+    _stub_controller(monkeypatch, owner_id="owner-no-kv")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.post(_REVOKE, headers=headers)
+
+    assert answered.status_code == 503
