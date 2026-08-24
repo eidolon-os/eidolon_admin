@@ -69,7 +69,7 @@ class StubControlPlane:
             raise self.workspace_failure
         return _workspace_operation(operation_id, "Manson")
 
-    async def get_owner_primary_runtime(
+    async def get_owner_default_runtime(
         self,
         owner_id: str,
     ) -> CompanionRuntimeSnapshot:
@@ -377,7 +377,7 @@ async def test_owner_runtime_requires_local_api_credential_and_derives_owner_pat
 
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
-    path = "/api/control-plane/v1/owners/owner-1/primary-runtime-snapshot"
+    path = "/api/control-plane/v1/owners/owner-1/default-runtime-snapshot"
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
     ) as client:

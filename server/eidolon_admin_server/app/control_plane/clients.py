@@ -355,7 +355,7 @@ class DataAuthorityClient:
         )
         return _parse("data", response, model)
 
-    async def get_owner_primary_runtime(
+    async def get_owner_default_runtime(
         self,
         owner_id: str,
     ) -> CompanionRuntimeSnapshot:
@@ -377,7 +377,7 @@ class DataAuthorityClient:
             self._client,
             "GET",
             f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
-            f"{quote(owner_id, safe='')}/primary-runtime-snapshot",
+            f"{quote(owner_id, safe='')}/default-runtime-snapshot",
             timeout=self._timeout,
             headers={"Authorization": f"Bearer {self._token}"},
         )

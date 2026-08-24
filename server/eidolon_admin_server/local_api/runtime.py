@@ -27,7 +27,7 @@ class WorkspaceRuntimeError(RuntimeError):
 
 
 class AdminOwnerRuntimePort(Protocol):
-    async def get_owner_primary_runtime(
+    async def get_owner_default_runtime(
         self,
         owner_id: str,
     ) -> CompanionRuntimeSnapshot: ...
@@ -298,7 +298,7 @@ class AdminOwnerRuntimeClient:
         self._client = client or httpx.AsyncClient(trust_env=False)
         self._owns_client = client is None
 
-    async def get_owner_primary_runtime(
+    async def get_owner_default_runtime(
         self,
         owner_id: str,
     ) -> CompanionRuntimeSnapshot:
@@ -308,7 +308,7 @@ class AdminOwnerRuntimeClient:
             )
         url = (
             f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}/primary-runtime-snapshot"
+            f"{quote(owner_id, safe='')}/default-runtime-snapshot"
         )
         try:
             response = await self._client.get(

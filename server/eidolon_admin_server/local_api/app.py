@@ -502,7 +502,7 @@ def create_app(
             )
             raise HTTPException(code, str(exc)) from exc
         try:
-            runtime_snapshot = await runtime.get_owner_primary_runtime(owner_id)
+            runtime_snapshot = await runtime.get_owner_default_runtime(owner_id)
             companion = await runtime.get_companion(runtime_snapshot.companion_id)
             return workspace_runtime_view(
                 workspace=workspace_operation,

@@ -245,17 +245,17 @@ async def rename_owner(
 
 
 @router.get(
-    "/owners/{owner_id}/primary-runtime-snapshot",
+    "/owners/{owner_id}/default-runtime-snapshot",
     response_model=CompanionRuntimeSnapshot,
 )
-async def get_owner_primary_runtime(
+async def get_owner_default_runtime(
     owner_id: str,
     request: Request,
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> CompanionRuntimeSnapshot:
     _authorize_local_api(request, authorization)
     try:
-        return await _service(request).get_owner_primary_runtime(owner_id)
+        return await _service(request).get_owner_default_runtime(owner_id)
     except AuthorityFailure as exc:
         _raise(exc)
 

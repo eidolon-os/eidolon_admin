@@ -132,7 +132,7 @@ async def test_data_client_reads_owner_runtime_through_its_declared_contract() -
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.raw_path == (
-            b"/api/companion-authority/v1/owners/owner%2Fone/primary-runtime-snapshot"
+            b"/api/companion-authority/v1/owners/owner%2Fone/default-runtime-snapshot"
         )
         assert request.headers["authorization"] == "Bearer admin-token"
         return httpx.Response(
@@ -168,7 +168,7 @@ async def test_data_client_reads_owner_runtime_through_its_declared_contract() -
             service_token="admin-token",
             timeout_seconds=1,
         )
-        result = await subject.get_owner_primary_runtime("owner/one")
+        result = await subject.get_owner_default_runtime("owner/one")
     finally:
         await http_client.aclose()
     assert result.companion_id == "companion-1"
@@ -189,7 +189,7 @@ async def test_data_runtime_precondition_is_preserved_as_domain_conflict() -> No
             timeout_seconds=1,
         )
         with pytest.raises(AuthorityFailure) as caught:
-            await subject.get_owner_primary_runtime("owner-1")
+            await subject.get_owner_default_runtime("owner-1")
     finally:
         await http_client.aclose()
     assert caught.value.kind == "conflict"

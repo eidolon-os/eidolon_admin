@@ -185,7 +185,7 @@ class _RuntimeClient:
         self.restored: tuple[str, str] | None = None
         self.owner_of_companion: str | None = None
 
-    async def get_owner_primary_runtime(
+    async def get_owner_default_runtime(
         self,
         owner_id: str,
     ) -> CompanionRuntimeSnapshot:

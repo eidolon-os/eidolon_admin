@@ -66,7 +66,7 @@ class _DataAuthority:
     def __init__(self, snapshot: Any = None) -> None:
         self._snapshot = snapshot
 
-    async def get_owner_primary_runtime(self, owner_id: str) -> Any:
+    async def get_owner_default_runtime(self, owner_id: str) -> Any:
         return self._snapshot
 
 

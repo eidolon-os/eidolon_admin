@@ -103,7 +103,7 @@ async def build_snapshot(
         _safe(
             statuses,
             "data.companions",
-            control_plane.data_authority.get_owner_primary_runtime(owner_id),
+            control_plane.data_authority.get_owner_default_runtime(owner_id),
             None,
         ),
         _safe(

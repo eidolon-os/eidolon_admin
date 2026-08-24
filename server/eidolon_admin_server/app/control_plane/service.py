@@ -173,11 +173,11 @@ class ControlPlaneService:
     async def get_workspace_operation(self, operation_id: str) -> WorkspaceOperation:
         return await self.workspace.get(operation_id)
 
-    async def get_owner_primary_runtime(
+    async def get_owner_default_runtime(
         self,
         owner_id: str,
     ) -> CompanionRuntimeSnapshot:
-        return await self.data.get_owner_primary_runtime(owner_id)
+        return await self.data.get_owner_default_runtime(owner_id)
 
     async def close(self) -> None:
         await self.directory.close()
@@ -900,7 +900,7 @@ class ControlPlaneService:
         return BoundaryCapabilities(
             supported=(
                 "data.companion-identity.read",
-                "data.owner-primary-runtime.read",
+                "data.owner-default-runtime.read",
                 "data.owner-workspace.initialize",
                 "hub.device-admission.read-write",
                 "kernel.device-mount.read-write",

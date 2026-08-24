@@ -205,7 +205,7 @@ async def main():
             companion_id="companion-admin-e2e",
             genome_id="genome-admin-e2e",
             realm_id="realm-admin-e2e",
-            role="primary",
+            kind="conversational",
         )
     finally:
         await store.close()
@@ -596,7 +596,7 @@ services: []
             }
             runtime_path = (
                 f"{admin_url}/api/control-plane/v1/owners/owner-admin-e2e/"
-                "primary-runtime-snapshot"
+                "default-runtime-snapshot"
             )
             missing_runtime_auth = await client.get(runtime_path)
             assert missing_runtime_auth.status_code == 401

@@ -70,7 +70,7 @@ async def test_admin_runtime_client_uses_exact_owner_route_and_service_token() -
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.raw_path == (
-            b"/api/control-plane/v1/owners/owner%2Fone/primary-runtime-snapshot"
+            b"/api/control-plane/v1/owners/owner%2Fone/default-runtime-snapshot"
         )
         assert request.headers["authorization"] == "Bearer local-service-token"
         return httpx.Response(
@@ -86,7 +86,7 @@ async def test_admin_runtime_client_uses_exact_owner_route_and_service_token() -
         client=http_client,
     )
     try:
-        result = await subject.get_owner_primary_runtime("owner/one")
+        result = await subject.get_owner_default_runtime("owner/one")
     finally:
         await http_client.aclose()
     assert result.owner_id == "owner/one"
