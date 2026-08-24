@@ -365,6 +365,46 @@ class ConversationPageView(BaseModel):
     next_cursor: str | None = Field(default=None, max_length=256)
 
 
+class SpokenMessageView(BaseModel):
+    """One thing said, by me or by it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str = Field(min_length=1, max_length=32)
+    text: str = Field(default="", max_length=1_048_576)
+
+
+class TranscriptTurnView(BaseModel):
+    """One exchange."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str = Field(min_length=1, max_length=64)
+    started_at: str = Field(default="", max_length=64)
+    #: Absent while it was still going — what a dropped connection looks like
+    #: afterwards.
+    finished_at: str | None = Field(default=None, max_length=64)
+    status: str = Field(default="", max_length=32)
+    messages: list[SpokenMessageView]
+
+
+class TranscriptView(BaseModel):
+    """What was said in one conversation.
+
+    Only what I said and what it said. What tools it called to get there is how
+    the answer was reached, not the conversation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    conversation_id: str = Field(min_length=1, max_length=64)
+    #: Newest turn first, as the Host answers. Reading order is this app's
+    #: decision.
+    turns: list[TranscriptTurnView]
+    next_cursor: str | None = Field(default=None, max_length=256)
+
+
 class TaskView(BaseModel):
     """Something I asked it to do, and how far it has got."""
 
@@ -612,6 +652,16 @@ class ManagementBackendPort(Protocol):
         *,
         owner_id: str,
         companion_id: str,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict: ...
+
+    async def transcript(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        conversation_id: str,
         limit: int | None,
         cursor: str | None,
     ) -> dict: ...
@@ -981,6 +1031,49 @@ def register_management_routes(
             companion_id=answer["companion_id"],
             conversations=[
                 ConversationView(**row) for row in answer["conversations"]
+            ],
+            next_cursor=answer.get("next_cursor"),
+        )
+
+    @router.get(
+        "/companions/{companion_id}/conversations/{conversation_id}/turns",
+        response_model=TranscriptView,
+    )
+    async def get_conversation_transcript(
+        companion_id: str,
+        conversation_id: str,
+        limit: int | None = Query(default=None, ge=1, le=100),
+        cursor: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> TranscriptView:
+        """What was said that time.
+
+        A page at a time, newest first, so "看更早的" walks back through it.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.transcript(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                conversation_id=conversation_id,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return TranscriptView(
+            conversation_id=answer["conversation_id"],
+            turns=[
+                TranscriptTurnView(
+                    turn_id=turn["turn_id"],
+                    started_at=turn["started_at"],
+                    finished_at=turn["finished_at"],
+                    status=turn["status"],
+                    messages=[
+                        SpokenMessageView(**message) for message in turn["messages"]
+                    ],
+                )
+                for turn in answer["turns"]
             ],
             next_cursor=answer.get("next_cursor"),
         )

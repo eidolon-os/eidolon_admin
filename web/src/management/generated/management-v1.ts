@@ -234,6 +234,11 @@ export interface RevokedSessionsView {
   revoked_at: string
 }
 
+export interface SpokenMessageView {
+  role: string
+  text?: string
+}
+
 export interface TaskPageView {
   companion_id: string
   contract_version?: "1"
@@ -257,6 +262,21 @@ export interface TaskView {
   urgency?: string
 }
 
+export interface TranscriptTurnView {
+  finished_at?: string | null
+  messages: Array<SpokenMessageView>
+  started_at?: string
+  status?: string
+  turn_id: string
+}
+
+export interface TranscriptView {
+  contract_version?: "1"
+  conversation_id: string
+  next_cursor?: string | null
+  turns: Array<TranscriptTurnView>
+}
+
 export interface ValidationError {
   ctx?: Record<string, unknown>
   input?: unknown
@@ -271,6 +291,7 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/companions/{companion_id}/conversations': ConversationPageView
+  'GET /api/management/v1/companions/{companion_id}/conversations/{conversation_id}/turns': TranscriptView
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
   'GET /api/management/v1/companions/{companion_id}/tasks': TaskPageView

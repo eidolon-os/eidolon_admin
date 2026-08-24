@@ -11,10 +11,17 @@ every time the runtime moved while nobody was looking. That is also why neither
 action has a local guard: whether a finished task may be cancelled is the
 runtime's rule, and asking twice for the same rule is how two copies of it drift.
 
-**Conversations carry no content here.** A conversation row is when it happened
-and what it was called; the words are per turn, and the runtime's turn rows
-deliberately hold no message bodies. A list that showed timestamps and nothing
-said would be worse than one that says what it is — see ``read_conversations``.
+**A conversation row is when it happened; a transcript is what was said.** Two
+reads rather than one field, because the runtime keeps them apart for a reason
+worth keeping: a page of conversation rows costs nothing and a page of turns
+carries every word in them. ``read_conversations`` lists occasions;
+``read_transcript`` opens one.
+
+**A transcript carries what a person said and what their Eidolon said, and
+nothing else.** Tool traffic — the calls it made, the arguments it passed, what
+came back — is how an answer was reached rather than the conversation, and it can
+contain anything the tools touched. Dropping it here rather than at a screen means
+no client has to decide again, and none of it reaches a phone in the first place.
 
 **Only this Owner's, and proved by the id the row carries.** The Agent's list
 routes take ``owner_id`` as a *filter*; a caller that omits it gets every Owner's
@@ -33,7 +40,14 @@ from eidolon_admin_server.app.control_plane.contracts import (
     ConversationRows,
     TaskRow,
     TaskRows,
+    TranscriptRows,
 )
+
+#: Which roles are the conversation. Anything else on a turn — tool calls, tool
+#: results, whatever a future runtime adds — is how the answer was reached, not
+#: what was said, so it does not travel. An unknown role is dropped rather than
+#: shown: a transcript is the wrong place to find out what a new message kind is.
+SPOKEN_ROLES = frozenset({"user", "assistant"})
 
 #: How many rows one page holds when the caller does not say. The Agent bounds
 #: its own list at 200; this is the smaller number a screen actually reads.
@@ -64,6 +78,15 @@ class CompanionActivityReader(Protocol):
         before: str | None = None,
     ) -> TaskRows: ...
 
+    async def list_transcript(
+        self,
+        *,
+        owner_id: str,
+        conversation_id: str,
+        limit: int,
+        before: str | None = None,
+    ) -> TranscriptRows: ...
+
     async def get_task(self, *, owner_id: str, task_id: str) -> TaskRow: ...
 
     async def cancel_task(self, *, owner_id: str, task_id: str) -> TaskRow: ...
@@ -88,6 +111,36 @@ class ConversationView:
 class ConversationPage:
     conversations: tuple[ConversationView, ...]
     #: The runtime's cursor, forwarded as received and read by nobody in between.
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SpokenMessage:
+    #: ``user`` or ``assistant``. Kept rather than turned into a boolean: a
+    #: transcript with three participants (a second Companion, a person on
+    #: another device) is a thing this product may grow, and a boolean would have
+    #: to be undone to say so.
+    role: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptTurn:
+    turn_id: str
+    started_at: str
+    #: Absent while a turn is still going. A turn that never finished is a real
+    #: thing to see in a transcript — it is what a dropped connection looks like.
+    finished_at: str | None
+    status: str
+    messages: tuple[SpokenMessage, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Transcript:
+    conversation_id: str
+    #: Newest turn first, as the runtime answers. Which way a person reads it is
+    #: the client's decision, and reversing a page is cheap.
+    turns: tuple[TranscriptTurn, ...]
     next_cursor: str | None
 
 
@@ -145,6 +198,47 @@ async def read_conversations(
                 ended_at=row.ended_at,
             )
             for row in page.conversations
+        ),
+        next_cursor=page.next_before,
+    )
+
+
+async def read_transcript(
+    *,
+    owner_id: str,
+    conversation_id: str,
+    limit: int | None,
+    cursor: str | None,
+    activity: CompanionActivityReader,
+) -> Transcript:
+    """What was said in one conversation.
+
+    Bounded by a page rather than by shortening messages: a transcript that
+    clipped someone's own words would lose exactly what they opened it for. The
+    runtime bounds it too — this is the smaller number a screen reads.
+    """
+
+    page = await activity.list_transcript(
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        limit=_page(limit),
+        before=cursor,
+    )
+    return Transcript(
+        conversation_id=page.conversation_id,
+        turns=tuple(
+            TranscriptTurn(
+                turn_id=turn.turn_id,
+                started_at=turn.started_at or "",
+                finished_at=turn.finished_at,
+                status=turn.status,
+                messages=tuple(
+                    SpokenMessage(role=message.role, text=message.content)
+                    for message in turn.messages
+                    if message.role in SPOKEN_ROLES and message.tool_name is None
+                ),
+            )
+            for turn in page.turns
         ),
         next_cursor=page.next_before,
     )

@@ -329,6 +329,35 @@ class _Backend:
             "next_cursor": "2026-08-24T08:00:00+00:00",
         }
 
+    async def transcript(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        conversation_id: str,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict:
+        self.asked.append((owner_id, companion_id, conversation_id, limit, cursor))
+        return {
+            "contract_version": "1",
+            "operation": "companion.transcript",
+            "conversation_id": conversation_id,
+            "turns": [
+                {
+                    "turn_id": "t-1",
+                    "started_at": "2026-08-24T09:00:00+00:00",
+                    "finished_at": "2026-08-24T09:00:09+00:00",
+                    "status": "ok",
+                    "messages": [
+                        {"role": "user", "text": "周末去哪"},
+                        {"role": "assistant", "text": "去公园吧"},
+                    ],
+                }
+            ],
+            "next_cursor": None,
+        }
+
     async def tasks(
         self,
         *,
@@ -1767,3 +1796,26 @@ async def test_a_host_that_cannot_do_it_says_so_rather_than_claiming_success(
         answered = await client.post(_REVOKE, headers=headers)
 
     assert answered.status_code == 503
+
+
+async def test_what_was_said_that_time_is_readable(tmp_path, monkeypatch) -> None:
+    """The half the last slice named as missing: a conversation row says when,
+    and this says what."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        path = f"{_conversations()}/conv-1/turns"
+        anonymous = await client.get(path)
+        headers = await _authenticate(client)
+        answered = await client.get(path, headers=headers, params={"limit": 5})
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", "companion-a", "conv-1", 5, None)]
+    said = [
+        (message["role"], message["text"])
+        for turn in answered.json()["turns"]
+        for message in turn["messages"]
+    ]
+    assert said == [("user", "周末去哪"), ("assistant", "去公园吧")]

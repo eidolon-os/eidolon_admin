@@ -32,6 +32,7 @@ from .contracts import (
     RuntimeSessionRevocation,
     TaskRow,
     TaskRows,
+    TranscriptRows,
     PersonaTimeline,
     CompanionIdentity,
     CompanionProvision,
@@ -1144,6 +1145,31 @@ class AgentActivityClient:
             params["before"] = before
         response = await self._call("GET", "/conversations", params=params)
         return _parse("agent", response, ConversationRows)
+
+    async def list_transcript(
+        self,
+        *,
+        owner_id: str,
+        conversation_id: str,
+        limit: int,
+        before: str | None = None,
+    ) -> TranscriptRows:
+        """One conversation's turns with their messages.
+
+        The Owner travels as a parameter because this route requires it: it is the
+        only list on that surface carrying message bodies, and it refuses to
+        answer without a scope.
+        """
+
+        params: dict[str, str] = {"owner_id": owner_id, "limit": str(limit)}
+        if before:
+            params["before"] = before
+        response = await self._call(
+            "GET",
+            f"/conversations/{quote(conversation_id, safe='')}/turns",
+            params=params,
+        )
+        return _parse("agent", response, TranscriptRows)
 
     async def list_tasks(
         self,

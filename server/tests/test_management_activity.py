@@ -19,6 +19,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     ConversationRows,
     TaskRow,
     TaskRows,
+    TranscriptRows,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.activity import (
@@ -26,6 +27,7 @@ from eidolon_admin_server.app.management.activity import (
     MAXIMUM_PAGE,
     cancel_task,
     read_conversations,
+    read_transcript,
     read_task,
     read_tasks,
     retry_task,
@@ -95,6 +97,54 @@ class _Agent:
         self.asked.append(("tasks", owner_id, companion_id, limit, status, before))
         return TaskRows.model_validate(
             {"tasks": self.tasks, "next_before": self.cursor}
+        )
+
+    async def list_transcript(self, *, owner_id, conversation_id, limit, before=None):
+        self.asked.append(("transcript", owner_id, conversation_id, limit, before))
+        return TranscriptRows.model_validate(
+            {
+                "conversation_id": conversation_id,
+                "turns": [
+                    {
+                        "turn_id": "t-2",
+                        "seq": 2,
+                        "started_at": "2026-08-24T09:05:00+00:00",
+                        "finished_at": None,
+                        "status": "running",
+                        "messages": [
+                            {"role": "user", "content": "周末去哪", "content_type": "text"},
+                            {
+                                "role": "assistant",
+                                "content": "我看看天气",
+                                "content_type": "text",
+                            },
+                            {
+                                "role": "tool",
+                                "content": '{"temp": 21}',
+                                "content_type": "application/json",
+                                "tool_name": "weather",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "调天气工具",
+                                "content_type": "text",
+                                "tool_name": "weather",
+                            },
+                        ],
+                    },
+                    {
+                        "turn_id": "t-1",
+                        "seq": 1,
+                        "started_at": "2026-08-24T09:00:00+00:00",
+                        "finished_at": "2026-08-24T09:00:09+00:00",
+                        "status": "ok",
+                        "messages": [
+                            {"role": "user", "content": "你好", "content_type": "text"}
+                        ],
+                    },
+                ],
+                "next_before": self.cursor,
+            }
         )
 
     async def get_task(self, *, owner_id, task_id):
@@ -298,3 +348,71 @@ async def test_another_owners_task_is_not_readable() -> None:
         await read_task(owner_id=OWNER, task_id="j-theirs", activity=agent)
 
     assert caught.value.status_code == 404
+
+
+async def test_a_transcript_carries_only_what_was_said() -> None:
+    """Tool traffic is how an answer was reached, not the conversation — and it
+    can carry anything the tools touched, so it never reaches a phone."""
+
+    agent = _Agent()
+
+    transcript = await read_transcript(
+        owner_id=OWNER,
+        conversation_id="c-1",
+        limit=None,
+        cursor=None,
+        activity=agent,
+    )
+
+    said = [
+        (message.role, message.text)
+        for turn in transcript.turns
+        for message in turn.messages
+    ]
+    assert said == [
+        ("user", "周末去哪"),
+        ("assistant", "我看看天气"),
+        ("user", "你好"),
+    ]
+    # The tool result and the assistant message that was a tool call are both
+    # gone; the assistant's own words are not.
+    assert all("temp" not in text for _role, text in said)
+    assert all(text != "调天气工具" for _role, text in said)
+
+
+async def test_a_turn_still_going_says_so_rather_than_inventing_an_end() -> None:
+    """An unfinished turn is what a dropped connection looks like afterwards."""
+
+    agent = _Agent()
+
+    transcript = await read_transcript(
+        owner_id=OWNER,
+        conversation_id="c-1",
+        limit=None,
+        cursor=None,
+        activity=agent,
+    )
+
+    assert transcript.turns[0].finished_at is None
+    assert transcript.turns[1].finished_at == "2026-08-24T09:00:09+00:00"
+
+
+async def test_a_transcript_is_bounded_and_walks_backwards() -> None:
+    agent = _Agent(cursor="2026-08-24T09:00:00+00:00")
+
+    transcript = await read_transcript(
+        owner_id=OWNER,
+        conversation_id="c-1",
+        limit=10_000,
+        cursor="2026-08-24T09:30:00+00:00",
+        activity=agent,
+    )
+
+    assert agent.asked[0] == (
+        "transcript",
+        OWNER,
+        "c-1",
+        MAXIMUM_PAGE,
+        "2026-08-24T09:30:00+00:00",
+    )
+    assert transcript.next_cursor == "2026-08-24T09:00:00+00:00"

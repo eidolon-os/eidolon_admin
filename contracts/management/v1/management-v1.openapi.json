@@ -1231,6 +1231,29 @@
         "title": "RevokedSessionsView",
         "type": "object"
       },
+      "SpokenMessageView": {
+        "additionalProperties": false,
+        "description": "One thing said, by me or by it.",
+        "properties": {
+          "role": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Role",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 1048576,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "SpokenMessageView",
+        "type": "object"
+      },
       "TaskPageView": {
         "additionalProperties": false,
         "properties": {
@@ -1367,6 +1390,98 @@
           "status"
         ],
         "title": "TaskView",
+        "type": "object"
+      },
+      "TranscriptTurnView": {
+        "additionalProperties": false,
+        "description": "One exchange.",
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/SpokenMessageView"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "started_at": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Status",
+            "type": "string"
+          },
+          "turn_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "messages"
+        ],
+        "title": "TranscriptTurnView",
+        "type": "object"
+      },
+      "TranscriptView": {
+        "additionalProperties": false,
+        "description": "What was said in one conversation.\n\nOnly what I said and what it said. What tools it called to get there is how\nthe answer was reached, not the conversation.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "conversation_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptTurnView"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "turns"
+        ],
+        "title": "TranscriptView",
         "type": "object"
       },
       "ValidationError": {
@@ -1689,6 +1804,108 @@
           }
         },
         "summary": "Get Companion Conversations",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/conversations/{conversation_id}/turns": {
+      "get": {
+        "description": "What was said that time.\n\nA page at a time, newest first, so \"看更早的\" walks back through it.",
+        "operationId": "get_conversation_transcript_api_management_v1_companions__companion_id__conversations__conversation_id__turns_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Conversation Transcript",
         "tags": [
           "management"
         ]

@@ -27,6 +27,7 @@ from eidolon_admin_server.app.management.memory import read_copy, read_day, read
 from eidolon_admin_server.app.management.activity import (
     cancel_task,
     read_conversations,
+    read_transcript,
     read_task,
     read_tasks,
     retry_task,
@@ -235,6 +236,35 @@ class ConversationPageInternal(BaseModel):
     operation: Literal["companion.conversations"] = "companion.conversations"
     companion_id: str = Field(min_length=1, max_length=64)
     conversations: list[ConversationInternal]
+    next_cursor: str | None = Field(default=None, max_length=256)
+
+
+class SpokenMessageInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: str = Field(min_length=1, max_length=32)
+    text: str = Field(default="", max_length=1_048_576)
+
+
+class TranscriptTurnInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str = Field(min_length=1, max_length=64)
+    started_at: str = Field(default="", max_length=64)
+    #: Absent while a turn is still going, which is what a dropped connection
+    #: looks like in a transcript.
+    finished_at: str | None = Field(default=None, max_length=64)
+    status: str = Field(default="", max_length=32)
+    messages: list[SpokenMessageInternal]
+
+
+class TranscriptInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.transcript"] = "companion.transcript"
+    conversation_id: str = Field(min_length=1, max_length=64)
+    turns: list[TranscriptTurnInternal]
     next_cursor: str | None = Field(default=None, max_length=256)
 
 
@@ -791,6 +821,59 @@ async def get_companion_conversations(
             for row in page.conversations
         ],
         next_cursor=page.next_cursor,
+    )
+
+
+@router.get(
+    "/companions/{companion_id}/conversations/{conversation_id}/turns",
+    response_model=TranscriptInternal,
+)
+async def get_conversation_transcript(
+    request: Request,
+    companion_id: str,
+    conversation_id: str,
+    owner_id: str,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> TranscriptInternal:
+    """What was said in one conversation.
+
+    Only what a person and their Eidolon said. Tool traffic is how an answer was
+    reached rather than the conversation, and it can carry anything the tools
+    touched — so it is dropped here and no client has to decide again.
+
+    ``companion_id`` is in the path because that is where a conversation sits in
+    this surface's shape; the check is on the Owner, which is what the runtime
+    keys the conversation by.
+    """
+    try:
+        transcript = await read_transcript(
+            owner_id=owner_id,
+            conversation_id=conversation_id,
+            limit=limit,
+            cursor=cursor,
+            activity=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return TranscriptInternal(
+        conversation_id=transcript.conversation_id,
+        turns=[
+            TranscriptTurnInternal(
+                turn_id=turn.turn_id,
+                started_at=turn.started_at,
+                finished_at=turn.finished_at,
+                status=turn.status,
+                messages=[
+                    SpokenMessageInternal(role=message.role, text=message.text)
+                    for message in turn.messages
+                ],
+            )
+            for turn in transcript.turns
+        ],
+        next_cursor=transcript.next_cursor,
     )
 
 

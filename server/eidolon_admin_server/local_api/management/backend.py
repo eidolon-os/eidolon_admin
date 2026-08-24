@@ -130,6 +130,27 @@ class AdminManagementClient:
             params,
         )
 
+    async def transcript(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        conversation_id: str,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self._get(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/conversations/"
+            f"{quote(conversation_id, safe='')}/turns",
+            params,
+        )
+
     async def tasks(
         self,
         *,

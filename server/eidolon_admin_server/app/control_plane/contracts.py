@@ -363,6 +363,33 @@ class ConversationRows(ConsumedModel):
     next_before: str | None = Field(default=None, max_length=64)
 
 
+class MessageRow(ConsumedModel):
+    """One thing said in a turn, as the runtime holds it."""
+
+    role: str = Field(default="", max_length=32)
+    content: str = Field(default="", max_length=1_048_576)
+    content_type: str = Field(default="", max_length=64)
+    #: Present on tool traffic. Consumed so the projection can tell tool messages
+    #: apart from what a person said, and dropped there rather than here.
+    tool_name: str | None = Field(default=None, max_length=128)
+    created_at: str | None = Field(default=None, max_length=64)
+
+
+class TranscriptTurnRow(ConsumedModel):
+    turn_id: str = Field(min_length=1, max_length=64)
+    seq: int
+    started_at: str | None = Field(default=None, max_length=64)
+    finished_at: str | None = Field(default=None, max_length=64)
+    status: str = Field(default="", max_length=32)
+    messages: tuple[MessageRow, ...] = ()
+
+
+class TranscriptRows(ConsumedModel):
+    conversation_id: str = Field(min_length=1, max_length=64)
+    turns: tuple[TranscriptTurnRow, ...] = ()
+    next_before: str | None = Field(default=None, max_length=64)
+
+
 class TaskRow(ConsumedModel):
     """One long task, as the runtime holds it.
 
