@@ -1230,7 +1230,7 @@ class HubManagementClient:
             "hub",
             self._client,
             "POST",
-            f"{base_url}/api/device-management/v1/devices/{quote(device_id, safe='')}/revocation",
+            f"{base_url}/api/admission/v1/claims/{quote(device_id, safe='')}:revoke",
             timeout=self._timeout,
             headers=self._headers(authorization),
             json={

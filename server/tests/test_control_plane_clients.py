@@ -13,6 +13,7 @@ from eidolon_sdk.device_foundation.v1 import (
     ClaimQuery,
     ClaimState,
     DecideEnrollment,
+    DeviceRef,
     EnrollmentProposalQuery,
     EnrollmentProposalState,
     ManifestRef,
@@ -579,6 +580,61 @@ async def test_hub_decision_uses_exact_canonical_contract() -> None:
         await http_client.aclose()
 
     assert result.decision_id == "decision-1"
+
+
+async def test_hub_revocation_uses_exact_canonical_claim_command() -> None:
+    device_ref = DeviceRef(
+        device_instance_id="device-1",
+        owner_domain_id=OwnerDomainId("owner-1"),
+        owner_domain_generation=2,
+        claim_generation=3,
+        trust_epoch=4,
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.raw_path == b"/api/admission/v1/claims/device-1:revoke"
+        assert request.headers["authorization"] == "Bearer owner-jwt"
+        body = json.loads(request.content)
+        assert body == {
+            "operation": "device.claim-revocation",
+            "command_id": "revoke-1",
+            "correlation_id": "removal-1",
+            "device_ref": device_ref.model_dump(mode="json"),
+            "reason": "owner-requested",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "operation": "device.claim-revocation-result",
+                "command_id": "revoke-1",
+                "outcome": "committed",
+                "device_ref": device_ref.model_dump(mode="json"),
+                "aggregate_revision": 5,
+                "lifecycle_state": "revoked",
+                "event_id": "claim-event-1",
+                "occurred_at": datetime.now(UTC).isoformat(),
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        result = await subject.revoke(
+            device_ref=device_ref,
+            reason="owner-requested",
+            command_id="revoke-1",
+            correlation_id="removal-1",
+            authorization="Bearer owner-jwt",
+        )
+    finally:
+        await http_client.aclose()
+
+    assert result.event_id == "claim-event-1"
 
 
 async def test_enrollment_query_preserves_recoverable_states() -> None:
