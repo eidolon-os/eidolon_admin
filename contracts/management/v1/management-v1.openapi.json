@@ -367,6 +367,125 @@
         "title": "ManagementContextView",
         "type": "object"
       },
+      "MemoryLibraryView": {
+        "additionalProperties": false,
+        "description": "What my Eidolon remembers, arranged the way it files it.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "entry_count": {
+            "minimum": 0.0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "wings": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryWingView"
+            },
+            "title": "Wings",
+            "type": "array"
+          },
+          "withheld_count": {
+            "minimum": 0.0,
+            "title": "Withheld Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "wings",
+          "entry_count",
+          "withheld_count",
+          "truncated"
+        ],
+        "title": "MemoryLibraryView",
+        "type": "object"
+      },
+      "MemoryRoomView": {
+        "additionalProperties": false,
+        "description": "One shelf of a person's memory.",
+        "properties": {
+          "entry_count": {
+            "minimum": 0.0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "more": {
+            "title": "More",
+            "type": "boolean"
+          },
+          "room_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Room Id",
+            "type": "string"
+          },
+          "titles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Titles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "room_id",
+          "entry_count",
+          "titles",
+          "more"
+        ],
+        "title": "MemoryRoomView",
+        "type": "object"
+      },
+      "MemoryWingView": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2048,
+            "title": "Description",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "entry_count": {
+            "minimum": 0.0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "rooms": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryRoomView"
+            },
+            "title": "Rooms",
+            "type": "array"
+          },
+          "wing_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Wing Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "wing_id",
+          "entry_count",
+          "rooms"
+        ],
+        "title": "MemoryWingView",
+        "type": "object"
+      },
       "OwnerContextView": {
         "additionalProperties": false,
         "properties": {
@@ -671,6 +790,72 @@
           }
         },
         "summary": "Get Context",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/memory/library": {
+      "get": {
+        "description": "What my Eidolon remembers.\n\n``companion_id`` names an audience, not a scope: the memory is the\nOwner's and every one of their Eidolons reads it. Naming one adds what\nthe Owner told that one in particular; naming none answers with the\nshared layer.",
+        "operationId": "get_memory_library_api_management_v1_memory_library_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "companion_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Companion Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryLibraryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory Library",
         "tags": [
           "management"
         ]

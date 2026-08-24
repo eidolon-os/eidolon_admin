@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import type {
   CompanionCreateRequest,
+  MemoryLibraryView,
   CompanionCreatedView,
   CompanionDetailView,
   DefaultCompanionRequest,
@@ -329,5 +330,73 @@ describe('management v1 create', () => {
       memory_ready: true,
     }
     expect(answer.companion_id).toBe('cp-1')
+  })
+})
+
+describe('management v1 memory library', () => {
+  const LIBRARY: MemoryLibraryView = {
+    contract_version: '1',
+    wings: [
+      {
+        wing_id: 'Wing_Life',
+        display_name: '生活',
+        description: '',
+        entry_count: 2,
+        rooms: [{ room_id: '饮食', entry_count: 2, titles: ['乌龙茶'], more: true }],
+      },
+    ],
+    entry_count: 2,
+    withheld_count: 1,
+    truncated: false,
+  }
+
+  it('shows the withheld count rather than a silence', () => {
+    // The total and the listed entries differ on purpose: "do not bring this
+    // up" is counted, not erased. A screen that dropped this number would look
+    // like a bug in the person's own memory.
+    const listed = LIBRARY.wings.flatMap((w) => w.rooms).reduce((n, r) => n + r.entry_count, 0)
+    expect(listed).toBe(LIBRARY.entry_count)
+    expect(LIBRARY.withheld_count).toBe(1)
+  })
+
+  it('has its own words for a category the Host cannot name', () => {
+    // display_name is empty when this Host has never heard of the wing. Showing
+    // the identifier would put "Wing_FromALaterRelease" in front of a person.
+    const unknown: MemoryLibraryView['wings'][number] = {
+      ...LIBRARY.wings[0],
+      wing_id: 'Wing_FromALaterRelease',
+      display_name: '',
+    }
+    const label = unknown.display_name || '其他'
+    expect(label).toBe('其他')
+    expect(label).not.toBe(unknown.wing_id)
+  })
+
+  it('does not treat a truncated library as the whole of a memory', () => {
+    const partial: MemoryLibraryView = { ...LIBRARY, truncated: true }
+    const claim = partial.truncated ? '只读了一部分' : '全部'
+    expect(claim).toBe('只读了一部分')
+  })
+
+  it('is given titles, not contents', () => {
+    // more: true says the shelf holds more than these. A client that asked for
+    // "everything" would be doing an export, which is a separate capability
+    // with separate consent.
+    expect(LIBRARY.wings[0].rooms[0].titles).toHaveLength(1)
+    expect(LIBRARY.wings[0].rooms[0].more).toBe(true)
+    expect(LIBRARY.wings[0].rooms[0].entry_count).toBeGreaterThan(
+      LIBRARY.wings[0].rooms[0].titles.length,
+    )
+  })
+
+  it('names neither an Owner nor a memory space', () => {
+    // The space id is an identifier for a thing nobody can open or act on.
+    expect(Object.keys(LIBRARY)).not.toContain('owner_id')
+    expect(Object.keys(LIBRARY)).not.toContain('memory_space_id')
+  })
+
+  it('keys the library response by the operation a client calls', () => {
+    const answer: ManagementResponses['GET /api/management/v1/memory/library'] = LIBRARY
+    expect(answer.entry_count).toBe(2)
   })
 })

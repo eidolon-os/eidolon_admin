@@ -72,6 +72,29 @@ export interface ManagementContextView {
   owner: OwnerContextView
 }
 
+export interface MemoryLibraryView {
+  contract_version?: "1"
+  entry_count: number
+  truncated: boolean
+  wings: Array<MemoryWingView>
+  withheld_count: number
+}
+
+export interface MemoryRoomView {
+  entry_count: number
+  more: boolean
+  room_id: string
+  titles: Array<string>
+}
+
+export interface MemoryWingView {
+  description?: string
+  display_name?: string
+  entry_count: number
+  rooms: Array<MemoryRoomView>
+  wing_id: string
+}
+
 export interface OwnerContextView {
   display_name?: string
   owner_id: string
@@ -92,5 +115,6 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/context': ManagementContextView
+  'GET /api/management/v1/memory/library': MemoryLibraryView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
 }

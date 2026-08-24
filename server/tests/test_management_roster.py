@@ -227,6 +227,32 @@ class _Backend:
             "memory_ready": True,
         }
 
+    async def memory_library(self, *, owner_id: str, companion_id: str | None) -> dict:
+        self.asked.append((owner_id, companion_id))
+        return {
+            "contract_version": "1",
+            "operation": "memory.library",
+            "wings": [
+                {
+                    "wing_id": "Wing_Life",
+                    "display_name": "生活",
+                    "description": "",
+                    "entry_count": 2,
+                    "rooms": [
+                        {
+                            "room_id": "饮食",
+                            "entry_count": 2,
+                            "titles": ["乌龙茶"],
+                            "more": True,
+                        }
+                    ],
+                }
+            ],
+            "entry_count": 2,
+            "withheld_count": 1,
+            "truncated": False,
+        }
+
     async def close(self) -> None:
         return None
 
@@ -648,3 +674,69 @@ async def test_the_ordinary_case_needs_no_kind(tmp_path, monkeypatch) -> None:
         )
 
     assert backend.asked[0][3] == "conversational"
+
+
+# --- what my Eidolon remembers --------------------------------------------
+
+_LIBRARY = "/api/management/v1/memory/library"
+
+
+async def test_the_library_is_the_authenticated_owners(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get(_LIBRARY)
+        headers = await _authenticate(client)
+        answered = await client.get(_LIBRARY, headers=headers)
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", None)]
+    body = answered.json()
+    assert body["entry_count"] == 2
+    assert body["wings"][0]["rooms"][0]["titles"] == ["乌龙茶"]
+
+
+async def test_the_withheld_count_reaches_the_client(tmp_path, monkeypatch) -> None:
+    """A silence here would look like a bug in the person's own memory.
+
+    The total and the listed entries differ on purpose — things marked "do not
+    bring this up" are counted, not erased — so the number that explains the
+    difference has to survive the trip.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (await client.get(_LIBRARY, headers=headers)).json()
+
+    assert body["withheld_count"] == 1
+    assert body["truncated"] is False
+
+
+async def test_naming_a_companion_selects_an_audience(tmp_path, monkeypatch) -> None:
+    """Not a scope. The memory is the Owner's; naming one adds a layer."""
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.get(_LIBRARY, params={"companion_id": "c-a"}, headers=headers)
+
+    assert backend.asked == [("owner-1", "c-a")]
+
+
+async def test_the_library_names_no_owner_and_no_space(tmp_path, monkeypatch) -> None:
+    """The memory space id is an identifier for a thing nobody can open.
+
+    It reaches Admin from the realm and stops there; a client that could see it
+    would eventually show it, and it means nothing to a person.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (await client.get(_LIBRARY, headers=headers)).json()
+
+    assert "owner_id" not in body
+    assert "memory_space_id" not in body

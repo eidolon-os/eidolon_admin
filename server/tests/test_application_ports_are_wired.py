@@ -41,6 +41,7 @@ from eidolon_admin_server.app.management.creation import (
     CompanionProvisioner,
     MemoryReconciler,
 )
+from eidolon_admin_server.app.management.memory import MemoryBrowser
 from eidolon_admin_server.app.management.roster import (
     DefaultCompanionWriter,
     RosterReader,
@@ -60,6 +61,10 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     "DefaultCompanionWriter": (DefaultCompanionWriter, "workspace"),
     "CompanionProvisioner": (CompanionProvisioner, "workspace"),
     "MemoryReconciler": (MemoryReconciler, "memory_supervisor"),
+    # Reading what a memory holds and bringing a realm *up* are different
+    # things on different clients; the gate below asserts they are not
+    # interchangeable.
+    "MemoryBrowser": (MemoryBrowser, "memory"),
     # Admin's own store, constructed by the service rather than reached for on
     # it: there is no authority behind it and nothing to mis-wire.
     "RemovalIntentStore": (None, None),
@@ -164,6 +169,7 @@ async def test_a_port_is_reached_for_by_name_not_by_luck() -> None:
         # And the memory *read* client cannot bring a realm up, which is the
         # confusion the create path would make if it reached for "memory".
         assert not isinstance(service.memory, MemoryReconciler)
+        assert not isinstance(service.memory_supervisor, MemoryBrowser)
     finally:
         await service.close()
 

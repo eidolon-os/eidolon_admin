@@ -118,6 +118,41 @@ class CompanionProvision(StrictModel):
     replayed: bool
 
 
+class MemoryRoom(StrictModel):
+    room_id: str = Field(min_length=1, max_length=256)
+    drawer_count: int = Field(ge=0)
+    #: A few titles, enough to recognise the room. Not the contents — a browse
+    #: that returned everything would be an export by another name.
+    drawers_preview: tuple[dict[str, Any], ...] = ()
+    preview_truncated: bool = False
+
+
+class MemoryWing(StrictModel):
+    wing_id: str = Field(min_length=1, max_length=128)
+    is_configured: bool
+    display_name: str = Field(default="", max_length=256)
+    description: str = Field(default="", max_length=2048)
+    sort_order: int
+    room_count: int = Field(ge=0)
+    drawer_count: int = Field(ge=0)
+    rooms: tuple[MemoryRoom, ...] = ()
+
+
+class MemoryBrowse(StrictModel):
+    """What an Owner's memory holds, by wing and room."""
+
+    contract_version: Literal["1"]
+    operation: Literal["memory.browse"]
+    memory_space_id: str = Field(min_length=1, max_length=64)
+    wings: tuple[MemoryWing, ...] = ()
+    entry_count: int = Field(ge=0)
+    #: Present and not listed — the Owner's own privacy wing is the common case.
+    #: Carried through rather than dropped: a count that disagrees with what is
+    #: listed is worse than a count that explains itself.
+    withheld_count: int = Field(ge=0)
+    truncated: bool
+
+
 class PersonaChapter(StrictModel):
     genome_id: str = Field(min_length=1, max_length=64)
     version: int = Field(ge=1)

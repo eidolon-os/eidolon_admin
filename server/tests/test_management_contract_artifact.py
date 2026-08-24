@@ -97,7 +97,15 @@ def test_the_contract_carries_only_the_management_surface() -> None:
 #: and a rule that has to be relaxed the first time it is inconvenient teaches
 #: nothing about what actually matters — which is that a client cannot name a
 #: subject it was not given.
-ALLOWED_QUERY_PARAMETERS = {"cursor"}
+ALLOWED_QUERY_PARAMETERS = {
+    "cursor",
+    # An *audience*, not a subject. Memory belongs to the Owner and every one of
+    # their Companions reads it, so naming one adds a layer and cannot widen
+    # what the space holds — a foreign id simply matches nothing. The value also
+    # came from the roster this Host served, which is the property that keeps
+    # this list closed: every name here is something the Host handed the client.
+    "companion_id",
+}
 
 
 def test_no_operation_accepts_an_owner(  # noqa: D401 - the name is the assertion

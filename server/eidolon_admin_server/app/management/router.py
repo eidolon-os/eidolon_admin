@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
+from eidolon_admin_server.app.management.memory import read_library
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
@@ -134,6 +135,36 @@ class CompanionCreateResponseInternal(BaseModel):
     revision: int = Field(ge=1)
     created: bool
     memory_ready: bool
+
+
+class MemoryRoomInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    room_id: str = Field(min_length=1, max_length=256)
+    entry_count: int = Field(ge=0)
+    titles: list[str]
+    more: bool
+
+
+class MemoryWingInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    wing_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(default="", max_length=256)
+    description: str = Field(default="", max_length=2048)
+    entry_count: int = Field(ge=0)
+    rooms: list[MemoryRoomInternal]
+
+
+class MemoryLibraryInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.library"] = "memory.library"
+    wings: list[MemoryWingInternal]
+    entry_count: int = Field(ge=0)
+    withheld_count: int = Field(ge=0)
+    truncated: bool
 
 
 @router.get("/context", response_model=ManagementContextInternal)
@@ -303,4 +334,52 @@ async def put_companion_provision(
         revision=created.revision,
         created=created.created,
         memory_ready=created.memory_ready,
+    )
+
+
+@router.get("/memory/library", response_model=MemoryLibraryInternal)
+async def get_memory_library(
+    request: Request,
+    owner_id: str,
+    companion_id: str | None = None,
+) -> MemoryLibraryInternal:
+    """What this Owner's memory holds, by wing and room.
+
+    ``companion_id`` is an audience, not a scope: memory belongs to the Owner
+    and every one of their Companions reads it. Naming one adds that Companion's
+    own layer; naming none answers with the Owner layer, which is the safe
+    direction for a caller that did not say.
+    """
+    try:
+        library = await read_library(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return MemoryLibraryInternal(
+        wings=[
+            MemoryWingInternal(
+                wing_id=wing.wing_id,
+                display_name=wing.display_name,
+                description=wing.description,
+                entry_count=wing.entry_count,
+                rooms=[
+                    MemoryRoomInternal(
+                        room_id=room.room_id,
+                        entry_count=room.entry_count,
+                        titles=list(room.titles),
+                        more=room.more,
+                    )
+                    for room in wing.rooms
+                ],
+            )
+            for wing in library.wings
+        ],
+        entry_count=library.entry_count,
+        withheld_count=library.withheld_count,
+        truncated=library.truncated,
     )

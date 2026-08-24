@@ -11,6 +11,7 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ValidationError
 
 from .contracts import (
+    MemoryBrowse,
     PersonaChapter,
     PersonaTimeline,
     CompanionIdentity,
@@ -681,6 +682,24 @@ class DataWorkspaceAuthorityClient:
         return result
 
 
+def _realm_path(published_url: str, leaf: str) -> str:
+    """A sibling route on the space's own port.
+
+    Discovery publishes one URL per space — historically the recollections one —
+    and the rest of ``/api/memory/v1/*`` sits beside it on that port. Composing
+    from the prefix rather than substituting into the URL keeps this from
+    rewriting part of a host or a query, and keeps Admin from guessing at the
+    realm's route layout.
+    """
+
+    prefix, separator, _ = published_url.rpartition("/api/memory/v1/")
+    if not separator:
+        raise _contract_violation(
+            "memory", "memory discovery published a read surface outside the contract"
+        )
+    return f"{prefix}{separator}{leaf}"
+
+
 def _realm_name(realm: dict) -> str:
     """How a Realm is named in a failure: by its id, never by its address."""
     for key in ("memory_realm_id", "memory_space_id"):
@@ -794,7 +813,7 @@ class MemoryRecollectionsClient:
             "memory",
             self._client,
             "GET",
-            space,
+            _realm_path(space, "recollections"),
             headers={"Authorization": f"Bearer {self._service_token}"},
             timeout=self._timeout,
             params=params,
@@ -818,6 +837,45 @@ class MemoryRecollectionsClient:
         if not isinstance(recollections, list):
             raise _contract_violation("memory", "memory answered outside its contract")
         return recollections
+
+    async def browse(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryBrowse:
+        """What this Owner's memory holds, as the realm reports it.
+
+        The realm applies the same visibility policy recall does, so this client
+        does no filtering of its own — a second filter here would be a second
+        answer to "what may this person see", and the two would drift.
+        """
+
+        if not self._service_token:
+            raise AuthorityFailure(
+                "memory",
+                "configuration",
+                "Admin memory service credential is not configured",
+                503,
+                retryable=False,
+            )
+        space = await self._space_for(owner_id)
+        browse_url = space.replace("/recollections", "/browse")
+        if browse_url == space:
+            raise _contract_violation(
+                "memory", "memory discovery published no browsable read surface"
+            )
+        params = {"companion_id": companion_id} if companion_id else None
+        response = await _request(
+            "memory",
+            self._client,
+            "GET",
+            _realm_path(space, "browse"),
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._service_token}"},
+            params=params,
+        )
+        return _parse("memory", response, MemoryBrowse)
 
     async def _space_for(self, owner_id: str) -> str:
         """The one memory space this Owner has, or a failure naming why not.

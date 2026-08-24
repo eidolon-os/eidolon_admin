@@ -72,6 +72,14 @@ class AdminManagementClient:
             {"display_name": display_name, "kind": kind},
         )
 
+    async def memory_library(
+        self, *, owner_id: str, companion_id: str | None
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if companion_id:
+            params["companion_id"] = companion_id
+        return await self._get("/api/internal/v1/management/memory/library", params)
+
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         return await self._call("GET", path, params, None)
 

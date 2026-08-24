@@ -89,7 +89,7 @@ _CAPABILITIES: tuple[str, ...] = (
 #: the only place a capability turns on — a route existing is not enough, which
 #: is what keeps a button from appearing before the thing behind it works.
 _ENABLED: frozenset[str] = frozenset(
-    {"companion.read", "companion.create", "companion.set_default"}
+    {"companion.read", "companion.create", "companion.set_default", "memory.read"}
 )
 
 

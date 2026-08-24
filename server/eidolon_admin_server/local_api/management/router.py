@@ -197,6 +197,52 @@ class CompanionCreatedView(BaseModel):
     memory_ready: bool
 
 
+class MemoryRoomView(BaseModel):
+    """One shelf of a person's memory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    room_id: str = Field(min_length=1, max_length=256)
+    entry_count: int = Field(ge=0)
+    #: A few titles, enough to recognise the shelf. Deliberately not its
+    #: contents: a browse that returned everything would be an export wearing
+    #: another name, and export is its own capability with its own consent.
+    titles: list[str]
+    #: True when the shelf holds more than the titles shown.
+    more: bool
+
+
+class MemoryWingView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    wing_id: str = Field(min_length=1, max_length=128)
+    #: Empty when this Host has never heard of the category. A client must show
+    #: its own words for that rather than the identifier — nobody named a memory
+    #: "Wing_FromALaterRelease".
+    display_name: str = Field(default="", max_length=256)
+    description: str = Field(default="", max_length=2048)
+    entry_count: int = Field(ge=0)
+    rooms: list[MemoryRoomView]
+
+
+class MemoryLibraryView(BaseModel):
+    """What my Eidolon remembers, arranged the way it files it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    wings: list[MemoryWingView]
+    entry_count: int = Field(ge=0)
+    #: Here and not listed — things marked "do not bring this up", and (once
+    #: anything is marked private to one Companion) another Companion's. A
+    #: number rather than a silence: a total that disagreed with what is shown
+    #: would look like a bug in the person's own memory.
+    withheld_count: int = Field(ge=0)
+    #: The Host read as much as it is willing to in one go. A client must not
+    #: present a truncated library as the whole of someone's memory.
+    truncated: bool
+
+
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
@@ -217,6 +263,10 @@ class ManagementBackendPort(Protocol):
         operation_id: str,
         display_name: str,
         kind: str,
+    ) -> dict: ...
+
+    async def memory_library(
+        self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
 
 
@@ -363,6 +413,32 @@ def register_management_routes(
             revision=answer["revision"],
             created=answer["created"],
             memory_ready=answer["memory_ready"],
+        )
+
+    @router.get("/memory/library", response_model=MemoryLibraryView)
+    async def get_memory_library(
+        companion_id: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MemoryLibraryView:
+        """What my Eidolon remembers.
+
+        ``companion_id`` names an audience, not a scope: the memory is the
+        Owner's and every one of their Eidolons reads it. Naming one adds what
+        the Owner told that one in particular; naming none answers with the
+        shared layer.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.memory_library(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return MemoryLibraryView(
+            wings=[MemoryWingView(**wing) for wing in answer["wings"]],
+            entry_count=answer["entry_count"],
+            withheld_count=answer["withheld_count"],
+            truncated=answer["truncated"],
         )
 
     app.include_router(router)
