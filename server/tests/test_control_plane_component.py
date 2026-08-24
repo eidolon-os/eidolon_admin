@@ -37,6 +37,8 @@ class DataPort:
             companion_id=companion_id,
             owner_id="owner-1",
             lifecycle_state="active",
+            kind="standard",
+            revision=1,
         )
 
 

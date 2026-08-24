@@ -273,6 +273,8 @@ class _RuntimeClient:
             owner_id=self.workspace.result.owner.owner_id,
             display_name=display_name,
             lifecycle_state="active",
+            kind="standard",
+            revision=2,
         )
 
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
@@ -351,6 +353,8 @@ class _RuntimeClient:
             ),
             display_name="小忆",
             lifecycle_state="active",
+            kind="standard",
+            revision=1,
         )
 
 class _DevicesClient:

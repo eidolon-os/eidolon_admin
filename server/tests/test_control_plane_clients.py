@@ -94,6 +94,8 @@ async def test_data_client_uses_exact_read_only_route_and_credential() -> None:
                 "companion_id": "companion one",
                 "owner_id": "owner-1",
                 "lifecycle_state": "active",
+                "kind": "standard",
+                "revision": 1,
             },
         )
 
@@ -514,6 +516,8 @@ async def test_data_identity_mismatch_is_a_contract_violation() -> None:
                 "companion_id": "different-companion",
                 "owner_id": "owner-1",
                 "lifecycle_state": "active",
+                "kind": "standard",
+                "revision": 1,
             },
         )
     )

@@ -26,13 +26,35 @@ class ServiceEndpoint(StrictModel):
 
 
 class CompanionIdentity(StrictModel):
+    """Data's published Companion identity, consumed strictly.
+
+    Strict means a producer field this model does not name is a hard parse
+    failure, which is the behaviour we want — and it is why this model must
+    track the published schema exactly. It did not: Data grew ``kind`` and
+    ``revision`` and split ``inactive`` into ``retiring``/``archived``, and
+    every Admin read of a Companion broke until this line was updated.
+    ``tests/test_data_contract_drift.py`` now checks the model against the
+    producer's schema, so the next divergence fails in this suite instead of at
+    runtime on a Host.
+    """
+
     operation: Literal["companion.identity"]
     companion_id: str = Field(min_length=1, max_length=64)
     owner_id: str = Field(min_length=1, max_length=64)
     #: What the Owner calls this Eidolon. Defaulted so a Host whose Data
     #: predates answering with it still parses.
     display_name: str = Field(default="", max_length=128)
-    lifecycle_state: Literal["active", "inactive"]
+    #: Four states, not two. A consumer must be able to tell "the Owner
+    #: archived it" from "it cannot run right now"; folding them was the
+    #: conflation the identity schema was changed to remove.
+    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    #: The product type (standard, guard, ...), independent of which Companion
+    #: is the Owner's default. Deliberately not a Literal: this is a consumer,
+    #: and a kind it has never heard of must not fail the parse of an identity
+    #: it can otherwise read.
+    kind: str = Field(min_length=1, max_length=32)
+    #: Aggregate version, for compare-and-swap on writes.
+    revision: int = Field(ge=1)
 
 
 class PersonaChapter(StrictModel):

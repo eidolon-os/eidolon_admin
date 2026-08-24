@@ -100,53 +100,101 @@ def _schema_documents(schema_root: Path) -> list[dict]:
 
 
 def test_data_consumed_identity_matches_the_producer_it_was_verified_against() -> None:
-    """Verified against Data 718b2cb, which added the Companion's display name.
+    """Verified against Data 48dcb41, which split one role column into three axes.
 
-    The previous baseline was 2a33894. Moving it is the deliberate part: this
-    copy of the contract is closed, so an addition at Data arrives here as a
-    failing test rather than as an unnoticed field, and someone decides.
+    The previous baselines were 2a33894 and 718b2cb. Moving the pin is the
+    deliberate part: this copy of the contract is closed, so an addition at Data
+    arrives here as a decision rather than as an unnoticed field.
+
+    Read this together with the working-tree check below. A pin proves "we were
+    right about what we reviewed"; it cannot notice the producer moving on, and
+    it did not — Data grew ``kind`` and ``revision``, this test stayed green
+    against 718b2cb, and every Admin read of a Companion was failing to parse.
     """
 
     schema_path = "eidolon_data/contracts/schemas/companion/identity.schema.json"
-    schema = _json_at_commit(DATA_ROOT, "718b2cb", schema_path)
+    schema = _json_at_commit(DATA_ROOT, "48dcb41", schema_path)
     document = CompanionIdentity(
         operation="companion.identity",
         companion_id="companion-1",
         owner_id="owner-1",
         display_name="小忆",
         lifecycle_state="active",
+        kind="standard",
+        revision=3,
     ).model_dump(mode="json")
     jsonschema.Draft202012Validator(schema).validate(document)
 
     producer_source = _at_commit(
-        DATA_ROOT, "718b2cb", "eidolon_data/api/companion_authority.py"
+        DATA_ROOT, "48dcb41", "eidolon_data/api/companion_authority.py"
     )
     assert "/api/companion-authority/v1/companions/{companion_id}" in producer_source
     assert "response_model=CompanionIdentityResponse" in producer_source
 
 
-def test_a_host_whose_data_predates_the_name_is_still_understood() -> None:
-    # An App and an Admin are routinely newer than the Host they run beside.
-    # A Companion identity from before Data answered with a name has to parse,
-    # and the name is simply absent rather than invented.
-    older = jsonschema.Draft202012Validator(
-        _json_at_commit(
-            DATA_ROOT,
-            "2a33894",
-            "eidolon_data/contracts/schemas/companion/identity.schema.json",
-        )
+def test_the_consumed_identity_still_parses_what_data_publishes_today() -> None:
+    """The check the pinned one structurally cannot be: against the working tree.
+
+    A pinned test fails when *this* repository changes. Nothing in it fails when
+    the *producer* changes, which is how ``kind`` and ``revision`` reached a
+    deployed Data while Admin still rejected them as extra fields. This reads
+    the schema as it is on disk right now and asserts the strict consumer
+    accepts every document it describes — including each lifecycle value, since
+    a consumer that parses only the happy state is a consumer that breaks the
+    first time an Owner archives something.
+    """
+
+    schema_file = (
+        DATA_ROOT / "eidolon_data/contracts/schemas/companion/identity.schema.json"
     )
-    document = {
-        "operation": "companion.identity",
-        "companion_id": "companion-1",
-        "owner_id": "owner-1",
-        "lifecycle_state": "active",
-    }
-    older.validate(document)
+    if not schema_file.is_file():
+        pytest.skip("eidolon_data sibling checkout is unavailable")
+    schema = json.loads(schema_file.read_text(encoding="utf-8"))
+    properties = set(schema["properties"])
 
-    parsed = CompanionIdentity.model_validate(document)
+    # Every field the producer publishes must be a field this model names.
+    # Strict parsing turns an unnamed one into a hard failure, so "we do not
+    # need it yet" is not an option available here.
+    named = set(CompanionIdentity.model_fields)
+    assert properties <= named, f"producer sends fields this model rejects: {properties - named}"
 
-    assert parsed.display_name == ""
+    for state in schema["properties"]["lifecycle_state"]["enum"]:
+        identity = CompanionIdentity.model_validate(
+            {
+                "operation": "companion.identity",
+                "companion_id": "companion-1",
+                "owner_id": "owner-1",
+                "display_name": "小忆",
+                "lifecycle_state": state,
+                "kind": "standard",
+                "revision": 3,
+            }
+        )
+        assert identity.lifecycle_state == state
+
+    # A kind this Admin has never heard of is not a parse failure. The set of
+    # product types is the producer's to grow, and an identity that is readable
+    # in every other respect must stay readable.
+    unknown_kind = CompanionIdentity.model_validate(
+        {
+            "operation": "companion.identity",
+            "companion_id": "companion-1",
+            "owner_id": "owner-1",
+            "lifecycle_state": "active",
+            "kind": "a-kind-from-a-later-release",
+            "revision": 1,
+        }
+    )
+    assert unknown_kind.kind == "a-kind-from-a-later-release"
+
+
+# Deleted here: a test asserting that an identity from a Data predating
+# ``display_name`` still parses. It cannot hold now that ``kind`` and
+# ``revision`` are required, and under the plan's no-compatibility premise
+# (§1.3) it should not: Data and Admin are one Host release and are installed
+# together, so tolerating an older producer buys nothing and hides a mismatch.
+# Version skew is real between a *client* and a Host, and it is handled at the
+# management ABI by the capabilities map — not by loosening internal contracts.
 
 
 def test_data_workspace_consumed_contract_matches_9fc4f4e() -> None:
