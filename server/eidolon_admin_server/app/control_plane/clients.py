@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from collections import deque
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimPage,
+    ClaimQuery,
+    ClaimRecord,
+    DecideEnrollment,
+    DecideEnrollmentResult,
+    EnrollmentProposalPage,
+    EnrollmentProposalQuery,
+    EnrollmentRecoveryProjection,
+)
 from pydantic import BaseModel, ValidationError
 
 from .contracts import (
@@ -19,14 +28,9 @@ from .contracts import (
     CompanionIdentity,
     CompanionProvision,
     CompanionRosterPage,
-    HubDevice,
     DeviceRef,
     HubClaimRevocationResult,
     HubDeviceControlOperationStatus,
-    HubDeviceEvent,
-    HubDeviceEventPage,
-    HubDevicePage,
-    HubLifecycleStatus,
     KernelMountPage,
     CompanionFace,
     KernelMutationResult,
@@ -90,7 +94,7 @@ def _parse(authority: str, response: httpx.Response, model: type[ModelT]) -> Mod
     if not 200 <= response.status_code < 300:
         _raise_status(authority, response)
     try:
-        return model.model_validate(response.json())
+        return model.model_validate_json(response.content)
     except (ValueError, ValidationError) as exc:
         raise AuthorityFailure(
             authority,
@@ -1067,39 +1071,156 @@ class HubManagementClient:
             )
         return {"Authorization": authorization}
 
-    async def approve(
+    async def decide_enrollment(
         self,
         *,
-        device_id: str,
-        owner_id: str,
-        request_id: str,
+        command: DecideEnrollment,
+        command_id: str,
+        correlation_id: str,
         authorization: str,
-    ) -> HubLifecycleStatus:
+    ) -> DecideEnrollmentResult:
         base_url = await self._base_url()
         response = await _request(
             "hub",
             self._client,
             "POST",
-            f"{base_url}/api/device-management/v1/devices/{quote(device_id, safe='')}/approval",
+            f"{base_url}/api/admission/v1/enrollments/"
+            f"{quote(command.enrollment_id, safe='')}/decisions",
             timeout=self._timeout,
             headers=self._headers(authorization),
             json={
-                "operation": "device.approval",
-                "request_id": request_id,
-                "owner_id": owner_id,
+                "command_id": command_id,
+                "correlation_id": correlation_id,
+                **command.model_dump(mode="json"),
             },
         )
-        result = _parse("hub", response, HubLifecycleStatus)
-        if (
-            result.device_id != device_id
-            or result.owner_id != owner_id
-            or result.lifecycle_state != "approved"
-        ):
+        result = _parse("hub", response, DecideEnrollmentResult)
+        if result.proposal_revision <= command.expected_proposal_revision:
             raise _contract_violation(
                 "hub",
-                "Hub approval response did not confirm the requested owner/device",
+                "Hub Decision response did not advance the requested Proposal",
             )
         return result
+
+    async def get_enrollment_recovery(
+        self,
+        *,
+        enrollment_id: str,
+        authorization: str,
+    ) -> EnrollmentRecoveryProjection:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/admission/v1/enrollments/"
+            f"{quote(enrollment_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+        )
+        projection = _parse("hub", response, EnrollmentRecoveryProjection)
+        if projection.proposal.enrollment_id != enrollment_id:
+            raise _contract_violation(
+                "hub", "Hub recovery query returned another Enrollment"
+            )
+        return projection
+
+    async def list_enrollment_recovery(
+        self,
+        *,
+        query: EnrollmentProposalQuery,
+        authorization: str,
+    ) -> EnrollmentProposalPage:
+        base_url = await self._base_url()
+        cursor = query.cursor
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/admission/v1/enrollments",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            params={
+                "states": ",".join(str(state) for state in query.states),
+                "limit": str(query.limit),
+                **(
+                    {
+                        "after_sort_key": cursor.sort_key.isoformat(),
+                        "after_resource_id": cursor.resource_id,
+                    }
+                    if cursor is not None
+                    else {}
+                ),
+            },
+        )
+        page = _parse("hub", response, EnrollmentProposalPage)
+        if page.owner_domain_id != query.owner_domain_id:
+            raise _contract_violation(
+                "hub", "Hub Enrollment page crossed its requested Owner Domain"
+            )
+        return page
+
+    async def list_claims(
+        self,
+        *,
+        query: ClaimQuery,
+        authorization: str,
+    ) -> ClaimPage:
+        base_url = await self._base_url()
+        cursor = query.cursor
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/admission/v1/claims",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            params={
+                "states": ",".join(str(state) for state in query.states),
+                "limit": str(query.limit),
+                **(
+                    {
+                        "after_sort_key": cursor.sort_key.isoformat(),
+                        "after_resource_id": cursor.resource_id,
+                    }
+                    if cursor is not None
+                    else {}
+                ),
+            },
+        )
+        page = _parse("hub", response, ClaimPage)
+        if page.owner_domain_id != query.owner_domain_id:
+            raise _contract_violation(
+                "hub", "Hub Claim page crossed its requested Owner Domain"
+            )
+        return page
+
+    async def get_claim(
+        self,
+        *,
+        owner_domain_id: str,
+        device_instance_id: str,
+        authorization: str,
+    ) -> ClaimRecord:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{base_url}/api/admission/v1/claims/"
+            f"{quote(device_instance_id, safe='')}",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+        )
+        claim = _parse("hub", response, ClaimRecord)
+        if (
+            str(claim.device_ref.owner_domain_id) != owner_domain_id
+            or claim.device_ref.device_instance_id != device_instance_id
+        ):
+            raise _contract_violation(
+                "hub", "Hub exact Claim query crossed its requested Owner Domain"
+            )
+        return claim
 
     async def revoke(
         self,
@@ -1141,37 +1262,6 @@ class HubManagementClient:
             )
         return result
 
-    async def get_device(
-        self,
-        *,
-        owner_id: str,
-        device_id: str,
-        authorization: str,
-    ) -> HubDevice:
-        base_url = await self._base_url()
-        response = await _request(
-            "hub",
-            self._client,
-            "GET",
-            f"{base_url}/api/device-management/v1/owners/{quote(owner_id, safe='')}"
-            f"/devices/{quote(device_id, safe='')}",
-            timeout=self._timeout,
-            headers=self._headers(authorization),
-            json=None,
-        )
-        result = _parse("hub", response, HubDevice)
-        if (
-            result.device_id != device_id
-            or result.owner_scope != owner_id
-            or result.device_ref is None
-            or result.device_ref.device_instance_id != device_id
-            or result.device_ref.owner_domain_id != owner_id
-        ):
-            raise _contract_violation(
-                "hub", "Hub exact query crossed its requested Claim scope"
-            )
-        return result
-
     async def get_device_control_operation(
         self,
         *,
@@ -1197,149 +1287,6 @@ class HubManagementClient:
                 "hub", "Device Control status crossed its requested event/Claim scope"
             )
         return result
-
-    async def rename(
-        self,
-        *,
-        device_id: str,
-        owner_scope: str,
-        display_name: str,
-        authorization: str,
-    ) -> HubDevice:
-        """Set what a device is called, for the Owner who holds it."""
-
-        base_url = await self._base_url()
-        response = await _request(
-            "hub",
-            self._client,
-            "PATCH",
-            f"{base_url}/api/device-management/v1/devices/{quote(device_id, safe='')}",
-            timeout=self._timeout,
-            headers=self._headers(authorization),
-            json={
-                "operation": "device.rename",
-                "display_name": display_name,
-                "owner_scope": owner_scope,
-            },
-        )
-        status = _parse("hub", response, HubLifecycleStatus)
-        if status.device_id != device_id:
-            raise _contract_violation(
-                "hub", "Hub rename response named a different device"
-            )
-        page = await self.list_devices(
-            owner_id=owner_scope,
-            authorization=authorization,
-        )
-        for device in page.devices:
-            if device.device_id == device_id:
-                return device
-        raise _contract_violation(
-            "hub", "Hub directory no longer holds the device it just renamed"
-        )
-
-    async def list_devices(
-        self,
-        *,
-        owner_id: str,
-        authorization: str,
-        limit: int = 100,
-        lifecycle_state: Literal["pending-approval", "approved", "revoked"]
-        | None = None,
-    ) -> HubDevicePage:
-        base_url = await self._base_url()
-        response = await _request(
-            "hub",
-            self._client,
-            "GET",
-            f"{base_url}/api/device-management/v1/owners/{quote(owner_id, safe='')}"
-            "/devices",
-            timeout=self._timeout,
-            headers=self._headers(authorization),
-            json=None,
-            params={
-                "limit": str(limit),
-                **(
-                    {"lifecycle_state": lifecycle_state}
-                    if lifecycle_state is not None
-                    else {}
-                ),
-            },
-        )
-        page = _parse("hub", response, HubDevicePage)
-        if any(device.owner_scope != owner_id for device in page.devices):
-            raise _contract_violation(
-                "hub", "Hub directory page crossed the requested owner scope"
-            )
-        return page
-
-    async def list_events(
-        self,
-        *,
-        owner_id: str,
-        authorization: str,
-        after_stream_position: int = 0,
-        limit: int = 500,
-    ) -> HubDeviceEventPage:
-        """One page of what the Hub recorded happening in this scope."""
-
-        base_url = await self._base_url()
-        response = await _request(
-            "hub",
-            self._client,
-            "GET",
-            f"{base_url}/api/device-management/v1/owners/{quote(owner_id, safe='')}"
-            f"/events",
-            timeout=self._timeout,
-            headers=self._headers(authorization),
-            params={
-                "after_stream_position": str(after_stream_position),
-                "limit": str(limit),
-            },
-        )
-        return _parse("hub", response, HubDeviceEventPage)
-
-    async def latest_events(
-        self,
-        *,
-        owner_id: str,
-        authorization: str,
-        keep: int,
-        page_size: int = 500,
-        max_pages: int = 100,
-    ) -> tuple[HubDeviceEvent, ...]:
-        """The newest `keep` things recorded in this scope.
-
-        The Hub's ledger reads forward from a position and has no "latest"
-        query, so the newest is found by walking to the end. Only a trailing
-        window is held.
-
-        Walking has a bound, and reaching it is an error rather than an
-        answer. Past that many events the window would hold the oldest of what
-        was read instead of the newest of what exists, and a history quietly
-        showing the wrong end of itself is worse than one that says it could
-        not be read.
-        """
-
-        window: deque[HubDeviceEvent] = deque(maxlen=keep)
-        position = 0
-        for _ in range(max_pages):
-            page = await self.list_events(
-                owner_id=owner_id,
-                authorization=authorization,
-                after_stream_position=position,
-                limit=page_size,
-            )
-            window.extend(page.events)
-            if len(page.events) < page_size:
-                return tuple(window)
-            position = page.next_stream_position
-        raise AuthorityFailure(
-            "hub",
-            "upstream_failure",
-            "Hub device history is longer than this Host can project",
-            502,
-        )
 
 
 class KernelMountClient:

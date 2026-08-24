@@ -25,7 +25,6 @@ def _ref(*, owner_generation: int = 1, generation: int = 1) -> DeviceRef:
         owner_domain_generation=owner_generation,
         claim_generation=generation,
         trust_epoch=1,
-        accepted_manifest_digest="sha256:" + str(generation) * 64,
     )
 
 

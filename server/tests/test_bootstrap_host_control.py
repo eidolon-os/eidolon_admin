@@ -60,10 +60,7 @@ from eidolon_admin_server.bootstrap.systemd_notify import SystemdNotifier
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionFace,
     CompanionIdentity,
-    HubDevice,
-    OwnerDeviceHistory,
     OwnerIdentity,
-    OwnerInventory,
     PersonaChapter,
     PersonaTimeline,
     KernelMountPage,
@@ -360,109 +357,6 @@ class _RuntimeClient:
 class _DevicesClient:
     def __init__(self) -> None:
         self.calls: list[str] = []
-        self.history_calls: list[tuple[str, str, int]] = []
-        #: Set to make the history unreadable, which must not read as empty.
-        self.history_failure: Exception | None = None
-        self.renamed: tuple[str, str] | None = None
-        #: Set to None to answer as a Host whose directory could not be
-        #: reached: the devices are still theirs, the names are simply gone.
-        self.directory: list[dict] | None = [
-            {
-                "operation": "device.directory-entry",
-                "device_id": "device-local-1",
-                "owner_scope": "owner_workspace_authority",
-                "display_name": "客厅的 Box-3",
-                "device_kind": "esp32-box3",
-                "manifest": {
-                    "schema_version": 1,
-                    "title": "Box-3",
-                    "properties": [],
-                    "actions": [],
-                    "events": [],
-                    "media": [],
-                },
-                "manifest_revision": "sha256:" + "a" * 64,
-                "device_ref": {
-                    "device_instance_id": "device-local-1",
-                    "owner_domain_id": "owner_workspace_authority",
-                    "owner_domain_generation": 1,
-                    "claim_generation": 1,
-                    "trust_epoch": 1,
-                    "accepted_manifest_digest": "sha256:" + "a" * 64,
-                },
-                "lifecycle_state": "approved",
-                "enrolled_at": "2026-08-09T08:00:00Z",
-                "updated_at": "2026-08-09T08:10:00Z",
-            }
-        ]
-
-    async def rename(
-        self,
-        owner_id: str,
-        controller_id: str,
-        device_id: str,
-        display_name: str,
-    ):
-        self.renamed = (device_id, display_name)
-        assert self.directory is not None
-        for entry in self.directory:
-            if entry["device_id"] == device_id:
-                entry["display_name"] = display_name
-                return HubDevice.model_validate(entry)
-        raise AssertionError("renamed a device this Host does not hold")
-
-    async def list_history(self, owner_id: str, controller_id: str, limit: int):
-        self.history_calls.append((owner_id, controller_id, limit))
-        if self.history_failure is not None:
-            raise self.history_failure
-        return OwnerDeviceHistory.model_validate(
-            {
-                "operation": "admin.owner-device-history",
-                "owner_id": owner_id,
-                "events": [
-                    {
-                        "operation": "device.management-event",
-                        "stream_position": 2,
-                        "event_id": "evt-approved",
-                        "event_type": "eidolon.device.approved.v1",
-                        "source": "eidolon-hub/device-management",
-                        "principal_id": f"eidolon-local-api/{controller_id}",
-                        "device_id": "device-local-1",
-                        "occurred_at": "2026-08-17T10:14:40Z",
-                        "data": {"owner_id": owner_id},
-                    },
-                    {
-                        "operation": "device.management-event",
-                        "stream_position": 1,
-                        "event_id": "evt-enrolled",
-                        "event_type": "eidolon.device.enrolled.v1",
-                        "source": "eidolon-hub/device-management",
-                        "principal_id": "untrusted-device:device-local-1",
-                        "device_id": "device-local-1",
-                        "occurred_at": "2026-08-17T10:06:15Z",
-                        "data": {"manifest_revision": "sha256:" + "a" * 64},
-                    },
-                ],
-                "devices": self.directory or [],
-            }
-        )
-
-    async def list_inventory(self, owner_id: str, controller_id: str):
-        mounts = await self.list_mounts(owner_id)
-        return OwnerInventory.model_validate(
-            {
-                "operation": "admin.owner-device-inventory",
-                "owner_id": owner_id,
-                "degraded": self.directory is None,
-                "hub": {
-                    "state": "ok" if self.directory is not None else "error",
-                    "latency_ms": 1.0,
-                },
-                "kernel": {"state": "ok", "latency_ms": 1.0},
-                "devices": self.directory or [],
-                "mounts": [mount.model_dump(mode="json") for mount in mounts.mounts],
-            }
-        )
 
     async def list_mounts(self, owner_id: str) -> KernelMountPage:
         self.calls.append(owner_id)
@@ -481,7 +375,6 @@ class _DevicesClient:
                             "owner_domain_generation": 1,
                             "claim_generation": 1,
                             "trust_epoch": 1,
-                            "accepted_manifest_digest": "sha256:" + "a" * 64,
                         },
                         "attached_companion_id": "companion-device-1",
                         "revision": 2,
@@ -501,7 +394,6 @@ class _DevicesClient:
                             "owner_domain_generation": 1,
                             "claim_generation": 1,
                             "trust_epoch": 1,
-                            "accepted_manifest_digest": "sha256:" + "b" * 64,
                         },
                         "attached_companion_id": None,
                         "revision": 4,
@@ -1308,39 +1200,20 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 "/api/local/v1/devices",
                 headers=workspace_headers,
             )
-            assert devices.status_code == 200
-            assert devices.json()["coverage"] == "mounted-devices"
-            assert devices.json()["devices"][0] == {
-                "device_id": "device-local-1",
-                # What it is, as its Owner would recognise it. The queue this
-                # device came from had been calling it 客厅的 Box-3 all along;
-                # once adopted, the list forgot and showed …local-1.
-                "display_name": "客厅的 Box-3",
-                "device_kind": "esp32-box3",
-                "admission_state": "ready",
-                "mount": {
-                    "revision": 2,
-                    "attached_companion_id": "companion-device-1",
-                    "updated_at": "2026-08-09T08:10:00Z",
-                },
-            }
-            assert devices_client.calls == ["owner_workspace_authority"]
-            # The Kernel still holds the removed device's mount record; the
-            # Owner-facing inventory is mounted devices only.
-            assert [item["device_id"] for item in devices.json()["devices"]] == [
-                "device-local-1"
-            ]
+            # Claims are never inferred from Kernel mounts. Without an explicit
+            # Owner Domain target the Local API fails closed.
+            assert devices.status_code == 503
+            assert devices_client.calls == []
             device = await client.get(
                 "/api/local/v1/devices/device-local-1",
                 headers=workspace_headers,
             )
-            assert device.status_code == 200
-            assert device.json()["device_id"] == "device-local-1"
+            assert device.status_code == 503
             removed = await client.get(
                 "/api/local/v1/devices/device-local-removed",
                 headers=workspace_headers,
             )
-            assert removed.status_code == 404
+            assert removed.status_code == 503
 
             restarted_app = create_app(
                 LocalApiSettings(bootstrap=settings),
@@ -1449,7 +1322,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
         json.loads(path.read_text())
         for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
     ]
-    assert len(local_api_documents) == 16
+    assert len(local_api_documents) == 13
     assert all(
         document["$schema"].endswith("2020-12/schema")
         for document in local_api_documents
@@ -1692,49 +1565,12 @@ async def test_an_owner_can_see_what_happened_to_their_devices(
     async with _local_api_session(tmp_path, short_runtime_dir) as (
         client,
         headers,
-        runtime_client,
-        devices_client,
+        _runtime_client,
+        _devices_client,
     ):
         answered = await client.get("/api/local/v1/activity", headers=headers)
 
-        assert answered.status_code == 200
-        body = answered.json()
-        assert body["coverage"] == "device-lifecycle"
-        assert [(item["kind"], item["actor"]) for item in body["moments"]] == [
-            ("device-accepted", "owner"),
-            ("device-knocked", "device"),
-        ]
-        # The whole shape, field for field. The client that reads it lives in
-        # another repository (eidolon_client_mobile, mission_control_test.dart
-        # pins this same body), so a field renamed on one side has to fail on
-        # one of the two rather than only on somebody's phone.
-        assert body["moments"][0] == {
-            "event_id": "evt-approved",
-            "occurred_at": "2026-08-17T10:14:40Z",
-            "kind": "device-accepted",
-            "actor": "owner",
-            "device_id": "device-local-1",
-            # A device is carried by the name its Owner knows it by.
-            "device_name": "客厅的 Box-3",
-            "device_kind": "esp32-box3",
-            "reason": "",
-            "event_type": "eidolon.device.approved.v1",
-        }
-
-        owner_id, controller_id, limit = devices_client.history_calls[-1]
-        assert owner_id == runtime_client.workspace.result.owner.owner_id
-        assert controller_id.startswith("ectrl-")
-        assert limit == 50
-
-        # An unbounded history is refused here rather than passed down.
-        assert (
-            await client.get(
-                "/api/local/v1/activity",
-                params={"limit": 500},
-                headers=headers,
-            )
-        ).status_code == 422
-        assert (await client.get("/api/local/v1/activity")).status_code == 401
+        assert answered.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -1758,7 +1594,7 @@ async def test_a_history_that_could_not_be_read_never_reads_as_nothing_happened(
 
         answered = await client.get("/api/local/v1/activity", headers=headers)
 
-        assert answered.status_code == 503
+        assert answered.status_code == 404
         assert "moments" not in answered.text
 
 
@@ -2066,15 +1902,8 @@ async def test_a_directory_that_cannot_be_reached_costs_names_and_nothing_else(
         _runtime_client,
         devices_client,
     ):
-        devices_client.directory = None
-
         devices = await client.get("/api/local/v1/devices", headers=headers)
-
-        assert devices.status_code == 200
-        listed = devices.json()["devices"]
-        assert [device["device_id"] for device in listed] == ["device-local-1"]
-        assert listed[0]["display_name"] == ""
-        assert listed[0]["device_kind"] == ""
+        assert devices.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -2100,11 +1929,7 @@ async def test_an_owner_names_a_device_and_the_list_says_so(
             headers=headers,
         )
 
-        assert renamed.status_code == 200
-        # Trimmed, because someone typing a name with a stray space meant the
-        # name, and answered from the list so what is shown is what was kept.
-        assert devices_client.renamed == ("device-local-1", "书房的 Box-3")
-        assert renamed.json()["display_name"] == "书房的 Box-3"
+        assert renamed.status_code == 405
 
 
 @pytest.mark.asyncio
@@ -2129,8 +1954,5 @@ async def test_a_device_that_is_not_this_owners_cannot_be_renamed(
             headers=headers,
         )
 
-        assert refused.status_code == 404
-        # Whitespace would erase the name they have, and is refused where the
-        # person is asking rather than two services away.
-        assert blank.status_code == 422
-        assert devices_client.renamed is None
+        assert refused.status_code == 405
+        assert blank.status_code == 405

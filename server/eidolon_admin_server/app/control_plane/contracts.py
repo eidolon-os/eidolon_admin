@@ -5,10 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
 from eidolon_sdk.device_foundation.v1 import (
+    BusinessOwnerId,
+    ClaimQuery,
+    ControllerActorRef,
+    DecideEnrollment,
+    DecideEnrollmentResult,
     DeviceRef,
+    EnrollmentProposalQuery,
+    EnrollmentRecoveryProjection,
     RevokeClaimResult as HubClaimRevocationResult,
 )
 
@@ -310,117 +317,6 @@ class WorkspaceOperation(StrictModel):
     workspace: WorkspaceResources
 
 
-class HubPropertyAffordance(StrictModel):
-    name: str = Field(min_length=1, max_length=128)
-    schema_: dict[str, Any] = Field(alias="schema")
-    observable: bool
-    writable: bool
-
-
-class HubActionAffordance(StrictModel):
-    name: str = Field(min_length=1, max_length=128)
-    version: int = Field(ge=1, le=65_535)
-    input_schema: dict[str, Any]
-    output_schema: dict[str, Any]
-    idempotent: bool
-
-
-class HubEventAffordance(StrictModel):
-    name: str = Field(min_length=1, max_length=128)
-    data_schema: dict[str, Any]
-
-
-class HubMediaCapability(StrictModel):
-    kind: Literal["audio", "video"]
-    direction: Literal["publish", "subscribe", "bidirectional"]
-    codecs: tuple[str, ...] = Field(max_length=32)
-
-
-class HubDeviceManifest(StrictModel):
-    schema_version: Literal[1]
-    title: str = Field(min_length=1, max_length=128)
-    properties: tuple[HubPropertyAffordance, ...] = Field(max_length=64)
-    actions: tuple[HubActionAffordance, ...] = Field(max_length=64)
-    events: tuple[HubEventAffordance, ...] = Field(max_length=64)
-    media: tuple[HubMediaCapability, ...] = Field(max_length=16)
-
-
-class HubDevice(StrictModel):
-    operation: Literal["device.directory-entry"]
-    device_id: str = Field(min_length=1, max_length=128)
-    owner_scope: str = Field(min_length=1, max_length=64)
-    display_name: str = Field(max_length=128)
-    device_kind: str = Field(min_length=1, max_length=96)
-    manifest: HubDeviceManifest
-    manifest_revision: str = Field(min_length=1, max_length=128)
-    lifecycle_state: Literal["pending-approval", "approved", "revoked"]
-    enrolled_at: datetime
-    updated_at: datetime
-    device_ref: DeviceRef | None = None
-
-
-class HubDevicePage(StrictModel):
-    operation: Literal["device.directory-page"]
-    next_cursor: str | None = Field(default=None, max_length=128)
-    devices: tuple[HubDevice, ...] = Field(default=(), max_length=100)
-
-    @field_validator("devices", mode="before")
-    @classmethod
-    def _array(cls, value: Any) -> Any:
-        return tuple(value) if isinstance(value, list) else value
-
-
-class HubDeviceEvent(StrictModel):
-    """One thing the Hub recorded happening to a device."""
-
-    operation: Literal["device.management-event"]
-    stream_position: int = Field(ge=1)
-    event_id: str = Field(min_length=1, max_length=255)
-    event_type: str = Field(min_length=1, max_length=255)
-    source: str = Field(min_length=1, max_length=512)
-    principal_id: str = Field(min_length=1, max_length=255)
-    device_id: str = Field(min_length=1, max_length=255)
-    occurred_at: datetime
-    data: dict[str, Any] = Field(default_factory=dict)
-
-
-class HubDeviceEventPage(StrictModel):
-    operation: Literal["device.management-event-page"]
-    next_stream_position: int = Field(ge=0)
-    events: tuple[HubDeviceEvent, ...] = Field(default=(), max_length=500)
-
-    @field_validator("events", mode="before")
-    @classmethod
-    def _array(cls, value: Any) -> Any:
-        return tuple(value) if isinstance(value, list) else value
-
-
-class OwnerDeviceHistory(StrictModel):
-    """What has happened to this Owner's devices, and what those devices are called.
-
-    Two scopes, not one. A device enrols before anyone holds it, so the Hub
-    files that moment under `unclaimed`; only the approval that follows is
-    filed under the Owner. Answering from the Owner's scope alone would show
-    an Eidolon accepting devices that had never knocked — which is exactly the
-    half of the story someone watching a device arrive is waiting for.
-
-    The directory travels with the events because an event names a device by
-    identifier and a person does not know their devices by identifier.
-    """
-
-    operation: Literal["admin.owner-device-history"] = "admin.owner-device-history"
-    owner_id: str = Field(min_length=1, max_length=64)
-    events: tuple[HubDeviceEvent, ...] = Field(default=(), max_length=500)
-    devices: tuple[HubDevice, ...] = Field(default=(), max_length=200)
-
-
-class HubLifecycleStatus(StrictModel):
-    operation: Literal["device.lifecycle-status"]
-    device_id: str = Field(min_length=1, max_length=128)
-    owner_id: str | None = Field(default=None, max_length=64)
-    lifecycle_state: Literal["pending-approval", "approved", "revoked"]
-
-
 class HubDeviceControlOperationStatus(StrictModel):
     operation: Literal["device-control.operation-status"]
     event_id: str = Field(min_length=3, max_length=128)
@@ -466,32 +362,75 @@ class KernelMutationResult(StrictModel):
     replayed: bool
 
 
-class DeviceAdmissionRequest(StrictModel):
-    request_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
-    owner_id: str = Field(min_length=1, max_length=64)
-    device_id: str = Field(min_length=1, max_length=128)
-    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    expected_mount_revision: int = Field(default=0, ge=0, strict=True)
-    replace_existing_mount: bool = False
-
-
-class ControllerDeviceAdmissionRequest(StrictModel):
-    """Internal service input derived from explicit Mobile confirmation."""
+class ControllerEnrollmentQuery(StrictModel):
+    """Authenticated Local context wrapped around the canonical Hub query."""
 
     contract_version: Literal["1"]
-    request_id: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9._:-]+$",
+    actor: ControllerActorRef
+    business_owner_id: BusinessOwnerId
+    query: EnrollmentProposalQuery
+
+    @model_validator(mode="after")
+    def _scope(self) -> "ControllerEnrollmentQuery":
+        if self.actor.owner_domain_id != self.query.owner_domain_id:
+            raise ValueError("Enrollment query actor and Owner Domain do not match")
+        if "device.read" not in self.actor.granted_scopes:
+            raise ValueError("Enrollment query actor lacks device.read")
+        return self
+
+
+class ControllerClaimQuery(StrictModel):
+    contract_version: Literal["1"]
+    actor: ControllerActorRef
+    business_owner_id: BusinessOwnerId
+    query: ClaimQuery
+
+    @model_validator(mode="after")
+    def _scope(self) -> "ControllerClaimQuery":
+        if self.actor.owner_domain_id != self.query.owner_domain_id:
+            raise ValueError("Claim query actor and Owner Domain do not match")
+        if "device.read" not in self.actor.granted_scopes:
+            raise ValueError("Claim query actor lacks device.read")
+        return self
+
+
+class ControllerEnrollmentDecisionIntent(StrictModel):
+    """Admin workflow input; the Decision itself is the SDK binding."""
+
+    contract_version: Literal["1"]
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    actor: ControllerActorRef
+    decision: DecideEnrollment
+
+    @model_validator(mode="after")
+    def _scope(self) -> "ControllerEnrollmentDecisionIntent":
+        if self.actor.owner_domain_id != self.decision.target_owner_domain_id:
+            raise ValueError("Decision actor and target Owner Domain do not match")
+        if "device.claim.approve" not in self.actor.granted_scopes:
+            raise ValueError("Decision actor lacks device.claim.approve")
+        return self
+
+
+class AdmissionDecisionWorkflowResult(StrictModel):
+    """Admin's checkpoint plus Hub's canonical, owner-scoped projection."""
+
+    operation: Literal["admin.admission-decision-intent"] = (
+        "admin.admission-decision-intent"
     )
-    owner_id: str = Field(min_length=1, max_length=64)
-    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
-    device_id: str = Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9._:-]+$",
-    )
-    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    request_id: str = Field(min_length=1, max_length=128)
+    intent_id: str = Field(pattern=r"^admission-intent-[0-9a-f]{32}$")
+    command_id: str = Field(pattern=r"^decide-enrollment-[0-9a-f]{32}$")
+    checkpoint: Literal["intent_recorded", "decision_committed"]
+    decision_result: DecideEnrollmentResult | None = None
+    recovery: EnrollmentRecoveryProjection
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "AdmissionDecisionWorkflowResult":
+        if (self.checkpoint == "decision_committed") != (
+            self.decision_result is not None
+        ):
+            raise ValueError("Decision checkpoint and result disagree")
+        return self
 
 
 class ControllerDeviceRemovalRequest(StrictModel):
@@ -536,35 +475,11 @@ class WorkflowFailure(StrictModel):
 
 
 class WorkflowStep(StrictModel):
-    name: Literal[
-        "hub_approval",
-        "kernel_mount",
-        "companion_attachment",
-        "hub_revocation",
-    ]
+    name: Literal["hub_revocation"]
     state: Literal["committed", "replayed", "failed", "not_requested", "not_attempted"]
     request_id: str | None = None
     revision: int | None = None
     failure: WorkflowFailure | None = None
-
-
-class DeviceAdmissionResult(StrictModel):
-    operation: Literal["admin.device-admission-workflow"] = (
-        "admin.device-admission-workflow"
-    )
-    request_id: str
-    outcome: Literal["completed", "retry_required", "blocked"]
-    completed_stage: Literal[
-        "received", "hub_approved", "kernel_mounted", "companion_attached"
-    ]
-    distributed_atomic: Literal[False] = False
-    compensation: Literal["none-safe-intermediate"] = "none-safe-intermediate"
-    recovery: Literal[
-        "none", "retry-forward-same-request-id", "operator-action-required"
-    ] = "none"
-    steps: tuple[WorkflowStep, ...]
-    hub: HubLifecycleStatus | None = None
-    mount: KernelMount | None = None
 
 
 class DeviceRemovalResult(StrictModel):
@@ -595,22 +510,6 @@ class RemovalCondition(StrictModel):
     authority: Literal["hub", "kernel", "device-control"]
     authority_ref: str | None = Field(default=None, max_length=255)
     observed_at: datetime
-
-
-class SourceStatus(StrictModel):
-    state: Literal["ok", "error"]
-    latency_ms: float = Field(ge=0)
-    failure: WorkflowFailure | None = None
-
-
-class OwnerInventory(StrictModel):
-    operation: Literal["admin.owner-device-inventory"] = "admin.owner-device-inventory"
-    owner_id: str
-    degraded: bool
-    hub: SourceStatus
-    kernel: SourceStatus
-    devices: tuple[HubDevice, ...]
-    mounts: tuple[KernelMount, ...]
 
 
 class BoundaryCapabilities(StrictModel):

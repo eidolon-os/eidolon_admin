@@ -13,12 +13,12 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
+from eidolon_sdk.device_foundation.v1 import ClaimRecord
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..app.control_plane.contracts import (
     DeviceRef,
     HubClaimRevocationResult,
-    HubDevice,
     HubDeviceControlOperationStatus,
 )
 from ..app.control_plane.errors import AuthorityFailure
@@ -39,7 +39,7 @@ class RemovalCapabilityReady(_StrictModel):
 
 class ResolveRemovalTarget(_StrictModel):
     operation: Literal["hub.removal-target.resolve"] = "hub.removal-target.resolve"
-    owner_id: str = Field(min_length=1, max_length=64)
+    owner_domain_id: str = Field(min_length=3, max_length=128)
     controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
     device_id: str = Field(min_length=1, max_length=128)
 
@@ -84,13 +84,13 @@ class RemovalCapabilityReply(_StrictModel):
         "hub.removal-capability-reply"
     )
     ready: Literal[True] | None = None
-    device: HubDevice | None = None
+    claim: ClaimRecord | None = None
     revocation: HubClaimRevocationResult | None = None
     delivery: HubDeviceControlOperationStatus | None = None
     problem: RemovalCapabilityProblem | None = None
 
     def model_post_init(self, __context: object) -> None:
-        values = (self.ready, self.device, self.revocation, self.delivery, self.problem)
+        values = (self.ready, self.claim, self.revocation, self.delivery, self.problem)
         if sum(value is not None for value in values) != 1:
             raise ValueError("capability reply must contain exactly one result")
 
@@ -190,13 +190,13 @@ class RemovalCapabilityBroker:
         if isinstance(call, ResolveRemovalTarget):
             authorization = credentials.issue_removal_discovery(
                 controller_id=call.controller_id,
-                owner_id=call.owner_id,
+                owner_id=call.owner_domain_id,
                 device_id=call.device_id,
             )
             return RemovalCapabilityReply(
-                device=await self._service.hub.get_device(
-                    owner_id=call.owner_id,
-                    device_id=call.device_id,
+                claim=await self._service.hub.get_claim(
+                    owner_domain_id=call.owner_domain_id,
+                    device_instance_id=call.device_id,
                     authorization=authorization,
                 )
             )
@@ -238,16 +238,18 @@ class BrokeredRemovalHubClient:
                 "hub", "unavailable", "Removal capability broker is not ready", 503
             )
 
-    async def get_device(self, *, owner_id, device_id, authorization) -> HubDevice:
+    async def get_claim(
+        self, *, owner_domain_id, device_instance_id, authorization
+    ) -> ClaimRecord:
         reply = await self._exchange(
             ResolveRemovalTarget(
-                owner_id=owner_id,
+                owner_domain_id=owner_domain_id,
                 controller_id=_controller(authorization),
-                device_id=device_id,
+                device_id=device_instance_id,
             )
         )
-        assert reply.device is not None
-        return reply.device
+        assert reply.claim is not None
+        return reply.claim
 
     async def revoke(
         self, *, device_ref, reason, command_id, correlation_id, authorization

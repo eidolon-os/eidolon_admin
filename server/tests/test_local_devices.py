@@ -4,6 +4,14 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
+from eidolon_sdk.device_foundation.v1 import (
+    BusinessOwnerId,
+    ClaimPage,
+    ClaimRecord,
+    ClaimState,
+    ManifestRef,
+    OwnerDomainId,
+)
 
 from eidolon_admin_server.app.control_plane.contracts import KernelMountPage
 from eidolon_admin_server.local_api.devices import (
@@ -30,7 +38,6 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                         "owner_domain_generation": 1,
                         "claim_generation": 1,
                         "trust_epoch": 1,
-                        "accepted_manifest_digest": "sha256:" + "a" * 64,
                     },
                     "attached_companion_id": "companion-1",
                     "revision": 3,
@@ -50,7 +57,6 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                         "owner_domain_generation": 1,
                         "claim_generation": 1,
                         "trust_epoch": 1,
-                        "accepted_manifest_digest": "sha256:" + "b" * 64,
                     },
                     "attached_companion_id": None,
                     "revision": 1,
@@ -70,7 +76,6 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                         "owner_domain_generation": 1,
                         "claim_generation": 1,
                         "trust_epoch": 1,
-                        "accepted_manifest_digest": "sha256:" + "c" * 64,
                     },
                     "attached_companion_id": None,
                     "revision": 5,
@@ -85,17 +90,43 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
     )
 
 
+def _claims(owner_id: str = "owner-1") -> ClaimPage:
+    domain = OwnerDomainId(owner_id)
+    now = datetime(2026, 8, 9, 10, 0, tzinfo=UTC)
+    return ClaimPage(
+        owner_domain_id=domain,
+        items=tuple(
+            ClaimRecord(
+                device_ref=mount.device_ref,
+                business_owner_id=BusinessOwnerId("owner_account_1"),
+                manifest_ref=ManifestRef(
+                    manifest_id=f"manifest-{mount.device_id}",
+                    revision=1,
+                    digest="sha256:" + "a" * 64,
+                ),
+                state=ClaimState.ACTIVE,
+                revision=1,
+                updated_at=now,
+            )
+            for mount in _mount_page(owner_id=owner_id).mounts
+            if mount.active
+        ),
+        next_cursor=None,
+        observed_at=now,
+    )
+
+
 @pytest.mark.asyncio
 async def test_admin_device_client_uses_exact_owner_route_and_service_token() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.raw_path == (
-            b"/api/control-plane/v1/owners/owner%3Aone/device-mounts"
+            b"/api/control-plane/v1/owners/owner-domain%3Aone/device-mounts"
         )
         assert request.headers["authorization"] == "Bearer local-service-token"
         return httpx.Response(
             200,
-            json=_mount_page(owner_id="owner:one").model_dump(mode="json"),
+            json=_mount_page(owner_id="owner-domain:one").model_dump(mode="json"),
         )
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -106,26 +137,23 @@ async def test_admin_device_client_uses_exact_owner_route_and_service_token() ->
         client=http_client,
     )
     try:
-        result = await subject.list_mounts("owner:one")
+        result = await subject.list_mounts("owner-domain:one")
     finally:
         await http_client.aclose()
-    assert result.mounts[0].owner_id == "owner:one"
+    assert result.mounts[0].owner_id == "owner-domain:one"
 
 
 def test_mobile_device_projection_is_sanitized_and_explicitly_mount_scoped() -> None:
     view = owner_device_inventory_view(
         mounts=_mount_page(),
         bound_owner_id="owner-1",
+        claims=_claims(),
     )
 
     payload = view.model_dump(mode="json")
     assert payload["contract_version"] == "1"
-    assert payload["coverage"] == "mounted-devices"
-    assert [item["admission_state"] for item in payload["devices"]] == [
-        "ready",
-        "mounted",
-    ]
-    assert "owner_id" not in payload["devices"][0]
+    assert payload["coverage"] == "active-kernel-mounts-with-owner-scoped-hub-claims"
+    assert payload["devices"][0]["claim"]["state"] == "active"
     assert "request_id" not in payload["devices"][0]["mount"]
     assert "fingerprint" not in payload["devices"][0]["mount"]
 
@@ -136,6 +164,7 @@ def test_mobile_device_projection_drops_the_mounts_removal_left_behind() -> None
     view = owner_device_inventory_view(
         mounts=_mount_page(),
         bound_owner_id="owner-1",
+        claims=_claims(),
     )
 
     assert [item.device_id for item in view.devices] == [
@@ -149,5 +178,6 @@ def test_mobile_device_projection_rejects_cross_owner_membership() -> None:
         owner_device_inventory_view(
             mounts=_mount_page(owner_id="owner-other"),
             bound_owner_id="owner-1",
+            claims=_claims("owner-other"),
         )
     assert caught.value.status_code == 409

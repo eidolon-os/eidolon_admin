@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import jwt
+from eidolon_sdk.device_foundation.v1 import BusinessOwnerId, ControllerActorRef
 
 from .contracts import DeviceRef
 from .errors import AuthorityFailure
@@ -23,7 +24,15 @@ class HubAdminCredentialIssuer:
     ttl_seconds: int = 60
     audience: str = "eidolon-admission"
 
-    def issue(self, *, controller_id: str) -> str:
+    def issue_admission_context(
+        self,
+        *,
+        actor: ControllerActorRef,
+        business_owner_id: BusinessOwnerId,
+        intent_id: str | None = None,
+    ) -> str:
+        """Bind one short-lived Hub call to the authenticated Controller context."""
+
         if len(self.secret) < 32:
             raise AuthorityFailure(
                 "hub",
@@ -34,9 +43,14 @@ class HubAdminCredentialIssuer:
         now = datetime.now(UTC)
         token = jwt.encode(
             {
-                "sub": f"eidolon-local-api/{controller_id}",
+                "sub": "eidolon-admin/admission-consumer",
+                "presenter": "eidolon-admin/admission-consumer",
                 "aud": self.audience,
-                "roles": ["hub-admin"],
+                "actor": actor.model_dump(mode="json"),
+                "owner_domain_id": str(actor.owner_domain_id),
+                "business_owner_id": str(business_owner_id),
+                "scopes": list(actor.granted_scopes),
+                **({"intent_id": intent_id} if intent_id is not None else {}),
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(seconds=self.ttl_seconds)).timestamp()),
             },
@@ -71,7 +85,6 @@ class HubAdminCredentialIssuer:
             target_owner_domain_generation=device_ref.owner_domain_generation,
             target_claim_generation=device_ref.claim_generation,
             target_trust_epoch=device_ref.trust_epoch,
-            target_manifest_digest=device_ref.accepted_manifest_digest,
         )
 
     def _issue_scoped(
@@ -85,7 +98,6 @@ class HubAdminCredentialIssuer:
         target_owner_domain_generation: int | None = None,
         target_claim_generation: int | None = None,
         target_trust_epoch: int | None = None,
-        target_manifest_digest: str | None = None,
     ) -> str:
         if len(self.secret) < 32:
             raise AuthorityFailure(
@@ -103,7 +115,7 @@ class HubAdminCredentialIssuer:
             "aud": self.audience,
             "roles": ["device-manager"],
             "scopes": scopes,
-            "owner_id": owner_id,
+            "owner_id": str(owner_id),
             "target_device_id": target_device_id,
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(seconds=self.ttl_seconds)).timestamp()),
@@ -118,6 +130,4 @@ class HubAdminCredentialIssuer:
             claims["target_claim_generation"] = target_claim_generation
         if target_trust_epoch is not None:
             claims["target_trust_epoch"] = target_trust_epoch
-        if target_manifest_digest is not None:
-            claims["target_manifest_digest"] = target_manifest_digest
         return "Bearer " + jwt.encode(claims, self.secret, algorithm="HS256")

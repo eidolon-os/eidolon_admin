@@ -1,22 +1,16 @@
-"""Sanitized owner-scoped Device membership for the Mobile product API."""
+"""Owner-scoped Device membership composed from Kernel mounts and canonical Claims."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from collections.abc import Mapping
-from typing import Literal, Protocol
+from typing import Protocol
 from urllib.parse import quote
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from eidolon_sdk.device_foundation.v1 import ClaimPage, ClaimRecord
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ..app.control_plane.contracts import (
-    HubDevice,
-    KernelMount,
-    KernelMountPage,
-    OwnerDeviceHistory,
-    OwnerInventory,
-)
+from ..app.control_plane.contracts import KernelMount, KernelMountPage
 
 
 class DeviceInventoryError(RuntimeError):
@@ -27,98 +21,38 @@ class DeviceInventoryError(RuntimeError):
 
 class AdminOwnerDevicesPort(Protocol):
     async def list_mounts(self, owner_id: str) -> KernelMountPage: ...
-
-    async def list_inventory(
-        self,
-        owner_id: str,
-        controller_id: str,
-    ) -> OwnerInventory: ...
-
-    async def rename(
-        self,
-        owner_id: str,
-        controller_id: str,
-        device_id: str,
-        display_name: str,
-    ) -> HubDevice: ...
-
-    async def list_history(
-        self,
-        owner_id: str,
-        controller_id: str,
-        limit: int,
-    ) -> OwnerDeviceHistory: ...
-
     async def close(self) -> None: ...
 
 
 class LocalDeviceMountView(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
     revision: int = Field(ge=1)
     attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     updated_at: datetime
 
 
 class LocalDeviceView(BaseModel):
-    """One device an Owner has, as they would recognise it.
-
-    Two authorities answer here and neither is asked to speak for the other:
-    Kernel says this is mounted to this Owner, and Hub says what it is called
-    and what kind of thing it is. Membership was all this carried, so a device
-    a person had adopted appeared as …4a52f354 — while the queue it came from
-    had been calling it Box-3 all along.
-
-    When Hub cannot be reached the name is simply absent. It is not filled in
-    with an identifier: an identifier is what someone falls back to when
-    nobody will tell them what a thing is.
-    """
+    """Kernel membership plus Hub's canonical Claim, without copied authority."""
 
     model_config = ConfigDict(extra="forbid")
-
-    device_id: str = Field(min_length=1, max_length=128)
-    display_name: str = Field(default="", max_length=128)
-    device_kind: str = Field(default="", max_length=96)
-    admission_state: Literal["mounted", "ready"]
+    claim: ClaimRecord
     mount: LocalDeviceMountView
 
-
-class LocalDeviceRenameCommand(BaseModel):
-    """What to call a device, as the person typed it.
-
-    Blank is refused here rather than two services away: the answer is the
-    same, and this is the boundary the person is talking to.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    display_name: str = Field(min_length=1, max_length=128)
-
-    @field_validator("display_name")
-    @classmethod
-    def _must_be_a_name(cls, value: str) -> str:
-        name = value.strip()
-        if not name:
-            raise ValueError("display_name cannot be blank")
-        return name
+    @property
+    def device_id(self) -> str:
+        return self.claim.device_ref.device_instance_id
 
 
 class LocalDeviceInventoryView(BaseModel):
     model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    coverage: Literal["mounted-devices"] = "mounted-devices"
+    contract_version: str = "1"
+    coverage: str = "active-kernel-mounts-with-owner-scoped-hub-claims"
     devices: tuple[LocalDeviceView, ...] = Field(default=(), max_length=100)
 
 
 class AdminOwnerDevicesClient:
     def __init__(
-        self,
-        *,
-        base_url: str,
-        service_token: str,
-        timeout_seconds: float,
+        self, *, base_url: str, service_token: str, timeout_seconds: float,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -129,187 +63,26 @@ class AdminOwnerDevicesClient:
 
     async def list_mounts(self, owner_id: str) -> KernelMountPage:
         if not self._token:
-            raise DeviceInventoryError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}/device-mounts"
-        )
+            raise DeviceInventoryError("Local API Admin service credential is not configured")
         try:
             response = await self._client.get(
-                url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=self._timeout,
+                f"{self._base_url}/api/control-plane/v1/owners/{quote(owner_id, safe='')}/device-mounts",
+                headers={"Authorization": f"Bearer {self._token}"}, timeout=self._timeout,
             )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise DeviceInventoryError(
-                "Admin Device membership control plane is unavailable"
-            ) from exc
-        if response.status_code in {401, 403}:
-            raise DeviceInventoryError(
-                "Local API is not authorized to read Device membership"
-            )
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise DeviceInventoryError("Admin Device membership control plane is unavailable") from exc
         if response.status_code != 200:
             raise DeviceInventoryError(
-                "Admin Device membership control plane is unavailable"
+                "Admin Device membership control plane is unavailable",
+                status_code=response.status_code if response.status_code in {401, 403, 409} else 503,
             )
         try:
             page = KernelMountPage.model_validate(response.json())
         except (ValueError, TypeError, ValidationError) as exc:
-            raise DeviceInventoryError(
-                "Admin Device membership response violated its contract"
-            ) from exc
+            raise DeviceInventoryError("Admin Device membership response violated its contract") from exc
         if any(mount.owner_id != owner_id for mount in page.mounts):
-            raise DeviceInventoryError(
-                "Admin Device membership response returned another Owner",
-                status_code=409,
-            )
+            raise DeviceInventoryError("Admin Device membership response returned another Owner", status_code=409)
         return page
-
-    async def list_inventory(
-        self,
-        owner_id: str,
-        controller_id: str,
-    ) -> OwnerInventory:
-        """Both authorities' answer about this Owner's devices."""
-
-        if not self._token:
-            raise DeviceInventoryError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}/device-inventory/"
-            f"{quote(controller_id, safe='')}"
-        )
-        try:
-            response = await self._client.get(
-                url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=self._timeout,
-            )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise DeviceInventoryError(
-                "Admin Device membership control plane is unavailable"
-            ) from exc
-        if response.status_code != 200:
-            raise DeviceInventoryError(
-                "Admin Device membership control plane is unavailable",
-                status_code=response.status_code
-                if response.status_code in {401, 403, 409}
-                else 503,
-            )
-        try:
-            return OwnerInventory.model_validate(response.json())
-        except (ValueError, TypeError, ValidationError) as exc:
-            raise DeviceInventoryError(
-                "Admin Device membership response violated its contract"
-            ) from exc
-
-    async def rename(
-        self,
-        owner_id: str,
-        controller_id: str,
-        device_id: str,
-        display_name: str,
-    ) -> HubDevice:
-        if not self._token:
-            raise DeviceInventoryError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}/devices/{quote(device_id, safe='')}"
-            f"/name/{quote(controller_id, safe='')}"
-        )
-        try:
-            response = await self._client.patch(
-                url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                json={"display_name": display_name},
-                timeout=self._timeout,
-            )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise DeviceInventoryError(
-                "Admin Device directory is unavailable"
-            ) from exc
-        if response.status_code == 404:
-            raise DeviceInventoryError("Device does not exist", status_code=404)
-        if response.status_code == 422:
-            raise DeviceInventoryError("Device name was rejected", status_code=422)
-        if response.status_code != 200:
-            raise DeviceInventoryError("Admin Device directory is unavailable")
-        try:
-            return HubDevice.model_validate(response.json())
-        except (ValueError, TypeError, ValidationError) as exc:
-            raise DeviceInventoryError(
-                "Admin Device rename response violated its contract"
-            ) from exc
-
-    async def list_history(
-        self,
-        owner_id: str,
-        controller_id: str,
-        limit: int,
-    ) -> OwnerDeviceHistory:
-        """What the Hub recorded happening to this Owner's devices."""
-
-        if not self._token:
-            raise DeviceInventoryError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}/device-history/"
-            f"{quote(controller_id, safe='')}"
-        )
-        try:
-            response = await self._client.get(
-                url,
-                params={"limit": limit},
-                headers={"Authorization": f"Bearer {self._token}"},
-                timeout=self._timeout,
-            )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise DeviceInventoryError(
-                "Admin Device history control plane is unavailable"
-            ) from exc
-        if response.status_code != 200:
-            raise DeviceInventoryError(
-                "Admin Device history control plane is unavailable",
-                status_code=response.status_code
-                if response.status_code in {401, 403, 409}
-                else 503,
-            )
-        try:
-            history = OwnerDeviceHistory.model_validate(response.json())
-        except (ValueError, TypeError, ValidationError) as exc:
-            raise DeviceInventoryError(
-                "Admin Device history response violated its contract"
-            ) from exc
-        if history.owner_id != owner_id:
-            raise DeviceInventoryError(
-                "Admin Device history response returned another Owner",
-                status_code=409,
-            )
-        return history
 
     async def close(self) -> None:
         if self._owns_client:
@@ -317,39 +90,27 @@ class AdminOwnerDevicesClient:
 
 
 def owner_device_inventory_view(
-    *,
-    mounts: KernelMountPage,
-    bound_owner_id: str,
-    directory: Mapping[str, HubDevice] | None = None,
+    *, mounts: KernelMountPage, bound_owner_id: str, claims: ClaimPage
 ) -> LocalDeviceInventoryView:
     if any(mount.owner_id != bound_owner_id for mount in mounts.mounts):
+        raise DeviceInventoryError("Host Owner scope does not match Kernel Device membership", status_code=409)
+    claimed = {item.device_ref.device_instance_id: item for item in claims.items}
+    active = tuple(mount for mount in mounts.mounts if mount.active)
+    if any(
+        mount.device_id not in claimed or claimed[mount.device_id].device_ref != mount.device_ref
+        for mount in active
+    ):
         raise DeviceInventoryError(
-            "Host Owner scope does not match Kernel Device membership",
-            status_code=409,
+            "Kernel membership and Hub Claim projection do not match", status_code=502
         )
-    # Kernel keeps the mount record of a removed device, inactive, because that
-    # record carries the revision the next admission has to swap against. The
-    # Owner is not being told about a revision; they are being told what is
-    # mounted. An inactive mount is a device this Owner removed, so it belongs
-    # to neither this view nor its stated coverage.
-    known = directory or {}
     return LocalDeviceInventoryView(
-        devices=tuple(
-            _device_view(mount, known.get(mount.device_id))
-            for mount in mounts.mounts
-            if mount.active
-        )
+        devices=tuple(_device_view(mount, claimed[mount.device_id]) for mount in active)
     )
 
 
-def _device_view(mount: KernelMount, entry: HubDevice | None) -> LocalDeviceView:
+def _device_view(mount: KernelMount, claim: ClaimRecord) -> LocalDeviceView:
     return LocalDeviceView(
-        device_id=mount.device_id,
-        display_name=entry.display_name if entry else "",
-        device_kind=entry.device_kind if entry else "",
-        admission_state=(
-            "ready" if mount.attached_companion_id is not None else "mounted"
-        ),
+        claim=claim,
         mount=LocalDeviceMountView(
             revision=mount.revision,
             attached_companion_id=mount.attached_companion_id,

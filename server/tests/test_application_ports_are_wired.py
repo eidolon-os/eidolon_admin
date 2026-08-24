@@ -70,6 +70,7 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # Admin's own store, constructed by the service rather than reached for on
     # it: there is no authority behind it and nothing to mis-wire.
     "RemovalIntentStore": (None, None),
+    "AdmissionDecisionIntentStore": (None, None),
 }
 
 

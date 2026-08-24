@@ -59,7 +59,6 @@ class ProducerState:
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
-                "accepted_manifest_digest": "sha256:" + "a" * 64,
             },
             "lifecycle_state": "approved",
             "enrolled_at": now,
@@ -79,7 +78,6 @@ class ProducerState:
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
                 "trust_epoch": 1,
-                "accepted_manifest_digest": "sha256:" + "a" * 64,
             },
             "attached_companion_id": companion_id,
             "revision": revision,
@@ -470,45 +468,6 @@ async def call_admin(app: FastAPI, method: str, path: str, **kwargs) -> httpx.Re
         return await client.request(method, path, **kwargs)
 
 
-async def test_full_http_stack_success_inventory_and_data_read(tmp_path: Path) -> None:
-    state = ProducerState()
-    app, producer_client = await admin_app(tmp_path, producer_app(state))
-    try:
-        result = await call_admin(
-            app,
-            "POST",
-            "/api/operator/v1/workflows/device-admission",
-            headers={"Authorization": "Bearer operator"},
-            json=workflow_payload(),
-        )
-        inventory = await call_admin(
-            app,
-            "GET",
-            "/api/operator/v1/owners/owner-1/inventory",
-            headers={"Authorization": "Bearer operator"},
-        )
-        companion = await call_admin(
-            app,
-            "GET",
-            "/api/control-plane/v1/companions/companion-1",
-            # The internal plane, so this is the caller proving it is the Local
-            # API — not the operator credential the two calls above forward to
-            # Hub. Same header, different meaning, which is why they are now on
-            # different planes.
-            headers={"Authorization": "Bearer local-api-token"},
-        )
-    finally:
-        await app.state.control_plane.close()
-        await producer_client.aclose()
-
-    assert result.status_code == 200
-    assert result.json()["completed_stage"] == "companion_attached"
-    assert inventory.status_code == 200
-    assert inventory.json()["degraded"] is False
-    assert inventory.json()["mounts"][0]["attached_companion_id"] == "companion-1"
-    assert companion.json()["lifecycle_state"] == "active"
-
-
 async def test_workspace_http_stack_is_content_bound_and_converges(
     tmp_path: Path,
 ) -> None:
@@ -544,80 +503,6 @@ async def test_workspace_http_stack_is_content_bound_and_converges(
     assert first.json() == second.json() == queried.json()
     assert conflict.status_code == 409
     assert len(state.workspace_operations) == 1
-
-
-async def test_partial_failure_retry_and_admin_restart_recovery(tmp_path: Path) -> None:
-    state = ProducerState()
-    state.fail_mounts = 1
-    producer = producer_app(state)
-    first_app, first_client = await admin_app(tmp_path, producer)
-    first = await call_admin(
-        first_app,
-        "POST",
-        "/api/operator/v1/workflows/device-admission",
-        headers={"Authorization": "Bearer operator"},
-        json=workflow_payload(),
-    )
-    await first_app.state.control_plane.close()
-    await first_client.aclose()
-
-    second_app, second_client = await admin_app(tmp_path, producer)
-    try:
-        recovered = await call_admin(
-            second_app,
-            "POST",
-            "/api/operator/v1/workflows/device-admission",
-            headers={"Authorization": "Bearer operator"},
-            json=workflow_payload(),
-        )
-        replayed = await call_admin(
-            second_app,
-            "POST",
-            "/api/operator/v1/workflows/device-admission",
-            headers={"Authorization": "Bearer operator"},
-            json=workflow_payload(),
-        )
-    finally:
-        await second_app.state.control_plane.close()
-        await second_client.aclose()
-
-    assert first.status_code == 202
-    assert first.json()["completed_stage"] == "hub_approved"
-    assert recovered.status_code == 200
-    assert recovered.json()["completed_stage"] == "companion_attached"
-    assert replayed.status_code == 200
-    assert replayed.json()["steps"][1]["state"] == "replayed"
-    assert replayed.json()["steps"][2]["state"] == "replayed"
-    assert len(state.approval_requests) == 1
-    assert len(state.mount_requests) == 1
-    assert len(state.attach_requests) == 1
-
-
-async def test_concurrent_duplicate_workflows_converge(tmp_path: Path) -> None:
-    state = ProducerState()
-    app, producer_client = await admin_app(tmp_path, producer_app(state))
-    try:
-        first, second = await asyncio.gather(
-            *(
-                call_admin(
-                    app,
-                    "POST",
-                    "/api/operator/v1/workflows/device-admission",
-                    headers={"Authorization": "Bearer operator"},
-                    json=workflow_payload(),
-                )
-                for _ in range(2)
-            )
-        )
-    finally:
-        await app.state.control_plane.close()
-        await producer_client.aclose()
-
-    assert first.status_code == second.status_code == 200
-    assert len(state.mount_requests) == 1
-    assert len(state.attach_requests) == 1
-    assert state.mount is not None
-    assert state.mount["revision"] == 2
 
 
 async def test_management_reads_reach_the_authority_that_owns_each_fact(

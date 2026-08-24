@@ -15,6 +15,16 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Any, Literal
 
 import httpx
+from eidolon_sdk.device_foundation.v1 import (
+    BusinessOwnerId,
+    ClaimPage,
+    ClaimQuery,
+    ClaimState,
+    EnrollmentProposalPage,
+    EnrollmentProposalQuery,
+    EnrollmentProposalState,
+    OwnerDomainId,
+)
 
 from fastapi import (
     FastAPI,
@@ -33,7 +43,7 @@ from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
 from .management.router import ManagementBackendPort, register_management_routes
-from ..app.control_plane.contracts import KernelMountPage
+from ..app.control_plane.contracts import AdmissionDecisionWorkflowResult
 from .config import LocalApiSettings, load_local_api_settings
 from .host_services import (
     AdminHostServicesClient,
@@ -47,13 +57,11 @@ from .host_services import (
     host_vitals,
     host_service_mutation,
 )
-from .activity import LocalActivityView, owner_activity_view
 from .devices import (
     AdminOwnerDevicesClient,
     AdminOwnerDevicesPort,
     DeviceInventoryError,
     LocalDeviceInventoryView,
-    LocalDeviceRenameCommand,
     LocalDeviceView,
     owner_device_inventory_view,
 )
@@ -61,16 +69,14 @@ from .device_admissions import (
     AdminDeviceAdmissionClient,
     AdminDeviceAdmissionPort,
     DeviceAdmissionError,
-    LocalDeviceAdmissionProgress,
-    LocalDeviceApprovalRequest,
+    LocalEnrollmentDecisionRequest,
     LocalDeviceOnboardingTarget,
     LocalDeviceRemovalProgress,
     LocalDeviceRemovalRequest,
-    LocalPendingDeviceEnrollmentPage,
+    claim_query,
     device_admission_detail,
-    device_admission_progress,
     device_removal_progress,
-    pending_device_enrollment_page,
+    enrollment_query,
 )
 from .runtime import (
     AdminOwnerRuntimeClient,
@@ -771,32 +777,45 @@ def create_app(
         authorization: str | None,
     ) -> LocalDeviceInventoryView:
         principal, _session = await authenticated_controller(authorization)
-        owner_id = principal.get("owner_id")
-        if not isinstance(owner_id, str) or not owner_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Host Workspace is not initialized",
-            )
-        controller_id = principal.get("controller_id")
+        owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
-            inventory = await devices.list_inventory(
-                owner_id,
-                controller_id if isinstance(controller_id, str) else "",
+            mounts = await devices.list_mounts(owner_id)
+            claims = await device_admission.query_claims(
+                payload=claim_query(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    query=ClaimQuery(
+                        owner_domain_id=owner_domain_id,
+                        states=(ClaimState.ACTIVE, ClaimState.SUSPENDED, ClaimState.REVOKED),
+                        cursor=None,
+                        limit=200,
+                    ),
+                )
             )
-            # Kernel decides what is theirs; Hub only says what those things
-            # are called. A directory that could not be reached costs the names
-            # and nothing else — the devices are still listed, because whether
-            # they are yours was never Hub's to answer.
             return owner_device_inventory_view(
-                mounts=KernelMountPage(
-                    operation="kernel.device-mount-page",
-                    mounts=inventory.mounts,
-                ),
+                mounts=mounts,
                 bound_owner_id=owner_id,
-                directory={entry.device_id: entry for entry in inventory.devices},
+                claims=claims,
             )
-        except DeviceInventoryError as exc:
+        except (DeviceInventoryError, DeviceAdmissionError) as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
+
+    def _admission_scope(owner_id: str) -> tuple[OwnerDomainId, BusinessOwnerId]:
+        target = resolved.device_onboarding_target
+        if target is None:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Hub Device onboarding target is not configured",
+            )
+        try:
+            return OwnerDomainId(target.owner_domain_id), BusinessOwnerId(owner_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Host Owner Domain or business Owner identity is invalid",
+            ) from exc
 
     @app.get(
         "/api/local/v1/devices",
@@ -842,28 +861,79 @@ def create_app(
         return LocalDeviceOnboardingTarget.from_verified(target)
 
     @app.get(
-        "/api/local/v1/device-enrollments/pending",
-        response_model=LocalPendingDeviceEnrollmentPage,
+        "/api/local/v1/device-enrollments",
+        response_model=EnrollmentProposalPage,
     )
-    async def list_pending_device_enrollments(
+    async def list_device_enrollments(
+        states: Annotated[list[EnrollmentProposalState], Query()] = [
+            EnrollmentProposalState.PENDING_REVIEW,
+            EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
+            EnrollmentProposalState.GRANT_DELIVERED,
+        ],
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
         authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalPendingDeviceEnrollmentPage:
+    ) -> EnrollmentProposalPage:
         principal, _session = await authenticated_controller(authorization)
-        _owner_id, controller_id = _owner_principal(principal)
+        owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
-            page = await device_admission.list_pending(controller_id=controller_id)
-            return pending_device_enrollment_page(page)
+            return await device_admission.query_enrollments(
+                payload=enrollment_query(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    query=EnrollmentProposalQuery(
+                        owner_domain_id=owner_domain_id,
+                        states=tuple(states),
+                        cursor=None,
+                        limit=limit,
+                    ),
+                )
+            )
         except DeviceAdmissionError as exc:
             raise HTTPException(
                 exc.status_code, device_admission_detail(exc)
             ) from exc
 
-    @app.post(
-        "/api/local/v1/device-enrollments/{device_id}/approval",
-        response_model=LocalDeviceAdmissionProgress,
+    @app.get(
+        "/api/local/v1/device-claims",
+        response_model=ClaimPage,
     )
-    async def approve_device_enrollment(
-        device_id: Annotated[
+    async def list_device_claims(
+        states: Annotated[list[ClaimState], Query()] = [
+            ClaimState.ACTIVE,
+            ClaimState.SUSPENDED,
+            ClaimState.REVOKED,
+        ],
+        limit: Annotated[int, Query(ge=1, le=200)] = 100,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ClaimPage:
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        try:
+            return await device_admission.query_claims(
+                payload=claim_query(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    query=ClaimQuery(
+                        owner_domain_id=owner_domain_id,
+                        states=tuple(states),
+                        cursor=None,
+                        limit=limit,
+                    ),
+                )
+            )
+        except DeviceAdmissionError as exc:
+            raise HTTPException(exc.status_code, device_admission_detail(exc)) from exc
+
+    @app.put(
+        "/api/local/v1/device-enrollments/{enrollment_id}/decision",
+        response_model=AdmissionDecisionWorkflowResult,
+    )
+    async def decide_device_enrollment(
+        enrollment_id: Annotated[
             str,
             Path(
                 min_length=1,
@@ -871,23 +941,20 @@ def create_app(
                 pattern=r"^[A-Za-z0-9._:-]+$",
             ),
         ],
-        payload: LocalDeviceApprovalRequest,
+        payload: LocalEnrollmentDecisionRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalDeviceAdmissionProgress:
+    ) -> AdmissionDecisionWorkflowResult:
         principal, _session = await authenticated_controller(authorization)
         owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
-            result = await device_admission.claim(
+            return await device_admission.decide(
                 payload=payload.to_admin(
-                    device_id=device_id,
-                    owner_id=owner_id,
+                    enrollment_id=enrollment_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
                     controller_id=controller_id,
-                ),
-            )
-            return device_admission_progress(
-                owner_id=owner_id,
-                companion_id=payload.companion_id,
-                result=result,
+                )
             )
         except DeviceAdmissionError as exc:
             raise HTTPException(
@@ -916,87 +983,30 @@ def create_app(
 
         principal, session = await authenticated_controller(authorization)
         owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
-            inventory = await devices.list_inventory(owner_id, controller_id)
-        except DeviceInventoryError as exc:
+            page = await device_admission.query_claims(
+                payload=claim_query(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    query=ClaimQuery(
+                        owner_domain_id=owner_domain_id,
+                        states=(ClaimState.ACTIVE, ClaimState.SUSPENDED, ClaimState.REVOKED),
+                        cursor=None,
+                        limit=200,
+                    ),
+                )
+            )
+        except DeviceAdmissionError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
-        device = next(
-            (candidate for candidate in inventory.devices if candidate.device_id == device_id),
+        claim = next(
+            (candidate for candidate in page.items if candidate.device_ref.device_instance_id == device_id),
             None,
         )
-        if device is None:
-            raise HTTPException(
-                (
-                    status.HTTP_503_SERVICE_UNAVAILABLE
-                    if inventory.degraded
-                    else status.HTTP_404_NOT_FOUND
-                ),
-                (
-                    "Device authority is unavailable"
-                    if inventory.degraded
-                    else "Device does not exist"
-                ),
-            )
-        if (
-            device.device_ref is None
-            or device.device_ref.owner_domain_id != owner_id
-            or device.device_ref.device_instance_id != device_id
-        ):
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Device authority did not provide an exact Claim reference",
-            )
-        return owner_id, controller_id, session, device.device_ref
-
-    @app.patch(
-        "/api/local/v1/devices/{device_id}",
-        response_model=LocalDeviceView,
-    )
-    async def rename_device(
-        device_id: Annotated[
-            str,
-            Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"),
-        ],
-        payload: LocalDeviceRenameCommand,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalDeviceView:
-        """Set what this Owner calls one of their devices.
-
-        A device names itself when it enrols, so two of the same board arrive
-        indistinguishable and stay that way. This is the one part of a device
-        record its Owner decides.
-        """
-
-        owner_id, controller_id, _session, _device_ref = await _owned_device(
-            device_id, authorization
-        )
-        try:
-            renamed = await devices.rename(
-                owner_id,
-                controller_id,
-                device_id,
-                payload.display_name,
-            )
-            # Re-read rather than patch a copy: the list is composed from two
-            # authorities, and what belongs on screen is what they now say.
-            inventory = await devices.list_inventory(owner_id, controller_id)
-        except DeviceInventoryError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        view = owner_device_inventory_view(
-            mounts=KernelMountPage(
-                operation="kernel.device-mount-page",
-                mounts=inventory.mounts,
-            ),
-            bound_owner_id=owner_id,
-            directory={entry.device_id: entry for entry in inventory.devices},
-        )
-        for device in view.devices:
-            if device.device_id == renamed.device_id:
-                return device
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Device is no longer mounted to this Owner",
-        )
+        if claim is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Device does not exist")
+        return owner_id, controller_id, session, claim.device_ref
 
     @app.post(
         "/api/local/v1/devices/{device_id}/removal",
@@ -1044,32 +1054,6 @@ def create_app(
             raise HTTPException(
                 exc.status_code, device_admission_detail(exc)
             ) from exc
-
-    @app.get(
-        "/api/local/v1/activity",
-        response_model=LocalActivityView,
-    )
-    async def get_activity(
-        limit: Annotated[int, Query(ge=1, le=200)] = 50,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalActivityView:
-        """What has happened to this Owner's devices lately.
-
-        Owner-scoped by the session, like the inventory beside it: there is one
-        history a session can ask for, so none is named here.
-
-        Only devices. This Host records no presence and no runtime telemetry,
-        and the view says so in its own coverage rather than leaving a screen
-        to guess that a quiet list means a quiet Host.
-        """
-
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
-        try:
-            history = await devices.list_history(owner_id, controller_id, limit)
-        except DeviceInventoryError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return owner_activity_view(history)
 
     @app.get(
         "/api/local/v1/host/vitals",

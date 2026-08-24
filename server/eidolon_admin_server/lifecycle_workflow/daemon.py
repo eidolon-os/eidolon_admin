@@ -133,17 +133,15 @@ class LifecycleWorkflowDaemon:
                 != "eidolon-admission"
                 or set(context.owner_authorization_context.scopes)
                 != {"device.read", "device.claim.revoke"}
-                or context.authorized_owner_domain_id != call.payload.owner_id
                 or context.actor_controller_id != call.payload.controller_id
                 or context.owner_authorization_context.actor.principal_type
                 != "controller"
-                or context.target_device_ref.owner_domain_id != call.payload.owner_id
                 or context.target_device_ref.device_instance_id
                 != call.payload.device_id
                 or context.intent_id
                 != removal_intent_id(
                     ingress_request_id=call.payload.request_id,
-                    owner_domain_id=call.payload.owner_id,
+                    owner_domain_id=str(context.authorized_owner_domain_id),
                 )
                 or context.controller_grant_generation != context.reset_epoch
             ):

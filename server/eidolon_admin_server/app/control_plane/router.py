@@ -6,25 +6,22 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
+from eidolon_sdk.device_foundation.v1 import ClaimPage, EnrollmentProposalPage
 
 from .contracts import (
     BoundaryCapabilities,
+    AdmissionDecisionWorkflowResult,
+    ControllerClaimQuery,
+    ControllerEnrollmentDecisionIntent,
+    ControllerEnrollmentQuery,
     CompanionFace,
     CompanionIdentity,
     CompanionRenameRequest,
-    DeviceRenameCommand,
-    HubDevice,
     PersonaChapter,
     PersonaRestoreRequest,
     PersonaTimeline,
-    ControllerDeviceAdmissionRequest,
-    DeviceAdmissionRequest,
-    DeviceAdmissionResult,
-    HubDevicePage,
     KernelMountPage,
-    OwnerDeviceHistory,
     OwnerIdentity,
-    OwnerInventory,
     OwnerRecollections,
     OwnerRenameRequest,
     WorkspaceInitializeRequest,
@@ -272,118 +269,38 @@ async def get_owner_device_mounts(
         _raise(exc)
 
 
-@router.patch(
-    "/owners/{owner_id}/devices/{device_id}/name/{controller_id}",
-    response_model=HubDevice,
-)
-async def rename_owner_device(
-    owner_id: str,
-    device_id: str,
-    controller_id: str,
-    payload: DeviceRenameCommand,
-    request: Request,
-) -> HubDevice:
+@router.post("/admission/enrollment-queries", response_model=EnrollmentProposalPage)
+async def query_enrollment_recovery(
+    payload: ControllerEnrollmentQuery, request: Request
+) -> EnrollmentProposalPage:
     try:
-        return await _service(request).rename_owner_device(
-            owner_id=owner_id,
-            controller_id=controller_id,
-            device_id=device_id,
-            display_name=payload.display_name,
-        )
+        return await _service(request).list_enrollment_recovery(payload=payload)
     except AuthorityFailure as exc:
         _raise(exc)
 
 
-@router.get(
-    "/owners/{owner_id}/device-inventory/{controller_id}",
-    response_model=OwnerInventory,
-)
-async def local_owner_device_inventory(
-    owner_id: str,
-    controller_id: str,
-    request: Request,
-) -> OwnerInventory:
-    """The Owner's devices as both authorities see them, for the Local API.
-
-    Separate from the inventory route beside it because of where the Hub
-    credential comes from: there, a caller supplies one; here, Admin mints it
-    for this Controller, the way it does for the pending queue. A phone should
-    never be holding a Hub management credential.
-    """
-
+@router.post("/admission/claim-queries", response_model=ClaimPage)
+async def query_claims(
+    payload: ControllerClaimQuery, request: Request
+) -> ClaimPage:
     try:
-        return await _service(request).local_owner_inventory(
-            owner_id=owner_id,
-            controller_id=controller_id,
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
-
-
-@router.get(
-    "/owners/{owner_id}/device-history/{controller_id}",
-    response_model=OwnerDeviceHistory,
-)
-async def local_owner_device_history(
-    owner_id: str,
-    controller_id: str,
-    request: Request,
-    limit: int = 50,
-) -> OwnerDeviceHistory:
-    """What has happened to this Owner's devices, for the Local API.
-
-    Beside the inventory route and for the same reason: Admin mints the Hub
-    credential for this Controller rather than taking one from a phone.
-    """
-
-    if not 1 <= limit <= 200:
-        raise HTTPException(422, "limit must be between 1 and 200")
-    try:
-        return await _service(request).local_owner_device_history(
-            owner_id=owner_id,
-            controller_id=controller_id,
-            limit=limit,
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
-
-
-@router.get(
-    "/pending-device-enrollments/{controller_id}",
-    response_model=HubDevicePage,
-)
-async def list_pending_device_enrollments(
-    controller_id: str,
-    request: Request,
-) -> HubDevicePage:
-    if not controller_id or len(controller_id) > 128:
-        raise HTTPException(422, "controller_id must contain between 1 and 128 characters")
-    try:
-        return await _service(request).list_pending_device_enrollments(
-            controller_id=controller_id,
-        )
+        return await _service(request).list_claims(payload=payload)
     except AuthorityFailure as exc:
         _raise(exc)
 
 
 @router.put(
-    "/local-device-admissions/{device_id}",
-    response_model=DeviceAdmissionResult,
+    "/admission/decision-intents/{enrollment_id}",
+    response_model=AdmissionDecisionWorkflowResult,
 )
-async def admit_local_device(
-    device_id: str,
-    payload: ControllerDeviceAdmissionRequest,
+async def submit_enrollment_decision(
+    enrollment_id: str,
+    payload: ControllerEnrollmentDecisionIntent,
     request: Request,
-) -> DeviceAdmissionResult:
-    """Service-only forward workflow consumed by the Controller Local API."""
-
-    if not device_id or len(device_id) > 128:
-        raise HTTPException(422, "device_id must contain between 1 and 128 characters")
-    if payload.device_id != device_id:
-        raise HTTPException(409, "device admission path and body do not match")
+) -> AdmissionDecisionWorkflowResult:
+    if payload.decision.enrollment_id != enrollment_id:
+        raise HTTPException(409, "Enrollment path and Decision do not match")
     try:
-        return await _service(request).admit_controller_device(
-            payload=payload,
-        )
+        return await _service(request).decide_controller_enrollment(payload=payload)
     except AuthorityFailure as exc:
         _raise(exc)

@@ -26,7 +26,6 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 #: The planes whose callers are services holding a credential (plan §3.1).
 SERVICE_PLANES = ("/api/control-plane/v1", "/api/internal/v1")
 #: The operator plane is deliberately excluded and asserted separately below.
-OPERATOR_PLANE = "/api/operator/v1"
 
 TOKEN = "local-api-secret"
 
@@ -113,21 +112,6 @@ async def test_the_credential_is_compared_whole(app) -> None:
             headers={"Authorization": header} if header else {},
         )
         assert response.status_code == 401, f"accepted {header!r}"
-
-
-async def test_the_operator_plane_is_not_quietly_on_the_service_plane(app) -> None:
-    """Its Authorization header is a forwarded Hub credential, not a caller's.
-
-    Asserted so that "the operator routes are exempt" stays a stated decision
-    with a reason (see operator_plane/router.py) rather than something a future
-    reader discovers and files as the same bug again.
-    """
-    operator = [
-        path for path in app.openapi()["paths"] if path.startswith(OPERATOR_PLANE)
-    ]
-    assert operator, "the operator plane vanished; the exemption above is now stale"
-    for path in operator:
-        assert not path.startswith(SERVICE_PLANES)
 
 
 async def test_one_place_decides_who_the_local_api_is() -> None:

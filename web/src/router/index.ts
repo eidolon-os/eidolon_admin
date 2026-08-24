@@ -9,7 +9,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: '',
         name: 'home',
-        component: () => import('@/modules/control-plane/ControlPlane.vue'),
+        component: () => import('@/modules/mission-control/MissionControl.vue'),
       },
       {
         // Read-only, and it composes what the authorities answer rather than

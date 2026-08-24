@@ -11,12 +11,15 @@ import jsonschema
 import pytest
 import yaml
 from referencing import Registry, Resource
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimPage,
+    EnrollmentProposalPage,
+    OwnerDomainId,
+)
 
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
     DeviceRef,
-    HubDevicePage,
-    HubLifecycleStatus,
     KernelMount,
     KernelMountPage,
     KernelMutationResult,
@@ -74,7 +77,6 @@ def _mount() -> KernelMount:
             owner_domain_generation=1,
             claim_generation=1,
             trust_epoch=1,
-            accepted_manifest_digest="sha256:" + "a" * 64,
         ),
         attached_companion_id=None,
         revision=1,
@@ -317,31 +319,20 @@ def test_kernel_routes_at_66e61c9_are_the_only_routes_admin_calls() -> None:
     assert '@router.get("/device-mounts"' in router_source
 
 
-def test_current_hub_consumed_page_and_mutation_match_producer_schemas() -> None:
-    schema_root = HUB_ROOT / "hub/contracts/schemas"
-    page_schema = json.loads(
-        (schema_root / "device/directory-page.schema.json").read_text(encoding="utf-8")
+def test_current_hub_consumes_the_exact_sdk_admission_bindings() -> None:
+    source = (HUB_ROOT / "hub/contracts/bindings/admission.py").read_text(
+        encoding="utf-8"
     )
-    status_schema = json.loads(
-        (schema_root / "device/status.schema.json").read_text(encoding="utf-8")
-    )
-    page_document = HubDevicePage(
-        operation="device.directory-page", next_cursor=None, devices=()
-    ).model_dump(mode="json", by_alias=True)
-    status_document = HubLifecycleStatus(
-        operation="device.lifecycle-status",
-        device_id="device-1",
-        owner_id="owner-1",
-        lifecycle_state="approved",
-    ).model_dump(mode="json", by_alias=True)
-
-    registry = _registry(_schema_documents(schema_root))
-    jsonschema.Draft202012Validator(page_schema, registry=registry).validate(
-        page_document
-    )
-    jsonschema.Draft202012Validator(status_schema, registry=registry).validate(
-        status_document
-    )
+    assert "from eidolon_sdk.device_foundation.v1 import" in source
+    assert "EnrollmentProposalPage" in source
+    assert "ClaimPage" in source
+    domain = OwnerDomainId("owner-domain-a")
+    assert EnrollmentProposalPage(
+        owner_domain_id=domain, items=(), next_cursor=None, observed_at=datetime.now(UTC)
+    ).owner_domain_id == domain
+    assert ClaimPage(
+        owner_domain_id=domain, items=(), next_cursor=None, observed_at=datetime.now(UTC)
+    ).owner_domain_id == domain
 
 
 def test_admin_operator_tree_has_only_its_bounded_removal_intent_database() -> None:
@@ -364,10 +355,10 @@ def test_admin_operator_tree_has_only_its_bounded_removal_intent_database() -> N
             text = path.read_text(encoding="utf-8")
             for needle in forbidden:
                 if needle in text:
-                    if (
-                        needle == "import sqlite3"
-                        and path.name == "removal_intents.py"
-                    ):
+                    if needle == "import sqlite3" and path.name in {
+                        "removal_intents.py",
+                        "admission_intents.py",
+                    }:
                         continue
                     violations.append(f"{path.relative_to(ADMIN_ROOT)}: {needle}")
     assert violations == []

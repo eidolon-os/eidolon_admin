@@ -8,6 +8,16 @@ from pathlib import Path
 
 import httpx
 import pytest
+from eidolon_sdk.device_foundation.v1 import (
+    BusinessOwnerId,
+    ClaimQuery,
+    ClaimState,
+    DecideEnrollment,
+    EnrollmentProposalQuery,
+    EnrollmentProposalState,
+    ManifestRef,
+    OwnerDomainId,
+)
 
 from eidolon_admin_server.app.control_plane.clients import (
     DATA_CONTRACT,
@@ -501,8 +511,12 @@ async def test_hub_status_mapping(
             timeout_seconds=1,
         )
         with pytest.raises(AuthorityFailure) as caught:
-            await subject.list_devices(
-                owner_id="owner-1", authorization="Bearer operator"
+            await subject.list_claims(
+                query=ClaimQuery(
+                    owner_domain_id=OwnerDomainId("owner-1"),
+                    states=(ClaimState.ACTIVE,), cursor=None, limit=20,
+                ),
+                authorization="Bearer operator",
             )
     finally:
         await http_client.aclose()
@@ -512,25 +526,31 @@ async def test_hub_status_mapping(
     assert caught.value.upstream_status == status
 
 
-async def test_hub_approval_uses_exact_contract_and_confirms_device_id() -> None:
+async def test_hub_decision_uses_exact_canonical_contract() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         assert request.url.raw_path == (
-            b"/api/device-management/v1/devices/device-1/approval"
+            b"/api/admission/v1/enrollments/enrollment-1/decisions"
         )
         assert request.headers["authorization"] == "Bearer owner-jwt"
-        assert json.loads(request.content) == {
-            "operation": "device.approval",
-            "request_id": "admin:approval:hub-approve",
-            "owner_id": "owner-1",
-        }
+        body = json.loads(request.content)
+        assert body["command_id"] == "decide-enrollment-1"
+        assert body["correlation_id"] == "admission-intent-1"
+        assert body["target_owner_domain_id"] == "owner-1"
         return httpx.Response(
             200,
             json={
-                "operation": "device.lifecycle-status",
-                "device_id": "device-1",
-                "owner_id": "owner-1",
-                "lifecycle_state": "approved",
+                "decision_id": "decision-1",
+                "decision": "approve",
+                "decided_by": {
+                    "principal_id": "ectrl-0123456789abcdef0123",
+                    "principal_type": "controller",
+                    "owner_domain_id": "owner-1",
+                    "granted_scopes": ["device.read", "device.claim.approve"],
+                    "authentication_strength": "software",
+                },
+                "decided_at": datetime.now(UTC).isoformat(),
+                "proposal_revision": 2,
             },
         )
 
@@ -541,34 +561,41 @@ async def test_hub_approval_uses_exact_contract_and_confirms_device_id() -> None
             client=http_client,
             timeout_seconds=1,
         )
-        result = await subject.approve(
-            device_id="device-1",
-            owner_id="owner-1",
-            request_id="admin:approval:hub-approve",
+        result = await subject.decide_enrollment(
+            command=DecideEnrollment(
+                enrollment_id="enrollment-1", expected_proposal_revision=1,
+                decision="approve", target_owner_domain_id=OwnerDomainId("owner-1"),
+                target_business_owner_id=BusinessOwnerId("owner_account_1"),
+                reviewed_manifest_ref=ManifestRef(
+                    manifest_id="manifest-1", revision=1,
+                    digest="sha256:" + "a" * 64,
+                ),
+            ),
+            command_id="decide-enrollment-1",
+            correlation_id="admission-intent-1",
             authorization="Bearer owner-jwt",
         )
     finally:
         await http_client.aclose()
 
-    assert result.device_id == "device-1"
+    assert result.decision_id == "decision-1"
 
 
-async def test_pending_directory_uses_authority_clock() -> None:
+async def test_enrollment_query_preserves_recoverable_states() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.path == (
-            "/api/device-management/v1/owners/unclaimed/devices"
+            "/api/admission/v1/enrollments"
         )
         assert dict(request.url.params) == {
             "limit": "100",
-            "lifecycle_state": "pending-approval",
+            "states": "pending_review,approved_awaiting_handoff,grant_delivered",
         }
         return httpx.Response(
             200,
             json={
-                "operation": "device.directory-page",
-                "next_cursor": None,
-                "devices": [],
+                "owner_domain_id": "owner-1", "items": [], "next_cursor": None,
+                "observed_at": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -579,10 +606,17 @@ async def test_pending_directory_uses_authority_clock() -> None:
             client=http_client,
             timeout_seconds=1,
         )
-        await subject.list_devices(
-            owner_id="unclaimed",
+        await subject.list_enrollment_recovery(
+            query=EnrollmentProposalQuery(
+                owner_domain_id=OwnerDomainId("owner-1"),
+                states=(
+                    EnrollmentProposalState.PENDING_REVIEW,
+                    EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
+                    EnrollmentProposalState.GRANT_DELIVERED,
+                ),
+                cursor=None, limit=100,
+            ),
             authorization="Bearer admin",
-            lifecycle_state="pending-approval",
         )
     finally:
         await http_client.aclose()
@@ -759,93 +793,3 @@ async def test_uds_directory_constructs_and_closes_owned_transport(
     assert subject._owns_client is True
     await subject.close()
     assert subject._client.is_closed is True
-
-
-def _hub_event(position: int) -> dict:
-    return {
-        "operation": "device.management-event",
-        "stream_position": position,
-        "event_id": f"evt-{position}",
-        "event_type": "eidolon.device.enrolled.v1",
-        "source": "eidolon-hub/device-management",
-        "principal_id": "untrusted-device:device-1",
-        "device_id": "device-1",
-        "occurred_at": datetime(2026, 8, 17, 10, 0, tzinfo=UTC).isoformat(),
-        "data": {},
-    }
-
-
-async def test_hub_events_are_read_forward_and_only_the_newest_are_kept() -> None:
-    """The ledger reads forward; a screen wants the end of it."""
-
-    requested: list[bytes] = []
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        requested.append(request.url.query)
-        after = int(dict(request.url.params)["after_stream_position"])
-        events = [_hub_event(after + offset) for offset in range(1, 4)]
-        # Three per page, three pages, then a short page ends the stream.
-        if after >= 9:
-            events = []
-        return httpx.Response(
-            200,
-            json={
-                "operation": "device.management-event-page",
-                "next_stream_position": events[-1]["stream_position"] if events else after,
-                "events": events,
-            },
-        )
-
-    http_client = client(handler)
-    try:
-        subject = HubManagementClient(
-            directory=directory(),  # type: ignore[arg-type]
-            client=http_client,
-            timeout_seconds=1,
-        )
-        newest = await subject.latest_events(
-            owner_id="owner-1",
-            authorization="Bearer admin",
-            keep=2,
-            page_size=3,
-        )
-    finally:
-        await http_client.aclose()
-
-    assert [event.stream_position for event in newest] == [8, 9]
-    assert requested[0] == b"after_stream_position=0&limit=3"
-
-
-async def test_a_history_too_long_to_reach_the_end_of_is_refused() -> None:
-    """Answering with the oldest window would be answering the wrong question."""
-
-    async def handler(request: httpx.Request) -> httpx.Response:
-        after = int(dict(request.url.params)["after_stream_position"])
-        events = [_hub_event(after + offset) for offset in range(1, 4)]
-        return httpx.Response(
-            200,
-            json={
-                "operation": "device.management-event-page",
-                "next_stream_position": events[-1]["stream_position"],
-                "events": events,
-            },
-        )
-
-    http_client = client(handler)
-    try:
-        subject = HubManagementClient(
-            directory=directory(),  # type: ignore[arg-type]
-            client=http_client,
-            timeout_seconds=1,
-        )
-        with pytest.raises(AuthorityFailure) as caught:
-            await subject.latest_events(
-                owner_id="owner-1",
-                authorization="Bearer admin",
-                keep=2,
-                page_size=3,
-                max_pages=4,
-            )
-    finally:
-        await http_client.aclose()
-    assert caught.value.kind == "upstream_failure"

@@ -7,10 +7,14 @@ import hashlib
 import json
 import time
 from datetime import UTC, datetime
-from uuid import UUID, uuid5
 
 import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimPage,
+    EnrollmentProposalPage,
+    EnrollmentProposalState,
+)
 
 from ..settings import Settings
 from .clients import (
@@ -22,66 +26,27 @@ from .clients import (
     MemorySupervisorClient,
 )
 from .contracts import (
-    HubDevice,
-    OwnerDeviceHistory,
+    AdmissionDecisionWorkflowResult,
+    ControllerClaimQuery,
+    ControllerEnrollmentDecisionIntent,
+    ControllerEnrollmentQuery,
     BoundaryCapabilities,
-    ControllerDeviceAdmissionRequest,
     ControllerDeviceRemovalRequest,
-    DeviceAdmissionRequest,
-    DeviceAdmissionResult,
     DeviceRemovalResult,
-    HubDevicePage,
-    HubLifecycleStatus,
-    KernelMount,
     KernelMountPage,
-    OwnerInventory,
     RemovalCondition,
-    SourceStatus,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
     WorkflowStep,
+)
+from .admission_intents import (
+    InMemoryAdmissionDecisionIntentStore,
+    SqliteAdmissionDecisionIntentStore,
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
 from .hub_credentials import HubAdminCredentialIssuer
 from ...lifecycle_workflow.protocol import RemovalOwnerAuthorizationContext
-
-
-#: The Hub's scope for devices nobody holds yet. A device enrols into it and
-#: leaves it when an Owner accepts the device, which is why both the pending
-#: queue and the history have to look there as well as at the Owner.
-UNCLAIMED_SCOPE = "unclaimed"
-
-_CONTROLLER_ADMISSION_NAMESPACE = UUID("2f9f5cd8-ddb8-55b6-b4c2-13ff7cd64b3e")
-
-
-def _child_request_id(workflow_id: str, suffix: str) -> str:
-    return f"admin:{workflow_id}:{suffix}"
-
-
-def _controller_admission_workflow_id(
-    payload: ControllerDeviceAdmissionRequest,
-) -> str:
-    """Name this admission by everything the authorities key idempotency on.
-
-    Downstream authorities do not take a request ID on trust: the Hub stores
-    the last management request ID for a device beside a fingerprint of that
-    mutation, and refuses an ID that comes back carrying a different one. Its
-    fingerprint covers the requesting Controller and the owner being granted,
-    so a workflow ID that leaves either out would hand the Hub one ID under two
-    fingerprints — a conflict it is right to refuse and that no retry can
-    clear. A household holds more than one phone, and every one of them derives
-    the same mobile request ID for a given device on purpose, so the collision
-    is reachable from the ordinary case of a second phone claiming a device.
-    """
-
-    operation = uuid5(
-        _CONTROLLER_ADMISSION_NAMESPACE,
-        "eidolon-controller-device-admission-v1:"
-        f"{payload.device_id}:{payload.request_id}:"
-        f"{payload.owner_id}:{payload.controller_id}",
-    )
-    return f"device-admission-{operation.hex}"
 
 
 class ControlPlaneService:
@@ -96,6 +61,7 @@ class ControlPlaneService:
         memory: MemoryRecollectionsClient,
         memory_supervisor: MemorySupervisorClient | None = None,
         hub_credentials: HubAdminCredentialIssuer | None = None,
+        admission_intents=None,
         removal_intents=None,
         removal_observation_timeout_seconds: float = 0.0,
     ) -> None:
@@ -107,6 +73,11 @@ class ControlPlaneService:
         self.memory = memory
         self.memory_supervisor = memory_supervisor
         self.hub_credentials = hub_credentials
+        self.admission_intents = (
+            admission_intents
+            if admission_intents is not None
+            else InMemoryAdmissionDecisionIntentStore()
+        )
         if removal_intents is None:
             from .removal_intents import InMemoryRemovalIntentStore
 
@@ -166,6 +137,9 @@ class ControlPlaneService:
                 secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
                 ttl_seconds=settings.hub_management_jwt_ttl_seconds,
             ),
+            admission_intents=SqliteAdmissionDecisionIntentStore(
+                settings.state_dir / "admission-decision-intents.sqlite3"
+            ),
         )
 
     async def initialize_workspace(
@@ -190,99 +164,158 @@ class ControlPlaneService:
 
     async def close(self) -> None:
         await self.directory.close()
+        close = getattr(self.admission_intents, "close", None)
+        if close is not None:
+            close()
         close = getattr(self.removal_intents, "close", None)
         if close is not None:
             close()
 
-    async def admit_device(
-        self,
-        payload: DeviceAdmissionRequest,
-        *,
-        hub_authorization: str,
-    ) -> DeviceAdmissionResult:
-        hub_request_id = _child_request_id(payload.request_id, "hub-approve")
-        mount_request_id = _child_request_id(payload.request_id, "kernel-mount")
-        attach_request_id = _child_request_id(payload.request_id, "kernel-attach")
-        hub = await self.hub.approve(
-            device_id=payload.device_id,
-            owner_id=payload.owner_id,
-            request_id=hub_request_id,
-            authorization=hub_authorization,
-        )
-        return await self._mount_approved_device(
-            response_request_id=payload.request_id,
-            owner_id=payload.owner_id,
-            device_id=payload.device_id,
-            companion_id=payload.companion_id,
-            expected_mount_revision=payload.expected_mount_revision,
-            replace_existing_mount=payload.replace_existing_mount,
-            hub=hub,
-            hub_step=WorkflowStep(
-                name="hub_approval",
-                state="committed",
-                request_id=hub_request_id,
+    async def list_enrollment_recovery(
+        self, *, payload: ControllerEnrollmentQuery
+    ) -> EnrollmentProposalPage:
+        issuer = self._admission_issuer()
+        return await self.hub.list_enrollment_recovery(
+            query=payload.query,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
             ),
-            mount_request_id=mount_request_id,
-            attach_request_id=attach_request_id,
         )
 
-    async def admit_controller_device(
-        self,
-        *,
-        payload: ControllerDeviceAdmissionRequest,
-    ) -> DeviceAdmissionResult:
-        """Apply explicit Mobile approval, then mount and bind forward only.
+    async def list_claims(self, *, payload: ControllerClaimQuery) -> ClaimPage:
+        issuer = self._admission_issuer()
+        return await self.hub.list_claims(
+            query=payload.query,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+            ),
+        )
 
-        There is intentionally no rollback. Every downstream mutation uses a
-        deterministic child request ID, so the same Mobile request resumes the
-        last safe intermediate state after process or network interruption.
-        """
+    async def decide_controller_enrollment(
+        self, *, payload: ControllerEnrollmentDecisionIntent
+    ) -> AdmissionDecisionWorkflowResult:
+        """Persist one explicit Decision intent and resume it forward only."""
 
-        if self.hub_credentials is None:
-            raise AuthorityFailure(
-                "hub",
-                "configuration",
-                "Hub Owner credential issuer is unavailable",
-                503,
+        issuer = self._admission_issuer()
+        now = datetime.now(UTC)
+        try:
+            intent = self.admission_intents.get_or_create(
+                ingress_request_id=payload.request_id,
+                owner_domain_id=str(payload.decision.target_owner_domain_id),
+                business_owner_id=str(payload.decision.target_business_owner_id),
+                actor=payload.actor,
+                decision=payload.decision,
+                now=now,
             )
-        workflow_id = _controller_admission_workflow_id(payload)
-        hub_request_id = _child_request_id(workflow_id, "hub-approve")
-        mount_request_id = _child_request_id(workflow_id, "kernel-mount")
-        attach_request_id = _child_request_id(workflow_id, "kernel-attach")
-        authorization = self.hub_credentials.issue(
-            controller_id=payload.controller_id,
+        except ValueError as exc:
+            raise AuthorityFailure("hub", "conflict", str(exc), 409) from exc
+        authorization = issuer.issue_admission_context(
+            actor=payload.actor,
+            business_owner_id=payload.decision.target_business_owner_id,
+            intent_id=intent.intent_id,
         )
-        hub = await self.hub.approve(
-            device_id=payload.device_id,
-            owner_id=payload.owner_id,
-            request_id=hub_request_id,
+        recovery = await self.hub.get_enrollment_recovery(
+            enrollment_id=payload.decision.enrollment_id,
             authorization=authorization,
         )
-        # A device the owner removed and is adding back still has its Kernel
-        # mount record, inactive, at whatever revision the removal left. Mounting
-        # it is a compare-and-swap against that revision, not against nothing.
-        existing = await self._owner_mount(
-            owner_id=payload.owner_id,
-            device_id=payload.device_id,
-            active_only=False,
+        self._validate_decision_target(payload, recovery)
+        if intent.result is None:
+            result = await self.hub.decide_enrollment(
+                command=payload.decision,
+                command_id=intent.command_id,
+                correlation_id=intent.correlation_id,
+                authorization=authorization,
+            )
+            try:
+                intent = self.admission_intents.mark_decision_committed(
+                    intent_id=intent.intent_id,
+                    result=result,
+                    now=datetime.now(UTC),
+                )
+            except ValueError as exc:
+                raise AuthorityFailure("hub", "conflict", str(exc), 409) from exc
+        recovery = await self.hub.get_enrollment_recovery(
+            enrollment_id=payload.decision.enrollment_id,
+            authorization=authorization,
         )
-        return await self._mount_approved_device(
-            response_request_id=payload.request_id,
-            owner_id=payload.owner_id,
-            device_id=payload.device_id,
-            companion_id=payload.companion_id,
-            expected_mount_revision=existing.revision if existing else 0,
-            replace_existing_mount=False,
-            mounted=existing if existing is not None and existing.active else None,
-            hub=hub,
-            hub_step=WorkflowStep(
-                name="hub_approval",
-                state="committed",
-                request_id=hub_request_id,
-            ),
-            mount_request_id=mount_request_id,
-            attach_request_id=attach_request_id,
+        self._validate_committed_decision(payload, intent.result, recovery)
+        return AdmissionDecisionWorkflowResult(
+            request_id=payload.request_id,
+            intent_id=intent.intent_id,
+            command_id=intent.command_id,
+            checkpoint=intent.checkpoint,
+            decision_result=intent.result,
+            recovery=recovery,
         )
+
+    def _admission_issuer(self) -> HubAdminCredentialIssuer:
+        if self.hub_credentials is None:
+            raise AuthorityFailure(
+                "hub", "configuration", "Hub Admission credential issuer is unavailable", 503
+            )
+        return self.hub_credentials
+
+    @staticmethod
+    def _validate_decision_target(payload, recovery) -> None:
+        proposal = recovery.proposal
+        decision = payload.decision
+        if (
+            proposal.requested_owner_domain_id != decision.target_owner_domain_id
+            or proposal.manifest_ref != decision.reviewed_manifest_ref
+        ):
+            raise AuthorityFailure(
+                "hub",
+                "conflict",
+                "Hub Proposal no longer matches the explicit Decision",
+                409,
+            )
+        if proposal.state == EnrollmentProposalState.PENDING_REVIEW:
+            if proposal.proposal_revision != decision.expected_proposal_revision:
+                raise AuthorityFailure(
+                    "hub", "conflict", "Hub Proposal revision changed", 409
+                )
+            return
+        committed = recovery.approval_decision
+        if proposal.state not in {
+            EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
+            EnrollmentProposalState.GRANT_DELIVERED,
+        } or committed is None or (
+            committed.enrollment_id != decision.enrollment_id
+            or committed.actor != payload.actor
+            or committed.decision != decision.decision
+            or committed.target_owner_domain_id != decision.target_owner_domain_id
+            or committed.target_business_owner_id != decision.target_business_owner_id
+            or committed.reviewed_manifest_ref != decision.reviewed_manifest_ref
+            or committed.expected_proposal_revision
+            != decision.expected_proposal_revision
+        ):
+            raise AuthorityFailure(
+                "hub", "conflict", "Hub Proposal is not decision-recoverable", 409
+            )
+
+    @staticmethod
+    def _validate_committed_decision(payload, result, recovery) -> None:
+        if result is None or recovery.approval_decision is None:
+            raise AuthorityFailure(
+                "hub", "contract_violation", "Hub omitted the committed Decision", 502
+            )
+        decision = recovery.approval_decision
+        if (
+            decision.decision_id != result.decision_id
+            or result.decided_by != payload.actor
+            or result.decision != payload.decision.decision
+            or decision.actor != payload.actor
+            or decision.decision != payload.decision.decision
+            or decision.target_business_owner_id
+            != payload.decision.target_business_owner_id
+            or decision.target_owner_domain_id
+            != payload.decision.target_owner_domain_id
+        ):
+            raise AuthorityFailure(
+                "hub", "contract_violation", "Hub recovery Decision changed identity or scope", 502
+            )
 
     async def remove_controller_device(
         self,
@@ -302,19 +335,17 @@ class ControlPlaneService:
             )
         discovery_authorization = self.hub_credentials.issue_removal_discovery(
             controller_id=payload.controller_id,
-            owner_id=payload.owner_id,
+            owner_id=str(authorization_context.target_device_ref.owner_domain_id),
             device_id=payload.device_id,
         )
-        device = await self.hub.get_device(
-            owner_id=payload.owner_id,
-            device_id=payload.device_id,
+        claim = await self.hub.get_claim(
+            owner_domain_id=str(
+                authorization_context.target_device_ref.owner_domain_id
+            ),
+            device_instance_id=payload.device_id,
             authorization=discovery_authorization,
         )
-        if device.device_ref is None:
-            raise AuthorityFailure(
-                "hub", "conflict", "Hub device has no active Claim reference", 409
-            )
-        if device.device_ref != authorization_context.target_device_ref:
+        if claim.device_ref != authorization_context.target_device_ref:
             raise AuthorityFailure(
                 "hub",
                 "conflict",
@@ -335,8 +366,8 @@ class ControlPlaneService:
         try:
             intent = self.removal_intents.get_or_create(
                 ingress_request_id=payload.request_id,
-                owner_domain_id=payload.owner_id,
-                device_ref=device.device_ref,
+                owner_domain_id=str(claim.device_ref.owner_domain_id),
+                device_ref=claim.device_ref,
                 actor_controller_id=payload.controller_id,
                 workload_principal_id=workload_principal_id,
                 controller_reset_epoch=authorization_context.reset_epoch,
@@ -544,356 +575,6 @@ class ControlPlaneService:
                 return mount
         return None
 
-    async def list_pending_device_enrollments(
-        self,
-        *,
-        controller_id: str,
-    ) -> HubDevicePage:
-        """Return Hub's screen-independent, unclaimed enrollment queue."""
-
-        if self.hub_credentials is None:
-            raise AuthorityFailure(
-                "hub",
-                "configuration",
-                "Hub Admin credential issuer is unavailable",
-                503,
-            )
-        return await self.hub.list_devices(
-            owner_id=UNCLAIMED_SCOPE,
-            authorization=self.hub_credentials.issue(controller_id=controller_id),
-            lifecycle_state="pending-approval",
-        )
-
-    async def local_owner_inventory(
-        self,
-        *,
-        owner_id: str,
-        controller_id: str,
-    ) -> OwnerInventory:
-        """This Owner's devices, with a Hub credential Admin mints itself."""
-
-        if self.hub_credentials is None:
-            raise AuthorityFailure(
-                "hub",
-                "configuration",
-                "Hub Admin credential issuer is unavailable",
-                503,
-            )
-        return await self.inventory(
-            owner_id=owner_id,
-            hub_authorization=self.hub_credentials.issue(controller_id=controller_id),
-        )
-
-    async def local_owner_device_history(
-        self,
-        *,
-        owner_id: str,
-        controller_id: str,
-        limit: int,
-    ) -> OwnerDeviceHistory:
-        """What has happened to this Owner's devices, in one answer.
-
-        Four reads, and every one of them has to succeed. A history is read to
-        find out whether something happened, so an unreachable half must not
-        come back looking like a quiet stretch — the whole call fails, with
-        the authority that failed still named in it.
-        """
-
-        if self.hub_credentials is None:
-            raise AuthorityFailure(
-                "hub",
-                "configuration",
-                "Hub Admin credential issuer is unavailable",
-                503,
-            )
-        authorization = self.hub_credentials.issue(controller_id=controller_id)
-        owned, unclaimed, directory, doorstep = await asyncio.gather(
-            self.hub.latest_events(
-                owner_id=owner_id,
-                authorization=authorization,
-                keep=limit,
-            ),
-            self.hub.latest_events(
-                owner_id=UNCLAIMED_SCOPE,
-                authorization=authorization,
-                keep=limit,
-            ),
-            self.hub.list_devices(owner_id=owner_id, authorization=authorization),
-            self.hub.list_devices(
-                owner_id=UNCLAIMED_SCOPE,
-                authorization=authorization,
-            ),
-        )
-        # Newest first, and only as many as were asked for. The two scopes
-        # interleave in time; the stream position that orders each one says
-        # nothing about the other.
-        events = sorted(
-            (*owned, *unclaimed),
-            key=lambda event: (event.occurred_at, event.stream_position),
-            reverse=True,
-        )[:limit]
-        named = {entry.device_id: entry for entry in (*directory.devices, *doorstep.devices)}
-        return OwnerDeviceHistory(
-            owner_id=owner_id,
-            events=tuple(events),
-            # Only the devices these events are about. The rest of the
-            # directory is another question, already answered elsewhere.
-            devices=tuple(
-                entry
-                for device_id, entry in named.items()
-                if any(event.device_id == device_id for event in events)
-            ),
-        )
-
-    async def rename_owner_device(
-        self,
-        *,
-        owner_id: str,
-        controller_id: str,
-        device_id: str,
-        display_name: str,
-    ) -> HubDevice:
-        """Set what one of this Owner's devices is called."""
-
-        if self.hub_credentials is None:
-            raise AuthorityFailure(
-                "hub",
-                "configuration",
-                "Hub Owner credential issuer is unavailable",
-                503,
-            )
-        return await self.hub.rename(
-            device_id=device_id,
-            owner_scope=owner_id,
-            display_name=display_name,
-            authorization=self.hub_credentials.issue(controller_id=controller_id),
-        )
-
-    async def _mount_approved_device(
-        self,
-        *,
-        response_request_id: str,
-        owner_id: str,
-        device_id: str,
-        companion_id: str | None,
-        expected_mount_revision: int,
-        replace_existing_mount: bool,
-        hub: HubLifecycleStatus,
-        hub_step: WorkflowStep,
-        mount_request_id: str,
-        attach_request_id: str,
-        mounted: KernelMount | None = None,
-    ) -> DeviceAdmissionResult:
-        steps = [
-            hub_step,
-        ]
-        if mounted is not None:
-            # Already where this step is trying to get to. Asking the Kernel to
-            # mount it again is not idempotent — the same device cannot be
-            # mounted over while it is active — so the state, not a repeated
-            # request, is what makes admission safe to run on every connect.
-            return await self._attach_mounted_device(
-                response_request_id=response_request_id,
-                owner_id=owner_id,
-                device_id=device_id,
-                companion_id=companion_id,
-                hub=hub,
-                steps=[*steps, WorkflowStep(name="kernel_mount", state="replayed", revision=mounted.revision)],
-                mount=mounted,
-                attach_request_id=attach_request_id,
-            )
-        try:
-            mount_result = await self.kernel.mount(
-                owner_id=owner_id,
-                device_id=device_id,
-                request_id=mount_request_id,
-                expected_revision=expected_mount_revision,
-                replace_existing=replace_existing_mount,
-            )
-        except AuthorityFailure as exc:
-            steps.extend(
-                (
-                    WorkflowStep(
-                        name="kernel_mount",
-                        state="failed",
-                        request_id=mount_request_id,
-                        failure=exc.to_wire(),
-                    ),
-                    WorkflowStep(
-                        name="companion_attachment",
-                        state="not_attempted"
-                        if companion_id
-                        else "not_requested",
-                        request_id=attach_request_id if companion_id else None,
-                    ),
-                )
-            )
-            return DeviceAdmissionResult(
-                request_id=response_request_id,
-                outcome="retry_required" if exc.retryable else "blocked",
-                completed_stage="hub_approved",
-                recovery=(
-                    "retry-forward-same-request-id"
-                    if exc.retryable
-                    else "operator-action-required"
-                ),
-                steps=tuple(steps),
-                hub=hub,
-            )
-        steps.append(
-            WorkflowStep(
-                name="kernel_mount",
-                state="replayed" if mount_result.replayed else "committed",
-                request_id=mount_request_id,
-                revision=mount_result.mount.revision,
-            )
-        )
-        return await self._attach_mounted_device(
-            response_request_id=response_request_id,
-            owner_id=owner_id,
-            device_id=device_id,
-            companion_id=companion_id,
-            hub=hub,
-            steps=steps,
-            mount=mount_result.mount,
-            attach_request_id=attach_request_id,
-        )
-
-    async def _attach_mounted_device(
-        self,
-        *,
-        response_request_id: str,
-        owner_id: str,
-        device_id: str,
-        companion_id: str | None,
-        hub: HubLifecycleStatus,
-        steps: list[WorkflowStep],
-        mount: KernelMount,
-        attach_request_id: str,
-    ) -> DeviceAdmissionResult:
-        if companion_id is None:
-            steps.append(
-                WorkflowStep(name="companion_attachment", state="not_requested")
-            )
-            return DeviceAdmissionResult(
-                request_id=response_request_id,
-                outcome="completed",
-                completed_stage="kernel_mounted",
-                steps=tuple(steps),
-                hub=hub,
-                mount=mount,
-            )
-        if mount.attached_companion_id == companion_id:
-            steps.append(
-                WorkflowStep(
-                    name="companion_attachment",
-                    state="replayed",
-                    revision=mount.revision,
-                )
-            )
-            return DeviceAdmissionResult(
-                request_id=response_request_id,
-                outcome="completed",
-                completed_stage="companion_attached",
-                steps=tuple(steps),
-                hub=hub,
-                mount=mount,
-            )
-        try:
-            attach_result = await self.kernel.attach(
-                owner_id=owner_id,
-                device_id=device_id,
-                companion_id=companion_id,
-                request_id=attach_request_id,
-                expected_revision=mount.revision,
-            )
-        except AuthorityFailure as exc:
-            steps.append(
-                WorkflowStep(
-                    name="companion_attachment",
-                    state="failed",
-                    request_id=attach_request_id,
-                    revision=mount.revision,
-                    failure=exc.to_wire(),
-                )
-            )
-            return DeviceAdmissionResult(
-                request_id=response_request_id,
-                outcome="retry_required" if exc.retryable else "blocked",
-                completed_stage="kernel_mounted",
-                recovery=(
-                    "retry-forward-same-request-id"
-                    if exc.retryable
-                    else "operator-action-required"
-                ),
-                steps=tuple(steps),
-                hub=hub,
-                mount=mount,
-            )
-        steps.append(
-            WorkflowStep(
-                name="companion_attachment",
-                state="replayed" if attach_result.replayed else "committed",
-                request_id=attach_request_id,
-                revision=attach_result.mount.revision,
-            )
-        )
-        return DeviceAdmissionResult(
-            request_id=response_request_id,
-            outcome="completed",
-            completed_stage="companion_attached",
-            steps=tuple(steps),
-            hub=hub,
-            mount=attach_result.mount,
-        )
-
-    async def inventory(
-        self, *, owner_id: str, hub_authorization: str
-    ) -> OwnerInventory:
-        async def measured(call):
-            started = time.perf_counter()
-            try:
-                value = await call
-                return value, SourceStatus(
-                    state="ok", latency_ms=(time.perf_counter() - started) * 1000
-                )
-            except AuthorityFailure as exc:
-                return None, SourceStatus(
-                    state="error",
-                    latency_ms=(time.perf_counter() - started) * 1000,
-                    failure=exc.to_wire(),
-                )
-
-        (hub_page, hub_status), (mount_page, kernel_status) = await asyncio.gather(
-            measured(
-                self.hub.list_devices(
-                    owner_id=owner_id,
-                    authorization=hub_authorization,
-                )
-            ),
-            measured(self.kernel.list_mounts(owner_id=owner_id)),
-        )
-        if hub_status.failure and hub_status.failure.kind in {
-            "unauthorized",
-            "forbidden",
-        }:
-            failure = hub_status.failure
-            raise AuthorityFailure(
-                "hub",
-                failure.kind,
-                failure.detail,
-                401 if failure.kind == "unauthorized" else 403,
-                failure.upstream_status,
-            )
-        return OwnerInventory(
-            owner_id=owner_id,
-            degraded=hub_page is None or mount_page is None,
-            hub=hub_status,
-            kernel=kernel_status,
-            devices=hub_page.devices if hub_page else (),
-            mounts=mount_page.mounts if mount_page else (),
-        )
-
     async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
         """Return Kernel-owned membership without requiring Hub operator authority.
 
@@ -911,9 +592,11 @@ class ControlPlaneService:
                 "data.companion-identity.read",
                 "data.owner-default-runtime.read",
                 "data.owner-workspace.initialize",
-                "hub.device-admission.read-write",
+                "hub.admission-recovery.read",
+                "hub.admission-decision.submit",
+                "hub.claim.read",
                 "kernel.device-mount.read-write",
-                "admin.device-admission.workflow",
+                "admin.admission-decision-intent.workflow",
             ),
             unavailable_without_producer_contract=(
                 "data.owner-management",

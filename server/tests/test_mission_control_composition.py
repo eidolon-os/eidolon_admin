@@ -57,12 +57,12 @@ async def test_the_companion_runtime_comes_from_the_companion_authority() -> Non
         await service.close()
 
 
-async def test_devices_and_their_events_come_from_hub() -> None:
+async def test_admission_recovery_and_claims_come_from_hub() -> None:
     service = _service()
     try:
         hub = hub_authority_of(service)
-        assert callable(hub.list_devices)
-        assert callable(hub.list_events)
+        assert callable(hub.list_enrollment_recovery)
+        assert callable(hub.list_claims)
     finally:
         await service.close()
 

@@ -12,13 +12,10 @@ from eidolon_admin_server.app.control_plane.contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
     DeviceRef,
-    DeviceAdmissionResult,
-    HubLifecycleStatus,
     KernelMount,
     KernelMountPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
-    WorkflowStep,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.settings import Settings
@@ -53,9 +50,6 @@ class StubControlPlane:
             supported=("data.companion-identity.read",),
             unavailable_without_producer_contract=("global-audit-projection",),
         )
-
-    async def inventory(self, **_kwargs):
-        raise AuthorityFailure("hub", "forbidden", "management scope denied", 403, 403)
 
     async def initialize_workspace(
         self,
@@ -116,7 +110,6 @@ class StubControlPlane:
                         owner_domain_generation=1,
                         claim_generation=1,
                         trust_epoch=1,
-                        accepted_manifest_digest="sha256:" + "a" * 64,
                     ),
                     attached_companion_id="companion-1",
                     revision=2,
@@ -127,111 +120,6 @@ class StubControlPlane:
                     active=True,
                 ),
             ),
-        )
-
-    async def admit_device(self, payload, **_kwargs) -> DeviceAdmissionResult:
-        blocked = payload.request_id == "blocked"
-        now = datetime.now(UTC)
-        mounted = KernelMount(
-            operation="kernel.device-mount",
-            device_id=payload.device_id,
-            owner_id=payload.owner_id,
-            device_ref=DeviceRef(
-                device_instance_id=payload.device_id,
-                owner_domain_id=payload.owner_id,
-                owner_domain_generation=1,
-                claim_generation=1,
-                trust_epoch=1,
-                accepted_manifest_digest="sha256:" + "a" * 64,
-            ),
-            attached_companion_id=None,
-            revision=1,
-            created_at=now,
-            updated_at=now,
-            request_id=f"admin:{payload.request_id}:kernel-mount",
-            fingerprint="sha256:" + "0" * 64,
-            active=True,
-        )
-        return DeviceAdmissionResult(
-            request_id=payload.request_id,
-            outcome="blocked" if blocked else "retry_required",
-            completed_stage="kernel_mounted",
-            recovery=(
-                "operator-action-required"
-                if blocked
-                else "retry-forward-same-request-id"
-            ),
-            steps=(
-                WorkflowStep(name="hub_approval", state="committed"),
-                WorkflowStep(name="kernel_mount", state="committed", revision=1),
-                WorkflowStep(
-                    name="companion_attachment",
-                    state="failed",
-                    failure=AuthorityFailure(
-                        "kernel",
-                        "conflict" if blocked else "upstream_failure",
-                        "request_id payload mismatch"
-                        if blocked
-                        else "Data authority unavailable",
-                        409 if blocked else 502,
-                        409 if blocked else 503,
-                        not blocked,
-                    ).to_wire(),
-                ),
-            ),
-            hub=HubLifecycleStatus(
-                operation="device.lifecycle-status",
-                device_id=payload.device_id,
-                owner_id=payload.owner_id,
-                lifecycle_state="approved",
-            ),
-            mount=mounted,
-        )
-
-    async def admit_controller_device(
-        self,
-        *,
-        payload,
-    ) -> DeviceAdmissionResult:
-        now = datetime.now(UTC)
-        mount = KernelMount(
-            operation="kernel.device-mount",
-            device_id=payload.device_id,
-            owner_id=payload.owner_id,
-            device_ref=DeviceRef(
-                device_instance_id=payload.device_id,
-                owner_domain_id=payload.owner_id,
-                owner_domain_generation=1,
-                claim_generation=1,
-                trust_epoch=1,
-                accepted_manifest_digest="sha256:" + "a" * 64,
-            ),
-            attached_companion_id=payload.companion_id,
-            revision=2,
-            created_at=now,
-            updated_at=now,
-            request_id="admin:approval:kernel-attach",
-            fingerprint="sha256:" + "0" * 64,
-            active=True,
-        )
-        return DeviceAdmissionResult(
-            request_id=payload.request_id,
-            outcome="completed",
-            completed_stage="companion_attached",
-            steps=(
-                WorkflowStep(name="hub_approval", state="committed"),
-                WorkflowStep(name="kernel_mount", state="committed", revision=1),
-                WorkflowStep(
-                    name="companion_attachment", state="committed", revision=2
-                ),
-            ),
-            hub=HubLifecycleStatus(
-                operation="device.lifecycle-status",
-                device_id=payload.device_id,
-                owner_id=payload.owner_id,
-                lifecycle_state="approved",
-            ),
-            mount=mount,
         )
 
 
@@ -444,93 +332,6 @@ async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:
     assert response.json()["detail"]["retryable"] is True
 
 
-async def test_inventory_preserves_forbidden_status(app) -> None:
-    response = await request(
-        app,
-        "GET",
-        "/api/operator/v1/owners/owner-1/inventory",
-        headers={"Authorization": "Bearer wrong-scope"},
-    )
-    assert response.status_code == 403
-    assert response.json()["detail"]["authority"] == "hub"
-
-
-async def test_partial_workflow_returns_202_with_explicit_state(app) -> None:
-    response = await request(
-        app,
-        "POST",
-        "/api/operator/v1/workflows/device-admission",
-        headers={"Authorization": "Bearer operator"},
-        json={
-            "request_id": "workflow-1",
-            "owner_id": "owner-1",
-            "device_id": "device-1",
-            "companion_id": "companion-1",
-            "expected_mount_revision": 0,
-            "replace_existing_mount": False,
-        },
-    )
-    assert response.status_code == 202
-    body = response.json()
-    assert body["completed_stage"] == "kernel_mounted"
-    assert body["distributed_atomic"] is False
-    assert body["recovery"] == "retry-forward-same-request-id"
-    assert body["steps"][-1]["failure"]["upstream_status"] == 503
-
-
-async def test_non_retryable_partial_workflow_returns_conflict(app) -> None:
-    response = await request(
-        app,
-        "POST",
-        "/api/operator/v1/workflows/device-admission",
-        headers={"Authorization": "Bearer operator"},
-        json={
-            "request_id": "blocked",
-            "owner_id": "owner-1",
-            "device_id": "device-1",
-            "companion_id": "companion-1",
-        },
-    )
-    assert response.status_code == 409
-    assert response.json()["outcome"] == "blocked"
-    assert response.json()["recovery"] == "operator-action-required"
-
-
-async def test_local_approval_workflow_requires_service_auth_and_matching_device_id(
-    app,
-) -> None:
-    app.state.control_plane = StubControlPlane()
-    app.state.settings = Settings(local_api_service_token="local-api-secret")
-    path = "/api/control-plane/v1/local-device-admissions/device-1"
-    payload = {
-        "contract_version": "1",
-        "request_id": "mobile-claim-1",
-        "owner_id": "owner-derived",
-        "controller_id": "ectrl-0123456789abcdefabcd",
-        "device_id": "device-1",
-        "companion_id": "companion-1",
-    }
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
-    ) as client:
-        missing = await client.put(path, json=payload)
-        accepted = await client.put(
-            path,
-            headers={"Authorization": "Bearer local-api-secret"},
-            json=payload,
-        )
-        injected_device = await client.put(
-            path,
-            headers={"Authorization": "Bearer local-api-secret"},
-            json={**payload, "device_id": "another-device"},
-        )
-
-    assert missing.status_code == 401
-    assert accepted.status_code == 200
-    assert accepted.json()["hub"]["device_id"] == "device-1"
-    assert injected_device.status_code == 409
-
-
 @pytest.mark.parametrize(
     "path",
     [
@@ -574,17 +375,3 @@ async def test_mission_control_answers_without_opening_a_database(app) -> None:
     # so instead of picking one.
     assert sources["data.owners"]["ok"] is False
     assert "ask for one Owner by id" in sources["data.owners"]["detail"]
-
-
-async def test_invalid_request_is_rejected_before_orchestration(app) -> None:
-    response = await request(
-        app,
-        "POST",
-        "/api/operator/v1/workflows/device-admission",
-        json={
-            "request_id": "contains spaces",
-            "owner_id": "owner-1",
-            "device_id": "device-1",
-        },
-    )
-    assert response.status_code == 422

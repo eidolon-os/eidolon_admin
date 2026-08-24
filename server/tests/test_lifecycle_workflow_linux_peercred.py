@@ -60,7 +60,6 @@ def _result() -> DeviceRemovalResult:
         owner_domain_generation=1,
         claim_generation=1,
         trust_epoch=1,
-        accepted_manifest_digest="sha256:" + "b" * 64,
     )
     return DeviceRemovalResult(
         request_id="linux-peer-removal-1",
