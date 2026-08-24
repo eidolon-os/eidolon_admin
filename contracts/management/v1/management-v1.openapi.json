@@ -1,6 +1,60 @@
 {
   "components": {
     "schemas": {
+      "CompanionDetailView": {
+        "additionalProperties": false,
+        "description": "One Eidolon, opened.\n\n``is_default`` is here and *not* on a roster row on purpose. A single answer\nabout a single Companion is a comparison the Host just made against the\nOwner's one pointer; a flag repeated across a list would let two rows claim\nit. Same fact, and only one shape of it can be self-contradictory.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "kind",
+          "lifecycle_state",
+          "revision",
+          "is_default"
+        ],
+        "title": "CompanionDetailView",
+        "type": "object"
+      },
       "CompanionRosterView": {
         "additionalProperties": false,
         "description": "One page of this Owner's Eidolons, oldest first.",
@@ -312,6 +366,65 @@
           }
         },
         "summary": "List Companions",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}": {
+      "get": {
+        "description": "One of this Owner's Eidolons.\n\nThe Companion is in the path and the Owner is not expressible, so the\npair is \"this id, for whoever is signed in\". One belonging to someone\nelse answers 404, not 403: an id that answers differently can be probed\nfor existence.",
+        "operationId": "get_companion_api_management_v1_companions__companion_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionDetailView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Companion",
         "tags": [
           "management"
         ]

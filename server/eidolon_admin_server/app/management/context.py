@@ -23,11 +23,12 @@ worse than absent.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from eidolon_admin_server.app.control_plane.contracts import OwnerIdentity
 
 
+@runtime_checkable
 class OwnerReader(Protocol):
     """The Owner facts this read needs, and nothing else."""
 

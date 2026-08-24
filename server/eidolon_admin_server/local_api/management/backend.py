@@ -8,6 +8,8 @@ loopback service, and the Data/Hub/Kernel credentials stay in that service.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import httpx
 
 from eidolon_admin_server.local_api.management.router import ManagementBackendError
@@ -39,6 +41,12 @@ class AdminManagementClient:
             # a cursor: the page boundary belongs to the authority that built it.
             params["cursor"] = cursor
         return await self._get("/api/internal/v1/management/companions", params)
+
+    async def companion(self, *, owner_id: str, companion_id: str) -> dict:
+        return await self._get(
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}",
+            {"owner_id": owner_id},
+        )
 
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         if not self._service_token:

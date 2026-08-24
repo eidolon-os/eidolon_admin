@@ -96,6 +96,42 @@ def _type_of(schema: dict, *, where: str) -> tuple[str, bool]:
     )
 
 
+def _path_member(path: str) -> str:
+    """A constant for a fixed path, a function for a templated one.
+
+    A templated path cannot be a constant a caller pastes into: they would
+    concatenate and, sooner or later, forget to percent-encode an id. The name
+    is built from every segment — template segments contributing the parameter
+    they stand for — so ``/companions`` and ``/companions/{companion_id}``
+    cannot collide.
+    """
+
+    #: Everything after the version prefix identifies the operation.
+    segments = [segment for segment in path.split("/") if segment][3:]
+    words: list[str] = []
+    parameters: list[str] = []
+    for segment in segments:
+        if segment.startswith("{") and segment.endswith("}"):
+            parameter = _dart_name(segment[1:-1])
+            parameters.append(parameter)
+            words.extend(["by", parameter])
+        else:
+            words.append(segment.replace("-", "_"))
+    name = _dart_name("_".join(words) + "_path")
+    if not parameters:
+        return f"static const String {name} = '{path}';"
+
+    interpolated = path
+    for parameter, segment in zip(
+        parameters, [s for s in segments if s.startswith("{")]
+    ):
+        interpolated = interpolated.replace(
+            segment, f"${{Uri.encodeComponent({parameter})}}"
+        )
+    arguments = ", ".join(f"String {parameter}" for parameter in parameters)
+    return f"static String {name}({arguments}) => '{interpolated}';"
+
+
 def _element_of(schema: dict, *, where: str) -> str:
     """The Dart type of a container's element, nullability included.
 
@@ -218,8 +254,7 @@ def build_output() -> bytes:
         "",
     ]
     for path in sorted(document["paths"]):
-        name = _dart_name(path.rsplit("/", 1)[1].replace("-", "_")) + "Path"
-        body.append(f"  static const String {name} = '{path}';")
+        body.append("  " + _path_member(path))
     body.append("}")
     body.append("")
     for name in sorted(schemas):

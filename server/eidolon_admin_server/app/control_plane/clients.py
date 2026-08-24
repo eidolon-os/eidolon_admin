@@ -228,6 +228,50 @@ class DataAuthorityClient:
             )
         return page
 
+    async def get_owner_companion(
+        self,
+        owner_id: str,
+        companion_id: str,
+    ) -> CompanionIdentity:
+        """One Companion, with ownership proved by the authority.
+
+        Not the same as ``get_companion`` plus a comparison here. That route
+        exists for Kernel, which asks "may this be assigned" and compares
+        Owners itself; a product surface must not be trusted to do that
+        comparison, so the Owner is in the path and the authority checks it.
+        A Companion of another Owner comes back as absent rather than as
+        forbidden, so an id cannot be probed for existence.
+        """
+
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/companions/{quote(companion_id, safe='')}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+        identity = _parse("data", response, CompanionIdentity)
+        if identity.companion_id != companion_id or identity.owner_id != owner_id:
+            raise _contract_violation(
+                "data", "Data returned a different Companion than was asked for"
+            )
+        return identity
+
     async def rename_companion(
         self,
         companion_id: str,

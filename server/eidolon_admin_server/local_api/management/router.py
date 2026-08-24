@@ -109,12 +109,36 @@ class CompanionRosterView(BaseModel):
     next_cursor: str | None = Field(default=None, max_length=256)
 
 
+class CompanionDetailView(BaseModel):
+    """One Eidolon, opened.
+
+    ``is_default`` is here and *not* on a roster row on purpose. A single answer
+    about a single Companion is a comparison the Host just made against the
+    Owner's one pointer; a flag repeated across a list would let two rows claim
+    it. Same fact, and only one shape of it can be self-contradictory.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    kind: str = Field(min_length=1, max_length=32)
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    #: The version a later write must present. Read now so a client that is
+    #: about to rename or archive is not made to fetch again first.
+    revision: int = Field(ge=1)
+    is_default: bool
+
+
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
     async def context(self, *, owner_id: str) -> dict: ...
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
+
+    async def companion(self, *, owner_id: str, companion_id: str) -> dict: ...
 
 
 def register_management_routes(
@@ -174,6 +198,34 @@ def register_management_routes(
                 CompanionSummaryView(**row) for row in answer["companions"]
             ],
             next_cursor=answer["next_cursor"],
+        )
+
+    @router.get("/companions/{companion_id}", response_model=CompanionDetailView)
+    async def get_companion(
+        companion_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionDetailView:
+        """One of this Owner's Eidolons.
+
+        The Companion is in the path and the Owner is not expressible, so the
+        pair is "this id, for whoever is signed in". One belonging to someone
+        else answers 404, not 403: an id that answers differently can be probed
+        for existence.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.companion(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return CompanionDetailView(
+            companion_id=answer["companion_id"],
+            display_name=answer["display_name"],
+            kind=answer["kind"],
+            lifecycle_state=answer["lifecycle_state"],
+            revision=answer["revision"],
+            is_default=answer["is_default"],
         )
 
     app.include_router(router)

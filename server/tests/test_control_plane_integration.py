@@ -188,6 +188,70 @@ def producer_app(state: ProducerState) -> FastAPI:
             state.workspace_operations[operation_id] = result
             return result
 
+    @app.get("/api/workspace-authority/v1/owners/{owner_id}")
+    async def owner_identity(
+        owner_id: str, authorization: str = Header(alias="Authorization")
+    ):
+        if authorization != "Bearer workspace-token":
+            raise HTTPException(401, "bad Data workspace credential")
+        if owner_id != "owner-1":
+            raise HTTPException(404, "owner not found")
+        return {
+            "operation": "owner.identity",
+            "owner_id": owner_id,
+            "display_name": "Manson",
+            "lifecycle_state": "active",
+            "default_companion_id": "companion-1",
+            "revision": 3,
+        }
+
+    @app.get("/api/companion-authority/v1/owners/{owner_id}/companions")
+    async def owner_companions(
+        owner_id: str, authorization: str = Header(alias="Authorization")
+    ):
+        if authorization != "Bearer data-token":
+            raise HTTPException(401, "bad Data credential")
+        return {
+            "contract_version": "1",
+            "operation": "companion.roster-page",
+            "owner_id": owner_id,
+            "default_companion_id": "companion-1",
+            "companions": [
+                {
+                    "companion_id": "companion-1",
+                    "display_name": "小忆",
+                    "kind": "standard",
+                    "lifecycle_state": "active",
+                    "revision": 2,
+                    "created_at": "2026-08-24T09:30:00+00:00",
+                    "updated_at": "2026-08-24T09:30:00+00:00",
+                }
+            ],
+            "next_cursor": None,
+        }
+
+    @app.get("/api/companion-authority/v1/owners/{owner_id}/companions/{companion_id}")
+    async def owner_companion(
+        owner_id: str,
+        companion_id: str,
+        authorization: str = Header(alias="Authorization"),
+    ):
+        if authorization != "Bearer data-token":
+            raise HTTPException(401, "bad Data credential")
+        if owner_id != "owner-1" or companion_id != "companion-1":
+            # Someone else's Companion is absent here, not forbidden: an id
+            # that answers differently can be probed for existence.
+            raise HTTPException(404, "companion not found for owner")
+        return {
+            "operation": "companion.identity",
+            "companion_id": companion_id,
+            "owner_id": owner_id,
+            "display_name": "小忆",
+            "lifecycle_state": "active",
+            "kind": "standard",
+            "revision": 2,
+        }
+
     @app.get("/api/workspace-authority/v1/operations/{operation_id}")
     async def get_workspace(
         operation_id: str,
@@ -486,3 +550,67 @@ async def test_concurrent_duplicate_workflows_converge(tmp_path: Path) -> None:
     assert len(state.attach_requests) == 1
     assert state.mount is not None
     assert state.mount["revision"] == 2
+
+
+async def test_management_reads_reach_the_authority_that_owns_each_fact(
+    tmp_path: Path,
+) -> None:
+    """The wiring, over HTTP, with the real clients composed as they ship.
+
+    Every other management test injects its readers, and that is how a defect
+    got in: ``/context`` asked the Companion authority for the Owner aggregate,
+    which it cannot answer. With stubs both paths look identical; only the real
+    composition tells them apart, which is why this test lives here and not
+    beside the unit tests.
+    """
+    state = ProducerState()
+    app, producer_client = await admin_app(tmp_path, producer_app(state))
+    headers = {"Authorization": "Bearer local-api-token"}
+    try:
+        context = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/context?owner_id=owner-1",
+            headers=headers,
+        )
+        roster = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/companions?owner_id=owner-1",
+            headers=headers,
+        )
+        detail = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/companions/companion-1?owner_id=owner-1",
+            headers=headers,
+        )
+        unknown_owner = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/context?owner_id=owner-2",
+            headers=headers,
+        )
+    finally:
+        await app.state.control_plane.close()
+        await producer_client.aclose()
+
+    assert context.status_code == 200, context.text
+    # From the Owner aggregate, which only the workspace authority holds.
+    assert context.json()["owner_display_name"] == "Manson"
+    assert context.json()["owner_revision"] == 3
+    assert context.json()["default_companion_id"] == "companion-1"
+    assert context.json()["capabilities"]["companion.read"] is True
+
+    assert roster.status_code == 200, roster.text
+    assert roster.json()["companions"][0]["display_name"] == "小忆"
+    # One fact, one place: the roster's pointer and the Owner's agree because
+    # they are the same field read once.
+    assert roster.json()["default_companion_id"] == "companion-1"
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["is_default"] is True
+    assert detail.json()["revision"] == 2
+
+    # An Owner this Host does not have is the authority's 404, relayed.
+    assert unknown_owner.status_code == 404

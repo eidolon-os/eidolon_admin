@@ -31,6 +31,7 @@ from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettin
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
+from eidolon_admin_server.local_api.management.router import ManagementBackendError
 
 pytestmark = pytest.mark.asyncio
 
@@ -180,6 +181,21 @@ class _Backend:
             "next_cursor": "next-page",
         }
 
+    async def companion(self, *, owner_id: str, companion_id: str) -> dict:
+        self.asked.append((owner_id, companion_id))
+        if companion_id != "companion-a":
+            raise ManagementBackendError("not found", status_code=404)
+        return {
+            "contract_version": "1",
+            "operation": "companion.detail",
+            "companion_id": companion_id,
+            "display_name": "小忆",
+            "kind": "standard",
+            "lifecycle_state": "active",
+            "revision": 2,
+            "is_default": True,
+        }
+
     async def close(self) -> None:
         return None
 
@@ -325,3 +341,60 @@ async def test_a_session_with_no_owner_is_a_conflict_not_an_empty_list(
 
     assert answered.status_code == 409
     assert backend.asked == []
+
+
+# --- one Eidolon, opened ---------------------------------------------------
+
+
+async def test_opening_one_asks_for_it_under_the_session_owner(
+    tmp_path, monkeypatch
+) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.get(
+            "/api/management/v1/companions/companion-a", headers=headers
+        )
+
+    assert answered.status_code == 200
+    assert backend.asked == [("owner-1", "companion-a")]
+    body = answered.json()
+    assert body["is_default"] is True
+    # Read now so a client about to rename or archive need not fetch again.
+    assert body["revision"] == 2
+    assert "owner_id" not in body
+
+
+async def test_someone_elses_companion_is_absent_rather_than_forbidden(
+    tmp_path, monkeypatch
+) -> None:
+    """403 would confirm the id exists. 404 says nothing either way."""
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.get(
+            "/api/management/v1/companions/someone-elses", headers=headers
+        )
+
+    assert answered.status_code == 404
+
+
+async def test_the_default_flag_belongs_to_the_single_answer_only() -> None:
+    """The asymmetry is the design, so it is asserted rather than left to notice.
+
+    One Companion carries ``is_default`` because the Host just compared it
+    against the Owner's one pointer. A list carries the pointer instead, once,
+    because a per-row flag can contradict itself and a single comparison
+    cannot.
+    """
+    from eidolon_admin_server.local_api.management.router import (
+        CompanionDetailView,
+        CompanionSummaryView,
+    )
+
+    assert "is_default" in CompanionDetailView.model_fields
+    assert "is_default" not in CompanionSummaryView.model_fields
+    assert "default_companion_id" not in CompanionDetailView.model_fields

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
-from eidolon_admin_server.app.management.roster import read_roster
+from eidolon_admin_server.app.management.roster import read_companion, read_roster
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
 #: Required by the router, so a second route here cannot be added without it.
@@ -74,6 +74,24 @@ class CompanionRosterInternal(BaseModel):
     next_cursor: str | None = Field(default=None, max_length=256)
 
 
+class CompanionDetailInternal(BaseModel):
+    """One Companion, with the default comparison already made."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.detail"] = "companion.detail"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    kind: str = Field(min_length=1, max_length=32)
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    revision: int = Field(ge=1)
+    #: Derived from the Owner's pointer at read time, not stored anywhere. A
+    #: single answer about a single Companion cannot contradict the roster,
+    #: because both compute it from the same one field.
+    is_default: bool
+
+
 @router.get("/context", response_model=ManagementContextInternal)
 async def get_context(
     request: Request,
@@ -88,7 +106,13 @@ async def get_context(
     """
     try:
         context = await read_context(
-            owner_id=owner_id, owners=request.app.state.control_plane.data
+            owner_id=owner_id,
+            # The Owner aggregate is the workspace authority's, not the
+            # Companion authority's. Reaching for ``.data`` here raised
+            # AttributeError at runtime and no test noticed, because every test
+            # injected its own reader. test_management_composition.py now
+            # asserts the composed service satisfies these Protocols.
+            owners=request.app.state.control_plane.workspace,
         )
     except AuthorityFailure as exc:
         raise HTTPException(
@@ -141,4 +165,37 @@ async def list_companions(
             for row in roster.companions
         ],
         next_cursor=roster.next_cursor,
+    )
+
+
+@router.get("/companions/{companion_id}", response_model=CompanionDetailInternal)
+async def get_companion(
+    companion_id: str,
+    request: Request,
+    owner_id: str,
+) -> CompanionDetailInternal:
+    """One of this Owner's Companions.
+
+    Ownership is proved by the authority, on a route that requires the Owner in
+    its path. A Companion belonging to someone else is 404 rather than 403, so
+    an identifier cannot be probed for existence.
+    """
+    try:
+        detail = await read_companion(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            companions=request.app.state.control_plane.data,
+            owners=request.app.state.control_plane.workspace,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return CompanionDetailInternal(
+        companion_id=detail.companion_id,
+        display_name=detail.display_name,
+        kind=detail.kind,
+        lifecycle_state=detail.lifecycle_state,
+        revision=detail.revision,
+        is_default=detail.is_default,
     )

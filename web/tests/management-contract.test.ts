@@ -12,6 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type {
+  CompanionDetailView,
   CompanionRosterView,
   CompanionSummaryView,
   ManagementContextView,
@@ -176,5 +177,42 @@ describe('management v1 roster', () => {
     const keys = Object.keys(ROSTER)
     expect(keys).not.toContain('owner_id')
     expect(ROSTER.companions.every((row) => !('owner_id' in row))).toBe(true)
+  })
+})
+
+describe('management v1 companion detail', () => {
+  const DETAIL: CompanionDetailView = {
+    contract_version: '1',
+    companion_id: 'companion-a',
+    display_name: '小忆',
+    kind: 'standard',
+    lifecycle_state: 'active',
+    revision: 2,
+    is_default: true,
+  }
+
+  it('carries is_default on the single answer and not on a list row', () => {
+    // The asymmetry is deliberate: one comparison the Host just made cannot
+    // contradict itself, a flag repeated per row can.
+    expect(DETAIL.is_default).toBe(true)
+    // @ts-expect-error - the page names the default, rows do not
+    const wrong: CompanionSummaryView = { ...ROSTER.companions[0], is_default: true }
+    expect(wrong).toBeTruthy()
+  })
+
+  it('gives a large screen the revision it needs to write later', () => {
+    // Without it a rename would have to re-read first, and the value it read
+    // could already be stale by the time it wrote.
+    expect(DETAIL.revision).toBe(2)
+  })
+
+  it('names no Owner', () => {
+    expect(Object.keys(DETAIL)).not.toContain('owner_id')
+  })
+
+  it('keys the detail response by the operation a client calls', () => {
+    const answer: ManagementResponses['GET /api/management/v1/companions/{companion_id}'] =
+      DETAIL
+    expect(answer.companion_id).toBe('companion-a')
   })
 })

@@ -19,13 +19,17 @@ arrives as an argument from a boundary that authenticated a Controller.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
-from eidolon_admin_server.app.control_plane.contracts import CompanionRosterPage
+from eidolon_admin_server.app.control_plane.contracts import (
+    CompanionIdentity,
+    CompanionRosterPage,
+)
 
 
+@runtime_checkable
 class RosterReader(Protocol):
-    """The one authority call this read needs."""
+    """The two authority calls these reads need."""
 
     async def list_owner_companions(
         self,
@@ -34,6 +38,12 @@ class RosterReader(Protocol):
         cursor: str | None = None,
         limit: int | None = None,
     ) -> CompanionRosterPage: ...
+
+    async def get_owner_companion(
+        self,
+        owner_id: str,
+        companion_id: str,
+    ) -> CompanionIdentity: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,4 +92,50 @@ async def read_roster(
             for row in page.companions
         ),
         next_cursor=page.next_cursor,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CompanionDetail:
+    """One Companion, and whether the Owner's pointer names it.
+
+    ``is_default`` is computed here, from one comparison against the Owner's
+    single pointer, and it is a property of *this answer* rather than a stored
+    fact about the Companion. That is the difference between a derived view and
+    a second authority: nothing writes it, and two of these can never disagree
+    because neither is remembered.
+    """
+
+    companion_id: str
+    display_name: str
+    kind: str
+    lifecycle_state: str
+    revision: int
+    is_default: bool
+
+
+async def read_companion(
+    *,
+    owner_id: str,
+    companion_id: str,
+    companions: RosterReader,
+    owners,
+) -> CompanionDetail:
+    """One Companion of this Owner, or an authority 404.
+
+    Both facts come from their own authority: the Companion from the
+    owner-scoped Companion route (which proves ownership rather than trusting
+    this layer to compare), and "which one is default" from the Owner
+    aggregate. This function only compares them.
+    """
+
+    identity = await companions.get_owner_companion(owner_id, companion_id)
+    owner = await owners.get_owner(owner_id)
+    return CompanionDetail(
+        companion_id=identity.companion_id,
+        display_name=identity.display_name,
+        kind=identity.kind,
+        lifecycle_state=identity.lifecycle_state,
+        revision=identity.revision,
+        is_default=owner.default_companion_id == identity.companion_id,
     )
