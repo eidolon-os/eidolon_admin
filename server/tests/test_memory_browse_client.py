@@ -339,3 +339,77 @@ async def test_a_day_read_shares_the_credential_check_with_every_other_realm_rea
         await client.entries(owner_id=OWNER, since="2026-08-24T12:00:00+00:00")
 
     assert caught.value.kind == "configuration"
+
+
+COPY = {
+    "contract_version": "1",
+    "operation": "memory.export",
+    "memory_space_id": "r_a",
+    "taken_at": "2026-08-24T12:31:00+00:00",
+    "records": [
+        {
+            "entry_id": "drawer_1",
+            "recorded_at": "2026-08-24T12:30:00+00:00",
+            "recorded_at_source": "occurred_at",
+            "wing_id": "Wing_Life",
+            "room_id": "饮食",
+            "memory_type": "preference",
+            "value": "他喜欢喝乌龙茶，" * 30,
+        },
+        {
+            "entry_id": "drawer_undated",
+            "recorded_at": "",
+            "recorded_at_source": "",
+            "wing_id": "",
+            "room_id": "",
+            "memory_type": "",
+            "value": "说不清什么时候",
+        },
+    ],
+    "record_count": 2,
+    "undated_count": 1,
+    "truncated": True,
+}
+
+
+async def test_the_copy_reaches_the_sibling_route_and_arrives_whole() -> None:
+    """The one read on this surface that must not shorten anything.
+
+    A relay, not an assembler: a file built here would be built out of whatever
+    this process asked for, and only the realm knows what "everything I can see"
+    is.
+    """
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=COPY, seen=seen)
+
+    copy = await client.export(owner_id=OWNER)
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/export")
+    assert asked.method == "GET"
+    assert asked.headers["authorization"] == f"Bearer {TOKEN}"
+    assert copy.records[0].value == COPY["records"][0]["value"]
+    # Both honesty counts survive the parse: one says why part of the file has
+    # no dates, the other says the file is part of a memory.
+    assert copy.undated_count == 1
+    assert copy.truncated is True
+
+
+async def test_a_copy_of_no_audience_in_particular_sends_no_parameter() -> None:
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=COPY, seen=seen)
+
+    await client.export(owner_id=OWNER)
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/export")
+    assert set(asked.url.params) == set()
+
+
+async def test_a_copy_shares_the_credential_check_with_every_other_realm_read() -> None:
+    """Four reads, one helper: none of them can drift open on its own."""
+
+    client = _client([_realm()], body=COPY, service_token="")
+
+    with pytest.raises(AuthorityFailure) as caught:
+        await client.export(owner_id=OWNER)
+
+    assert caught.value.kind == "configuration"

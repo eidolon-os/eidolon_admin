@@ -282,6 +282,37 @@ class _Backend:
             "truncated": False,
         }
 
+    async def memory_export(self, *, owner_id: str, companion_id: str | None) -> dict:
+        self.asked.append((owner_id, companion_id))
+        return {
+            "contract_version": "1",
+            "operation": "memory.copy",
+            "taken_at": "2026-08-24T12:31:00+00:00",
+            "records": [
+                {
+                    "entry_id": "drawer_1",
+                    "recorded_at": "2026-08-24T12:00:00+00:00",
+                    "recorded_at_source": "occurred_at",
+                    "wing_id": "Wing_Life",
+                    "room_id": "饮食",
+                    "memory_type": "preference",
+                    "value": "他喜欢喝乌龙茶。" * 20,
+                },
+                {
+                    "entry_id": "drawer_undated",
+                    "recorded_at": "",
+                    "recorded_at_source": "",
+                    "wing_id": "",
+                    "room_id": "",
+                    "memory_type": "",
+                    "value": "说不清什么时候",
+                },
+            ],
+            "record_count": 2,
+            "undated_count": 1,
+            "truncated": True,
+        }
+
     async def forget_preview(self, *, owner_id: str, target: str, action: str) -> dict:
         self.asked.append((owner_id, target, action))
         if target == "一切":
@@ -1003,3 +1034,89 @@ async def test_the_day_names_no_owner_and_no_space(tmp_path, monkeypatch) -> Non
 
     assert "owner_id" not in body
     assert "memory_space_id" not in body
+
+
+# --- the copy I keep --------------------------------------------------------
+
+_EXPORT = "/api/management/v1/memory/export"
+
+
+async def test_the_copy_is_the_authenticated_owners_and_arrives_whole(
+    tmp_path, monkeypatch
+) -> None:
+    """The one read here that shortens nothing.
+
+    The library and the day list are pages someone scrolls; this is a file they
+    keep, and a preview in it would be data loss that looks like a working read.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get(_EXPORT)
+        headers = await _authenticate(client)
+        answered = await client.get(_EXPORT, headers=headers)
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", None)]
+    body = answered.json()
+    assert body["records"][0]["value"] == "他喜欢喝乌龙茶。" * 20
+    assert body["record_count"] == 2
+
+
+async def test_the_copy_says_what_it_could_not_date_and_where_it_stopped(
+    tmp_path, monkeypatch
+) -> None:
+    """Its two honesty counts, which are the whole reason it can be trusted."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (await client.get(_EXPORT, headers=headers)).json()
+
+    assert body["undated_count"] == 1
+    assert body["truncated"] is True
+    # And the undated one is in the file rather than left out of it.
+    assert body["records"][-1]["entry_id"] == "drawer_undated"
+    assert body["records"][-1]["recorded_at"] == ""
+
+
+async def test_the_copy_names_no_owner_and_answers_for_no_other_one(
+    tmp_path, monkeypatch
+) -> None:
+    """The subject comes from the session and nowhere else.
+
+    A named ``owner_id`` is not refused — an unread query parameter on a GET
+    never reaches a handler — so what is asserted is the thing that matters: it
+    changes nothing. The structural half is elsewhere: the contract gate refuses
+    a route that *declares* a parameter naming a subject, which is what would be
+    needed for this to be more than noise.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.get(_EXPORT, params={"owner_id": "owner-2"}, headers=headers)
+        body = (await client.get(_EXPORT, headers=headers)).json()
+
+    assert backend.asked == [("owner-1", None), ("owner-1", None)]
+    assert "owner_id" not in body
+    assert "memory_space_id" not in body
+
+
+async def test_a_copy_may_be_asked_for_one_companions_audience(
+    tmp_path, monkeypatch
+) -> None:
+    """Exactly as the library is, so an export cannot see more than a browse."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.get(_EXPORT, params={"companion_id": "c-a"}, headers=headers)
+
+    assert backend.asked == [("owner-1", "c-a")]

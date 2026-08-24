@@ -22,7 +22,7 @@ from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
-from eidolon_admin_server.app.management.memory import read_day, read_library
+from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
@@ -188,6 +188,33 @@ class MemoryDayInternal(BaseModel):
     entries: list[MemoryEntryInternal]
     entry_count: int = Field(ge=0)
     more_in_window: bool
+    undated_count: int = Field(ge=0)
+    truncated: bool
+
+
+class MemoryExportRecordInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    #: Empty when nothing on the record gives a time. Those travel at the end of
+    #: the file rather than being left out of it.
+    recorded_at: str = Field(default="", max_length=64)
+    recorded_at_source: str = Field(default="", max_length=64)
+    wing_id: str = Field(default="", max_length=128)
+    room_id: str = Field(default="", max_length=256)
+    memory_type: str = Field(default="", max_length=64)
+    #: Whole. This is the one read on this surface that must not shorten.
+    value: str = Field(default="", max_length=65536)
+
+
+class MemoryCopyInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.copy"] = "memory.copy"
+    taken_at: str = Field(min_length=1, max_length=64)
+    records: list[MemoryExportRecordInternal]
+    record_count: int = Field(ge=0)
     undated_count: int = Field(ge=0)
     truncated: bool
 
@@ -514,6 +541,48 @@ async def post_forget_confirm(
         target=result.target,
         entry_count=result.entry_count,
         status=result.status,
+    )
+
+
+@router.get("/memory/export", response_model=MemoryCopyInternal)
+async def get_memory_export(
+    request: Request,
+    owner_id: str,
+    companion_id: str | None = None,
+) -> MemoryCopyInternal:
+    """A copy of this memory the person can read and keep.
+
+    A read, so a GET. Not the Host backup — that copy is the palace itself, it
+    is taken by the operator tool through memory's own admin action, and it never
+    passes through here.
+    """
+    try:
+        copy = await read_copy(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return MemoryCopyInternal(
+        taken_at=copy.taken_at,
+        records=[
+            MemoryExportRecordInternal(
+                entry_id=record.entry_id,
+                recorded_at=record.recorded_at,
+                recorded_at_source=record.recorded_at_source,
+                wing_id=record.wing_id,
+                room_id=record.room_id,
+                memory_type=record.memory_type,
+                value=record.value,
+            )
+            for record in copy.records
+        ],
+        record_count=copy.record_count,
+        undated_count=copy.undated_count,
+        truncated=copy.truncated,
     )
 
 

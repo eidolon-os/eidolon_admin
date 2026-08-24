@@ -191,6 +191,48 @@ class MemoryEntries(StrictModel):
     truncated: bool
 
 
+class MemoryExportRecord(StrictModel):
+    """One memory, whole.
+
+    ``value`` rather than ``preview``: the day list and the library shorten what
+    they show because someone is scrolling them, and this is the copy a person
+    keeps. A preview here would be data loss that looks like a working read.
+    """
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    #: Empty when the record carries no derivable time. Those are in the file, at
+    #: the end, rather than omitted — leaving one out of a copy is losing it.
+    recorded_at: str = Field(default="", max_length=64)
+    recorded_at_source: str = Field(default="", max_length=64)
+    wing_id: str = Field(default="", max_length=128)
+    room_id: str = Field(default="", max_length=256)
+    memory_type: str = Field(default="", max_length=64)
+    value: str = Field(default="", max_length=65536)
+
+
+class MemoryExport(StrictModel):
+    """A copy of an Owner's memory, in a form they can read and keep.
+
+    Not the Host backup. That copy is the palace — vectors, ledgers, the encoder
+    they were built under — and exists so a lost disk is survivable; it is taken
+    by the operator tool and never passes through here. This one exists so a
+    person is not locked in, and the two share nothing but the word "export".
+    """
+
+    contract_version: Literal["1"]
+    operation: Literal["memory.export"]
+    memory_space_id: str = Field(min_length=1, max_length=64)
+    #: Two exports of the same memory differ, and a file with no instant cannot
+    #: be told apart from a stale one.
+    taken_at: str = Field(min_length=1, max_length=64)
+    records: tuple[MemoryExportRecord, ...] = ()
+    record_count: int = Field(ge=0)
+    undated_count: int = Field(ge=0)
+    #: The palace scan stopped before the end. What is here is real; it is not
+    #: all of it, and a file that said nothing about that would be worse.
+    truncated: bool
+
+
 class ForgetCandidate(StrictModel):
     drawer_id: str = Field(min_length=1, max_length=128)
     score: float = Field(ge=0.0, le=1.0)
@@ -503,7 +545,9 @@ class WorkflowStep(StrictModel):
 class DeviceRemovalResult(StrictModel):
     """A durable intent result plus observations from independent authorities."""
 
-    operation: Literal["admin.device-removal-workflow"] = "admin.device-removal-workflow"
+    operation: Literal["admin.device-removal-workflow"] = (
+        "admin.device-removal-workflow"
+    )
     request_id: str
     intent_id: str = Field(min_length=1, max_length=128)
     device_ref: DeviceRef
@@ -511,7 +555,9 @@ class DeviceRemovalResult(StrictModel):
     completed_stage: Literal["received", "claim_revoked", "converged"]
     distributed_atomic: Literal[False] = False
     compensation: Literal["none-safe-intermediate"] = "none-safe-intermediate"
-    recovery: Literal["none", "retry-forward-same-request-id", "operator-action-required"] = "none"
+    recovery: Literal[
+        "none", "retry-forward-same-request-id", "operator-action-required"
+    ] = "none"
     steps: tuple[WorkflowStep, ...]
     hub: HubClaimRevocationResult | None = None
     conditions: tuple["RemovalCondition", ...] = ()

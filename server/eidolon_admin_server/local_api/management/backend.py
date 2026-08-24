@@ -95,6 +95,14 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/entries", params)
 
+    async def memory_export(
+        self, *, owner_id: str, companion_id: str | None
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if companion_id:
+            params["companion_id"] = companion_id
+        return await self._get("/api/internal/v1/management/memory/export", params)
+
     async def forget_preview(
         self, *, owner_id: str, target: str, action: str
     ) -> dict:

@@ -282,6 +282,46 @@ class MemoryDayView(BaseModel):
     truncated: bool
 
 
+class MemoryExportRecordView(BaseModel):
+    """One memory, whole."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    #: Empty when nothing on the record gives a time. Shown at the end of the
+    #: file rather than dropped from it: this is the copy.
+    recorded_at: str = Field(default="", max_length=64)
+    recorded_at_source: str = Field(default="", max_length=64)
+    wing_id: str = Field(default="", max_length=128)
+    room_id: str = Field(default="", max_length=256)
+    memory_type: str = Field(default="", max_length=64)
+    value: str = Field(default="", max_length=65536)
+
+
+class MemoryCopyView(BaseModel):
+    """Everything my Eidolon remembers about me, in a form I can keep.
+
+    Not the Host's backup. That one is the palace — vectors and ledgers and the
+    encoder they were built with — and exists so a lost disk is survivable; only
+    the operator tool ever holds it. This one exists so I am not locked in.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: Two copies of the same memory differ. Without this, a file I saved months
+    #: ago is indistinguishable from one I saved today.
+    taken_at: str = Field(min_length=1, max_length=64)
+    records: list[MemoryExportRecordView]
+    record_count: int = Field(ge=0)
+    #: In the file and carrying no date. Counted so I can see why, rather than
+    #: wondering what happened to them.
+    undated_count: int = Field(ge=0)
+    #: The Host stopped reading before the end of my memory. What is here is
+    #: real; it is not all of it.
+    truncated: bool
+
+
 class ForgetTargetRequest(BaseModel):
     """What to forget, in the person's own words."""
 
@@ -389,6 +429,10 @@ class ManagementBackendPort(Protocol):
         since: str,
         limit: int | None,
         companion_id: str | None,
+    ) -> dict: ...
+
+    async def memory_export(
+        self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
 
     async def forget_preview(
@@ -623,6 +667,35 @@ def register_management_routes(
             target=answer["target"],
             entry_count=answer["entry_count"],
             status=answer["status"],
+        )
+
+    @router.get("/memory/export", response_model=MemoryCopyView)
+    async def get_memory_export(
+        companion_id: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MemoryCopyView:
+        """A copy of everything my Eidolon remembers that I can see.
+
+        The one read here that shortens nothing: the library and the day list are
+        pages I scroll, and this is a file I keep. Its two counts are what keep it
+        honest — how many memories carry no date, and whether the Host stopped
+        reading before the end.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.memory_export(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return MemoryCopyView(
+            taken_at=answer["taken_at"],
+            records=[
+                MemoryExportRecordView(**record) for record in answer["records"]
+            ],
+            record_count=answer["record_count"],
+            undated_count=answer["undated_count"],
+            truncated=answer["truncated"],
         )
 
     @router.get("/memory/entries", response_model=MemoryDayView)

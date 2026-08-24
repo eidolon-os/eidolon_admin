@@ -25,6 +25,7 @@ from .contracts import (
     ForgetPreview,
     MemoryBrowse,
     MemoryEntries,
+    MemoryExport,
     PersonaChapter,
     PersonaTimeline,
     CompanionIdentity,
@@ -392,7 +393,9 @@ class DataAuthorityClient:
         return _parse("data", response, CompanionFace)
 
     async def clear_companion_face(self, companion_id: str) -> CompanionFace:
-        return _parse("data", await self._face_request("DELETE", companion_id), CompanionFace)
+        return _parse(
+            "data", await self._face_request("DELETE", companion_id), CompanionFace
+        )
 
     async def _face_request(
         self,
@@ -640,7 +643,9 @@ class DataWorkspaceAuthorityClient:
         )
         identity = _parse("data", response, OwnerIdentity)
         if identity.owner_id != owner_id:
-            raise _contract_violation("data", "Data returned a different Owner identity")
+            raise _contract_violation(
+                "data", "Data returned a different Owner identity"
+            )
         if identity.default_companion_id != companion_id:
             # The authority answered 200 for a state that is not the one asked
             # for. Better to refuse than to relay it: a client would show the
@@ -668,7 +673,9 @@ class DataWorkspaceAuthorityClient:
         )
         identity = _parse("data", response, OwnerIdentity)
         if identity.owner_id != owner_id:
-            raise _contract_violation("data", "Data returned a different Owner identity")
+            raise _contract_violation(
+                "data", "Data returned a different Owner identity"
+            )
         return identity
 
     async def get(self, operation_id: str) -> WorkspaceOperation:
@@ -873,6 +880,26 @@ class MemoryRecollectionsClient:
             owner_id, "entries", params=params, method="GET"
         )
         return _parse("memory", response, MemoryEntries)
+
+    async def export(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryExport:
+        """The whole visible memory, as the realm reports it.
+
+        A relay like the other realm reads, and deliberately not a place where
+        the file is assembled: a copy built here would be built from what this
+        process happened to ask for, and the realm is the only thing that knows
+        what a complete answer is.
+        """
+
+        params = {"companion_id": companion_id} if companion_id else None
+        response = await self._realm_call(
+            owner_id, "export", params=params, method="GET"
+        )
+        return _parse("memory", response, MemoryExport)
 
     async def forget_preview(
         self,
@@ -1104,8 +1131,7 @@ class HubManagementClient:
             "hub",
             self._client,
             "GET",
-            f"{base_url}/api/admission/v1/enrollments/"
-            f"{quote(enrollment_id, safe='')}",
+            f"{base_url}/api/admission/v1/enrollments/{quote(enrollment_id, safe='')}",
             timeout=self._timeout,
             headers=self._headers(authorization),
         )
@@ -1198,8 +1224,7 @@ class HubManagementClient:
             "hub",
             self._client,
             "GET",
-            f"{base_url}/api/admission/v1/claims/"
-            f"{quote(device_instance_id, safe='')}",
+            f"{base_url}/api/admission/v1/claims/{quote(device_instance_id, safe='')}",
             timeout=self._timeout,
             headers=self._headers(authorization),
         )

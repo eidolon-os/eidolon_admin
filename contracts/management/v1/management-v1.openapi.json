@@ -568,6 +568,54 @@
         "title": "ManagementContextView",
         "type": "object"
       },
+      "MemoryCopyView": {
+        "additionalProperties": false,
+        "description": "Everything my Eidolon remembers about me, in a form I can keep.\n\nNot the Host's backup. That one is the palace — vectors and ledgers and the\nencoder they were built with — and exists so a lost disk is survivable; only\nthe operator tool ever holds it. This one exists so I am not locked in.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "record_count": {
+            "minimum": 0.0,
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryExportRecordView"
+            },
+            "title": "Records",
+            "type": "array"
+          },
+          "taken_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Taken At",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "undated_count": {
+            "minimum": 0.0,
+            "title": "Undated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "taken_at",
+          "records",
+          "record_count",
+          "undated_count",
+          "truncated"
+        ],
+        "title": "MemoryCopyView",
+        "type": "object"
+      },
       "MemoryDayView": {
         "additionalProperties": false,
         "description": "What it wrote down since a moment the client named.",
@@ -667,6 +715,59 @@
           "recorded_at"
         ],
         "title": "MemoryEntryView",
+        "type": "object"
+      },
+      "MemoryExportRecordView": {
+        "additionalProperties": false,
+        "description": "One memory, whole.",
+        "properties": {
+          "entry_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "memory_type": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Memory Type",
+            "type": "string"
+          },
+          "recorded_at": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recorded_at_source": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Recorded At Source",
+            "type": "string"
+          },
+          "room_id": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Room Id",
+            "type": "string"
+          },
+          "value": {
+            "default": "",
+            "maxLength": 65536,
+            "title": "Value",
+            "type": "string"
+          },
+          "wing_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Wing Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id"
+        ],
+        "title": "MemoryExportRecordView",
         "type": "object"
       },
       "MemoryLibraryView": {
@@ -1183,6 +1284,72 @@
           }
         },
         "summary": "Get Memory Entries",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/memory/export": {
+      "get": {
+        "description": "A copy of everything my Eidolon remembers that I can see.\n\nThe one read here that shortens nothing: the library and the day list are\npages I scroll, and this is a file I keep. Its two counts are what keep it\nhonest — how many memories carry no date, and whether the Host stopped\nreading before the end.",
+        "operationId": "get_memory_export_api_management_v1_memory_export_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "companion_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Companion Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryCopyView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory Export",
         "tags": [
           "management"
         ]

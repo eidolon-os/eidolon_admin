@@ -16,12 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from eidolon_admin_server.app.control_plane.contracts import MemoryBrowse, MemoryEntries
+from eidolon_admin_server.app.control_plane.contracts import (
+    MemoryBrowse,
+    MemoryEntries,
+    MemoryExport,
+)
 
 
 @runtime_checkable
 class MemoryBrowser(Protocol):
-    """The two authority reads these projections need."""
+    """The three authority reads these projections need."""
 
     async def browse(
         self,
@@ -38,6 +42,13 @@ class MemoryBrowser(Protocol):
         limit: int | None = None,
         companion_id: str | None = None,
     ) -> MemoryEntries: ...
+
+    async def export(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryExport: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +175,69 @@ async def read_day(
         ),
         entry_count=page.entry_count,
         more_in_window=page.more_in_window,
+        undated_count=page.undated_count,
+        truncated=page.truncated,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryExportRecordView:
+    entry_id: str
+    recorded_at: str
+    recorded_at_source: str
+    wing_id: str
+    room_id: str
+    memory_type: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryCopy:
+    """The whole visible memory, as a person would keep it.
+
+    The one projection on this surface that must not shorten anything. Its two
+    counts are what keep it honest: ``undated_count`` says why some of it carries
+    no date, and ``truncated`` says the palace scan stopped before the end. A
+    file that was silently part of a memory would be worse than one that says it
+    is part.
+    """
+
+    taken_at: str
+    records: tuple[MemoryExportRecordView, ...]
+    record_count: int
+    undated_count: int
+    truncated: bool
+
+
+async def read_copy(
+    *,
+    owner_id: str,
+    companion_id: str | None,
+    memory: MemoryBrowser,
+) -> MemoryCopy:
+    """A relay, like the other two, and for the same reason.
+
+    Assembling the file here would assemble it out of whatever this process
+    happened to ask for; the realm is the only thing that knows what a complete
+    answer to "everything I can see" is.
+    """
+
+    page = await memory.export(owner_id=owner_id, companion_id=companion_id)
+    return MemoryCopy(
+        taken_at=page.taken_at,
+        records=tuple(
+            MemoryExportRecordView(
+                entry_id=record.entry_id,
+                recorded_at=record.recorded_at,
+                recorded_at_source=record.recorded_at_source,
+                wing_id=record.wing_id,
+                room_id=record.room_id,
+                memory_type=record.memory_type,
+                value=record.value,
+            )
+            for record in page.records
+        ),
+        record_count=page.record_count,
         undated_count=page.undated_count,
         truncated=page.truncated,
     )
