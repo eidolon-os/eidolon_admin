@@ -22,6 +22,7 @@ from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
+from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
 from eidolon_admin_server.app.management.roster import (
     read_companion,
@@ -192,6 +193,27 @@ class MemoryDayInternal(BaseModel):
     truncated: bool
 
 
+class MemoryAudienceInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.audience"] = "memory.audience"
+    entry_id: str = Field(min_length=1, max_length=128)
+    #: Empty means the Owner layer. The audience token itself does not travel:
+    #: nothing above needs to know it spells ``companion:<id>``.
+    companion_id: str = Field(default="", max_length=128)
+    status: str = Field(min_length=1, max_length=64)
+
+
+class MemoryAudienceRequestInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Absent or empty gives the memory back to every Companion. Said as an
+    #: absence rather than a magic string so no client can name a Companion
+    #: called "owner" and mean the Owner layer.
+    companion_id: str = Field(default="", max_length=128)
+
+
 class MemoryExportRecordInternal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -203,8 +225,8 @@ class MemoryExportRecordInternal(BaseModel):
     wing_id: str = Field(default="", max_length=128)
     room_id: str = Field(default="", max_length=256)
     memory_type: str = Field(default="", max_length=64)
-    #: Whole. This is the one read on this surface that must not shorten.
-    value: str = Field(default="", max_length=65536)
+    #: Whole, and required: this is what the copy is of.
+    value: str = Field(max_length=65536)
 
 
 class MemoryCopyInternal(BaseModel):
@@ -540,6 +562,38 @@ async def post_forget_confirm(
         action=result.action,
         target=result.target,
         entry_count=result.entry_count,
+        status=result.status,
+    )
+
+
+@router.put("/memory/entries/{entry_id}/audience", response_model=MemoryAudienceInternal)
+async def put_memory_entry_audience(
+    request: Request,
+    entry_id: str,
+    owner_id: str,
+    payload: MemoryAudienceRequestInternal,
+) -> MemoryAudienceInternal:
+    """Say which of this Owner's Eidolons one memory belongs to.
+
+    ``PUT``: the body is the desired end state of an exact record, so a client
+    that never saw the answer can send it again and nothing happens twice. The
+    entry id names a drawer in the realm's store and is not interpreted here —
+    the realm refuses anything that is not one of its own.
+    """
+    try:
+        result = await assign_memory_audience(
+            owner_id=owner_id,
+            entry_id=entry_id,
+            companion_id=payload.companion_id or None,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return MemoryAudienceInternal(
+        entry_id=result.entry_id,
+        companion_id=result.companion_id,
         status=result.status,
     )
 

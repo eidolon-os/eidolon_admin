@@ -103,6 +103,16 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/export", params)
 
+    async def assign_memory_audience(
+        self, *, owner_id: str, entry_id: str, companion_id: str
+    ) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/memory/entries/"
+            f"{quote(entry_id, safe='')}/audience",
+            {"owner_id": owner_id},
+            {"companion_id": companion_id},
+        )
+
     async def forget_preview(
         self, *, owner_id: str, target: str, action: str
     ) -> dict:
