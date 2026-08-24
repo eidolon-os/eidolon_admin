@@ -253,7 +253,10 @@ class ControlPlaneService:
     def _admission_issuer(self) -> HubAdminCredentialIssuer:
         if self.hub_credentials is None:
             raise AuthorityFailure(
-                "hub", "configuration", "Hub Admission credential issuer is unavailable", 503
+                "hub",
+                "configuration",
+                "Hub Admission credential issuer is unavailable",
+                503,
             )
         return self.hub_credentials
 
@@ -278,18 +281,24 @@ class ControlPlaneService:
                 )
             return
         committed = recovery.approval_decision
-        if proposal.state not in {
-            EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
-            EnrollmentProposalState.GRANT_DELIVERED,
-        } or committed is None or (
-            committed.enrollment_id != decision.enrollment_id
-            or committed.actor != payload.actor
-            or committed.decision != decision.decision
-            or committed.target_owner_domain_id != decision.target_owner_domain_id
-            or committed.target_business_owner_id != decision.target_business_owner_id
-            or committed.reviewed_manifest_ref != decision.reviewed_manifest_ref
-            or committed.expected_proposal_revision
-            != decision.expected_proposal_revision
+        if (
+            proposal.state
+            not in {
+                EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
+                EnrollmentProposalState.GRANT_DELIVERED,
+            }
+            or committed is None
+            or (
+                committed.enrollment_id != decision.enrollment_id
+                or committed.actor != payload.actor
+                or committed.decision != decision.decision
+                or committed.target_owner_domain_id != decision.target_owner_domain_id
+                or committed.target_business_owner_id
+                != decision.target_business_owner_id
+                or committed.reviewed_manifest_ref != decision.reviewed_manifest_ref
+                or committed.expected_proposal_revision
+                != decision.expected_proposal_revision
+            )
         ):
             raise AuthorityFailure(
                 "hub", "conflict", "Hub Proposal is not decision-recoverable", 409
@@ -314,7 +323,10 @@ class ControlPlaneService:
             != payload.decision.target_owner_domain_id
         ):
             raise AuthorityFailure(
-                "hub", "contract_violation", "Hub recovery Decision changed identity or scope", 502
+                "hub",
+                "contract_violation",
+                "Hub recovery Decision changed identity or scope",
+                502,
             )
 
     async def remove_controller_device(
@@ -438,12 +450,6 @@ class ControlPlaneService:
                         observed_at=datetime.now(UTC),
                     ),
                     RemovalCondition(
-                        name="channel_access_revoked",
-                        state="unknown",
-                        authority="device-control",
-                        observed_at=datetime.now(UTC),
-                    ),
-                    RemovalCondition(
                         name="device_erase_acknowledged",
                         state="unknown",
                         authority="device-control",
@@ -477,11 +483,11 @@ class ControlPlaneService:
                 ),
             )
         removed = mount is None or not mount.active
-        channel_state, channel_ref = await self._observe_channel_revocation(
+        erase_state, erase_ref = await self._observe_device_erase(
             intent=intent,
             authorization=authorization,
         )
-        platform_converged = removed and channel_state == "true"
+        platform_converged = removed
         return DeviceRemovalResult(
             request_id=payload.request_id,
             intent_id=intent.intent_id,
@@ -496,25 +502,28 @@ class ControlPlaneService:
             conditions=self._removal_conditions(
                 intent=intent,
                 mount_state="true" if removed else "false",
-                channel_state=channel_state,
-                channel_ref=channel_ref,
+                erase_state=erase_state,
+                erase_ref=erase_ref,
             ),
         )
 
-    async def _observe_channel_revocation(self, *, intent, authorization: str):
+    async def _observe_device_erase(self, *, intent, authorization: str):
         event_id = intent.hub_result.event_id
         if event_id is None:
             return "unknown", None
         try:
             operation = await self.hub.get_device_control_operation(
                 device_ref=intent.device_ref,
-                event_id=event_id,
+                source_claim_event_id=event_id,
                 authorization=authorization,
             )
         except AuthorityFailure:
             return "unknown", event_id
         return (
-            "true" if operation.state == "delivered" else "false",
+            "true"
+            if operation.state == "acknowledged"
+            and operation.terminal_result == "erased"
+            else "false",
             operation.operation_id,
         )
 
@@ -533,8 +542,8 @@ class ControlPlaneService:
         *,
         intent,
         mount_state: str,
-        channel_state: str = "unknown",
-        channel_ref: str | None = None,
+        erase_state: str = "unknown",
+        erase_ref: str | None = None,
     ):
         observed_at = datetime.now(UTC)
         return (
@@ -554,21 +563,17 @@ class ControlPlaneService:
                 observed_at=observed_at,
             ),
             RemovalCondition(
-                name="channel_access_revoked",
-                state=channel_state,
-                authority="device-control",
-                authority_ref=channel_ref,
-                observed_at=observed_at,
-            ),
-            RemovalCondition(
                 name="device_erase_acknowledged",
-                state="unknown",
+                state=erase_state,
                 authority="device-control",
+                authority_ref=erase_ref,
                 observed_at=observed_at,
             ),
         )
 
-    async def _owner_mount(self, *, owner_id: str, device_id: str, active_only: bool = True):
+    async def _owner_mount(
+        self, *, owner_id: str, device_id: str, active_only: bool = True
+    ):
         page = await self.kernel.list_mounts(owner_id=owner_id)
         for mount in page.mounts:
             if mount.device_id == device_id and (mount.active or not active_only):

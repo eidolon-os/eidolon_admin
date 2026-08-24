@@ -13,13 +13,15 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from eidolon_sdk.device_foundation.v1 import ClaimRecord
+from eidolon_sdk.device_foundation.v1 import (
+    ClaimRecord,
+    DeviceLocalEraseOperationStatus,
+)
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..app.control_plane.contracts import (
     DeviceRef,
     HubClaimRevocationResult,
-    HubDeviceControlOperationStatus,
 )
 from ..app.control_plane.errors import AuthorityFailure
 from .daemon import _bind_socket, _unlink_owned_socket
@@ -32,9 +34,7 @@ class _StrictModel(BaseModel):
 
 
 class RemovalCapabilityReady(_StrictModel):
-    operation: Literal["hub.removal-capability.ready"] = (
-        "hub.removal-capability.ready"
-    )
+    operation: Literal["hub.removal-capability.ready"] = "hub.removal-capability.ready"
 
 
 class ResolveRemovalTarget(_StrictModel):
@@ -58,7 +58,7 @@ class ObserveRemovalDelivery(_StrictModel):
     controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
     intent_id: str = Field(pattern=r"^removal-intent-[0-9a-f]{32}$")
     device_ref: DeviceRef
-    event_id: str = Field(min_length=1, max_length=255)
+    source_claim_event_id: str = Field(min_length=1, max_length=255)
 
 
 RemovalCapabilityCall = Annotated[
@@ -80,13 +80,11 @@ class RemovalCapabilityProblem(_StrictModel):
 
 
 class RemovalCapabilityReply(_StrictModel):
-    operation: Literal["hub.removal-capability-reply"] = (
-        "hub.removal-capability-reply"
-    )
+    operation: Literal["hub.removal-capability-reply"] = "hub.removal-capability-reply"
     ready: Literal[True] | None = None
     claim: ClaimRecord | None = None
     revocation: HubClaimRevocationResult | None = None
-    delivery: HubDeviceControlOperationStatus | None = None
+    delivery: DeviceLocalEraseOperationStatus | None = None
     problem: RemovalCapabilityProblem | None = None
 
     def model_post_init(self, __context: object) -> None:
@@ -96,7 +94,9 @@ class RemovalCapabilityReply(_StrictModel):
 
 
 class RemovalCapabilityBroker:
-    def __init__(self, *, socket_path: Path, allowed_workflow_uid: int, service) -> None:
+    def __init__(
+        self, *, socket_path: Path, allowed_workflow_uid: int, service
+    ) -> None:
         self._path = socket_path
         self._service = service
         self._reader = LinuxSoPeerCredentialAdapter()
@@ -131,7 +131,9 @@ class RemovalCapabilityBroker:
             self._listener.close()
         _unlink_owned_socket(self._path, expected_identity=self._identity)
 
-    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         try:
             connection = writer.get_extra_info("socket")
             if connection is None:
@@ -186,7 +188,9 @@ class RemovalCapabilityBroker:
             return RemovalCapabilityReply(ready=True)
         credentials = self._service.hub_credentials
         if credentials is None:
-            raise AuthorityFailure("hub", "configuration", "Hub issuer unavailable", 503)
+            raise AuthorityFailure(
+                "hub", "configuration", "Hub issuer unavailable", 503
+            )
         if isinstance(call, ResolveRemovalTarget):
             authorization = credentials.issue_removal_discovery(
                 controller_id=call.controller_id,
@@ -218,7 +222,7 @@ class RemovalCapabilityBroker:
         return RemovalCapabilityReply(
             delivery=await self._service.hub.get_device_control_operation(
                 device_ref=call.device_ref,
-                event_id=call.event_id,
+                source_claim_event_id=call.source_claim_event_id,
                 authorization=authorization,
             )
         )
@@ -267,15 +271,15 @@ class BrokeredRemovalHubClient:
         return reply.revocation
 
     async def get_device_control_operation(
-        self, *, device_ref, event_id, authorization
-    ) -> HubDeviceControlOperationStatus:
+        self, *, device_ref, source_claim_event_id, authorization
+    ) -> DeviceLocalEraseOperationStatus:
         controller_id, intent_id = _controller_and_intent(authorization)
         reply = await self._exchange(
             ObserveRemovalDelivery(
                 controller_id=controller_id,
                 intent_id=intent_id,
                 device_ref=device_ref,
-                event_id=event_id,
+                source_claim_event_id=source_claim_event_id,
             )
         )
         assert reply.delivery is not None

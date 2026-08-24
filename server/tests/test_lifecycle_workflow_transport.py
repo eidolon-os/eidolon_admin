@@ -124,12 +124,6 @@ def _result() -> DeviceRemovalResult:
                 observed_at=NOW,
             ),
             RemovalCondition(
-                name="channel_access_revoked",
-                state="unknown",
-                authority="device-control",
-                observed_at=NOW,
-            ),
-            RemovalCondition(
                 name="device_erase_acknowledged",
                 state="unknown",
                 authority="device-control",
@@ -333,7 +327,9 @@ async def test_authorization_context_drift_is_denied_before_workflow(
     assert service.calls == []
 
 
-async def test_removal_context_missing_revoke_scope_is_invalid_before_workflow() -> None:
+async def test_removal_context_missing_revoke_scope_is_invalid_before_workflow() -> (
+    None
+):
     uid = 41001
     document = _call().model_dump(mode="json")
     document["authorization_context"]["owner_authorization_context"]["scopes"] = [

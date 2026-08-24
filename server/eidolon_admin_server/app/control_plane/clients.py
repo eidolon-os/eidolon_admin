@@ -13,6 +13,7 @@ from eidolon_sdk.device_foundation.v1 import (
     ClaimRecord,
     DecideEnrollment,
     DecideEnrollmentResult,
+    DeviceLocalEraseOperationStatus,
     EnrollmentProposalPage,
     EnrollmentProposalQuery,
     EnrollmentRecoveryProjection,
@@ -31,7 +32,6 @@ from .contracts import (
     CompanionRosterPage,
     DeviceRef,
     HubClaimRevocationResult,
-    HubDeviceControlOperationStatus,
     KernelMountPage,
     CompanionFace,
     KernelMutationResult,
@@ -1086,10 +1086,10 @@ class HubManagementClient:
             },
         )
         result = _parse("hub", response, DecideEnrollmentResult)
-        if result.proposal_revision <= command.expected_proposal_revision:
+        if result.proposal_revision != command.expected_proposal_revision:
             raise _contract_violation(
                 "hub",
-                "Hub Decision response did not advance the requested Proposal",
+                "Hub Decision response changed the reviewed Proposal content revision",
             )
         return result
 
@@ -1257,25 +1257,30 @@ class HubManagementClient:
         self,
         *,
         device_ref: DeviceRef,
-        event_id: str,
+        source_claim_event_id: str,
         authorization: str,
-    ) -> HubDeviceControlOperationStatus:
+    ) -> DeviceLocalEraseOperationStatus:
         base_url = await self._base_url()
         response = await _request(
             "hub",
             self._client,
             "GET",
-            f"{base_url}/api/device-management/v1/owners/"
-            f"{quote(device_ref.owner_domain_id, safe='')}/devices/"
-            f"{quote(device_ref.device_instance_id, safe='')}/control-operations/"
-            f"{quote(event_id, safe='')}",
+            f"{base_url}/api/device-control/v1/owners/"
+            f"{quote(str(device_ref.owner_domain_id), safe='')}/devices/"
+            f"{quote(device_ref.device_instance_id, safe='')}/erase-operations",
             timeout=self._timeout,
             headers=self._headers(authorization),
+            params={
+                "source_claim_event_id": source_claim_event_id,
+                "owner_domain_generation": str(device_ref.owner_domain_generation),
+                "claim_generation": str(device_ref.claim_generation),
+                "trust_epoch": str(device_ref.trust_epoch),
+            },
         )
-        result = _parse("hub", response, HubDeviceControlOperationStatus)
-        if result.event_id != event_id or result.device_ref != device_ref:
+        result = _parse("hub", response, DeviceLocalEraseOperationStatus)
+        if result.device_ref != device_ref:
             raise _contract_violation(
-                "hub", "Device Control status crossed its requested event/Claim scope"
+                "hub", "Device Control status crossed its requested Claim scope"
             )
         return result
 

@@ -83,12 +83,6 @@ def _result() -> DeviceRemovalResult:
                 observed_at=NOW,
             ),
             RemovalCondition(
-                name="channel_access_revoked",
-                state="unknown",
-                authority="device-control",
-                observed_at=NOW,
-            ),
-            RemovalCondition(
                 name="device_erase_acknowledged",
                 state="unknown",
                 authority="device-control",
@@ -198,6 +192,7 @@ async def _exchange_from_uid(
         except BaseException:
             os._exit(1)
     os.close(write_descriptor)
+
     def read_response() -> bytes:
         chunks: list[bytes] = []
         while chunk := os.read(read_descriptor, 65536):
@@ -263,7 +258,9 @@ async def test_real_so_peercred_controls_the_workflow_before_request_parsing(
     os.geteuid() != 0,
     reason="requires root to create real distinct numeric process principals",
 )
-async def test_real_distinct_uids_share_socket_acl_but_only_local_uid_is_authorized() -> None:
+async def test_real_distinct_uids_share_socket_acl_but_only_local_uid_is_authorized() -> (
+    None
+):
     local_uid = 61001
     attacker_uid = 61002
     socket_gid = 61003
@@ -282,12 +279,8 @@ async def test_real_distinct_uids_share_socket_acl_but_only_local_uid_is_authori
     os.chown(path, 0, socket_gid)
     path.chmod(0o660)
     try:
-        accepted = await _exchange_from_uid(
-            path, uid=local_uid, shared_gid=socket_gid
-        )
-        denied = await _exchange_from_uid(
-            path, uid=attacker_uid, shared_gid=socket_gid
-        )
+        accepted = await _exchange_from_uid(path, uid=local_uid, shared_gid=socket_gid)
+        denied = await _exchange_from_uid(path, uid=attacker_uid, shared_gid=socket_gid)
     finally:
         await daemon.close()
         temporary.cleanup()

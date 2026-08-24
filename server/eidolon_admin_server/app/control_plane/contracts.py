@@ -348,19 +348,6 @@ class WorkspaceOperation(StrictModel):
     workspace: WorkspaceResources
 
 
-class HubDeviceControlOperationStatus(StrictModel):
-    operation: Literal["device-control.operation-status"]
-    event_id: str = Field(min_length=3, max_length=128)
-    operation_id: str = Field(min_length=3, max_length=255)
-    operation_type: Literal["channel.device-access.revoke"]
-    device_ref: DeviceRef
-    state: Literal["pending", "delivered"]
-    attempt_count: int = Field(ge=0)
-    next_attempt_at: datetime
-    delivered_at: datetime | None = None
-    last_error: str = Field(default="", max_length=512)
-
-
 class KernelMount(StrictModel):
     operation: Literal["kernel.device-mount"]
     device_id: str = Field(min_length=1, max_length=128)
@@ -534,7 +521,6 @@ class RemovalCondition(StrictModel):
     name: Literal[
         "platform_access_revoked",
         "mount_removed",
-        "channel_access_revoked",
         "device_erase_acknowledged",
     ]
     state: Literal["true", "false", "unknown"]

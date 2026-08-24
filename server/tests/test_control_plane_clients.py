@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -515,7 +515,9 @@ async def test_hub_status_mapping(
             await subject.list_claims(
                 query=ClaimQuery(
                     owner_domain_id=OwnerDomainId("owner-1"),
-                    states=(ClaimState.ACTIVE,), cursor=None, limit=20,
+                    states=(ClaimState.ACTIVE,),
+                    cursor=None,
+                    limit=20,
                 ),
                 authorization="Bearer operator",
             )
@@ -551,7 +553,7 @@ async def test_hub_decision_uses_exact_canonical_contract() -> None:
                     "authentication_strength": "software",
                 },
                 "decided_at": datetime.now(UTC).isoformat(),
-                "proposal_revision": 2,
+                "proposal_revision": 1,
             },
         )
 
@@ -564,11 +566,14 @@ async def test_hub_decision_uses_exact_canonical_contract() -> None:
         )
         result = await subject.decide_enrollment(
             command=DecideEnrollment(
-                enrollment_id="enrollment-1", expected_proposal_revision=1,
-                decision="approve", target_owner_domain_id=OwnerDomainId("owner-1"),
+                enrollment_id="enrollment-1",
+                expected_proposal_revision=1,
+                decision="approve",
+                target_owner_domain_id=OwnerDomainId("owner-1"),
                 target_business_owner_id=BusinessOwnerId("owner_account_1"),
                 reviewed_manifest_ref=ManifestRef(
-                    manifest_id="manifest-1", revision=1,
+                    manifest_id="manifest-1",
+                    revision=1,
                     digest="sha256:" + "a" * 64,
                 ),
             ),
@@ -637,12 +642,68 @@ async def test_hub_revocation_uses_exact_canonical_claim_command() -> None:
     assert result.event_id == "claim-event-1"
 
 
-async def test_enrollment_query_preserves_recoverable_states() -> None:
+async def test_device_erase_status_uses_source_event_and_full_generation() -> None:
+    device_ref = DeviceRef(
+        device_instance_id="device-1",
+        owner_domain_id=OwnerDomainId("owner-1"),
+        owner_domain_generation=2,
+        claim_generation=3,
+        trust_epoch=4,
+    )
+
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.path == (
-            "/api/admission/v1/enrollments"
+            "/api/device-control/v1/owners/owner-1/devices/device-1/erase-operations"
         )
+        assert dict(request.url.params) == {
+            "source_claim_event_id": "claim-event-1",
+            "owner_domain_generation": "2",
+            "claim_generation": "3",
+            "trust_epoch": "4",
+        }
+        assert request.headers["authorization"] == "Bearer owner-jwt"
+        now = datetime.now(UTC)
+        return httpx.Response(
+            200,
+            json={
+                "contract": "eidolon.device-foundation.device-operation-status",
+                "contract_version": "1.0",
+                "operation_id": "erase-operation-1",
+                "operation_type": "device-local.erase",
+                "request_fingerprint": "sha256:" + "a" * 64,
+                "device_ref": device_ref.model_dump(mode="json"),
+                "created_at": now.isoformat(),
+                "deadline": (now + timedelta(days=1)).isoformat(),
+                "state": "pending",
+                "attempt_count": 0,
+                "terminal_result": None,
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        result = await subject.get_device_control_operation(
+            device_ref=device_ref,
+            source_claim_event_id="claim-event-1",
+            authorization="Bearer owner-jwt",
+        )
+    finally:
+        await http_client.aclose()
+
+    assert result.operation_id == "erase-operation-1"
+    assert result.device_ref == device_ref
+
+
+async def test_enrollment_query_preserves_recoverable_states() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == ("/api/admission/v1/enrollments")
         assert dict(request.url.params) == {
             "limit": "100",
             "states": "pending_review,approved_awaiting_handoff,grant_delivered",
@@ -650,7 +711,9 @@ async def test_enrollment_query_preserves_recoverable_states() -> None:
         return httpx.Response(
             200,
             json={
-                "owner_domain_id": "owner-1", "items": [], "next_cursor": None,
+                "owner_domain_id": "owner-1",
+                "items": [],
+                "next_cursor": None,
                 "observed_at": datetime.now(UTC).isoformat(),
             },
         )
@@ -670,7 +733,8 @@ async def test_enrollment_query_preserves_recoverable_states() -> None:
                     EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
                     EnrollmentProposalState.GRANT_DELIVERED,
                 ),
-                cursor=None, limit=100,
+                cursor=None,
+                limit=100,
             ),
             authorization="Bearer admin",
         )
