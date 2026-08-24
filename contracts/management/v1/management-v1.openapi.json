@@ -568,6 +568,107 @@
         "title": "ManagementContextView",
         "type": "object"
       },
+      "MemoryDayView": {
+        "additionalProperties": false,
+        "description": "What it wrote down since a moment the client named.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "entry_count": {
+            "minimum": 0.0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "more_in_window": {
+            "title": "More In Window",
+            "type": "boolean"
+          },
+          "since": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Since",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "undated_count": {
+            "minimum": 0.0,
+            "title": "Undated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "since",
+          "entries",
+          "entry_count",
+          "more_in_window",
+          "undated_count",
+          "truncated"
+        ],
+        "title": "MemoryDayView",
+        "type": "object"
+      },
+      "MemoryEntryView": {
+        "additionalProperties": false,
+        "description": "One thing it wrote down.",
+        "properties": {
+          "entry_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "preview": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "Preview",
+            "type": "string"
+          },
+          "recorded_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "recorded_at_source": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Recorded At Source",
+            "type": "string"
+          },
+          "room_id": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Room Id",
+            "type": "string"
+          },
+          "wing_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Wing Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "recorded_at"
+        ],
+        "title": "MemoryEntryView",
+        "type": "object"
+      },
       "MemoryLibraryView": {
         "additionalProperties": false,
         "description": "What my Eidolon remembers, arranged the way it files it.",
@@ -991,6 +1092,97 @@
           }
         },
         "summary": "Get Context",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/memory/entries": {
+      "get": {
+        "description": "What it has written down since a moment I name.\n\n``since`` is required. My \"today\" depends on where I am, and the Host\ndoes not know that — so the client says when the day started rather than\nthe Host guessing and being wrong by up to a day.",
+        "operationId": "get_memory_entries_api_management_v1_memory_entries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": true,
+            "schema": {
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "companion_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Companion Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDayView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Memory Entries",
         "tags": [
           "management"
         ]

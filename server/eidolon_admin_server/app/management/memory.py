@@ -16,12 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from eidolon_admin_server.app.control_plane.contracts import MemoryBrowse
+from eidolon_admin_server.app.control_plane.contracts import MemoryBrowse, MemoryEntries
 
 
 @runtime_checkable
 class MemoryBrowser(Protocol):
-    """The one authority call this read needs."""
+    """The two authority reads these projections need."""
 
     async def browse(
         self,
@@ -29,6 +29,15 @@ class MemoryBrowser(Protocol):
         owner_id: str,
         companion_id: str | None = None,
     ) -> MemoryBrowse: ...
+
+    async def entries(
+        self,
+        *,
+        owner_id: str,
+        since: str,
+        limit: int | None = None,
+        companion_id: str | None = None,
+    ) -> MemoryEntries: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,5 +100,70 @@ async def read_library(
         ),
         entry_count=page.entry_count,
         withheld_count=page.withheld_count,
+        truncated=page.truncated,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryEntryView:
+    entry_id: str
+    recorded_at: str
+    recorded_at_source: str
+    wing_id: str
+    room_id: str
+    preview: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDay:
+    """What was recorded in a window the caller named.
+
+    The window itself is carried back. A client that asked for "since my last
+    visit" and got a list with no ``since`` could not tell an empty day from an
+    answer to a different question.
+    """
+
+    since: str
+    entries: tuple[MemoryEntryView, ...]
+    entry_count: int
+    more_in_window: bool
+    undated_count: int
+    truncated: bool
+
+
+async def read_day(
+    *,
+    owner_id: str,
+    since: str,
+    limit: int | None,
+    companion_id: str | None,
+    memory: MemoryBrowser,
+) -> MemoryDay:
+    """Recent entries, as the realm reports them.
+
+    ``since`` is relayed rather than defaulted. A day depends on where the
+    person is; a default here would be this layer answering for a timezone it
+    does not know, and it would be wrong by up to a day without saying so.
+    """
+
+    page = await memory.entries(
+        owner_id=owner_id, since=since, limit=limit, companion_id=companion_id
+    )
+    return MemoryDay(
+        since=page.since,
+        entries=tuple(
+            MemoryEntryView(
+                entry_id=entry.entry_id,
+                recorded_at=entry.recorded_at,
+                recorded_at_source=entry.recorded_at_source,
+                wing_id=entry.wing_id,
+                room_id=entry.room_id,
+                preview=entry.preview,
+            )
+            for entry in page.entries
+        ),
+        entry_count=page.entry_count,
+        more_in_window=page.more_in_window,
+        undated_count=page.undated_count,
         truncated=page.truncated,
     )

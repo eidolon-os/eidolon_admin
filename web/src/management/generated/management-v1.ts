@@ -107,6 +107,25 @@ export interface ManagementContextView {
   owner: OwnerContextView
 }
 
+export interface MemoryDayView {
+  contract_version?: "1"
+  entries: Array<MemoryEntryView>
+  entry_count: number
+  more_in_window: boolean
+  since: string
+  truncated: boolean
+  undated_count: number
+}
+
+export interface MemoryEntryView {
+  entry_id: string
+  preview?: string
+  recorded_at: string
+  recorded_at_source?: string
+  room_id?: string
+  wing_id?: string
+}
+
 export interface MemoryLibraryView {
   contract_version?: "1"
   entry_count: number
@@ -150,6 +169,7 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/context': ManagementContextView
+  'GET /api/management/v1/memory/entries': MemoryDayView
   'POST /api/management/v1/memory/forget/confirm': ForgetResultView
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView

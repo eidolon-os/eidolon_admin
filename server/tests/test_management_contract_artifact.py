@@ -97,14 +97,28 @@ def test_the_contract_carries_only_the_management_surface() -> None:
 #: and a rule that has to be relaxed the first time it is inconvenient teaches
 #: nothing about what actually matters — which is that a client cannot name a
 #: subject it was not given.
+#: The invariant is narrower than "no query parameters", and narrower than my
+#: first attempt at stating it ("everything here is a value the Host handed the
+#: client" — ``since`` is not). What must never be expressible is a parameter
+#: that names a **subject**: whose data this is. The Owner comes from the
+#: authenticated session, and that is the whole point of the assertion below.
+#:
+#: These four shape an answer about a subject the session already fixed:
 ALLOWED_QUERY_PARAMETERS = {
+    # A position the Host issued. Reading it would make its page boundary part
+    # of the client.
     "cursor",
     # An *audience*, not a subject. Memory belongs to the Owner and every one of
     # their Companions reads it, so naming one adds a layer and cannot widen
-    # what the space holds — a foreign id simply matches nothing. The value also
-    # came from the roster this Host served, which is the property that keeps
-    # this list closed: every name here is something the Host handed the client.
+    # what the space holds — a foreign id simply matches nothing.
     "companion_id",
+    # The client's own instant, and it has to be: a day depends on where the
+    # person is, and no layer on the Host knows that. A default would answer
+    # for the wrong day without saying so.
+    "since",
+    # How much of the answer to return. Bounded by the Host regardless of what
+    # is asked for.
+    "limit",
 }
 
 

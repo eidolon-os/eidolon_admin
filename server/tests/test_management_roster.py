@@ -253,6 +253,35 @@ class _Backend:
             "truncated": False,
         }
 
+    async def memory_entries(
+        self,
+        *,
+        owner_id: str,
+        since: str,
+        limit: int | None,
+        companion_id: str | None,
+    ) -> dict:
+        self.asked.append((owner_id, since, limit, companion_id))
+        return {
+            "contract_version": "1",
+            "operation": "memory.day",
+            "since": since,
+            "entries": [
+                {
+                    "entry_id": "drawer_1",
+                    "recorded_at": "2026-08-24T12:00:00+00:00",
+                    "recorded_at_source": "occurred_at",
+                    "wing_id": "Wing_Life",
+                    "room_id": "饮食",
+                    "preview": "乌龙茶",
+                }
+            ],
+            "entry_count": 1,
+            "more_in_window": True,
+            "undated_count": 2,
+            "truncated": False,
+        }
+
     async def forget_preview(self, *, owner_id: str, target: str, action: str) -> dict:
         self.asked.append((owner_id, target, action))
         if target == "一切":
@@ -887,3 +916,90 @@ async def test_no_owner_may_be_named_when_forgetting(tmp_path, monkeypatch) -> N
 
     assert answered.status_code == 422
     assert backend.asked == []
+
+
+# --- what it wrote down today ---------------------------------------------
+
+_ENTRIES = "/api/management/v1/memory/entries"
+_NOON = "2026-08-24T12:00:00+00:00"
+
+
+async def test_the_day_is_the_authenticated_owners(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get(_ENTRIES, params={"since": _NOON})
+        headers = await _authenticate(client)
+        answered = await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", _NOON, None, None)]
+    body = answered.json()
+    assert body["since"] == _NOON
+    assert body["entries"][0]["preview"] == "乌龙茶"
+
+
+async def test_the_client_says_when_the_day_started(tmp_path, monkeypatch) -> None:
+    """No default, at any layer.
+
+    A day depends on where the person is, and no layer on the Host knows that;
+    a default would answer for the wrong day without saying so.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.get(_ENTRIES, headers=headers)
+
+    assert answered.status_code == 422
+    assert backend.asked == []
+
+
+async def test_the_two_partial_answers_stay_apart(tmp_path, monkeypatch) -> None:
+    """``more_in_window`` is this page; ``truncated`` is the palace.
+
+    Collapsing them would leave a client unable to say whether asking again
+    would help.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (
+            await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
+        ).json()
+
+    assert body["more_in_window"] is True
+    assert body["truncated"] is False
+    # And entries with no usable time are a number rather than a silence.
+    assert body["undated_count"] == 2
+
+
+async def test_the_window_and_audience_reach_the_backend(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.get(
+            _ENTRIES,
+            params={"since": _NOON, "limit": 5, "companion_id": "c-a"},
+            headers=headers,
+        )
+
+    assert backend.asked == [("owner-1", _NOON, 5, "c-a")]
+
+
+async def test_the_day_names_no_owner_and_no_space(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (
+            await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
+        ).json()
+
+    assert "owner_id" not in body
+    assert "memory_space_id" not in body

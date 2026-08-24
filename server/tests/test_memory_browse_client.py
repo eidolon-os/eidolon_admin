@@ -277,3 +277,65 @@ async def test_a_host_without_the_credential_refuses_before_dialling() -> None:
         await client.forget_preview(owner_id=OWNER, target="x")
 
     assert caught.value.kind == "configuration"
+
+
+DAY = {
+    "contract_version": "1",
+    "operation": "memory.entries",
+    "memory_space_id": "r_a",
+    "since": "2026-08-24T12:00:00+00:00",
+    "entries": [
+        {
+            "entry_id": "drawer_1",
+            "recorded_at": "2026-08-24T12:30:00+00:00",
+            "recorded_at_source": "occurred_at",
+            "wing_id": "Wing_Life",
+            "room_id": "饮食",
+            "preview": "乌龙茶",
+        }
+    ],
+    "entry_count": 1,
+    "more_in_window": False,
+    "undated_count": 1,
+    "truncated": False,
+}
+
+
+async def test_entries_reach_the_sibling_route_with_the_window_intact() -> None:
+    """``since`` is relayed exactly as given.
+
+    Rewriting or defaulting it here would be this client answering for a
+    timezone it does not know, and being wrong by up to a day without saying so.
+    """
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=DAY, seen=seen)
+
+    day = await client.entries(owner_id=OWNER, since="2026-08-24T12:00:00+00:00")
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/entries")
+    assert asked.url.params["since"] == "2026-08-24T12:00:00+00:00"
+    assert asked.headers["authorization"] == f"Bearer {TOKEN}"
+    assert day.entries[0].entry_id == "drawer_1"
+    assert day.undated_count == 1
+
+
+async def test_an_absent_limit_and_audience_send_nothing() -> None:
+    """Not empty strings: ``limit=`` is not a number and ``companion_id=`` names
+    an Eidolon with no id."""
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=DAY, seen=seen)
+
+    await client.entries(owner_id=OWNER, since="2026-08-24T12:00:00+00:00")
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/entries")
+    assert set(asked.url.params) == {"since"}
+
+
+async def test_a_day_read_shares_the_credential_check_with_every_other_realm_read() -> None:
+    """All three reads go through one helper, so one of them cannot drift open."""
+    client = _client([_realm()], body=DAY, service_token="")
+
+    with pytest.raises(AuthorityFailure) as caught:
+        await client.entries(owner_id=OWNER, since="2026-08-24T12:00:00+00:00")
+
+    assert caught.value.kind == "configuration"

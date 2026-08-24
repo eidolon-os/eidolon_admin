@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import type {
   CompanionCreateRequest,
+  MemoryDayView,
   ForgetProposalView,
   ForgetTargetRequest,
   MemoryLibraryView,
@@ -466,5 +467,58 @@ describe('management v1 forget', () => {
     const answer: ManagementResponses['POST /api/management/v1/memory/forget/preview'] =
       PROPOSAL
     expect(answer.target).toBe('上周那件事')
+  })
+})
+
+describe('management v1 memory day', () => {
+  const DAY: MemoryDayView = {
+    contract_version: '1',
+    since: '2026-08-24T12:00:00+00:00',
+    entries: [
+      {
+        entry_id: 'drawer_1',
+        recorded_at: '2026-08-24T12:30:00+00:00',
+        recorded_at_source: 'occurred_at',
+        wing_id: 'Wing_Life',
+        room_id: '饮食',
+        preview: '乌龙茶',
+      },
+    ],
+    entry_count: 1,
+    more_in_window: false,
+    undated_count: 1,
+    truncated: false,
+  }
+
+  it('echoes the window it answered for', () => {
+    // A list with no window cannot be told apart from an answer to a different
+    // question, which matters most for "since my last visit".
+    expect(DAY.since).toBe('2026-08-24T12:00:00+00:00')
+  })
+
+  it('keeps "more in this page" apart from "the Host stopped reading"', () => {
+    // Asking again helps with the first and not the second.
+    const morePage: MemoryDayView = { ...DAY, more_in_window: true }
+    const partialScan: MemoryDayView = { ...DAY, truncated: true }
+    expect(morePage.more_in_window).not.toBe(morePage.truncated)
+    expect(partialScan.truncated).not.toBe(partialScan.more_in_window)
+  })
+
+  it('is told how many entries hold no usable time', () => {
+    // A silence here would leave someone unable to learn why their entry never
+    // shows up in any day.
+    expect(DAY.undated_count).toBe(1)
+    expect(DAY.entries).toHaveLength(1)
+  })
+
+  it('can say where an entry\'s time came from', () => {
+    // Nobody reads this field; it is what makes "它记到昨天了" answerable.
+    expect(DAY.entries[0].recorded_at_source).toBe('occurred_at')
+    expect(DAY.entries[0].recorded_at).not.toBe(DAY.since)
+  })
+
+  it('keys the day response by the operation a client calls', () => {
+    const answer: ManagementResponses['GET /api/management/v1/memory/entries'] = DAY
+    expect(answer.entry_count).toBe(1)
   })
 })

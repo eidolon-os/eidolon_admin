@@ -23,6 +23,7 @@ from .contracts import (
     ForgetOutcome,
     ForgetPreview,
     MemoryBrowse,
+    MemoryEntries,
     PersonaChapter,
     PersonaTimeline,
     CompanionIdentity,
@@ -803,26 +804,11 @@ class MemoryRecollectionsClient:
         statements to the Owner-layer ones. Omitting it answers with the Owner
         layer, which is what an Owner-level question wants.
         """
-        if not self._service_token:
-            raise AuthorityFailure(
-                "memory",
-                "configuration",
-                "Admin memory service credential is not configured",
-                503,
-                retryable=False,
-            )
-        space = await self._space_for(owner_id)
         params = {"q": query, "limit": str(limit)}
         if companion_id:
             params["companion_id"] = companion_id
-        response = await _request(
-            "memory",
-            self._client,
-            "GET",
-            _realm_path(space, "recollections"),
-            headers={"Authorization": f"Bearer {self._service_token}"},
-            timeout=self._timeout,
-            params=params,
+        response = await self._realm_call(
+            owner_id, "recollections", params=params, method="GET"
         )
         if response.status_code != 200:
             raise AuthorityFailure(
@@ -857,31 +843,36 @@ class MemoryRecollectionsClient:
         answer to "what may this person see", and the two would drift.
         """
 
-        if not self._service_token:
-            raise AuthorityFailure(
-                "memory",
-                "configuration",
-                "Admin memory service credential is not configured",
-                503,
-                retryable=False,
-            )
-        space = await self._space_for(owner_id)
-        browse_url = space.replace("/recollections", "/browse")
-        if browse_url == space:
-            raise _contract_violation(
-                "memory", "memory discovery published no browsable read surface"
-            )
         params = {"companion_id": companion_id} if companion_id else None
-        response = await _request(
-            "memory",
-            self._client,
-            "GET",
-            _realm_path(space, "browse"),
-            timeout=self._timeout,
-            headers={"Authorization": f"Bearer {self._service_token}"},
-            params=params,
+        response = await self._realm_call(
+            owner_id, "browse", params=params, method="GET"
         )
         return _parse("memory", response, MemoryBrowse)
+
+    async def entries(
+        self,
+        *,
+        owner_id: str,
+        since: str,
+        limit: int | None = None,
+        companion_id: str | None = None,
+    ) -> MemoryEntries:
+        """What was recorded at or after ``since``.
+
+        ``since`` is passed through as the caller gave it. A day depends on
+        where the person is, and neither this client nor the realm knows —
+        inventing one here would answer for the wrong day, silently.
+        """
+
+        params: dict[str, str] = {"since": since}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if companion_id:
+            params["companion_id"] = companion_id
+        response = await self._realm_call(
+            owner_id, "entries", params=params, method="GET"
+        )
+        return _parse("memory", response, MemoryEntries)
 
     async def forget_preview(
         self,

@@ -22,7 +22,7 @@ from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
-from eidolon_admin_server.app.management.memory import read_library
+from eidolon_admin_server.app.management.memory import read_day, read_library
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
@@ -165,6 +165,30 @@ class MemoryLibraryInternal(BaseModel):
     wings: list[MemoryWingInternal]
     entry_count: int = Field(ge=0)
     withheld_count: int = Field(ge=0)
+    truncated: bool
+
+
+class MemoryEntryInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    recorded_at: str = Field(min_length=1, max_length=64)
+    recorded_at_source: str = Field(default="", max_length=64)
+    wing_id: str = Field(default="", max_length=128)
+    room_id: str = Field(default="", max_length=256)
+    preview: str = Field(default="", max_length=4096)
+
+
+class MemoryDayInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.day"] = "memory.day"
+    since: str = Field(min_length=1, max_length=64)
+    entries: list[MemoryEntryInternal]
+    entry_count: int = Field(ge=0)
+    more_in_window: bool
+    undated_count: int = Field(ge=0)
     truncated: bool
 
 
@@ -490,4 +514,50 @@ async def post_forget_confirm(
         target=result.target,
         entry_count=result.entry_count,
         status=result.status,
+    )
+
+
+@router.get("/memory/entries", response_model=MemoryDayInternal)
+async def get_memory_entries(
+    request: Request,
+    owner_id: str,
+    since: str,
+    limit: int | None = None,
+    companion_id: str | None = None,
+) -> MemoryDayInternal:
+    """What was recorded at or after ``since``.
+
+    ``since`` is required with no default, all the way down. A day depends on
+    where the person is and no layer here knows; a default would answer for the
+    wrong day without saying so.
+    """
+    try:
+        day = await read_day(
+            owner_id=owner_id,
+            since=since,
+            limit=limit,
+            companion_id=companion_id,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return MemoryDayInternal(
+        since=day.since,
+        entries=[
+            MemoryEntryInternal(
+                entry_id=entry.entry_id,
+                recorded_at=entry.recorded_at,
+                recorded_at_source=entry.recorded_at_source,
+                wing_id=entry.wing_id,
+                room_id=entry.room_id,
+                preview=entry.preview,
+            )
+            for entry in day.entries
+        ],
+        entry_count=day.entry_count,
+        more_in_window=day.more_in_window,
+        undated_count=day.undated_count,
+        truncated=day.truncated,
     )

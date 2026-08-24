@@ -80,6 +80,21 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/library", params)
 
+    async def memory_entries(
+        self,
+        *,
+        owner_id: str,
+        since: str,
+        limit: int | None,
+        companion_id: str | None,
+    ) -> dict:
+        params = {"owner_id": owner_id, "since": since}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if companion_id:
+            params["companion_id"] = companion_id
+        return await self._get("/api/internal/v1/management/memory/entries", params)
+
     async def forget_preview(
         self, *, owner_id: str, target: str, action: str
     ) -> dict:

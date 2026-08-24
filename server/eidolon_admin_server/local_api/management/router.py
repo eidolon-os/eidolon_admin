@@ -243,6 +243,45 @@ class MemoryLibraryView(BaseModel):
     truncated: bool
 
 
+class MemoryEntryView(BaseModel):
+    """One thing it wrote down."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    #: When the memory is *about*, not when it was stored — the two differ when
+    #: someone mentions last week.
+    recorded_at: str = Field(min_length=1, max_length=64)
+    #: Which field that time came from. A person never reads it; "它把这件事
+    #: 记到昨天了" is a real complaint and this is what makes it answerable.
+    recorded_at_source: str = Field(default="", max_length=64)
+    wing_id: str = Field(default="", max_length=128)
+    room_id: str = Field(default="", max_length=256)
+    preview: str = Field(default="", max_length=4096)
+
+
+class MemoryDayView(BaseModel):
+    """What it wrote down since a moment the client named."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: Echoed back. A client that asked for "since my last visit" and got a list
+    #: with no window could not tell a quiet day from an answer to a different
+    #: question.
+    since: str = Field(min_length=1, max_length=64)
+    entries: list[MemoryEntryView]
+    entry_count: int = Field(ge=0)
+    #: More inside the window than this page holds. Not the same as
+    #: ``truncated``: one is about this answer, the other about how much of the
+    #: memory the Host was willing to read.
+    more_in_window: bool
+    #: Held no usable time, so in no day's list. A number rather than a silence:
+    #: someone whose entry never appears should be able to find out why.
+    undated_count: int = Field(ge=0)
+    truncated: bool
+
+
 class ForgetTargetRequest(BaseModel):
     """What to forget, in the person's own words."""
 
@@ -341,6 +380,15 @@ class ManagementBackendPort(Protocol):
 
     async def memory_library(
         self, *, owner_id: str, companion_id: str | None
+    ) -> dict: ...
+
+    async def memory_entries(
+        self,
+        *,
+        owner_id: str,
+        since: str,
+        limit: int | None,
+        companion_id: str | None,
     ) -> dict: ...
 
     async def forget_preview(
@@ -575,6 +623,38 @@ def register_management_routes(
             target=answer["target"],
             entry_count=answer["entry_count"],
             status=answer["status"],
+        )
+
+    @router.get("/memory/entries", response_model=MemoryDayView)
+    async def get_memory_entries(
+        since: str,
+        limit: int | None = None,
+        companion_id: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MemoryDayView:
+        """What it has written down since a moment I name.
+
+        ``since`` is required. My "today" depends on where I am, and the Host
+        does not know that — so the client says when the day started rather than
+        the Host guessing and being wrong by up to a day.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.memory_entries(
+                owner_id=owner_id,
+                since=since,
+                limit=limit,
+                companion_id=companion_id,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return MemoryDayView(
+            since=answer["since"],
+            entries=[MemoryEntryView(**entry) for entry in answer["entries"]],
+            entry_count=answer["entry_count"],
+            more_in_window=answer["more_in_window"],
+            undated_count=answer["undated_count"],
+            truncated=answer["truncated"],
         )
 
     app.include_router(router)

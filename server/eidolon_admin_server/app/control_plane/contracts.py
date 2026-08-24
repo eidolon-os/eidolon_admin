@@ -160,6 +160,37 @@ class MemoryBrowse(StrictModel):
     truncated: bool
 
 
+class MemoryEntry(StrictModel):
+    entry_id: str = Field(min_length=1, max_length=128)
+    recorded_at: str = Field(min_length=1, max_length=64)
+    #: Which field the time came from. Carried because "it filed this under
+    #: yesterday" is a real complaint and this is what makes it answerable.
+    recorded_at_source: str = Field(default="", max_length=64)
+    wing_id: str = Field(default="", max_length=128)
+    room_id: str = Field(default="", max_length=256)
+    preview: str = Field(default="", max_length=4096)
+
+
+class MemoryEntries(StrictModel):
+    """What was recorded at or after an instant the caller named."""
+
+    contract_version: Literal["1"]
+    operation: Literal["memory.entries"]
+    memory_space_id: str = Field(min_length=1, max_length=64)
+    since: str = Field(min_length=1, max_length=64)
+    entries: tuple[MemoryEntry, ...] = ()
+    entry_count: int = Field(ge=0)
+    #: The page ended inside the window. Distinct from ``truncated``, which is
+    #: the palace scan stopping — one is about this answer, the other about how
+    #: much of the memory was looked at.
+    more_in_window: bool
+    #: Visible and holding no usable time, so in no day's list. Relayed rather
+    #: than dropped: a person whose entry never appears should be able to learn
+    #: that this is why.
+    undated_count: int = Field(ge=0)
+    truncated: bool
+
+
 class ForgetCandidate(StrictModel):
     drawer_id: str = Field(min_length=1, max_length=128)
     score: float = Field(ge=0.0, le=1.0)
