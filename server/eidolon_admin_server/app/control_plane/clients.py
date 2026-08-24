@@ -23,11 +23,14 @@ from pydantic import BaseModel, ValidationError
 from .contracts import (
     ForgetOutcome,
     ForgetPreview,
+    ConversationRows,
     MemoryAudience,
     MemoryBrowse,
     MemoryEntries,
     MemoryExport,
     PersonaChapter,
+    TaskRow,
+    TaskRows,
     PersonaTimeline,
     CompanionIdentity,
     CompanionProvision,
@@ -1086,6 +1089,151 @@ class MemoryRecollectionsClient:
                 retryable=True,
             )
         return url
+
+
+class AgentActivityClient:
+    """What a Companion has been asked and what it is doing about it.
+
+    The Agent owns both facts and its own task state machine; this reads them and
+    relays the two actions. Nothing here mirrors a task: a status this process
+    stored would be a second answer to "is it done", and the wrong one every time
+    the runtime moved while nobody was looking.
+
+    Reached at a configured loopback address rather than through the service
+    directory, which today publishes only the Agent's gRPC endpoint for runtime
+    traffic. Same shape as the memory supervisor client for the same reason —
+    when the Agent declares an HTTP authority endpoint, this constructor is the
+    one place that changes.
+
+    The credential is required rather than optional: this surface holds every
+    Owner's conversation text, and a Host that has none should say so rather than
+    send an unauthenticated read that will be refused anyway. The failure then
+    names the missing credential instead of looking like the Agent being down.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        client: httpx.AsyncClient,
+        timeout_seconds: float,
+        service_token: str,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._client = client
+        self._timeout = timeout_seconds
+        self._service_token = service_token
+
+    async def list_conversations(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int,
+        before: str | None = None,
+    ) -> ConversationRows:
+        params: dict[str, str] = {
+            "owner_id": owner_id,
+            "companion_id": companion_id,
+            "limit": str(limit),
+        }
+        if before:
+            # Passed through untouched in both directions: the page boundary
+            # belongs to the runtime that built it.
+            params["before"] = before
+        response = await self._call("GET", "/conversations", params=params)
+        return _parse("agent", response, ConversationRows)
+
+    async def list_tasks(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int,
+        status: str | None = None,
+        before: str | None = None,
+    ) -> TaskRows:
+        params: dict[str, str] = {
+            "owner_id": owner_id,
+            "companion_id": companion_id,
+            "limit": str(limit),
+        }
+        if status:
+            params["status"] = status
+        if before:
+            params["before"] = before
+        response = await self._call("GET", "/long-tasks", params=params)
+        return _parse("agent", response, TaskRows)
+
+    async def get_task(self, *, owner_id: str, task_id: str) -> TaskRow:
+        """One task, and a check that it is this Owner's.
+
+        The runtime's detail route takes no Owner — it is keyed on the task id
+        alone — so the ownership check happens here, against the ``owner_id`` the
+        row itself carries. Compared rather than trusted: this is the one read on
+        this surface where the producer cannot do it for us.
+        """
+
+        response = await self._call(
+            "GET", f"/long-tasks/{quote(task_id, safe='')}", params=None
+        )
+        row = _parse("agent", response, TaskRow)
+        if row.owner_id != owner_id:
+            raise AuthorityFailure(
+                "agent",
+                "not_found",
+                "task not found",
+                404,
+                retryable=False,
+            )
+        return row
+
+    async def cancel_task(self, *, owner_id: str, task_id: str) -> TaskRow:
+        response = await self._call(
+            "POST",
+            f"/long-tasks/{quote(task_id, safe='')}/cancel",
+            params={"owner_id": owner_id},
+        )
+        return _parse("agent", response, TaskRow)
+
+    async def retry_task(self, *, owner_id: str, task_id: str) -> TaskRow:
+        response = await self._call(
+            "POST",
+            f"/long-tasks/{quote(task_id, safe='')}/retry",
+            params={"owner_id": owner_id},
+        )
+        return _parse("agent", response, TaskRow)
+
+    async def _call(
+        self,
+        method: str,
+        leaf: str,
+        *,
+        params: dict[str, str] | None,
+    ):
+        """One route of the Agent's admin surface, with this Host's credential.
+
+        Shared so the credential check happens the same way for every read and
+        both actions — a second copy is how one of them ends up sending nothing.
+        """
+
+        if not self._service_token:
+            raise AuthorityFailure(
+                "agent",
+                "configuration",
+                "Admin Agent service credential is not configured",
+                503,
+                retryable=False,
+            )
+        return await _request(
+            "agent",
+            self._client,
+            method,
+            f"{self._base_url}/api/admin{leaf}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._service_token}"},
+            params=params,
+        )
 
 
 class HubManagementClient:

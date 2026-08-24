@@ -22,6 +22,7 @@ from .clients import (
     DataWorkspaceAuthorityClient,
     HubManagementClient,
     KernelMountClient,
+    AgentActivityClient,
     MemoryRecollectionsClient,
     MemorySupervisorClient,
 )
@@ -59,6 +60,7 @@ class ControlPlaneService:
         hub: HubManagementClient,
         kernel: KernelMountClient,
         memory: MemoryRecollectionsClient,
+        activity: AgentActivityClient,
         memory_supervisor: MemorySupervisorClient | None = None,
         hub_credentials: HubAdminCredentialIssuer | None = None,
         admission_intents=None,
@@ -71,6 +73,7 @@ class ControlPlaneService:
         self.hub = hub
         self.kernel = kernel
         self.memory = memory
+        self.activity = activity
         self.memory_supervisor = memory_supervisor
         self.hub_credentials = hub_credentials
         self.admission_intents = (
@@ -127,6 +130,12 @@ class ControlPlaneService:
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
                 service_token=settings.memory_api_service_token,
+            ),
+            activity=AgentActivityClient(
+                base_url=settings.agent_admin_url,
+                client=http_client,
+                timeout_seconds=settings.authority_timeout_seconds,
+                service_token=settings.agent_admin_api_token,
             ),
             memory_supervisor=MemorySupervisorClient(
                 base_url=settings.memory_supervisor_url,

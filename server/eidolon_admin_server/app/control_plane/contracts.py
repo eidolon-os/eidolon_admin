@@ -312,6 +312,76 @@ class MemoryAudience(StrictModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class ConsumedModel(BaseModel):
+    """A producer's answer, read narrowly on purpose.
+
+    Every other consumed model here is strict — an unknown field is a parse
+    failure, which is what we want when the producer publishes a contract this
+    surface mirrors field for field. The Agent's admin API is different: it is
+    also a debugging surface, and its rows carry thirty-odd fields of latency,
+    tokens, model names, worker leases and provider payloads. Refusing to parse
+    because it grew a new debug field would take down a person's page for a
+    reason that has nothing to do with them.
+
+    So this one ignores what it was not asked for. The narrowing *is* the
+    projection: what a person sees is chosen here, not by whatever the runtime
+    happened to record.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+
+class ConversationRow(ConsumedModel):
+    """One conversation, as the runtime holds it."""
+
+    conversation_id: str = Field(min_length=1, max_length=64)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str = Field(default="", max_length=64)
+    title: str | None = Field(default=None, max_length=512)
+    status: str = Field(default="", max_length=32)
+    started_at: str | None = Field(default=None, max_length=64)
+    updated_at: str | None = Field(default=None, max_length=64)
+    ended_at: str | None = Field(default=None, max_length=64)
+
+
+class ConversationRows(ConsumedModel):
+    conversations: tuple[ConversationRow, ...] = ()
+    #: The runtime's keyset cursor — an instant, passed back untouched. Read by
+    #: nothing here: what it means is the producer's business.
+    next_before: str | None = Field(default=None, max_length=64)
+
+
+class TaskRow(ConsumedModel):
+    """One long task, as the runtime holds it.
+
+    ``status`` is a plain string rather than a Literal deliberately. The
+    vocabulary is the Agent's, it has nine values today, and a consumer that
+    refused an unfamiliar one would turn a runtime that grew a state into a page
+    that cannot be opened.
+    """
+
+    task_id: str = Field(min_length=1, max_length=64)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str = Field(default="", max_length=64)
+    status: str = Field(min_length=1, max_length=32)
+    task: str = Field(default="", max_length=8192)
+    task_type: str = Field(default="", max_length=64)
+    urgency: str = Field(default="", max_length=32)
+    expected_output: str | None = Field(default=None, max_length=4096)
+    progress_summary: str | None = Field(default=None, max_length=8192)
+    result_text: str | None = Field(default=None, max_length=65536)
+    error_code: str | None = Field(default=None, max_length=128)
+    error_message: str | None = Field(default=None, max_length=4096)
+    created_at: str | None = Field(default=None, max_length=64)
+    updated_at: str | None = Field(default=None, max_length=64)
+    completed_at: str | None = Field(default=None, max_length=64)
+
+
+class TaskRows(ConsumedModel):
+    tasks: tuple[TaskRow, ...] = ()
+    next_before: str | None = Field(default=None, max_length=64)
+
+
 class PersonaChapter(StrictModel):
     genome_id: str = Field(min_length=1, max_length=64)
     version: int = Field(ge=1)

@@ -184,6 +184,19 @@ class Settings(BaseSettings):
     #: refused anyway — the failure then names the missing credential instead of
     #: looking like memory being down.
     memory_api_service_token: str = ""
+    #: Where the Agent's admin surface answers. A configured loopback address
+    #: rather than a directory lookup: the service directory publishes the
+    #: Agent's gRPC endpoint for runtime traffic and no HTTP one, and this is the
+    #: same shape the memory supervisor is reached at.
+    agent_admin_url: str = "http://127.0.0.1:8081"
+    #: The credential that surface requires. Read from the **unprefixed**
+    #: variable, unlike every other setting here, because the service registry
+    #: names this exact one (``config/services.yaml``, agent entry) and Mission
+    #: Control presents it from there. One secret with two names is how the two
+    #: come to disagree on a Host where only one was set.
+    agent_admin_api_token: str = Field(
+        default="", validation_alias="EIDOLON_AGENT_ADMIN_API_TOKEN"
+    )
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     authority_timeout_seconds: float = Field(default=3.0, gt=0, le=30)

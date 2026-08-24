@@ -24,6 +24,13 @@ from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
 from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
+from eidolon_admin_server.app.management.activity import (
+    cancel_task,
+    read_conversations,
+    read_task,
+    read_tasks,
+    retry_task,
+)
 from eidolon_admin_server.app.management.persona import read_history, restore_chapter
 from eidolon_admin_server.app.management.recollecting import recall
 from eidolon_admin_server.app.management.roster import (
@@ -193,6 +200,61 @@ class MemoryDayInternal(BaseModel):
     more_in_window: bool
     undated_count: int = Field(ge=0)
     truncated: bool
+
+
+class ConversationInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str = Field(min_length=1, max_length=64)
+    #: Empty when nothing named it. A title composed here would be this layer
+    #: summarising someone's conversation.
+    title: str = Field(default="", max_length=512)
+    started_at: str = Field(default="", max_length=64)
+    updated_at: str = Field(default="", max_length=64)
+    #: Absent while it has not ended — which is not the same as ended at an
+    #: unknown time.
+    ended_at: str | None = Field(default=None, max_length=64)
+
+
+class ConversationPageInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.conversations"] = "companion.conversations"
+    companion_id: str = Field(min_length=1, max_length=64)
+    conversations: list[ConversationInternal]
+    next_cursor: str | None = Field(default=None, max_length=256)
+
+
+class TaskInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=64)
+    #: The runtime's word, relayed rather than narrowed: the vocabulary is the
+    #: Agent's, and a state this release has not heard of must not make a page
+    #: unopenable.
+    status: str = Field(min_length=1, max_length=32)
+    asked: str = Field(default="", max_length=8192)
+    kind: str = Field(default="", max_length=64)
+    urgency: str = Field(default="", max_length=32)
+    expected_output: str = Field(default="", max_length=4096)
+    progress: str = Field(default="", max_length=8192)
+    result: str = Field(default="", max_length=65536)
+    error_code: str = Field(default="", max_length=128)
+    error_message: str = Field(default="", max_length=4096)
+    created_at: str = Field(default="", max_length=64)
+    updated_at: str = Field(default="", max_length=64)
+    completed_at: str | None = Field(default=None, max_length=64)
+
+
+class TaskPageInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.tasks"] = "companion.tasks"
+    companion_id: str = Field(min_length=1, max_length=64)
+    tasks: list[TaskInternal]
+    next_cursor: str | None = Field(default=None, max_length=256)
 
 
 class PersonaChapterInternal(BaseModel):
@@ -645,6 +707,182 @@ async def put_memory_entry_audience(
         entry_id=result.entry_id,
         companion_id=result.companion_id,
         status=result.status,
+    )
+
+
+@router.get(
+    "/companions/{companion_id}/conversations",
+    response_model=ConversationPageInternal,
+)
+async def get_companion_conversations(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> ConversationPageInternal:
+    """When this Companion and its Owner talked, and what it was called.
+
+    No message bodies: the runtime keeps those per turn and its turn rows carry
+    none, so a list here would be timestamps with nothing said.
+    """
+    try:
+        page = await read_conversations(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            limit=limit,
+            cursor=cursor,
+            activity=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return ConversationPageInternal(
+        companion_id=companion_id,
+        conversations=[
+            ConversationInternal(
+                conversation_id=row.conversation_id,
+                title=row.title,
+                started_at=row.started_at,
+                updated_at=row.updated_at,
+                ended_at=row.ended_at,
+            )
+            for row in page.conversations
+        ],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.get("/companions/{companion_id}/tasks", response_model=TaskPageInternal)
+async def get_companion_tasks(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    limit: int | None = None,
+    status: str | None = None,
+    cursor: str | None = None,
+) -> TaskPageInternal:
+    """What this Companion was asked to do, and how far it has got."""
+    try:
+        page = await read_tasks(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            limit=limit,
+            status=status,
+            cursor=cursor,
+            activity=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _task_page_internal(companion_id, page)
+
+
+@router.get(
+    "/companions/{companion_id}/tasks/{task_id}",
+    response_model=TaskInternal,
+)
+async def get_companion_task(
+    request: Request,
+    companion_id: str,
+    task_id: str,
+    owner_id: str,
+) -> TaskInternal:
+    """One task. ``companion_id`` is in the path for the shape of the resource;
+    the Owner is what the check is made against, because the runtime keys a task
+    by its id alone."""
+    try:
+        task = await read_task(
+            owner_id=owner_id,
+            task_id=task_id,
+            activity=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _task_internal(task)
+
+
+@router.post(
+    "/companions/{companion_id}/tasks/{task_id}/cancel",
+    response_model=TaskInternal,
+)
+async def post_task_cancel(
+    request: Request,
+    companion_id: str,
+    task_id: str,
+    owner_id: str,
+) -> TaskInternal:
+    """Stop it, and answer with what the runtime says it became.
+
+    ``POST`` rather than ``PUT``: this is not a desired end state a retry can
+    repeat blindly. Whether a task may be cancelled depends on what it is doing
+    *now*, and that rule lives in the runtime — including its refusal when the
+    task finished between the page being read and the button being pressed.
+    """
+    try:
+        task = await cancel_task(
+            owner_id=owner_id,
+            task_id=task_id,
+            activity=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _task_internal(task)
+
+
+@router.post(
+    "/companions/{companion_id}/tasks/{task_id}/retry",
+    response_model=TaskInternal,
+)
+async def post_task_retry(
+    request: Request,
+    companion_id: str,
+    task_id: str,
+    owner_id: str,
+) -> TaskInternal:
+    """Ask for it again. The runtime decides whether that is possible."""
+    try:
+        task = await retry_task(
+            owner_id=owner_id,
+            task_id=task_id,
+            activity=request.app.state.control_plane.activity,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _task_internal(task)
+
+
+def _task_internal(task) -> TaskInternal:
+    return TaskInternal(
+        task_id=task.task_id,
+        status=task.status,
+        asked=task.asked,
+        kind=task.kind,
+        urgency=task.urgency,
+        expected_output=task.expected_output,
+        progress=task.progress,
+        result=task.result,
+        error_code=task.error_code,
+        error_message=task.error_message,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        completed_at=task.completed_at,
+    )
+
+
+def _task_page_internal(companion_id: str, page) -> TaskPageInternal:
+    return TaskPageInternal(
+        companion_id=companion_id,
+        tasks=[_task_internal(task) for task in page.tasks],
+        next_cursor=page.next_cursor,
     )
 
 

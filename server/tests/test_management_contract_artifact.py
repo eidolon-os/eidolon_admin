@@ -103,7 +103,7 @@ def test_the_contract_carries_only_the_management_surface() -> None:
 #: that names a **subject**: whose data this is. The Owner comes from the
 #: authenticated session, and that is the whole point of the assertion below.
 #:
-#: These five shape an answer about a subject the session already fixed:
+#: These six shape an answer about a subject the session already fixed:
 ALLOWED_QUERY_PARAMETERS = {
     # A position the Host issued. Reading it would make its page boundary part
     # of the client.
@@ -119,6 +119,11 @@ ALLOWED_QUERY_PARAMETERS = {
     # How much of the answer to return. Bounded by the Host regardless of what
     # is asked for.
     "limit",
+    # Which tasks, by the state the runtime put them in. A filter over the
+    # answer, like ``since`` — and one this surface must not interpret: the
+    # vocabulary is the Agent's, so an unfamiliar value is a page with nothing in
+    # it rather than a rejected request.
+    "status",
     # The question itself. The one entry that is content rather than shape, and
     # it belongs for the same reason the others do: it says what is being asked
     # *about*, never *whose* memory is being asked. A search text cannot reach

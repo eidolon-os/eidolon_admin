@@ -50,6 +50,21 @@ export interface CompanionSummaryView {
   updated_at: string
 }
 
+export interface ConversationPageView {
+  companion_id: string
+  contract_version?: "1"
+  conversations: Array<ConversationView>
+  next_cursor?: string | null
+}
+
+export interface ConversationView {
+  conversation_id: string
+  ended_at?: string | null
+  started_at?: string
+  title?: string
+  updated_at?: string
+}
+
 export interface DefaultCompanionRequest {
   companion_id: string
   expected_revision: number
@@ -214,6 +229,29 @@ export interface RecollectionsView {
   recollections: Array<RecollectionView>
 }
 
+export interface TaskPageView {
+  companion_id: string
+  contract_version?: "1"
+  next_cursor?: string | null
+  tasks: Array<TaskView>
+}
+
+export interface TaskView {
+  asked?: string
+  completed_at?: string | null
+  created_at?: string
+  error_code?: string
+  error_message?: string
+  expected_output?: string
+  kind?: string
+  progress?: string
+  result?: string
+  status: string
+  task_id: string
+  updated_at?: string
+  urgency?: string
+}
+
 export interface ValidationError {
   ctx?: Record<string, unknown>
   input?: unknown
@@ -227,8 +265,13 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions': CompanionRosterView
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
+  'GET /api/management/v1/companions/{companion_id}/conversations': ConversationPageView
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
+  'GET /api/management/v1/companions/{companion_id}/tasks': TaskPageView
+  'GET /api/management/v1/companions/{companion_id}/tasks/{task_id}': TaskView
+  'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/cancel': TaskView
+  'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/retry': TaskView
   'GET /api/management/v1/context': ManagementContextView
   'GET /api/management/v1/memory/entries': MemoryDayView
   'PUT /api/management/v1/memory/entries/{entry_id}/audience': MemoryAudienceView

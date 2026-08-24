@@ -297,6 +297,77 @@ class _Backend:
             "status": "applied" if companion_id else "accepted",
         }
 
+    async def conversations(
+        self, *, owner_id: str, companion_id: str, limit: int | None, cursor: str | None
+    ) -> dict:
+        self.asked.append((owner_id, companion_id, limit, cursor))
+        return {
+            "contract_version": "1",
+            "operation": "companion.conversations",
+            "companion_id": companion_id,
+            "conversations": [
+                {
+                    "conversation_id": "c-1",
+                    "title": "周末计划",
+                    "started_at": "2026-08-24T08:00:00+00:00",
+                    "updated_at": "2026-08-24T09:00:00+00:00",
+                    "ended_at": None,
+                }
+            ],
+            "next_cursor": "2026-08-24T08:00:00+00:00",
+        }
+
+    async def tasks(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int | None,
+        status: str | None,
+        cursor: str | None,
+    ) -> dict:
+        self.asked.append((owner_id, companion_id, limit, status, cursor))
+        return {
+            "contract_version": "1",
+            "operation": "companion.tasks",
+            "companion_id": companion_id,
+            "tasks": [self._task()],
+            "next_cursor": None,
+        }
+
+    async def task(self, *, owner_id: str, companion_id: str, task_id: str) -> dict:
+        self.asked.append((owner_id, companion_id, task_id))
+        if task_id == "j-theirs":
+            raise ManagementBackendError("task not found", status_code=404)
+        return self._task()
+
+    async def task_action(
+        self, *, owner_id: str, companion_id: str, task_id: str, action: str
+    ) -> dict:
+        self.asked.append((owner_id, companion_id, task_id, action))
+        if task_id == "j-done":
+            raise ManagementBackendError(
+                "long task already finished as succeeded", status_code=409
+            )
+        return self._task(status="cancelled" if action == "cancel" else "accepted")
+
+    def _task(self, *, status: str = "running") -> dict:
+        return {
+            "task_id": "j-1",
+            "status": status,
+            "asked": "帮我查一下周末的天气",
+            "kind": "research",
+            "urgency": "normal",
+            "expected_output": "一句话",
+            "progress": "在看了",
+            "result": "",
+            "error_code": "",
+            "error_message": "",
+            "created_at": "2026-08-24T09:00:00+00:00",
+            "updated_at": "2026-08-24T09:05:00+00:00",
+            "completed_at": None,
+        }
+
     async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
         self.asked.append((owner_id, companion_id))
         if companion_id == "companion-elsewhere":
@@ -1495,3 +1566,133 @@ async def test_another_owners_persona_is_not_readable_or_restorable(
 
     assert read.status_code == 404
     assert wrote.status_code == 404
+
+
+# --- 它做了什么 -------------------------------------------------------------
+
+
+def _conversations(companion_id: str = "companion-a") -> str:
+    return f"/api/management/v1/companions/{companion_id}/conversations"
+
+
+def _tasks(companion_id: str = "companion-a") -> str:
+    return f"/api/management/v1/companions/{companion_id}/tasks"
+
+
+async def test_when_we_talked_is_visible_and_says_nothing_about_what_was_said(
+    tmp_path, monkeypatch
+) -> None:
+    """The runtime keeps no words on a conversation row, so this page does not
+    imply it has any."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get(_conversations())
+        headers = await _authenticate(client)
+        answered = await client.get(_conversations(), headers=headers)
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", "companion-a", None, None)]
+    body = answered.json()
+    assert body["conversations"][0]["title"] == "周末计划"
+    assert "turns" not in answered.text
+    # The runtime's cursor, forwarded as received.
+    assert body["next_cursor"] == "2026-08-24T08:00:00+00:00"
+
+
+async def test_what_it_was_asked_to_do_is_visible(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (await client.get(_tasks(), headers=headers)).json()
+
+    assert body["tasks"][0]["asked"] == "帮我查一下周末的天气"
+    assert body["tasks"][0]["progress"] == "在看了"
+    # Nothing about how the runtime runs it: worker leases and workspace
+    # directories are its business, not what someone asked for.
+    assert set(body["tasks"][0]) == {
+        "task_id",
+        "status",
+        "asked",
+        "kind",
+        "urgency",
+        "expected_output",
+        "progress",
+        "result",
+        "error_code",
+        "error_message",
+        "created_at",
+        "updated_at",
+        "completed_at",
+    }
+
+
+async def test_a_page_may_be_narrowed_by_state_and_walked_by_cursor(
+    tmp_path, monkeypatch
+) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        await client.get(
+            _tasks(),
+            params={"limit": 5, "status": "running", "cursor": "2026-08-24T09:00:00+00:00"},
+            headers=headers,
+        )
+
+    assert backend.asked == [
+        ("owner-1", "companion-a", 5, "running", "2026-08-24T09:00:00+00:00")
+    ]
+
+
+async def test_stopping_a_task_reports_what_the_host_says_it_became(
+    tmp_path, monkeypatch
+) -> None:
+    """Not what the client hoped: the task's states belong to the runtime."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        cancelled = await client.post(f"{_tasks()}/j-1/cancel", headers=headers)
+        retried = await client.post(f"{_tasks()}/j-1/retry", headers=headers)
+
+    assert cancelled.json()["status"] == "cancelled"
+    assert retried.json()["status"] == "accepted"
+    assert backend.asked[-2:] == [
+        ("owner-1", "companion-a", "j-1", "cancel"),
+        ("owner-1", "companion-a", "j-1", "retry"),
+    ]
+
+
+async def test_a_runtime_refusal_reaches_the_client_as_a_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """It finished while the page was open. Reporting that as success is the one
+    outcome nobody could detect."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.post(f"{_tasks()}/j-done/cancel", headers=headers)
+
+    assert answered.status_code == 409
+
+
+async def test_another_owners_task_is_not_readable_here_either(
+    tmp_path, monkeypatch
+) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.get(f"{_tasks()}/j-theirs", headers=headers)
+
+    assert answered.status_code == 404

@@ -129,7 +129,7 @@ class Hub:
 def _service(hub, *, store=None):
     return ControlPlaneService(
         directory=object(), data=object(), workspace=object(), hub=hub,
-        kernel=object(), memory=object(), admission_intents=store,
+        kernel=object(), memory=object(), activity=object(), admission_intents=store,
         hub_credentials=HubAdminCredentialIssuer(secret=b"x" * 32, ttl_seconds=60),
     )
 

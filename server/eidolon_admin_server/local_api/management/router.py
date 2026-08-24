@@ -324,6 +324,71 @@ class MemoryCopyView(BaseModel):
     truncated: bool
 
 
+class ConversationView(BaseModel):
+    """One time we talked, and what it was called."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    conversation_id: str = Field(min_length=1, max_length=64)
+    #: Empty when nothing named it, and it stays empty: a title made up here
+    #: would be a screen summarising my conversation for me.
+    title: str = Field(default="", max_length=512)
+    started_at: str = Field(default="", max_length=64)
+    updated_at: str = Field(default="", max_length=64)
+    #: Absent while it is still open, which is not the same as ended at a time
+    #: nobody recorded.
+    ended_at: str | None = Field(default=None, max_length=64)
+
+
+class ConversationPageView(BaseModel):
+    """When this Eidolon and I talked. Not what was said — that is per turn, and
+    the Host keeps no words on these rows."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    conversations: list[ConversationView]
+    #: Opaque: sent back as received to ask for the next page.
+    next_cursor: str | None = Field(default=None, max_length=256)
+
+
+class TaskView(BaseModel):
+    """Something I asked it to do, and how far it has got."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=64)
+    #: The Host's word for where this task is. Not an enum here on purpose: the
+    #: runtime owns the vocabulary, and a state this app has not heard of must
+    #: not make the page unopenable.
+    status: str = Field(min_length=1, max_length=32)
+    asked: str = Field(default="", max_length=8192)
+    kind: str = Field(default="", max_length=64)
+    urgency: str = Field(default="", max_length=32)
+    expected_output: str = Field(default="", max_length=4096)
+    #: What it has said about its own progress. Empty until it says something —
+    #: which is different from being stuck.
+    progress: str = Field(default="", max_length=8192)
+    #: The answer, when there is one. A task can finish without producing one.
+    result: str = Field(default="", max_length=65536)
+    #: Why it stopped badly. A code for matching, a message for reading.
+    error_code: str = Field(default="", max_length=128)
+    error_message: str = Field(default="", max_length=4096)
+    created_at: str = Field(default="", max_length=64)
+    updated_at: str = Field(default="", max_length=64)
+    completed_at: str | None = Field(default=None, max_length=64)
+
+
+class TaskPageView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    tasks: list[TaskView]
+    next_cursor: str | None = Field(default=None, max_length=256)
+
+
 class PersonaChapterView(BaseModel):
     """One thing my Eidolon has been.
 
@@ -528,6 +593,33 @@ class ManagementBackendPort(Protocol):
         self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
 
+    async def conversations(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict: ...
+
+    async def tasks(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int | None,
+        status: str | None,
+        cursor: str | None,
+    ) -> dict: ...
+
+    async def task(
+        self, *, owner_id: str, companion_id: str, task_id: str
+    ) -> dict: ...
+
+    async def task_action(
+        self, *, owner_id: str, companion_id: str, task_id: str, action: str
+    ) -> dict: ...
+
     async def persona_history(
         self, *, owner_id: str, companion_id: str
     ) -> dict: ...
@@ -551,6 +643,14 @@ class ManagementBackendPort(Protocol):
     async def forget_confirm(
         self, *, owner_id: str, confirmation_token: str
     ) -> dict: ...
+
+
+def _task_page_view(answer: dict) -> TaskPageView:
+    return TaskPageView(
+        companion_id=answer["companion_id"],
+        tasks=[TaskView(**row) for row in answer["tasks"]],
+        next_cursor=answer.get("next_cursor"),
+    )
 
 
 def _persona_history_view(answer: dict) -> PersonaHistoryView:
@@ -817,6 +917,120 @@ def register_management_routes(
             companion_id=answer.get("companion_id", ""),
             status=answer["status"],
         )
+
+    @router.get(
+        "/companions/{companion_id}/conversations",
+        response_model=ConversationPageView,
+    )
+    async def get_companion_conversations(
+        companion_id: str,
+        limit: int | None = Query(default=None, ge=1, le=100),
+        cursor: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ConversationPageView:
+        """When this Eidolon and I talked."""
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.conversations(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                limit=limit,
+                cursor=cursor,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return ConversationPageView(
+            companion_id=answer["companion_id"],
+            conversations=[
+                ConversationView(**row) for row in answer["conversations"]
+            ],
+            next_cursor=answer.get("next_cursor"),
+        )
+
+    @router.get("/companions/{companion_id}/tasks", response_model=TaskPageView)
+    async def get_companion_tasks(
+        companion_id: str,
+        limit: int | None = Query(default=None, ge=1, le=100),
+        status: str | None = None,
+        cursor: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> TaskPageView:
+        """What I asked it to do, and how far it has got."""
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.tasks(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                limit=limit,
+                status=status,
+                cursor=cursor,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return _task_page_view(answer)
+
+    @router.get(
+        "/companions/{companion_id}/tasks/{task_id}", response_model=TaskView
+    )
+    async def get_companion_task(
+        companion_id: str,
+        task_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> TaskView:
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.task(
+                owner_id=owner_id, companion_id=companion_id, task_id=task_id
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return TaskView(**answer)
+
+    @router.post(
+        "/companions/{companion_id}/tasks/{task_id}/cancel", response_model=TaskView
+    )
+    async def post_companion_task_cancel(
+        companion_id: str,
+        task_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> TaskView:
+        """别做了 — stop it.
+
+        What comes back is what the Host says the task became, not what this app
+        hoped: the task's states belong to the runtime that runs it, and it may
+        refuse because the thing finished while I was looking at the page.
+        """
+        return await _task_action(companion_id, task_id, "cancel", authorization)
+
+    @router.post(
+        "/companions/{companion_id}/tasks/{task_id}/retry", response_model=TaskView
+    )
+    async def post_companion_task_retry(
+        companion_id: str,
+        task_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> TaskView:
+        """再试一次 — ask for it again. The Host decides whether it can."""
+
+        return await _task_action(companion_id, task_id, "retry", authorization)
+
+    async def _task_action(
+        companion_id: str,
+        task_id: str,
+        action: str,
+        authorization: str | None,
+    ) -> TaskView:
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.task_action(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                task_id=task_id,
+                action=action,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return TaskView(**answer)
 
     @router.get(
         "/companions/{companion_id}/persona-history",

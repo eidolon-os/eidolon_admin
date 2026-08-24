@@ -103,6 +103,67 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/export", params)
 
+    async def conversations(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self._get(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/conversations",
+            params,
+        )
+
+    async def tasks(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int | None,
+        status: str | None,
+        cursor: str | None,
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if status is not None:
+            params["status"] = status
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self._get(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/tasks",
+            params,
+        )
+
+    async def task(self, *, owner_id: str, companion_id: str, task_id: str) -> dict:
+        return await self._get(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/tasks/{quote(task_id, safe='')}",
+            {"owner_id": owner_id},
+        )
+
+    async def task_action(
+        self, *, owner_id: str, companion_id: str, task_id: str, action: str
+    ) -> dict:
+        # ``_put`` with an explicit method: the one helper that carries a body
+        # also carries the verb, and a task action has no body to send.
+        return await self._put(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/tasks/{quote(task_id, safe='')}/{action}",
+            {"owner_id": owner_id},
+            {},
+            method="POST",
+        )
+
     async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/companions/"
