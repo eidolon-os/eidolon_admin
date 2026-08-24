@@ -20,6 +20,7 @@ SERVER = Path(__file__).resolve().parents[1]
 CONTRACT = SERVER.parent / "contracts/management/v1"
 GENERATOR = CONTRACT / "generate.py"
 TYPESCRIPT_GENERATOR = CONTRACT / "generate_typescript.py"
+DART_GENERATOR = CONTRACT / "generate_dart.py"
 ARTIFACT = CONTRACT / "management-v1.openapi.json"
 
 
@@ -50,6 +51,25 @@ def test_the_generated_typescript_still_matches_the_contract() -> None:
     """
     result = subprocess.run(
         [sys.executable, str(TYPESCRIPT_GENERATOR), "--check"],
+        cwd=SERVER,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_generated_dart_still_matches_the_contract() -> None:
+    """The mobile client's types, gated like the other two artifacts.
+
+    Emitted into the mobile repository, following the precedent of the Device
+    Foundation generator, which writes its Dart and C++ bindings into the client
+    repos that consume them. When that checkout is absent the generator says so
+    and passes: a repository cannot verify a file it does not contain, and
+    failing here would only teach people to ignore this test.
+    """
+    result = subprocess.run(
+        [sys.executable, str(DART_GENERATOR), "--check"],
         cwd=SERVER,
         text=True,
         capture_output=True,
