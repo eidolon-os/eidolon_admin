@@ -10,7 +10,7 @@ vi.mock('../src/api/client', () => ({
   },
 }))
 
-describe('api/controlPlane.ts', () => {
+describe('api/operatorPlane.ts', () => {
   beforeEach(() => {
     getMock.mockReset()
     postMock.mockReset()
@@ -18,12 +18,12 @@ describe('api/controlPlane.ts', () => {
 
   it('encodes owner scope and forwards the operator-owned Hub credential', async () => {
     getMock.mockResolvedValueOnce({ data: { operation: 'admin.owner-device-inventory' } })
-    const { getOwnerInventory } = await import('../src/api/controlPlane')
+    const { getOwnerInventory } = await import('../src/api/operatorPlane')
 
     await getOwnerInventory('owner one/二', '  Bearer operator  ')
 
     expect(getMock).toHaveBeenCalledWith(
-      '/control-plane/v1/owners/owner%20one%2F%E4%BA%8C/inventory',
+      '/operator/v1/owners/owner%20one%2F%E4%BA%8C/inventory',
       {
         headers: { Authorization: 'Bearer operator' },
         suppressToast: true,
@@ -33,7 +33,7 @@ describe('api/controlPlane.ts', () => {
 
   it('submits the stable workflow request without rewriting its CAS fields', async () => {
     postMock.mockResolvedValueOnce({ data: { outcome: 'retry_required' } })
-    const { admitDevice } = await import('../src/api/controlPlane')
+    const { admitDevice } = await import('../src/api/operatorPlane')
     const input = {
       request_id: 'operator-1',
       owner_id: 'owner-1',
@@ -46,7 +46,7 @@ describe('api/controlPlane.ts', () => {
     const result = await admitDevice(input, 'Bearer operator')
 
     expect(postMock).toHaveBeenCalledWith(
-      '/control-plane/v1/workflows/device-admission',
+      '/operator/v1/workflows/device-admission',
       input,
       {
         headers: { Authorization: 'Bearer operator' },

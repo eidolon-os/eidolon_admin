@@ -21,6 +21,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     WorkflowStep,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
+from eidolon_admin_server.app.settings import Settings
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
@@ -256,12 +257,31 @@ def _workspace_operation(operation_id: str, owner_name: str) -> WorkspaceOperati
     )
 
 
+#: The internal plane requires this Host's service credential on every route
+#: (see test_service_plane_authentication.py). These tests are about what the
+#: routes *answer*, so they present the credential and say nothing about it.
+SERVICE_TOKEN = "local-api-secret"
+SERVICE_HEADERS = {"Authorization": f"Bearer {SERVICE_TOKEN}"}
+
+
 async def request(app, method: str, path: str, **kwargs) -> httpx.Response:
     app.state.control_plane = StubControlPlane()
+    return await authenticated_request(app, method, path, **kwargs)
+
+
+async def authenticated_request(app, method: str, path: str, **kwargs) -> httpx.Response:
+    """Call a service-plane route with a caller it accepts.
+
+    Kept separate from ``request`` so a test can install its own stub first;
+    both send the credential, because a test that forgot it would fail on
+    authentication and read as a broken contract.
+    """
+    app.state.settings = Settings(local_api_service_token=SERVICE_TOKEN)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
     ) as client:
-        return await client.request(method, path, **kwargs)
+        headers = {**SERVICE_HEADERS, **kwargs.pop("headers", {})}
+        return await client.request(method, path, headers=headers, **kwargs)
 
 
 async def test_capabilities_exposes_missing_producer_contracts(app) -> None:
@@ -292,18 +312,15 @@ async def test_data_not_found_is_not_rewritten_as_inactive(app) -> None:
         "data", "not_found", "companion not found", 404, 404
     )
     app.state.control_plane = control_plane
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
-    ) as client:
-        response = await client.get("/api/control-plane/v1/companions/missing")
+    response = await authenticated_request(
+        app, "GET", "/api/control-plane/v1/companions/missing"
+    )
 
     assert response.status_code == 404
     assert response.json()["detail"]["kind"] == "not_found"
 
 
 async def test_workspace_onboarding_requires_exact_local_api_credential(app) -> None:
-    from eidolon_admin_server.app.settings import Settings
-
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
     operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
@@ -351,8 +368,6 @@ async def test_workspace_onboarding_preserves_upstream_failure_semantics(
     failure: AuthorityFailure,
     expected_status: int,
 ) -> None:
-    from eidolon_admin_server.app.settings import Settings
-
     control_plane = StubControlPlane()
     control_plane.workspace_failure = failure
     app.state.control_plane = control_plane
@@ -373,8 +388,6 @@ async def test_workspace_onboarding_preserves_upstream_failure_semantics(
 async def test_owner_runtime_requires_local_api_credential_and_derives_owner_path(
     app,
 ) -> None:
-    from eidolon_admin_server.app.settings import Settings
-
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
     path = "/api/control-plane/v1/owners/owner-1/default-runtime-snapshot"
@@ -396,8 +409,6 @@ async def test_owner_runtime_requires_local_api_credential_and_derives_owner_pat
 async def test_owner_device_mounts_are_narrow_and_require_local_api_credential(
     app,
 ) -> None:
-    from eidolon_admin_server.app.settings import Settings
-
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
     path = "/api/control-plane/v1/owners/owner-1/device-mounts"
@@ -422,10 +433,9 @@ async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:
         "data", "unavailable", "authority unreachable", 503, retryable=True
     )
     app.state.control_plane = control_plane
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
-    ) as client:
-        response = await client.get("/api/control-plane/v1/companions/companion-1")
+    response = await authenticated_request(
+        app, "GET", "/api/control-plane/v1/companions/companion-1"
+    )
 
     assert response.status_code == 503
     assert response.json()["detail"]["kind"] == "unavailable"
@@ -436,7 +446,7 @@ async def test_inventory_preserves_forbidden_status(app) -> None:
     response = await request(
         app,
         "GET",
-        "/api/control-plane/v1/owners/owner-1/inventory",
+        "/api/operator/v1/owners/owner-1/inventory",
         headers={"Authorization": "Bearer wrong-scope"},
     )
     assert response.status_code == 403
@@ -447,7 +457,7 @@ async def test_partial_workflow_returns_202_with_explicit_state(app) -> None:
     response = await request(
         app,
         "POST",
-        "/api/control-plane/v1/workflows/device-admission",
+        "/api/operator/v1/workflows/device-admission",
         headers={"Authorization": "Bearer operator"},
         json={
             "request_id": "workflow-1",
@@ -470,7 +480,7 @@ async def test_non_retryable_partial_workflow_returns_conflict(app) -> None:
     response = await request(
         app,
         "POST",
-        "/api/control-plane/v1/workflows/device-admission",
+        "/api/operator/v1/workflows/device-admission",
         headers={"Authorization": "Bearer operator"},
         json={
             "request_id": "blocked",
@@ -487,8 +497,6 @@ async def test_non_retryable_partial_workflow_returns_conflict(app) -> None:
 async def test_local_approval_workflow_requires_service_auth_and_matching_device_id(
     app,
 ) -> None:
-    from eidolon_admin_server.app.settings import Settings
-
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
     path = "/api/control-plane/v1/local-device-admissions/device-1"
@@ -570,7 +578,7 @@ async def test_invalid_request_is_rejected_before_orchestration(app) -> None:
     response = await request(
         app,
         "POST",
-        "/api/control-plane/v1/workflows/device-admission",
+        "/api/operator/v1/workflows/device-admission",
         json={
             "request_id": "contains spaces",
             "owner_id": "owner-1",

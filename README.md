@@ -17,11 +17,21 @@ Web / CLI
 
 ## 当前业务能力
 
+**Internal Orchestration Plane** —— `/api/control-plane/v1/*`，**每一条路由都要求本机 Local API 服务凭据**（router 级依赖，不是各 handler 自己记得调用）。调用方只有 loopback 的 `eidolon-local-api`；浏览器不该出现在这里。
+
 - `GET /api/control-plane/v1/capabilities`：报告已支持及因生产者契约缺失而不可用的能力。
 - `GET /api/control-plane/v1/companions/{companion_id}`：通过 Data V2 的只读 Companion Authority 查询。
-- `GET /api/control-plane/v1/owners/{owner_id}/inventory`：并发聚合 Hub Device Directory 与 Kernel Mount 的瞬时读模型；每个来源保留独立状态和延迟。
-- `POST /api/control-plane/v1/workflows/device-admission`：按 `Hub approval -> Kernel Mount -> optional Companion Attachment` 编排。
-- `GET/PUT /api/control-plane/v1/workspace-onboarding/operations/{operation_id}`：仅供 Local API 使用的 Workspace onboarding 内部边界；以独立写凭证调用 Data Workspace Authority。
+- `GET/PUT /api/control-plane/v1/workspace-onboarding/operations/{operation_id}`：Workspace onboarding 内部边界；以独立写凭证调用 Data Workspace Authority。
+- 其余 Owner/Companion/persona/face/memory/device 读写见 OpenAPI。
+
+**Operator Plane** —— `/api/operator/v1/*`。这两条路由上的 `Authorization` **不是**调用方在证明自己是谁，而是操作员在页面里填入的 Hub 管理凭据，由本进程转发给下游。方向相反的同名 header 是它们不再和上面同处一个 router 的原因。
+
+- `GET /api/operator/v1/owners/{owner_id}/inventory`：并发聚合 Hub Device Directory 与 Kernel Mount 的瞬时读模型；每个来源保留独立状态和延迟。
+- `POST /api/operator/v1/workflows/device-admission`：按 `Hub approval -> Kernel Mount -> optional Companion Attachment` 编排。
+
+**Owner Management Plane** —— `/api/management/v1/*` 由 `eidolon-local-api` 对外提供；两个管理客户端都从 `contracts/management/v1/management-v1.openapi.json` 生成，不手写请求。
+
+进程存活探测用 `GET /healthz`：它只回答"composition 完成了"，不需要凭据，也不代表任何权威已就绪。
 
 设备接纳 workflow 要求调用方提供稳定 `request_id`。Admin 派生确定性的子 request ID，并把 CAS revision 传给 Kernel。它不是分布式事务：可重试的部分成功返回 HTTP 202、最后已提交阶段和 `retry-forward-same-request-id`；非重试冲突返回 `blocked/operator-action-required`。Admin 重启后由 Hub/Kernel 自有幂等记录恢复，不在本地复制权威状态。
 

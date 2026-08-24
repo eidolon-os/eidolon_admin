@@ -98,7 +98,11 @@ def test_the_owner_is_never_a_public_input() -> None:
 
     internal = (INTERNAL_MANAGEMENT / "router.py").read_text(encoding="utf-8")
     assert "owner_id: str," in internal
-    assert "_authorize_local_api" in internal
+    # That the internal ABI is credential-gated is asserted where it is true —
+    # against the mounted routes, in test_service_plane_authentication.py. This
+    # assertion used to name the helper that did the checking, which made a
+    # refactor that *strengthened* the check look like a regression.
+    assert "require_local_api_credential" in internal
 
 
 def test_capabilities_stay_false_until_a_slice_is_declared_closed() -> None:

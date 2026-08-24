@@ -343,18 +343,25 @@ async def test_full_http_stack_success_inventory_and_data_read(tmp_path: Path) -
         result = await call_admin(
             app,
             "POST",
-            "/api/control-plane/v1/workflows/device-admission",
+            "/api/operator/v1/workflows/device-admission",
             headers={"Authorization": "Bearer operator"},
             json=workflow_payload(),
         )
         inventory = await call_admin(
             app,
             "GET",
-            "/api/control-plane/v1/owners/owner-1/inventory",
+            "/api/operator/v1/owners/owner-1/inventory",
             headers={"Authorization": "Bearer operator"},
         )
         companion = await call_admin(
-            app, "GET", "/api/control-plane/v1/companions/companion-1"
+            app,
+            "GET",
+            "/api/control-plane/v1/companions/companion-1",
+            # The internal plane, so this is the caller proving it is the Local
+            # API — not the operator credential the two calls above forward to
+            # Hub. Same header, different meaning, which is why they are now on
+            # different planes.
+            headers={"Authorization": "Bearer local-api-token"},
         )
     finally:
         await app.state.control_plane.close()
@@ -413,7 +420,7 @@ async def test_partial_failure_retry_and_admin_restart_recovery(tmp_path: Path) 
     first = await call_admin(
         first_app,
         "POST",
-        "/api/control-plane/v1/workflows/device-admission",
+        "/api/operator/v1/workflows/device-admission",
         headers={"Authorization": "Bearer operator"},
         json=workflow_payload(),
     )
@@ -425,14 +432,14 @@ async def test_partial_failure_retry_and_admin_restart_recovery(tmp_path: Path) 
         recovered = await call_admin(
             second_app,
             "POST",
-            "/api/control-plane/v1/workflows/device-admission",
+            "/api/operator/v1/workflows/device-admission",
             headers={"Authorization": "Bearer operator"},
             json=workflow_payload(),
         )
         replayed = await call_admin(
             second_app,
             "POST",
-            "/api/control-plane/v1/workflows/device-admission",
+            "/api/operator/v1/workflows/device-admission",
             headers={"Authorization": "Bearer operator"},
             json=workflow_payload(),
         )
@@ -461,7 +468,7 @@ async def test_concurrent_duplicate_workflows_converge(tmp_path: Path) -> None:
                 call_admin(
                     app,
                     "POST",
-                    "/api/control-plane/v1/workflows/device-admission",
+                    "/api/operator/v1/workflows/device-admission",
                     headers={"Authorization": "Bearer operator"},
                     json=workflow_payload(),
                 )

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import hmac
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 
 from .contracts import (
@@ -31,10 +30,26 @@ from .contracts import (
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
+from eidolon_admin_server.app.service_auth import require_local_api_credential
+
 from .errors import AuthorityFailure
 from .service import ControlPlaneService
 
-router = APIRouter(prefix="/control-plane/v1", tags=["control-plane"])
+#: Every route mounted here requires the Local API service credential, and it
+#: is required *by the router* rather than by each handler. The reason is
+#: historical and worth keeping visible: this family used to authenticate per
+#: handler, 12 of 23 routes never called the check, and among them were the
+#: routes that rename an Owner and replace a Companion's face. Authentication
+#: that a new route can forget will eventually be forgotten.
+#:
+#: This is the internal orchestration plane (plan §3.1). No browser reaches it;
+#: the credential isolation the two-process split is bought with (§3.4.1) is
+#: only real if this boundary actually checks.
+router = APIRouter(
+    prefix="/control-plane/v1",
+    tags=["control-plane"],
+    dependencies=[Depends(require_local_api_credential)],
+)
 
 
 def _service(request: Request) -> ControlPlaneService:
@@ -45,19 +60,6 @@ def _raise(exc: AuthorityFailure) -> None:
     raise HTTPException(
         status_code=exc.status_code, detail=exc.to_wire().model_dump()
     ) from exc
-
-
-def _authorize_local_api(request: Request, authorization: str | None) -> None:
-    expected = request.app.state.settings.local_api_service_token.strip()
-    if not expected:
-        raise HTTPException(503, "Local API service credential is not configured")
-    scheme, separator, token = (authorization or "").partition(" ")
-    if (
-        separator != " "
-        or scheme.lower() != "bearer"
-        or not hmac.compare_digest(token, expected)
-    ):
-        raise HTTPException(401, "Local API service authentication failed")
 
 
 @router.get("/capabilities", response_model=BoundaryCapabilities)
@@ -168,9 +170,7 @@ async def initialize_workspace(
     operation_id: UUID,
     payload: WorkspaceInitializeRequest,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> WorkspaceOperation:
-    _authorize_local_api(request, authorization)
     try:
         return await _service(request).initialize_workspace(
             operation_id=str(operation_id),
@@ -187,9 +187,7 @@ async def initialize_workspace(
 async def get_workspace_operation(
     operation_id: UUID,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> WorkspaceOperation:
-    _authorize_local_api(request, authorization)
     try:
         return await _service(request).get_workspace_operation(str(operation_id))
     except AuthorityFailure as exc:
@@ -251,9 +249,7 @@ async def rename_owner(
 async def get_owner_default_runtime(
     owner_id: str,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> CompanionRuntimeSnapshot:
-    _authorize_local_api(request, authorization)
     try:
         return await _service(request).get_owner_default_runtime(owner_id)
     except AuthorityFailure as exc:
@@ -267,62 +263,13 @@ async def get_owner_default_runtime(
 async def get_owner_device_mounts(
     owner_id: str,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> KernelMountPage:
     """Narrow product projection used only by the loopback Local API."""
 
-    _authorize_local_api(request, authorization)
     try:
         return await _service(request).list_owner_device_mounts(owner_id)
     except AuthorityFailure as exc:
         _raise(exc)
-
-
-@router.get("/owners/{owner_id}/inventory", response_model=OwnerInventory)
-async def owner_inventory(
-    owner_id: str,
-    request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
-) -> OwnerInventory:
-    try:
-        return await _service(request).inventory(
-            owner_id=owner_id,
-            hub_authorization=authorization or "",
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
-
-
-@router.post("/workflows/device-admission", response_model=DeviceAdmissionResult)
-async def admit_device(
-    payload: DeviceAdmissionRequest,
-    request: Request,
-    response: Response,
-    authorization: str | None = Header(default=None, alias="Authorization"),
-) -> DeviceAdmissionResult:
-    try:
-        result = await _service(request).admit_device(
-            payload,
-            hub_authorization=authorization or "",
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
-    if result.outcome == "retry_required":
-        response.status_code = 202
-    elif result.outcome == "blocked":
-        failed = next(
-            (step.failure for step in reversed(result.steps) if step.failure), None
-        )
-        response.status_code = {
-            "unauthorized": 401,
-            "forbidden": 403,
-            "not_found": 404,
-            "conflict": 409,
-            "invalid_request": 422,
-            "configuration": 503,
-            "contract_violation": 502,
-        }.get(failed.kind if failed else "", 502)
-    return result
 
 
 @router.patch(
@@ -335,9 +282,7 @@ async def rename_owner_device(
     controller_id: str,
     payload: DeviceRenameCommand,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> HubDevice:
-    _authorize_local_api(request, authorization)
     try:
         return await _service(request).rename_owner_device(
             owner_id=owner_id,
@@ -357,7 +302,6 @@ async def local_owner_device_inventory(
     owner_id: str,
     controller_id: str,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> OwnerInventory:
     """The Owner's devices as both authorities see them, for the Local API.
 
@@ -367,7 +311,6 @@ async def local_owner_device_inventory(
     never be holding a Hub management credential.
     """
 
-    _authorize_local_api(request, authorization)
     try:
         return await _service(request).local_owner_inventory(
             owner_id=owner_id,
@@ -386,7 +329,6 @@ async def local_owner_device_history(
     controller_id: str,
     request: Request,
     limit: int = 50,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> OwnerDeviceHistory:
     """What has happened to this Owner's devices, for the Local API.
 
@@ -394,7 +336,6 @@ async def local_owner_device_history(
     credential for this Controller rather than taking one from a phone.
     """
 
-    _authorize_local_api(request, authorization)
     if not 1 <= limit <= 200:
         raise HTTPException(422, "limit must be between 1 and 200")
     try:
@@ -414,9 +355,7 @@ async def local_owner_device_history(
 async def list_pending_device_enrollments(
     controller_id: str,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> HubDevicePage:
-    _authorize_local_api(request, authorization)
     if not controller_id or len(controller_id) > 128:
         raise HTTPException(422, "controller_id must contain between 1 and 128 characters")
     try:
@@ -435,11 +374,9 @@ async def admit_local_device(
     device_id: str,
     payload: ControllerDeviceAdmissionRequest,
     request: Request,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> DeviceAdmissionResult:
     """Service-only forward workflow consumed by the Controller Local API."""
 
-    _authorize_local_api(request, authorization)
     if not device_id or len(device_id) > 128:
         raise HTTPException(422, "device_id must contain between 1 and 128 characters")
     if payload.device_id != device_id:

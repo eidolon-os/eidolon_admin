@@ -6,7 +6,7 @@ import {
   getOwnerInventory,
   type DeviceAdmissionResult,
   type OwnerInventory,
-} from '@/api/controlPlane'
+} from '@/api/operatorPlane'
 
 const ownerId = ref('')
 const deviceId = ref('')

@@ -13,16 +13,21 @@ caller may choose.
 
 from __future__ import annotations
 
-import hmac
 from typing import Literal
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
+from eidolon_admin_server.app.service_auth import require_local_api_credential
 
-router = APIRouter(prefix="/internal/v1/management", tags=["management-internal"])
+#: Required by the router, so a second route here cannot be added without it.
+router = APIRouter(
+    prefix="/internal/v1/management",
+    tags=["management-internal"],
+    dependencies=[Depends(require_local_api_credential)],
+)
 
 
 class ManagementContextInternal(BaseModel):
@@ -40,24 +45,10 @@ class ManagementContextInternal(BaseModel):
     limits: dict[str, int | None]
 
 
-def _authorize_local_api(request: Request, authorization: str | None) -> None:
-    expected = request.app.state.settings.local_api_service_token.strip()
-    if not expected:
-        raise HTTPException(503, "Local API service credential is not configured")
-    scheme, separator, token = (authorization or "").partition(" ")
-    if (
-        separator != " "
-        or scheme.lower() != "bearer"
-        or not hmac.compare_digest(token, expected)
-    ):
-        raise HTTPException(401, "Local API service authentication failed")
-
-
 @router.get("/context", response_model=ManagementContextInternal)
 async def get_context(
     request: Request,
     owner_id: str,
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> ManagementContextInternal:
     """The Owner's context, for the Owner the caller already authenticated.
 
@@ -66,7 +57,6 @@ async def get_context(
     passes the Owner bound to the Controller session it just verified. The
     authority checks ownership again on every read it serves.
     """
-    _authorize_local_api(request, authorization)
     try:
         context = await read_context(
             owner_id=owner_id, owners=request.app.state.control_plane.data

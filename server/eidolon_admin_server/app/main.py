@@ -16,6 +16,7 @@ from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
 from .control_plane.router import router as control_plane_router
+from .operator_plane.router import router as operator_plane_router
 from .management.router import router as management_router
 from .control_plane.service import ControlPlaneService
 from .mission_control.router import router as mission_control_router
@@ -162,6 +163,10 @@ def create_app(
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")
     app.include_router(control_plane_router, prefix="/api")
+    # The two routes whose Authorization header is a forwarded Hub credential
+    # rather than a caller proving who it is. They were on the control plane,
+    # where that header means the opposite thing.
+    app.include_router(operator_plane_router, prefix="/api")
     # Its own prefix, not another branch of control-plane: that family already
     # answers to two audiences and a third meaning is how this got confusing.
     app.include_router(management_router, prefix="/api")

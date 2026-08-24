@@ -581,7 +581,11 @@ services: []
                 services_file=admin_services,
             )
             await _eventually(
-                lambda: client.get(f"{admin_url}/api/control-plane/v1/capabilities"),
+                # /healthz, not a control-plane route: readiness is "composition
+                # finished", which is exactly what that endpoint reports and what
+                # deployment probes. Probing a credential-gated route conflated
+                # "the process is up" with "I am allowed to ask it things".
+                lambda: client.get(f"{admin_url}/healthz"),
                 lambda response: response.status_code == 200,
                 label="Admin",
                 process=admin_process,
@@ -675,7 +679,7 @@ services: []
             )
             started = time.perf_counter()
             first = await client.post(
-                f"{admin_url}/api/control-plane/v1/workflows/device-admission",
+                f"{admin_url}/api/operator/v1/workflows/device-admission",
                 headers=headers,
                 json=payload,
             )
@@ -686,7 +690,7 @@ services: []
             async def timed_post() -> tuple[httpx.Response, float]:
                 call_started = time.perf_counter()
                 response = await client.post(
-                    f"{admin_url}/api/control-plane/v1/workflows/device-admission",
+                    f"{admin_url}/api/operator/v1/workflows/device-admission",
                     headers=headers,
                     json=payload,
                 )
@@ -710,7 +714,7 @@ services: []
             async def timed_inventory() -> tuple[httpx.Response, float]:
                 call_started = time.perf_counter()
                 response = await client.get(
-                    f"{admin_url}/api/control-plane/v1/owners/owner-admin-e2e/inventory",
+                    f"{admin_url}/api/operator/v1/owners/owner-admin-e2e/inventory",
                     headers=headers,
                 )
                 return response, (time.perf_counter() - call_started) * 1000
@@ -734,13 +738,17 @@ services: []
                 services_file=admin_services,
             )
             await _eventually(
-                lambda: client.get(f"{admin_url}/api/control-plane/v1/capabilities"),
+                # /healthz, not a control-plane route: readiness is "composition
+                # finished", which is exactly what that endpoint reports and what
+                # deployment probes. Probing a credential-gated route conflated
+                # "the process is up" with "I am allowed to ask it things".
+                lambda: client.get(f"{admin_url}/healthz"),
                 lambda response: response.status_code == 200,
                 label="restarted Admin",
                 process=admin_process,
             )
             after_restart = await client.post(
-                f"{admin_url}/api/control-plane/v1/workflows/device-admission",
+                f"{admin_url}/api/operator/v1/workflows/device-admission",
                 headers=headers,
                 json=payload,
             )
@@ -766,7 +774,7 @@ services: []
                 "companion_id": "companion-different"
             }
             conflict = await client.post(
-                f"{admin_url}/api/control-plane/v1/workflows/device-admission",
+                f"{admin_url}/api/operator/v1/workflows/device-admission",
                 headers=headers,
                 json=reused_with_different_payload,
             )
@@ -790,7 +798,7 @@ services: []
             _stop(data_process)
             data_process = None
             outage = await client.post(
-                f"{admin_url}/api/control-plane/v1/workflows/device-admission",
+                f"{admin_url}/api/operator/v1/workflows/device-admission",
                 headers=headers,
                 json=_workflow(
                     device_id="device-data-outage",

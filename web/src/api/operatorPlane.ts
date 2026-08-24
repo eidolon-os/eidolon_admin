@@ -1,3 +1,14 @@
+// The Operator Plane client: /api/operator/v1.
+//
+// These two calls used to live under /api/control-plane/v1, alongside routes
+// where the Authorization header is a *service* credential proving the caller
+// is the loopback Local API. Here it is the Hub credential the operator typed
+// into this page, which the Host forwards downstream. One header name, two
+// opposite directions of trust — so they are two planes now.
+//
+// This client belongs to the operator cockpit. The Management Shell must not
+// import it: its Owner surface is the generated /api/management/v1 client and
+// nothing else.
 import client from './client'
 
 export type FailureKind =
@@ -103,7 +114,7 @@ export async function getOwnerInventory(
   hubCredential: string,
 ): Promise<OwnerInventory> {
   const { data } = await client.get<OwnerInventory>(
-    `/control-plane/v1/owners/${encodeURIComponent(ownerId)}/inventory`,
+    `/operator/v1/owners/${encodeURIComponent(ownerId)}/inventory`,
     { headers: auth(hubCredential), suppressToast: true },
   )
   return data
@@ -114,7 +125,7 @@ export async function admitDevice(
   hubCredential: string,
 ): Promise<DeviceAdmissionResult> {
   const { data } = await client.post<DeviceAdmissionResult>(
-    '/control-plane/v1/workflows/device-admission',
+    '/operator/v1/workflows/device-admission',
     input,
     { headers: auth(hubCredential), suppressToast: true },
   )
