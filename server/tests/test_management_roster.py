@@ -156,6 +156,7 @@ async def test_times_are_instants_a_client_can_still_reason_about() -> None:
 class _Backend:
     def __init__(self) -> None:
         self.asked: list[tuple[str, str | None]] = []
+        self.current = "g_2"
 
     async def context(self, *, owner_id: str) -> dict:
         raise AssertionError("this test never reads context")
@@ -294,6 +295,48 @@ class _Backend:
             "entry_id": entry_id,
             "companion_id": companion_id,
             "status": "applied" if companion_id else "accepted",
+        }
+
+    async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
+        self.asked.append((owner_id, companion_id))
+        if companion_id == "companion-elsewhere":
+            raise ManagementBackendError("not found", status_code=404)
+        return self._history()
+
+    async def restore_persona(
+        self, *, owner_id: str, companion_id: str, chapter_id: str
+    ) -> dict:
+        self.asked.append((owner_id, companion_id, chapter_id))
+        if companion_id == "companion-elsewhere":
+            raise ManagementBackendError("not found", status_code=404)
+        if chapter_id == "g_never":
+            raise ManagementBackendError(
+                "only a committed persona genome can be restored", status_code=409
+            )
+        self.current = chapter_id
+        return self._history()
+
+    def _history(self) -> dict:
+        return {
+            "contract_version": "1",
+            "operation": "companion.persona-history",
+            "companion_id": "companion-a",
+            "chapters": [
+                {
+                    "chapter_id": "g_2",
+                    "changed_at": "2026-08-20T09:00:00+00:00",
+                    "what_changed": "话变少了一点",
+                    "restored_from": None,
+                    "is_current": self.current == "g_2",
+                },
+                {
+                    "chapter_id": "g_1",
+                    "changed_at": "2026-08-01T09:00:00+00:00",
+                    "what_changed": "",
+                    "restored_from": None,
+                    "is_current": self.current == "g_1",
+                },
+            ],
         }
 
     async def recollections(
@@ -1322,3 +1365,133 @@ async def test_a_recollection_may_be_asked_of_one_companions_audience(
         )
 
     assert backend.asked == [("owner-1", "茶", 3, "c-a")]
+
+
+# --- 它曾经是什么样 ---------------------------------------------------------
+
+
+def _persona(companion_id: str = "companion-a") -> str:
+    return f"/api/management/v1/companions/{companion_id}/persona-history"
+
+
+def _restorations(companion_id: str = "companion-a") -> str:
+    return f"/api/management/v1/companions/{companion_id}/persona-restorations"
+
+
+async def test_a_person_is_shown_what_their_eidolon_became(tmp_path, monkeypatch) -> None:
+    """Migrated from ``/api/local/v1/companions/{id}/persona``, now deleted.
+
+    A record rather than a settings screen, and nothing about how a Companion is
+    built: no genome hash, no schema version, no realizer.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get(_persona())
+        headers = await _authenticate(client)
+        answered = await client.get(_persona(), headers=headers)
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", "companion-a")]
+    chapters = answered.json()["chapters"]
+    assert [chapter["chapter_id"] for chapter in chapters] == ["g_2", "g_1"]
+    assert set(chapters[0]) == {
+        "chapter_id",
+        "changed_at",
+        "what_changed",
+        "restored_from",
+        "is_current",
+    }
+    # Nothing was recorded for the first chapter, and nothing is invented.
+    assert chapters[1]["what_changed"] == ""
+
+
+async def test_going_back_answers_with_where_that_leaves_them(
+    tmp_path, monkeypatch
+) -> None:
+    """The whole history, not the one new chapter.
+
+    What someone wants to see after going back is where that leaves them, and a
+    screen that had to ask again would show the old answer in the meantime.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        restored = await client.put(
+            _restorations(), headers=headers, json={"chapter_id": "g_1"}
+        )
+
+    assert restored.status_code == 200
+    assert backend.asked == [("owner-1", "companion-a", "g_1")]
+    chapters = {c["chapter_id"]: c["is_current"] for c in restored.json()["chapters"]}
+    assert chapters == {"g_1": True, "g_2": False}
+
+
+async def test_going_back_to_where_it_already_is_is_not_a_conflict(
+    tmp_path, monkeypatch
+) -> None:
+    """A retry of a request whose answer was never seen asks for a state that
+    already holds. The authority would refuse to append a chapter for it — and it
+    is right to — but that refusal is not the person's answer."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        first = await client.put(
+            _restorations(), headers=headers, json={"chapter_id": "g_1"}
+        )
+        second = await client.put(
+            _restorations(), headers=headers, json={"chapter_id": "g_1"}
+        )
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert first.json() == second.json()
+
+
+async def test_a_chapter_it_never_was_cannot_be_returned_to(
+    tmp_path, monkeypatch
+) -> None:
+    """A proposal is not a past. The authority refuses and the refusal is
+    relayed rather than turned into a success."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _restorations(), headers=headers, json={"chapter_id": "g_never"}
+        )
+
+    assert answered.status_code == 409
+
+
+async def test_another_owners_persona_is_not_readable_or_restorable(
+    tmp_path, monkeypatch
+) -> None:
+    """404 rather than 403, so an identifier cannot be probed for existence.
+
+    The check is the authority's: these routes are keyed on a Companion alone, so
+    ownership is proved through the owner-scoped Companion route before either of
+    them runs.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        read = await client.get(_persona("companion-elsewhere"), headers=headers)
+        wrote = await client.put(
+            _restorations("companion-elsewhere"),
+            headers=headers,
+            json={"chapter_id": "g_1"},
+        )
+
+    assert read.status_code == 404
+    assert wrote.status_code == 404

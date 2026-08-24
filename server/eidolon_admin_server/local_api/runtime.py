@@ -13,8 +13,6 @@ from ..app.control_plane.contracts import (
     CompanionFace,
     CompanionIdentity,
     OwnerIdentity,
-    PersonaChapter,
-    PersonaTimeline,
     WorkspaceOperation,
     WorkspaceOwner,
 )
@@ -58,15 +56,6 @@ class AdminOwnerRuntimePort(Protocol):
 
     async def clear_companion_face(self, companion_id: str) -> CompanionFace: ...
 
-    async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline: ...
-
-    async def restore_persona(
-        self,
-        companion_id: str,
-        genome_id: str,
-        change_summary: str,
-    ) -> PersonaChapter: ...
-
     async def close(self) -> None: ...
 
 
@@ -79,69 +68,6 @@ class PrimaryCompanionView(BaseModel):
     #: handle rather than filled in with an identifier here.
     display_name: str = Field(default="", max_length=128)
     lifecycle_state: Literal["active"]
-
-
-class PersonaChapterView(BaseModel):
-    """One thing this Eidolon has been, as its Owner reads it.
-
-    No genome hash, no schema version, no realizer. What a person wonders is
-    when it changed and what changed — and, if they are about to go back,
-    which one it is now.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    chapter_id: str = Field(min_length=1, max_length=64)
-    changed_at: str
-    #: Written with the change, by whatever made it. Empty when nothing was
-    #: recorded — left empty rather than filled in with a summary this layer
-    #: invented, because a sentence about who your Eidolon became should not
-    #: be written by a projection.
-    what_changed: str = Field(default="", max_length=4096)
-    restored_from: int | None = None
-    is_current: bool = False
-
-
-class PersonaHistoryView(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    operation: Literal["local.persona-history"] = "local.persona-history"
-    contract_version: Literal["1"] = "1"
-    companion_id: str = Field(min_length=1, max_length=64)
-    chapters: tuple[PersonaChapterView, ...] = ()
-
-
-class PersonaRestoreCommand(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    chapter_id: str = Field(min_length=1, max_length=64)
-
-
-def persona_history_view(timeline: PersonaTimeline) -> PersonaHistoryView:
-    """Project the authority's timeline into what an Owner is shown.
-
-    Proposals are dropped here. A Companion that is considering a change has
-    not changed, and putting that in front of someone turns living with an
-    Eidolon into reviewing it — which is the one thing this product decided
-    not to ask of them. The authority still stores them; the agent still needs
-    somewhere to stage. It is simply not a thing the person is handed.
-    """
-
-    return PersonaHistoryView(
-        companion_id=timeline.companion_id,
-        chapters=tuple(
-            PersonaChapterView(
-                chapter_id=chapter.genome_id,
-                changed_at=chapter.created_at,
-                what_changed=chapter.change_summary,
-                restored_from=chapter.restored_from_version,
-                is_current=chapter.is_current,
-            )
-            for chapter in timeline.chapters
-            if chapter.lifecycle_state == "committed"
-        ),
-    )
 
 
 class CompanionRenameCommand(BaseModel):
@@ -537,26 +463,6 @@ class AdminOwnerRuntimeClient:
             raise WorkspaceRuntimeError(
                 "Admin Companion control plane is unavailable"
             ) from exc
-
-    async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline:
-        return await self._companion_request(
-            "GET",
-            f"{companion_id}/persona-timeline",
-            PersonaTimeline,
-        )
-
-    async def restore_persona(
-        self,
-        companion_id: str,
-        genome_id: str,
-        change_summary: str,
-    ) -> PersonaChapter:
-        return await self._companion_request(
-            "POST",
-            f"{companion_id}/persona-restorations",
-            PersonaChapter,
-            json={"genome_id": genome_id, "change_summary": change_summary},
-        )
 
     async def _companion_request(
         self,

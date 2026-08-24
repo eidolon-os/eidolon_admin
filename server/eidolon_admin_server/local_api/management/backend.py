@@ -103,6 +103,23 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/export", params)
 
+    async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
+        return await self._get(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/persona-history",
+            {"owner_id": owner_id},
+        )
+
+    async def restore_persona(
+        self, *, owner_id: str, companion_id: str, chapter_id: str
+    ) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/persona-restorations",
+            {"owner_id": owner_id},
+            {"chapter_id": chapter_id},
+        )
+
     async def recollections(
         self, *, owner_id: str, query: str, limit: int, companion_id: str | None
     ) -> dict:

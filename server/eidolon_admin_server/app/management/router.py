@@ -24,6 +24,7 @@ from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
 from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
+from eidolon_admin_server.app.management.persona import read_history, restore_chapter
 from eidolon_admin_server.app.management.recollecting import recall
 from eidolon_admin_server.app.management.roster import (
     read_companion,
@@ -192,6 +193,34 @@ class MemoryDayInternal(BaseModel):
     more_in_window: bool
     undated_count: int = Field(ge=0)
     truncated: bool
+
+
+class PersonaChapterInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: str = Field(min_length=1, max_length=64)
+    changed_at: str = Field(min_length=1, max_length=64)
+    #: As written by whatever made the change. Empty stays empty: a sentence
+    #: about who someone's Eidolon became is not this layer's to compose.
+    what_changed: str = Field(default="", max_length=4096)
+    #: Set when this chapter exists because someone went back to an earlier one.
+    restored_from: int | None = None
+    is_current: bool = False
+
+
+class PersonaHistoryInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.persona-history"] = "companion.persona-history"
+    companion_id: str = Field(min_length=1, max_length=64)
+    chapters: list[PersonaChapterInternal]
+
+
+class PersonaRestoreInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: str = Field(min_length=1, max_length=64)
 
 
 class RecollectionInternal(BaseModel):
@@ -616,6 +645,86 @@ async def put_memory_entry_audience(
         entry_id=result.entry_id,
         companion_id=result.companion_id,
         status=result.status,
+    )
+
+
+@router.get(
+    "/companions/{companion_id}/persona-history",
+    response_model=PersonaHistoryInternal,
+)
+async def get_persona_history(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+) -> PersonaHistoryInternal:
+    """What this Eidolon has been.
+
+    ``owner_id`` is what makes this safe: the persona routes are keyed on a
+    Companion alone, so ownership is proved through the owner-scoped Companion
+    route before either of them is called. Someone else's Companion is a 404.
+    """
+    try:
+        history = await read_history(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            persona=request.app.state.control_plane.data,
+            companions=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _persona_history_internal(history)
+
+
+@router.put(
+    "/companions/{companion_id}/persona-restorations",
+    response_model=PersonaHistoryInternal,
+)
+async def put_persona_restoration(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    payload: PersonaRestoreInternal,
+) -> PersonaHistoryInternal:
+    """Make this Eidolon the way it was then.
+
+    ``PUT``: the body names the chapter this Companion should be, so the same
+    request twice leaves it as the same thing — the projection reads the current
+    chapter first and a repeat is answered with the history unchanged rather than
+    with the authority's "nothing to append" conflict.
+
+    Answers with the history rather than the new chapter, because what someone
+    wants after going back is where that leaves them.
+    """
+    try:
+        history = await restore_chapter(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            chapter_id=payload.chapter_id,
+            persona=request.app.state.control_plane.data,
+            companions=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _persona_history_internal(history)
+
+
+def _persona_history_internal(history) -> PersonaHistoryInternal:
+    return PersonaHistoryInternal(
+        companion_id=history.companion_id,
+        chapters=[
+            PersonaChapterInternal(
+                chapter_id=chapter.chapter_id,
+                changed_at=chapter.changed_at,
+                what_changed=chapter.what_changed,
+                restored_from=chapter.restored_from,
+                is_current=chapter.is_current,
+            )
+            for chapter in history.chapters
+        ],
     )
 
 

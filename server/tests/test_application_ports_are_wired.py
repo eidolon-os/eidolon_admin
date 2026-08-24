@@ -44,6 +44,7 @@ from eidolon_admin_server.app.management.creation import (
 from eidolon_admin_server.app.management.audience import MemoryAudienceKeeper
 from eidolon_admin_server.app.management.forgetting import MemoryForgetter
 from eidolon_admin_server.app.management.memory import MemoryBrowser
+from eidolon_admin_server.app.management.persona import PersonaHistorian
 from eidolon_admin_server.app.management.recollecting import MemoryRecollector
 from eidolon_admin_server.app.management.roster import (
     DefaultCompanionWriter,
@@ -71,6 +72,9 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     "MemoryForgetter": (MemoryForgetter, "memory"),
     "MemoryAudienceKeeper": (MemoryAudienceKeeper, "memory"),
     "MemoryRecollector": (MemoryRecollector, "memory"),
+    # Persona history is Data's, like the roster: same authority, and the gate
+    # below asserts the two clients are not interchangeable.
+    "PersonaHistorian": (PersonaHistorian, "data"),
     # Admin's own store, constructed by the service rather than reached for on
     # it: there is no authority behind it and nothing to mis-wire.
     "RemovalIntentStore": (None, None),

@@ -185,6 +185,24 @@ export interface OwnerContextView {
   revision: number
 }
 
+export interface PersonaChapterView {
+  changed_at: string
+  chapter_id: string
+  is_current?: boolean
+  restored_from?: number | null
+  what_changed?: string
+}
+
+export interface PersonaHistoryView {
+  chapters: Array<PersonaChapterView>
+  companion_id: string
+  contract_version?: "1"
+}
+
+export interface PersonaRestoreRequest {
+  chapter_id: string
+}
+
 export interface RecollectionView {
   remembered_at?: string | null
   text?: string
@@ -209,6 +227,8 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions': CompanionRosterView
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
+  'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
+  'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
   'GET /api/management/v1/context': ManagementContextView
   'GET /api/management/v1/memory/entries': MemoryDayView
   'PUT /api/management/v1/memory/entries/{entry_id}/audience': MemoryAudienceView

@@ -324,6 +324,44 @@ class MemoryCopyView(BaseModel):
     truncated: bool
 
 
+class PersonaChapterView(BaseModel):
+    """One thing my Eidolon has been.
+
+    No version, no hash, no realizer: those are how a Companion is built, and
+    what I wonder is when it changed and what changed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: str = Field(min_length=1, max_length=64)
+    changed_at: str = Field(min_length=1, max_length=64)
+    #: In the words recorded with the change. Empty when nothing was written
+    #: down, and it stays empty — a sentence about who my Eidolon became is not
+    #: something a screen may compose on its behalf.
+    what_changed: str = Field(default="", max_length=4096)
+    #: Set when this chapter exists because someone went back to an earlier one.
+    restored_from: int | None = None
+    is_current: bool = False
+
+
+class PersonaHistoryView(BaseModel):
+    """What my Eidolon has been, newest first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    chapters: list[PersonaChapterView]
+
+
+class PersonaRestoreRequest(BaseModel):
+    """Which chapter to go back to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    chapter_id: str = Field(min_length=1, max_length=64)
+
+
 class RecollectionView(BaseModel):
     """One thing my Eidolon remembers, as I read it.
 
@@ -490,6 +528,14 @@ class ManagementBackendPort(Protocol):
         self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
 
+    async def persona_history(
+        self, *, owner_id: str, companion_id: str
+    ) -> dict: ...
+
+    async def restore_persona(
+        self, *, owner_id: str, companion_id: str, chapter_id: str
+    ) -> dict: ...
+
     async def recollections(
         self, *, owner_id: str, query: str, limit: int, companion_id: str | None
     ) -> dict: ...
@@ -505,6 +551,15 @@ class ManagementBackendPort(Protocol):
     async def forget_confirm(
         self, *, owner_id: str, confirmation_token: str
     ) -> dict: ...
+
+
+def _persona_history_view(answer: dict) -> PersonaHistoryView:
+    return PersonaHistoryView(
+        companion_id=answer["companion_id"],
+        chapters=[
+            PersonaChapterView(**chapter) for chapter in answer["chapters"]
+        ],
+    )
 
 
 def register_management_routes(
@@ -762,6 +817,55 @@ def register_management_routes(
             companion_id=answer.get("companion_id", ""),
             status=answer["status"],
         )
+
+    @router.get(
+        "/companions/{companion_id}/persona-history",
+        response_model=PersonaHistoryView,
+    )
+    async def get_persona_history(
+        companion_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaHistoryView:
+        """What this Eidolon has been.
+
+        A record, not a settings screen: every chapter is something it actually
+        was, and there is no proposal queue here — a Companion considering a
+        change has not changed.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.persona_history(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return _persona_history_view(answer)
+
+    @router.put(
+        "/companions/{companion_id}/persona-restorations",
+        response_model=PersonaHistoryView,
+    )
+    async def put_persona_restoration(
+        companion_id: str,
+        payload: PersonaRestoreRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaHistoryView:
+        """Make it the way it was then.
+
+        Going back appends a chapter rather than rewinding, so the record keeps
+        the months in between and says when I went back. The answer is the whole
+        history, because what I want to see afterwards is where that leaves it.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.restore_persona(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                chapter_id=payload.chapter_id,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return _persona_history_view(answer)
 
     @router.get("/memory/recollections", response_model=RecollectionsView)
     async def get_memory_recollections(

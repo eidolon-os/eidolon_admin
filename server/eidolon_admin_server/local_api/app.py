@@ -85,9 +85,6 @@ from .runtime import (
     OwnerNameView,
     OwnerRenameCommand,
     CompanionRenameCommand,
-    PersonaHistoryView,
-    PersonaRestoreCommand,
-    persona_history_view,
     AdminOwnerRuntimePort,
     WorkspaceRuntimeError,
     WorkspaceRuntimeView,
@@ -692,54 +689,6 @@ def create_app(
         except WorkspaceRuntimeError as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
         return _face_view(state)
-
-    @app.get(
-        "/api/local/v1/companions/{companion_id}/persona",
-        response_model=PersonaHistoryView,
-    )
-    async def companion_persona_history(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> PersonaHistoryView:
-        """What this Eidolon has been, as its Owner reads it."""
-
-        await _owned_companion(companion_id, authorization)
-        try:
-            timeline = await runtime.get_persona_timeline(companion_id)
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return persona_history_view(timeline)
-
-    @app.post(
-        "/api/local/v1/companions/{companion_id}/persona-restorations",
-        response_model=PersonaHistoryView,
-    )
-    async def restore_companion_persona(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        payload: PersonaRestoreCommand,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> PersonaHistoryView:
-        """Make this Eidolon the way it was then.
-
-        Answers with the history rather than the one new chapter: what someone
-        wants to see after going back is where that leaves them, and a screen
-        that had to ask again to find out would be showing the old answer in
-        the meantime.
-        """
-
-        await _owned_companion(companion_id, authorization)
-        try:
-            await runtime.restore_persona(
-                companion_id,
-                payload.chapter_id,
-                # Said in the Owner's voice because the Owner did it. Nothing
-                # here invents a reason on their behalf.
-                "回到了那时候的样子",
-            )
-            timeline = await runtime.get_persona_timeline(companion_id)
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return persona_history_view(timeline)
 
     async def owner_device_inventory(
         authorization: str | None,

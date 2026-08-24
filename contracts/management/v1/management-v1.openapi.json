@@ -967,6 +967,100 @@
         "title": "OwnerContextView",
         "type": "object"
       },
+      "PersonaChapterView": {
+        "additionalProperties": false,
+        "description": "One thing my Eidolon has been.\n\nNo version, no hash, no realizer: those are how a Companion is built, and\nwhat I wonder is when it changed and what changed.",
+        "properties": {
+          "changed_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Changed At",
+            "type": "string"
+          },
+          "chapter_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Chapter Id",
+            "type": "string"
+          },
+          "is_current": {
+            "default": false,
+            "title": "Is Current",
+            "type": "boolean"
+          },
+          "restored_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored From"
+          },
+          "what_changed": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "What Changed",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chapter_id",
+          "changed_at"
+        ],
+        "title": "PersonaChapterView",
+        "type": "object"
+      },
+      "PersonaHistoryView": {
+        "additionalProperties": false,
+        "description": "What my Eidolon has been, newest first.",
+        "properties": {
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaChapterView"
+            },
+            "title": "Chapters",
+            "type": "array"
+          },
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "companion_id",
+          "chapters"
+        ],
+        "title": "PersonaHistoryView",
+        "type": "object"
+      },
+      "PersonaRestoreRequest": {
+        "additionalProperties": false,
+        "description": "Which chapter to go back to.",
+        "properties": {
+          "chapter_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Chapter Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chapter_id"
+        ],
+        "title": "PersonaRestoreRequest",
+        "type": "object"
+      },
       "RecollectionView": {
         "additionalProperties": false,
         "description": "One thing my Eidolon remembers, as I read it.\n\nNot the stored record. What memory holds carries wings, rooms, scores and\nprovenance — that is how it found something, not what it remembers, and I\nasked the second question.",
@@ -1251,6 +1345,134 @@
           }
         },
         "summary": "Get Companion",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/persona-history": {
+      "get": {
+        "description": "What this Eidolon has been.\n\nA record, not a settings screen: every chapter is something it actually\nwas, and there is no proposal queue here — a Companion considering a\nchange has not changed.",
+        "operationId": "get_persona_history_api_management_v1_companions__companion_id__persona_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaHistoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Persona History",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/persona-restorations": {
+      "put": {
+        "description": "Make it the way it was then.\n\nGoing back appends a chapter rather than rewinding, so the record keeps\nthe months in between and says when I went back. The answer is the whole\nhistory, because what I want to see afterwards is where that leaves it.",
+        "operationId": "put_persona_restoration_api_management_v1_companions__companion_id__persona_restorations_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaHistoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Persona Restoration",
         "tags": [
           "management"
         ]
