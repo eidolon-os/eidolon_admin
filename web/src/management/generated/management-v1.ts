@@ -33,6 +33,16 @@ export interface CompanionSummaryView {
   updated_at: string
 }
 
+export interface DefaultCompanionRequest {
+  companion_id: string
+  expected_revision: number
+}
+
+export interface DefaultCompanionView {
+  contract_version?: "1"
+  default_companion_id?: string | null
+}
+
 export interface HTTPValidationError {
   detail?: Array<ValidationError>
 }
@@ -64,4 +74,5 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions': CompanionRosterView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/context': ManagementContextView
+  'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
 }

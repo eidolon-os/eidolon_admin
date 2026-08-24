@@ -17,7 +17,10 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.service import ControlPlaneService
 from eidolon_admin_server.app.management.context import OwnerReader
-from eidolon_admin_server.app.management.roster import RosterReader
+from eidolon_admin_server.app.management.roster import (
+    DefaultCompanionWriter,
+    RosterReader,
+)
 from eidolon_admin_server.app.settings import Settings
 
 pytestmark = pytest.mark.asyncio
@@ -50,6 +53,15 @@ async def test_the_roster_reader_the_routes_reach_for_can_read_companions() -> N
         await service.close()
 
 
+async def test_the_default_writer_the_route_reaches_for_can_write_it() -> None:
+    """The pointer is on the Owner, so its writer is the workspace authority."""
+    service = _service()
+    try:
+        assert isinstance(service.workspace, DefaultCompanionWriter)
+    finally:
+        await service.close()
+
+
 async def test_the_two_authorities_are_not_interchangeable() -> None:
     """Which is the point. If they were, the defect above would not have been one.
 
@@ -60,5 +72,6 @@ async def test_the_two_authorities_are_not_interchangeable() -> None:
     try:
         assert not isinstance(service.data, OwnerReader)
         assert not isinstance(service.workspace, RosterReader)
+        assert not isinstance(service.data, DefaultCompanionWriter)
     finally:
         await service.close()

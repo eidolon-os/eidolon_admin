@@ -564,6 +564,47 @@ class DataWorkspaceAuthorityClient:
             "PATCH", owner_id, json={"display_name": display_name}
         )
 
+    async def set_default_companion(
+        self,
+        owner_id: str,
+        *,
+        companion_id: str,
+        expected_revision: int,
+    ) -> OwnerIdentity:
+        """Point this Owner's unaddressed work at one of their Companions.
+
+        The whole write is one field on the Owner, and the authority decides
+        everything about whether it may happen: that the Companion is this
+        Owner's, that it is not a guard, and that the revision the caller read
+        is still current. None of those are re-checked here — a second opinion
+        would be a second answer.
+        """
+
+        response = await _request(
+            "data",
+            self._client,
+            "PUT",
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/default-companion",
+            timeout=self._timeout,
+            headers=self._headers,
+            json={
+                "companion_id": companion_id,
+                "expected_revision": expected_revision,
+            },
+        )
+        identity = _parse("data", response, OwnerIdentity)
+        if identity.owner_id != owner_id:
+            raise _contract_violation("data", "Data returned a different Owner identity")
+        if identity.default_companion_id != companion_id:
+            # The authority answered 200 for a state that is not the one asked
+            # for. Better to refuse than to relay it: a client would show the
+            # change as done.
+            raise _contract_violation(
+                "data", "Data accepted the default change without applying it"
+            )
+        return identity
+
     async def _owner_call(
         self,
         method: str,

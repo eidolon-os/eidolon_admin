@@ -131,6 +131,32 @@ class CompanionDetailView(BaseModel):
     is_default: bool
 
 
+class DefaultCompanionRequest(BaseModel):
+    """Which of my Eidolons answers when I did not say which.
+
+    ``expected_revision`` is not ceremony a client can skip: it is the version
+    of the Owner it last read, and it is what makes two phones (or a phone and a
+    browser) unable to both win. A client that has not read the Owner has no
+    business changing this.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    companion_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=1)
+
+
+class DefaultCompanionView(BaseModel):
+    """Where the pointer now points, read back from the authority."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: Echoed rather than assumed. A client that painted its own choice would be
+    #: showing what it asked for instead of what happened.
+    default_companion_id: str | None = Field(default=None, max_length=64)
+
+
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
@@ -139,6 +165,10 @@ class ManagementBackendPort(Protocol):
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
 
     async def companion(self, *, owner_id: str, companion_id: str) -> dict: ...
+
+    async def set_default_companion(
+        self, *, owner_id: str, companion_id: str, expected_revision: int
+    ) -> dict: ...
 
 
 def register_management_routes(
@@ -226,6 +256,31 @@ def register_management_routes(
             lifecycle_state=answer["lifecycle_state"],
             revision=answer["revision"],
             is_default=answer["is_default"],
+        )
+
+    @router.put("/owner/default-companion", response_model=DefaultCompanionView)
+    async def put_default_companion(
+        payload: DefaultCompanionRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DefaultCompanionView:
+        """Make one of my Eidolons the one that answers by default.
+
+        PUT, so a phone that lost the response can simply ask again. Nothing
+        else moves: conversations already running keep the Eidolon they were
+        started with, devices stay where they are, and no memory is copied —
+        this changes where *new* unaddressed work goes.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.set_default_companion(
+                owner_id=owner_id,
+                companion_id=payload.companion_id,
+                expected_revision=payload.expected_revision,
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return DefaultCompanionView(
+            default_companion_id=answer["default_companion_id"]
         )
 
     app.include_router(router)

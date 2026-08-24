@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest'
 import type {
   CompanionDetailView,
+  DefaultCompanionRequest,
+  DefaultCompanionView,
   CompanionRosterView,
   CompanionSummaryView,
   ManagementContextView,
@@ -214,5 +216,41 @@ describe('management v1 companion detail', () => {
     const answer: ManagementResponses['GET /api/management/v1/companions/{companion_id}'] =
       DETAIL
     expect(answer.companion_id).toBe('companion-a')
+  })
+})
+
+describe('management v1 default companion', () => {
+  it('requires the revision the client last read', () => {
+    const request: DefaultCompanionRequest = {
+      companion_id: 'companion-b',
+      expected_revision: 3,
+    }
+    expect(request.expected_revision).toBe(3)
+
+    // @ts-expect-error - omitting it would make the compare-and-swap optional
+    const blind: DefaultCompanionRequest = { companion_id: 'companion-b' }
+    expect(blind).toBeTruthy()
+  })
+
+  it('has no way to write on another Owner\'s behalf', () => {
+    // @ts-expect-error - the Owner comes from the session, not the body
+    const wrong: DefaultCompanionRequest = {
+      companion_id: 'companion-b',
+      expected_revision: 3,
+      owner_id: 'owner-2',
+    }
+    expect(wrong).toBeTruthy()
+  })
+
+  it('reads back where the pointer went, not what was asked for', () => {
+    const answer: ManagementResponses['PUT /api/management/v1/owner/default-companion'] = {
+      contract_version: '1',
+      default_companion_id: 'companion-b',
+    }
+    // The response carries no echo of the request, so a screen cannot show its
+    // own choice back to the person and call it done.
+    expect(Object.keys(answer)).toEqual(['contract_version', 'default_companion_id'])
+    const view: DefaultCompanionView = answer
+    expect(view.default_companion_id).toBe('companion-b')
   })
 })

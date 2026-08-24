@@ -196,6 +196,20 @@ class _Backend:
             "is_default": True,
         }
 
+    async def set_default_companion(
+        self, *, owner_id: str, companion_id: str, expected_revision: int
+    ) -> dict:
+        self.asked.append((owner_id, companion_id, expected_revision))
+        if expected_revision != 3:
+            # What the authority answers a stale caller. Relayed, not softened:
+            # a client must re-read rather than retry.
+            raise ManagementBackendError("owner revision moved", status_code=409)
+        return {
+            "contract_version": "1",
+            "operation": "owner.default-companion",
+            "default_companion_id": companion_id,
+        }
+
     async def close(self) -> None:
         return None
 
@@ -398,3 +412,116 @@ async def test_the_default_flag_belongs_to_the_single_answer_only() -> None:
     assert "is_default" in CompanionDetailView.model_fields
     assert "is_default" not in CompanionSummaryView.model_fields
     assert "default_companion_id" not in CompanionDetailView.model_fields
+
+
+# --- making one the default ------------------------------------------------
+
+_DEFAULT = "/api/management/v1/owner/default-companion"
+
+
+async def test_the_switch_is_made_for_the_session_owner(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.put(
+            _DEFAULT, json={"companion_id": "companion-b", "expected_revision": 3}
+        )
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _DEFAULT,
+            headers=headers,
+            json={"companion_id": "companion-b", "expected_revision": 3},
+        )
+
+    assert anonymous.status_code == 401
+    # An unauthenticated write never reaches the credential-holding side.
+    assert backend.asked == [("owner-1", "companion-b", 3)]
+    assert answered.status_code == 200
+    assert answered.json()["default_companion_id"] == "companion-b"
+
+
+async def test_the_answer_is_where_the_pointer_now_is_not_what_was_asked(
+    tmp_path, monkeypatch
+) -> None:
+    """Echoed from the authority, so a client shows what happened.
+
+    A client that painted its own choice would be showing its request back to
+    the person, which looks identical whether or not the Host agreed.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (
+            await client.put(
+                _DEFAULT,
+                headers=headers,
+                json={"companion_id": "companion-b", "expected_revision": 3},
+            )
+        ).json()
+
+    assert set(body) == {"contract_version", "default_companion_id"}
+
+
+async def test_a_stale_revision_arrives_as_a_conflict(tmp_path, monkeypatch) -> None:
+    """409 has to survive the trip intact.
+
+    It is the one refusal a client must answer by re-reading rather than
+    retrying, so flattening it into 503 (or into a generic failure) would turn a
+    "someone else changed this" into "try again", and the second phone would
+    win by persistence.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _DEFAULT,
+            headers=headers,
+            json={"companion_id": "companion-b", "expected_revision": 1},
+        )
+
+    assert answered.status_code == 409
+
+
+async def test_a_write_without_a_revision_is_refused(tmp_path, monkeypatch) -> None:
+    """Not defaulted to "whatever is current" — that is a blind write.
+
+    A client that has not read the Owner has no business changing this, and
+    letting the field be omitted would make the compare-and-swap optional in
+    practice while looking mandatory in the contract.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _DEFAULT, headers=headers, json={"companion_id": "companion-b"}
+        )
+
+    assert answered.status_code == 422
+    assert backend.asked == []
+
+
+async def test_no_owner_may_be_named_in_the_write(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _DEFAULT,
+            headers=headers,
+            json={
+                "companion_id": "companion-b",
+                "expected_revision": 3,
+                "owner_id": "owner-2",
+            },
+        )
+
+    # Refused rather than ignored: a caller that believes it chose the Owner
+    # must find out that it did not.
+    assert answered.status_code == 422
+    assert backend.asked == []

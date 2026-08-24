@@ -188,6 +188,20 @@ def producer_app(state: ProducerState) -> FastAPI:
             state.workspace_operations[operation_id] = result
             return result
 
+    #: The Owner aggregate this fake holds, so a write is observable by the
+    #: read that follows it — the point of the test below.
+    owner = {"default_companion_id": "companion-1", "revision": 3}
+
+    def owner_body(owner_id: str) -> dict:
+        return {
+            "operation": "owner.identity",
+            "owner_id": owner_id,
+            "display_name": "Manson",
+            "lifecycle_state": "active",
+            "default_companion_id": owner["default_companion_id"],
+            "revision": owner["revision"],
+        }
+
     @app.get("/api/workspace-authority/v1/owners/{owner_id}")
     async def owner_identity(
         owner_id: str, authorization: str = Header(alias="Authorization")
@@ -196,14 +210,26 @@ def producer_app(state: ProducerState) -> FastAPI:
             raise HTTPException(401, "bad Data workspace credential")
         if owner_id != "owner-1":
             raise HTTPException(404, "owner not found")
-        return {
-            "operation": "owner.identity",
-            "owner_id": owner_id,
-            "display_name": "Manson",
-            "lifecycle_state": "active",
-            "default_companion_id": "companion-1",
-            "revision": 3,
-        }
+        return owner_body(owner_id)
+
+    @app.put("/api/workspace-authority/v1/owners/{owner_id}/default-companion")
+    async def set_default(
+        owner_id: str,
+        payload: dict,
+        authorization: str = Header(alias="Authorization"),
+    ):
+        if authorization != "Bearer workspace-token":
+            raise HTTPException(401, "bad Data workspace credential")
+        if owner_id != "owner-1":
+            raise HTTPException(404, "owner not found")
+        expected = payload.get("expected_revision")
+        if expected is not None and expected != owner["revision"]:
+            if payload["companion_id"] != owner["default_companion_id"]:
+                raise HTTPException(409, "owner revision has moved")
+        if payload["companion_id"] != owner["default_companion_id"]:
+            owner["default_companion_id"] = payload["companion_id"]
+            owner["revision"] += 1
+        return owner_body(owner_id)
 
     @app.get("/api/companion-authority/v1/owners/{owner_id}/companions")
     async def owner_companions(
@@ -614,3 +640,59 @@ async def test_management_reads_reach_the_authority_that_owns_each_fact(
 
     # An Owner this Host does not have is the authority's 404, relayed.
     assert unknown_owner.status_code == 404
+
+
+async def test_making_one_the_default_moves_the_owners_pointer_over_http(
+    tmp_path: Path,
+) -> None:
+    """The write, then the read that has to agree with it.
+
+    Both go through the real clients: the write to the workspace authority, the
+    read of the roster to the Companion authority. They agree only because the
+    pointer is one field read from one place — which is the property the whole
+    shape exists to protect, and the one a per-row flag would break silently.
+    """
+    state = ProducerState()
+    app, producer_client = await admin_app(tmp_path, producer_app(state))
+    headers = {"Authorization": "Bearer local-api-token"}
+    try:
+        before = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/context?owner_id=owner-1",
+            headers=headers,
+        )
+        written = await call_admin(
+            app,
+            "PUT",
+            "/api/internal/v1/management/owners/default-companion?owner_id=owner-1",
+            headers=headers,
+            json={"companion_id": "companion-2", "expected_revision": 3},
+        )
+        after = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/context?owner_id=owner-1",
+            headers=headers,
+        )
+        stale = await call_admin(
+            app,
+            "PUT",
+            "/api/internal/v1/management/owners/default-companion?owner_id=owner-1",
+            headers=headers,
+            json={"companion_id": "companion-3", "expected_revision": 3},
+        )
+    finally:
+        await app.state.control_plane.close()
+        await producer_client.aclose()
+
+    assert before.json()["default_companion_id"] == "companion-1"
+    assert written.status_code == 200, written.text
+    assert written.json()["default_companion_id"] == "companion-2"
+    # The context read afterwards sees it, because there is only one place it
+    # could have come from.
+    assert after.json()["default_companion_id"] == "companion-2"
+    assert after.json()["owner_revision"] == 4
+    # And the caller still holding revision 3 loses, with a status a client can
+    # act on rather than a generic failure.
+    assert stale.status_code == 409, stale.text

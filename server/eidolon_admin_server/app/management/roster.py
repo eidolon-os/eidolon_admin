@@ -139,3 +139,40 @@ async def read_companion(
         revision=identity.revision,
         is_default=owner.default_companion_id == identity.companion_id,
     )
+
+
+@runtime_checkable
+class DefaultCompanionWriter(Protocol):
+    """The one authority call this command needs."""
+
+    async def set_default_companion(
+        self,
+        owner_id: str,
+        *,
+        companion_id: str,
+        expected_revision: int,
+    ): ...
+
+
+async def set_default_companion(
+    *,
+    owner_id: str,
+    companion_id: str,
+    expected_revision: int,
+    owners: DefaultCompanionWriter,
+) -> str | None:
+    """Ask the authority to move the Owner's pointer; return where it now points.
+
+    This layer holds no rule of its own. Whether the Companion is this Owner's,
+    whether a guard may be the default, and whether the caller's revision is
+    current are all the authority's to answer — and it answers them inside the
+    transaction that does the write, which is the only place those checks are
+    not a race.
+    """
+
+    identity = await owners.set_default_companion(
+        owner_id,
+        companion_id=companion_id,
+        expected_revision=expected_revision,
+    )
+    return identity.default_companion_id

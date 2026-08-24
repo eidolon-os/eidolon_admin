@@ -20,7 +20,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
-from eidolon_admin_server.app.management.roster import read_companion, read_roster
+from eidolon_admin_server.app.management.roster import (
+    read_companion,
+    read_roster,
+    set_default_companion,
+)
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
 #: Required by the router, so a second route here cannot be added without it.
@@ -90,6 +94,24 @@ class CompanionDetailInternal(BaseModel):
     #: single answer about a single Companion cannot contradict the roster,
     #: because both compute it from the same one field.
     is_default: bool
+
+
+class DefaultCompanionRequestInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    companion_id: str = Field(min_length=1, max_length=64)
+    #: Required here, unlike at the authority: this boundary has always just
+    #: read the Owner, so a caller with no revision is a caller that skipped a
+    #: read it was supposed to do.
+    expected_revision: int = Field(ge=1)
+
+
+class DefaultCompanionResponseInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["owner.default-companion"] = "owner.default-companion"
+    default_companion_id: str | None = Field(default=None, max_length=64)
 
 
 @router.get("/context", response_model=ManagementContextInternal)
@@ -198,4 +220,29 @@ async def get_companion(
         lifecycle_state=detail.lifecycle_state,
         revision=detail.revision,
         is_default=detail.is_default,
+    )
+
+
+@router.put(
+    "/owners/default-companion", response_model=DefaultCompanionResponseInternal
+)
+async def put_default_companion(
+    request: Request,
+    owner_id: str,
+    payload: DefaultCompanionRequestInternal,
+) -> DefaultCompanionResponseInternal:
+    """Move this Owner's default to one of their Companions."""
+    try:
+        default_companion_id = await set_default_companion(
+            owner_id=owner_id,
+            companion_id=payload.companion_id,
+            expected_revision=payload.expected_revision,
+            owners=request.app.state.control_plane.workspace,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return DefaultCompanionResponseInternal(
+        default_companion_id=default_companion_id
     )

@@ -48,15 +48,36 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
+    async def set_default_companion(
+        self, *, owner_id: str, companion_id: str, expected_revision: int
+    ) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/owners/default-companion",
+            {"owner_id": owner_id},
+            {"companion_id": companion_id, "expected_revision": expected_revision},
+        )
+
     async def _get(self, path: str, params: dict[str, str]) -> dict:
+        return await self._call("GET", path, params, None)
+
+    async def _call(
+        self, method: str, path: str, params: dict[str, str], body: dict | None
+    ) -> dict:
+        """One place that speaks to the other process, whatever the verb.
+
+        Reads and writes differ only in method and body here — deliberately, so
+        that "how a refusal is relayed" cannot come to mean two things.
+        """
         if not self._service_token:
             raise ManagementBackendError(
                 "Host management backend credential is not configured", status_code=503
             )
         try:
-            response = await self._client.get(
+            response = await self._client.request(
+                method,
                 f"{self._base_url}{path}",
                 params=params,
+                json=body,
                 headers={"Authorization": f"Bearer {self._service_token}"},
                 timeout=self._timeout,
             )
@@ -67,7 +88,9 @@ class AdminManagementClient:
         if response.status_code != 200:
             # Relayed rather than reinterpreted: this side has no credentials and
             # no authority facts, so it is in no position to decide what a
-            # refusal from the other side means.
+            # refusal from the other side means. A 409 in particular has to
+            # arrive intact — it is the one a client must react to by re-reading
+            # rather than by retrying.
             raise ManagementBackendError(
                 "Host management backend refused this request",
                 status_code=response.status_code
@@ -85,6 +108,9 @@ class AdminManagementClient:
                 "Host management backend answered outside its contract", status_code=502
             )
         return payload
+
+    async def _put(self, path: str, params: dict[str, str], body: dict) -> dict:
+        return await self._call("PUT", path, params, body)
 
     async def close(self) -> None:
         await self._client.aclose()

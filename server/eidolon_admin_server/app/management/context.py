@@ -88,7 +88,7 @@ _CAPABILITIES: tuple[str, ...] = (
 #: from the same document, and there are tests on each side. This frozenset is
 #: the only place a capability turns on — a route existing is not enough, which
 #: is what keeps a button from appearing before the thing behind it works.
-_ENABLED: frozenset[str] = frozenset({"companion.read"})
+_ENABLED: frozenset[str] = frozenset({"companion.read", "companion.set_default"})
 
 
 async def read_context(*, owner_id: str, owners: OwnerReader) -> ManagementContext:

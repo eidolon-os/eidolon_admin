@@ -160,6 +160,55 @@
         "title": "CompanionSummaryView",
         "type": "object"
       },
+      "DefaultCompanionRequest": {
+        "additionalProperties": false,
+        "description": "Which of my Eidolons answers when I did not say which.\n\n``expected_revision`` is not ceremony a client can skip: it is the version\nof the Owner it last read, and it is what makes two phones (or a phone and a\nbrowser) unable to both win. A client that has not read the Owner has no\nbusiness changing this.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "expected_revision"
+        ],
+        "title": "DefaultCompanionRequest",
+        "type": "object"
+      },
+      "DefaultCompanionView": {
+        "additionalProperties": false,
+        "description": "Where the pointer now points, read back from the authority.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "default_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Companion Id"
+          }
+        },
+        "title": "DefaultCompanionView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -474,6 +523,66 @@
           }
         },
         "summary": "Get Context",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner/default-companion": {
+      "put": {
+        "description": "Make one of my Eidolons the one that answers by default.\n\nPUT, so a phone that lost the response can simply ask again. Nothing\nelse moves: conversations already running keep the Eidolon they were\nstarted with, devices stay where they are, and no memory is copied —\nthis changes where *new* unaddressed work goes.",
+        "operationId": "put_default_companion_api_management_v1_owner_default_companion_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefaultCompanionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefaultCompanionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Default Companion",
         "tags": [
           "management"
         ]
