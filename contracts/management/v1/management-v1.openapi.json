@@ -1,6 +1,111 @@
 {
   "components": {
     "schemas": {
+      "CompanionRosterView": {
+        "additionalProperties": false,
+        "description": "One page of this Owner's Eidolons, oldest first.",
+        "properties": {
+          "companions": {
+            "items": {
+              "$ref": "#/components/schemas/CompanionSummaryView"
+            },
+            "title": "Companions",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "default_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Companion Id"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "companions"
+        ],
+        "title": "CompanionRosterView",
+        "type": "object"
+      },
+      "CompanionSummaryView": {
+        "additionalProperties": false,
+        "description": "One Eidolon, as a list shows it.\n\nNo \"is the default\" flag. The page says which one is default exactly once,\nso a client cannot render two rows both claiming it, and cannot disagree\nwith the Owner record about which one it is.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "created_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "lifecycle_state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "companion_id",
+          "kind",
+          "lifecycle_state",
+          "revision",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "CompanionSummaryView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -146,6 +251,72 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/management/v1/companions": {
+      "get": {
+        "description": "This Owner's Eidolons.\n\nThere is no ``owner_id`` parameter and there will not be one: the Owner\nis whoever this session authenticated. ``cursor`` is the one thing a\nclient may vary, and it is a value this boundary handed it.",
+        "operationId": "list_companions_api_management_v1_companions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionRosterView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Companions",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/context": {
       "get": {
         "operationId": "get_context_api_management_v1_context_get",

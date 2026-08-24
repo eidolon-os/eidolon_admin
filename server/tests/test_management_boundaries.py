@@ -112,4 +112,9 @@ def test_capabilities_stay_false_until_a_slice_is_declared_closed() -> None:
     named set, not a side effect of adding a route.
     """
     context = (INTERNAL_MANAGEMENT / "context.py").read_text(encoding="utf-8")
-    assert "_ENABLED: frozenset[str] = frozenset()" in context
+    # One assignment, one place. What it contains is the application's business
+    # (and is asserted in test_management_context.py); what matters here is that
+    # no other line in this module can make a capability true.
+    assert context.count("_ENABLED") == 2, "declared once, read once"
+    assert "_ENABLED: frozenset[str] = frozenset(" in context
+    assert "name in _ENABLED" in context

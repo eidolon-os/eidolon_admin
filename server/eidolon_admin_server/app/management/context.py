@@ -81,7 +81,13 @@ _CAPABILITIES: tuple[str, ...] = (
 
 #: Closed slices. Everything else in ``_CAPABILITIES`` is false, and stays false
 #: until its authority, application, route, client and tests are all in place.
-_ENABLED: frozenset[str] = frozenset()
+#:
+#: ``companion.read`` is the first one closed: Data answers the roster, the
+#: application reads it, both boundaries expose it, both clients are generated
+#: from the same document, and there are tests on each side. This frozenset is
+#: the only place a capability turns on — a route existing is not enough, which
+#: is what keeps a button from appearing before the thing behind it works.
+_ENABLED: frozenset[str] = frozenset({"companion.read"})
 
 
 async def read_context(*, owner_id: str, owners: OwnerReader) -> ManagementContext:

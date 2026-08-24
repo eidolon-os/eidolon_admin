@@ -12,6 +12,8 @@
 
 import { describe, expect, it } from 'vitest'
 import type {
+  CompanionRosterView,
+  CompanionSummaryView,
   ManagementContextView,
   ManagementResponses,
   OwnerContextView,
@@ -85,5 +87,94 @@ describe('management v1 context', () => {
     expect(keys.sort()).toEqual(
       ['capabilities', 'contract_version', 'default_companion_id', 'limits', 'owner'].sort(),
     )
+  })
+})
+
+/** A roster page exactly as the Host sends it. */
+const ROSTER: CompanionRosterView = {
+  contract_version: '1',
+  default_companion_id: 'companion-a',
+  companions: [
+    {
+      companion_id: 'companion-a',
+      display_name: '小忆',
+      kind: 'standard',
+      lifecycle_state: 'active',
+      revision: 2,
+      created_at: '2026-08-24T09:30:00+00:00',
+      updated_at: '2026-08-24T09:30:00+00:00',
+    },
+    {
+      companion_id: 'companion-b',
+      display_name: '',
+      kind: 'standard',
+      lifecycle_state: 'archived',
+      revision: 5,
+      created_at: '2026-08-24T09:31:00+00:00',
+      updated_at: '2026-08-24T09:40:00+00:00',
+    },
+  ],
+  next_cursor: null,
+}
+
+describe('management v1 roster', () => {
+  it('reads the default from the page, never from a row', () => {
+    // @ts-expect-error - a per-row flag would let two rows claim it
+    const wrong: CompanionSummaryView = { ...ROSTER.companions[0], is_default: true }
+    expect(wrong).toBeTruthy()
+
+    const defaults = ROSTER.companions.filter(
+      (row) => row.companion_id === ROSTER.default_companion_id,
+    )
+    expect(defaults).toHaveLength(1)
+  })
+
+  it('renders a null default rather than promoting a row', () => {
+    const none: CompanionRosterView = { ...ROSTER, default_companion_id: null }
+    const marked = none.companions.filter(
+      (row) => row.companion_id === none.default_companion_id,
+    )
+    expect(marked).toHaveLength(0)
+    // What a large screen may do is say so; what it may not do is pick one.
+    expect(none.companions).toHaveLength(2)
+  })
+
+  it('shows archived Eidolons instead of filtering them out', () => {
+    // Four states, so "the Owner archived it" is distinguishable from "it
+    // cannot run right now". A client that treated this as a boolean would
+    // have to guess which, and would guess the same way for both.
+    expect(ROSTER.companions.map((row) => row.lifecycle_state)).toEqual([
+      'active',
+      'archived',
+    ])
+  })
+
+  it('treats a kind it has never heard of as another kind, not an error', () => {
+    // kind is a string in the contract on purpose: the set of product types is
+    // the Host's to grow, and a row must stay renderable.
+    const later: CompanionSummaryView = {
+      ...ROSTER.companions[0],
+      kind: 'a-kind-from-a-later-release',
+    }
+    expect(later.kind).toBe('a-kind-from-a-later-release')
+  })
+
+  it('leaves an unnamed Eidolon to the client rather than showing its id', () => {
+    const unnamed = ROSTER.companions[1]
+    expect(unnamed.display_name).toBe('')
+    // The identifier is not a name, and substituting it here is how a person
+    // ends up reading 'companion-b' where they expected what they called it.
+    expect(unnamed.display_name || 'unnamed').not.toBe(unnamed.companion_id)
+  })
+
+  it('keys the roster response by the operation a client calls', () => {
+    const answer: ManagementResponses['GET /api/management/v1/companions'] = ROSTER
+    expect(answer.companions[0].revision).toBe(2)
+  })
+
+  it('has no way to ask for another Owner\'s roster', () => {
+    const keys = Object.keys(ROSTER)
+    expect(keys).not.toContain('owner_id')
+    expect(ROSTER.companions.every((row) => !('owner_id' in row))).toBe(true)
   })
 })

@@ -15,10 +15,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from types import SimpleNamespace
+
 import httpx
 import pytest
 
-from eidolon_admin_server.app.management.context import _CAPABILITIES, _ENABLED
+from eidolon_admin_server.app.management.context import (
+    _CAPABILITIES,
+    _ENABLED,
+    read_context,
+)
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
@@ -230,11 +236,43 @@ async def test_every_capability_is_false_and_the_whole_surface_is_declared(
         headers = await _authenticate(client)
         body = (await client.get(_CONTEXT, headers=headers)).json()
 
-    assert _ENABLED == frozenset(), "a closed slice must be added here deliberately"
+    # The whole surface is named, whatever today's build can do. This boundary
+    # relays the map; which names are true is the application's judgement and is
+    # asserted against _ENABLED in
+    # test_a_capability_is_true_only_for_a_slice_declared_closed below, where a
+    # stub cannot stand in for it.
     assert set(body["capabilities"]) == set(_CAPABILITIES)
-    assert not any(body["capabilities"].values())
+    assert not any(body["capabilities"].values()), "this backend said all false"
     for expected in ("companion.create", "memory.export", "task.manage"):
         assert expected in body["capabilities"]
+
+
+async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
+    """Read against the application, not through a stub that hard-codes a map.
+
+    Going through the public boundary would only prove the stub's answer is
+    relayed. This asks the code that decides.
+    """
+
+    class _Owners:
+        async def get_owner(self, owner_id: str):
+            return SimpleNamespace(
+                owner_id=owner_id,
+                display_name="Manson",
+                revision=3,
+                default_companion_id="companion-a",
+            )
+
+    context = await read_context(owner_id="owner-1", owners=_Owners())
+
+    assert set(context.capabilities) == set(_CAPABILITIES)
+    # Compared against _ENABLED rather than a hard-coded "all false": closing
+    # the next slice is then a one-line edit to that set, while a capability
+    # that turned true *without* being added there still fails here.
+    assert {name for name, value in context.capabilities.items() if value} == set(_ENABLED)
+    assert context.capabilities["companion.read"] is True, "the first closed slice"
+    for still_open in ("companion.create", "memory.export", "task.manage"):
+        assert context.capabilities[still_open] is False
 
 
 async def test_limits_are_null_rather_than_a_number_nobody_measured(

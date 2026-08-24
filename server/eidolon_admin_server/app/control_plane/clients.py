@@ -14,6 +14,7 @@ from .contracts import (
     PersonaChapter,
     PersonaTimeline,
     CompanionIdentity,
+    CompanionRosterPage,
     HubDevice,
     DeviceRef,
     HubClaimRevocationResult,
@@ -174,6 +175,58 @@ class DataAuthorityClient:
                 "data", "Data returned a different companion identity"
             )
         return identity
+
+    async def list_owner_companions(
+        self,
+        owner_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> CompanionRosterPage:
+        """One page of this Owner's roster, from the authority that owns it.
+
+        ``owner_id`` is in the path and the authority filters by it, so this is
+        not a client-side scope check that could be forgotten: a Companion of
+        another Owner is not something this call can return.
+        """
+
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        # Forwarded as received. Admin neither decodes the cursor nor decides
+        # the page size default — the authority owns both, and a second opinion
+        # here would be a second page boundary.
+        params: dict[str, str] = {}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if limit is not None:
+            params["limit"] = str(limit)
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/companions",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            params=params or None,
+        )
+        page = _parse("data", response, CompanionRosterPage)
+        if page.owner_id != owner_id:
+            raise _contract_violation(
+                "data", "Data returned a roster for a different Owner"
+            )
+        return page
 
     async def rename_companion(
         self,

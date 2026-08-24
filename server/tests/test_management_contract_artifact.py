@@ -70,6 +70,16 @@ def test_the_contract_carries_only_the_management_surface() -> None:
     assert all(path.startswith("/api/management/v1") for path in paths)
 
 
+#: Query parameters this ABI may offer. Not a style rule — every name here is a
+#: value the Host itself handed the client (a cursor), so the list is closed and
+#: an addition is a decision. It replaces an earlier blanket "no query
+#: parameters at all", which was too tight: it would have rejected pagination,
+#: and a rule that has to be relaxed the first time it is inconvenient teaches
+#: nothing about what actually matters — which is that a client cannot name a
+#: subject it was not given.
+ALLOWED_QUERY_PARAMETERS = {"cursor"}
+
+
 def test_no_operation_accepts_an_owner(  # noqa: D401 - the name is the assertion
 ) -> None:
     """A parameter in this document is a parameter two clients can send.
@@ -82,9 +92,14 @@ def test_no_operation_accepts_an_owner(  # noqa: D401 - the name is the assertio
             parameters = operation.get("parameters", [])
             names = {parameter["name"] for parameter in parameters}
             assert "owner_id" not in names, f"{method.upper()} {path} takes an owner_id"
-            assert not any(
-                parameter["in"] == "query" for parameter in parameters
-            ), f"{method.upper()} {path} declares a query parameter"
+            queries = {
+                parameter["name"]
+                for parameter in parameters
+                if parameter["in"] == "query"
+            }
+            assert queries <= ALLOWED_QUERY_PARAMETERS, (
+                f"{method.upper()} {path} declares {queries - ALLOWED_QUERY_PARAMETERS}"
+            )
 
 
 def test_the_contract_carries_only_the_schemas_its_paths_reach() -> None:

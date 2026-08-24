@@ -6,6 +6,23 @@
 // No operation takes an owner_id: the Owner comes from the authenticated
 // Controller session, so it is not expressible from a client.
 
+export interface CompanionRosterView {
+  companions: Array<CompanionSummaryView>
+  contract_version?: "1"
+  default_companion_id?: string | null
+  next_cursor?: string | null
+}
+
+export interface CompanionSummaryView {
+  companion_id: string
+  created_at: string
+  display_name?: string
+  kind: string
+  lifecycle_state: string
+  revision: number
+  updated_at: string
+}
+
 export interface HTTPValidationError {
   detail?: Array<ValidationError>
 }
@@ -34,5 +51,6 @@ export interface ValidationError {
 
 /** Response type per operation, keyed as it is called. */
 export interface ManagementResponses {
+  'GET /api/management/v1/companions': CompanionRosterView
   'GET /api/management/v1/context': ManagementContextView
 }

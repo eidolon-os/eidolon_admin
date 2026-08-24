@@ -80,6 +80,133 @@ def directory() -> StaticDirectory:
     )
 
 
+ROSTER_PAGE = {
+    "contract_version": "1",
+    "operation": "companion.roster-page",
+    "owner_id": "owner one",
+    "default_companion_id": "companion-a",
+    "companions": [
+        {
+            "companion_id": "companion-a",
+            "display_name": "小忆",
+            "kind": "standard",
+            "lifecycle_state": "active",
+            "revision": 2,
+            "created_at": "2026-08-24T09:30:00+00:00",
+            "updated_at": "2026-08-24T09:30:00+00:00",
+        }
+    ],
+    "next_cursor": "opaque",
+}
+
+
+async def test_roster_is_read_owner_scoped_with_the_cursor_untouched() -> None:
+    """The Owner is in the path, so scope is the authority's filter, not ours.
+
+    A client-side filter over an unscoped list is the version of this that
+    leaks: it works until someone adds a code path that forgets to apply it.
+    """
+
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.raw_path.split(b"?")[0]
+        seen["cursor"] = request.url.params.get("cursor")
+        assert request.headers["authorization"] == "Bearer admin-token"
+        return httpx.Response(200, json=ROSTER_PAGE)
+
+    http_client = client(handler)
+    try:
+        subject = DataAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="admin-token",
+            timeout_seconds=1,
+        )
+        page = await subject.list_owner_companions("owner one", cursor="page-2")
+    finally:
+        await http_client.aclose()
+
+    assert seen["path"] == b"/api/companion-authority/v1/owners/owner%20one/companions"
+    assert seen["cursor"] == "page-2"
+    assert page.default_companion_id == "companion-a"
+    assert page.next_cursor == "opaque"
+
+
+async def test_no_cursor_means_no_cursor_parameter() -> None:
+    """Not an empty string: the authority's own default page start.
+
+    Sending ``cursor=`` would ask it to decode nothing into a position.
+    """
+
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["query"] = request.url.query
+        return httpx.Response(200, json=ROSTER_PAGE)
+
+    http_client = client(handler)
+    try:
+        subject = DataAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="admin-token",
+            timeout_seconds=1,
+        )
+        await subject.list_owner_companions("owner one")
+    finally:
+        await http_client.aclose()
+
+    assert seen["query"] == b""
+
+
+async def test_a_roster_for_another_owner_is_a_contract_violation() -> None:
+    """Cheap to check, and the failure it catches is a cross-Owner leak."""
+    http_client = client(
+        lambda _request: httpx.Response(
+            200, json={**ROSTER_PAGE, "owner_id": "someone-else"}
+        )
+    )
+    try:
+        subject = DataAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="admin-token",
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as failure:
+            await subject.list_owner_companions("owner one")
+    finally:
+        await http_client.aclose()
+
+    assert failure.value.kind == "contract_violation"
+
+
+async def test_a_roster_row_claiming_the_default_is_refused() -> None:
+    """Strict parsing is the guard against the fact arriving twice.
+
+    If a producer ever added ``is_default`` per row, this consumer must fail
+    loudly rather than quietly carry two answers to one question.
+    """
+    row = {**ROSTER_PAGE["companions"][0], "is_default": True}
+    http_client = client(
+        lambda _request: httpx.Response(200, json={**ROSTER_PAGE, "companions": [row]})
+    )
+    try:
+        subject = DataAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="admin-token",
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as failure:
+            await subject.list_owner_companions("owner one")
+    finally:
+        await http_client.aclose()
+
+    assert failure.value.kind == "contract_violation"
+
+
 async def test_data_client_uses_exact_read_only_route_and_credential() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"

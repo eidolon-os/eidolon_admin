@@ -32,6 +32,14 @@ class AdminManagementClient:
     async def context(self, *, owner_id: str) -> dict:
         return await self._get("/api/internal/v1/management/context", {"owner_id": owner_id})
 
+    async def roster(self, *, owner_id: str, cursor: str | None) -> dict:
+        params = {"owner_id": owner_id}
+        if cursor is not None:
+            # Passed through untouched in both directions. This side never reads
+            # a cursor: the page boundary belongs to the authority that built it.
+            params["cursor"] = cursor
+        return await self._get("/api/internal/v1/management/companions", params)
+
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         if not self._service_token:
             raise ManagementBackendError(

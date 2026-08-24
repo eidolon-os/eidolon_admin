@@ -57,6 +57,41 @@ class CompanionIdentity(StrictModel):
     revision: int = Field(ge=1)
 
 
+class CompanionSummary(StrictModel):
+    """One row of an Owner's roster.
+
+    Deliberately carries no "is the default" flag. That fact is one field on the
+    Owner, and repeating it per row would make "two rows both claim it" a
+    representable state — a second place adjudicating one fact. The page names
+    the pointer once and a reader compares.
+    """
+
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    #: Plain string for the same reason as ``CompanionIdentity.kind``: the set
+    #: of product types is the producer's to grow.
+    kind: str = Field(min_length=1, max_length=32)
+    lifecycle_state: Literal["active", "retiring", "archived", "deleting"]
+    revision: int = Field(ge=1)
+    created_at: datetime
+    updated_at: datetime
+
+
+class CompanionRosterPage(StrictModel):
+    """A page of one Owner's Companions, as the authority answers it."""
+
+    contract_version: Literal["1"]
+    operation: Literal["companion.roster-page"]
+    owner_id: str = Field(min_length=1, max_length=64)
+    #: Verbatim from the Owner aggregate. ``None`` is a real state and nothing
+    #: above may resolve it by picking a row.
+    default_companion_id: str | None = Field(default=None, max_length=64)
+    companions: tuple[CompanionSummary, ...] = ()
+    #: Opaque both ways: consumed as received, forwarded as received. Reading it
+    #: would make the producer's page boundary part of this contract.
+    next_cursor: str | None = Field(default=None, max_length=256)
+
+
 class PersonaChapter(StrictModel):
     genome_id: str = Field(min_length=1, max_length=64)
     version: int = Field(ge=1)
