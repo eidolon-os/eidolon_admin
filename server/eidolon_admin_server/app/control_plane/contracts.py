@@ -153,6 +153,59 @@ class MemoryBrowse(StrictModel):
     truncated: bool
 
 
+class ForgetCandidate(StrictModel):
+    drawer_id: str = Field(min_length=1, max_length=128)
+    score: float = Field(ge=0.0, le=1.0)
+    preview: str = Field(default="", max_length=4096)
+
+
+class ForgetPreview(StrictModel):
+    """What "forget this" would remove, and the token that binds it.
+
+    ``status`` is the realm's word for what it found. Carried rather than
+    flattened into success or failure: "nothing matched" and "too many matched"
+    lead a person to different next steps, and a client that saw only an empty
+    list could not tell them apart.
+    """
+
+    contract_version: Literal["1"]
+    operation: Literal["memory.forget-preview"]
+    status: Literal["preview", "not_found", "too_broad"]
+    target: str = Field(min_length=1, max_length=512)
+    action: Literal["archive", "delete"] | None = None
+    entries: tuple[ForgetCandidate, ...] = ()
+    needs_confirmation: bool = False
+    #: Opaque, and signed by the realm that minted it. Nothing above the realm
+    #: parses it: the whole point is that the confirm acts on what the preview
+    #: bound, and a layer that could read it could also build one.
+    confirmation_token: str | None = Field(default=None, max_length=4096)
+    expires_at: int | None = None
+    #: Present when the realm refused to resolve — why it was too broad.
+    detail: str = Field(default="", max_length=1024)
+
+
+class ForgetOutcome(StrictModel):
+    """What became of a confirmed forget.
+
+    ``extra="allow"`` here alone: the realm merges the command ledger's own
+    status dictionary into this answer, and that vocabulary belongs to the
+    ledger rather than to this contract. Pinning it would make every ledger
+    field an Admin release.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    contract_version: Literal["1"]
+    operation: Literal["memory.forget-confirm"]
+    action: Literal["archive", "delete"]
+    target: str = Field(min_length=1, max_length=512)
+    entry_count: int = Field(ge=0)
+    #: The ledger's word, relayed. Publishing is durable and applying is a
+    #: projection that may still be running, so "done" is not this layer's to
+    #: decide.
+    status: str = Field(min_length=1, max_length=64)
+
+
 class PersonaChapter(StrictModel):
     genome_id: str = Field(min_length=1, max_length=64)
     version: int = Field(ge=1)

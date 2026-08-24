@@ -199,3 +199,81 @@ async def test_a_wing_this_admin_has_never_heard_of_still_parses() -> None:
 
     assert page.wings[0].wing_id == "Wing_FromALaterRelease"
     assert page.wings[0].is_configured is False
+
+
+PREVIEW = {
+    "contract_version": "1",
+    "operation": "memory.forget-preview",
+    "status": "preview",
+    "target": "上周那件事",
+    "action": "delete",
+    "entries": [{"drawer_id": "drawer_1", "score": 0.8, "preview": "上周那件事"}],
+    "needs_confirmation": True,
+    "confirmation_token": "opaque",
+    "expires_at": 1900000000,
+    "detail": "",
+}
+
+CONFIRMED = {
+    "contract_version": "1",
+    "operation": "memory.forget-confirm",
+    "action": "delete",
+    "target": "上周那件事",
+    "entry_count": 1,
+    "status": "accepted",
+    "request_id": "r1",
+}
+
+
+async def test_a_preview_is_a_post_to_the_realms_own_route() -> None:
+    """A read that mints a token is not a GET.
+
+    It has a side effect the caller depends on — the binding — and it must not
+    be cached or replayed by anything between here and the realm.
+    """
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=PREVIEW, seen=seen)
+
+    proposal = await client.forget_preview(owner_id=OWNER, target="上周那件事")
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/forget/preview")
+    assert asked.method == "POST"
+    assert asked.url.params["target"] == "上周那件事"
+    assert asked.url.params["action"] == "delete"
+    assert asked.headers["authorization"] == f"Bearer {TOKEN}"
+    assert proposal.entries[0].drawer_id == "drawer_1"
+
+
+async def test_the_confirm_sends_the_token_and_nothing_else() -> None:
+    """Not the target. Sending both would invite the realm to prefer the wrong one."""
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=CONFIRMED, seen=seen)
+
+    result = await client.forget_confirm(owner_id=OWNER, confirmation_token="opaque")
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/forget/confirm")
+    assert dict(asked.url.params) == {"confirmation_token": "opaque"}
+    assert result.entry_count == 1
+    assert result.status == "accepted"
+
+
+async def test_the_ledgers_own_fields_survive_the_parse() -> None:
+    """The command ledger's vocabulary is not this contract's to pin.
+
+    ``request_id`` here comes from the ledger. Forbidding unknown fields on this
+    one model would make every ledger addition an Admin release.
+    """
+    client = _client([_realm()], body=CONFIRMED)
+
+    result = await client.forget_confirm(owner_id=OWNER, confirmation_token="opaque")
+
+    assert result.model_extra["request_id"] == "r1"
+
+
+async def test_a_host_without_the_credential_refuses_before_dialling() -> None:
+    client = _client([_realm()], body=PREVIEW, service_token="")
+
+    with pytest.raises(AuthorityFailure) as caught:
+        await client.forget_preview(owner_id=OWNER, target="x")
+
+    assert caught.value.kind == "configuration"

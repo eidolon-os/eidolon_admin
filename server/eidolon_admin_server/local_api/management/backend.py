@@ -80,6 +80,24 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/library", params)
 
+    async def forget_preview(
+        self, *, owner_id: str, target: str, action: str
+    ) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/memory/forget/preview",
+            {"owner_id": owner_id},
+            {"target": target, "action": action},
+            method="POST",
+        )
+
+    async def forget_confirm(self, *, owner_id: str, confirmation_token: str) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/memory/forget/confirm",
+            {"owner_id": owner_id},
+            {"confirmation_token": confirmation_token},
+            method="POST",
+        )
+
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         return await self._call("GET", path, params, None)
 
@@ -132,8 +150,10 @@ class AdminManagementClient:
             )
         return payload
 
-    async def _put(self, path: str, params: dict[str, str], body: dict) -> dict:
-        return await self._call("PUT", path, params, body)
+    async def _put(
+        self, path: str, params: dict[str, str], body: dict, *, method: str = "PUT"
+    ) -> dict:
+        return await self._call(method, path, params, body)
 
     async def close(self) -> None:
         await self._client.aclose()

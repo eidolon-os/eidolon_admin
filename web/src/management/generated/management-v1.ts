@@ -60,6 +60,41 @@ export interface DefaultCompanionView {
   default_companion_id?: string | null
 }
 
+export interface ForgetConfirmRequest {
+  confirmation_token: string
+}
+
+export interface ForgetEntryView {
+  entry_id: string
+  preview?: string
+  score: number
+}
+
+export interface ForgetProposalView {
+  action?: string | null
+  confirmation_token?: string | null
+  contract_version?: "1"
+  detail?: string
+  entries: Array<ForgetEntryView>
+  expires_at?: number | null
+  needs_confirmation: boolean
+  status: "preview" | "not_found" | "too_broad"
+  target: string
+}
+
+export interface ForgetResultView {
+  action: string
+  contract_version?: "1"
+  entry_count: number
+  status: string
+  target: string
+}
+
+export interface ForgetTargetRequest {
+  action?: "delete" | "archive"
+  target: string
+}
+
 export interface HTTPValidationError {
   detail?: Array<ValidationError>
 }
@@ -115,6 +150,8 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/context': ManagementContextView
+  'POST /api/management/v1/memory/forget/confirm': ForgetResultView
+  'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
 }

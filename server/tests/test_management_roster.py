@@ -253,6 +253,47 @@ class _Backend:
             "truncated": False,
         }
 
+    async def forget_preview(self, *, owner_id: str, target: str, action: str) -> dict:
+        self.asked.append((owner_id, target, action))
+        if target == "一切":
+            return {
+                "contract_version": "1",
+                "operation": "memory.forget-proposal",
+                "status": "too_broad",
+                "target": target,
+                "action": None,
+                "entries": [],
+                "needs_confirmation": False,
+                "confirmation_token": None,
+                "expires_at": None,
+                "detail": "too many matches",
+            }
+        return {
+            "contract_version": "1",
+            "operation": "memory.forget-proposal",
+            "status": "preview",
+            "target": target,
+            "action": action,
+            "entries": [
+                {"entry_id": "drawer_1", "preview": "上周那件事", "score": 0.8}
+            ],
+            "needs_confirmation": True,
+            "confirmation_token": "opaque-token",
+            "expires_at": 1900000000,
+            "detail": "",
+        }
+
+    async def forget_confirm(self, *, owner_id: str, confirmation_token: str) -> dict:
+        self.asked.append((owner_id, confirmation_token))
+        return {
+            "contract_version": "1",
+            "operation": "memory.forgotten",
+            "action": "delete",
+            "target": "上周那件事",
+            "entry_count": 1,
+            "status": "accepted",
+        }
+
     async def close(self) -> None:
         return None
 
@@ -740,3 +781,109 @@ async def test_the_library_names_no_owner_and_no_space(tmp_path, monkeypatch) ->
 
     assert "owner_id" not in body
     assert "memory_space_id" not in body
+
+
+# --- forgetting something -------------------------------------------------
+
+_FORGET_PREVIEW = "/api/management/v1/memory/forget/preview"
+_FORGET_CONFIRM = "/api/management/v1/memory/forget/confirm"
+
+
+async def test_a_preview_is_for_the_session_owner_and_changes_nothing(
+    tmp_path, monkeypatch
+) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.post(_FORGET_PREVIEW, json={"target": "上周那件事"})
+        headers = await _authenticate(client)
+        answered = await client.post(
+            _FORGET_PREVIEW, headers=headers, json={"target": "上周那件事"}
+        )
+
+    assert anonymous.status_code == 401
+    assert backend.asked == [("owner-1", "上周那件事", "delete")]
+    body = answered.json()
+    assert body["status"] == "preview"
+    assert body["entries"][0]["entry_id"] == "drawer_1"
+    assert body["needs_confirmation"] is True
+
+
+async def test_the_token_reaches_the_confirm_untouched(tmp_path, monkeypatch) -> None:
+    """No layer above the realm may read or rebuild it.
+
+    It is what ties the decision to the entries the person looked at; a client
+    or a boundary that could interpret one could confirm something nobody saw.
+    """
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        preview = (
+            await client.post(
+                _FORGET_PREVIEW, headers=headers, json={"target": "上周那件事"}
+            )
+        ).json()
+        confirmed = await client.post(
+            _FORGET_CONFIRM,
+            headers=headers,
+            json={"confirmation_token": preview["confirmation_token"]},
+        )
+
+    assert backend.asked[-1] == ("owner-1", "opaque-token")
+    assert confirmed.json()["entry_count"] == 1
+    # The Host's word for where the change got to, relayed rather than read as
+    # "done": publishing is durable, applying is a projection still running.
+    assert confirmed.json()["status"] == "accepted"
+
+
+async def test_too_broad_is_not_flattened_into_an_empty_list(
+    tmp_path, monkeypatch
+) -> None:
+    """"You never told me that" and "say which one" are different sentences."""
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        body = (
+            await client.post(_FORGET_PREVIEW, headers=headers, json={"target": "一切"})
+        ).json()
+
+    assert body["status"] == "too_broad"
+    assert body["entries"] == []
+    assert body["confirmation_token"] is None
+    assert body["detail"]
+
+
+async def test_an_action_outside_the_contract_is_refused(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.post(
+            _FORGET_PREVIEW,
+            headers=headers,
+            json={"target": "x", "action": "obliterate"},
+        )
+
+    assert answered.status_code == 422
+    assert backend.asked == []
+
+
+async def test_no_owner_may_be_named_when_forgetting(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.post(
+            _FORGET_PREVIEW,
+            headers=headers,
+            json={"target": "x", "owner_id": "owner-2"},
+        )
+
+    assert answered.status_code == 422
+    assert backend.asked == []

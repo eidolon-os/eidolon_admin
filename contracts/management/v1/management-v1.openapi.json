@@ -299,6 +299,207 @@
         "title": "DefaultCompanionView",
         "type": "object"
       },
+      "ForgetConfirmRequest": {
+        "additionalProperties": false,
+        "description": "The token the preview handed back, unchanged.",
+        "properties": {
+          "confirmation_token": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Confirmation Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_token"
+        ],
+        "title": "ForgetConfirmRequest",
+        "type": "object"
+      },
+      "ForgetEntryView": {
+        "additionalProperties": false,
+        "properties": {
+          "entry_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "preview": {
+            "default": "",
+            "maxLength": 4096,
+            "title": "Preview",
+            "type": "string"
+          },
+          "score": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "entry_id",
+          "score"
+        ],
+        "title": "ForgetEntryView",
+        "type": "object"
+      },
+      "ForgetProposalView": {
+        "additionalProperties": false,
+        "description": "What would go, before anything goes.\n\n``status`` distinguishes three answers a client must handle differently:\n``preview`` (here is what I found), ``not_found`` (nothing matched those\nwords), ``too_broad`` (too much matched to show, so nothing is offered).\nCollapsing the last two into an empty list would leave a person unable to\ntell \"you never told me that\" from \"say which one\".",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "confirmation_token": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation Token"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "detail": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Detail",
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/ForgetEntryView"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "needs_confirmation": {
+            "title": "Needs Confirmation",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "preview",
+              "not_found",
+              "too_broad"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "target",
+          "entries",
+          "needs_confirmation"
+        ],
+        "title": "ForgetProposalView",
+        "type": "object"
+      },
+      "ForgetResultView": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "entry_count": {
+            "minimum": 0.0,
+            "title": "Entry Count",
+            "type": "integer"
+          },
+          "status": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target",
+          "entry_count",
+          "status"
+        ],
+        "title": "ForgetResultView",
+        "type": "object"
+      },
+      "ForgetTargetRequest": {
+        "additionalProperties": false,
+        "description": "What to forget, in the person's own words.",
+        "properties": {
+          "action": {
+            "default": "delete",
+            "enum": [
+              "delete",
+              "archive"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "target": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "ForgetTargetRequest",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -790,6 +991,126 @@
           }
         },
         "summary": "Get Context",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/memory/forget/confirm": {
+      "post": {
+        "description": "Forget exactly what the preview showed.\n\nThe token is passed through untouched. No layer above the memory realm\ncan read it, and none should be able to: it is what ties this decision\nto the entries the person actually looked at.",
+        "operationId": "confirm_forget_api_management_v1_memory_forget_confirm_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetConfirmRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgetResultView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Confirm Forget",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/memory/forget/preview": {
+      "post": {
+        "description": "Show what forgetting this would remove. Nothing changes here.\n\nTwo steps rather than one because a topic is not a set: the words are\nresolved once, shown, and bound — and the confirm acts on what was\nshown rather than on what the words match by then.",
+        "operationId": "preview_forget_api_management_v1_memory_forget_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetTargetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgetProposalView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Forget",
         "tags": [
           "management"
         ]

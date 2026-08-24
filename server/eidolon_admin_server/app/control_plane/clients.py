@@ -11,6 +11,8 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ValidationError
 
 from .contracts import (
+    ForgetOutcome,
+    ForgetPreview,
     MemoryBrowse,
     PersonaChapter,
     PersonaTimeline,
@@ -876,6 +878,77 @@ class MemoryRecollectionsClient:
             params=params,
         )
         return _parse("memory", response, MemoryBrowse)
+
+    async def forget_preview(
+        self,
+        *,
+        owner_id: str,
+        target: str,
+        action: str = "delete",
+    ) -> ForgetPreview:
+        """What forgetting this would remove, without removing it."""
+
+        response = await self._realm_call(
+            owner_id,
+            "forget/preview",
+            params={"target": target, "action": action},
+        )
+        return _parse("memory", response, ForgetPreview)
+
+    async def forget_confirm(
+        self,
+        *,
+        owner_id: str,
+        confirmation_token: str,
+    ) -> ForgetOutcome:
+        """Apply exactly the set a preview bound.
+
+        The token is passed through untouched. This layer cannot read it and
+        must not try: it is signed by the realm that minted it, and a layer able
+        to interpret one would be a layer able to build one.
+        """
+
+        response = await self._realm_call(
+            owner_id,
+            "forget/confirm",
+            params={"confirmation_token": confirmation_token},
+            method="POST",
+        )
+        return _parse("memory", response, ForgetOutcome)
+
+    async def _realm_call(
+        self,
+        owner_id: str,
+        leaf: str,
+        *,
+        params: dict[str, str] | None = None,
+        method: str = "POST",
+    ):
+        """One route of this Owner's realm, with this Host's credential.
+
+        Shared by every read and write on that surface so the credential check
+        and the space resolution happen the same way each time — a second copy
+        is how one of them ends up unauthenticated.
+        """
+
+        if not self._service_token:
+            raise AuthorityFailure(
+                "memory",
+                "configuration",
+                "Admin memory service credential is not configured",
+                503,
+                retryable=False,
+            )
+        space = await self._space_for(owner_id)
+        return await _request(
+            "memory",
+            self._client,
+            method,
+            _realm_path(space, leaf),
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._service_token}"},
+            params=params,
+        )
 
     async def _space_for(self, owner_id: str) -> str:
         """The one memory space this Owner has, or a failure naming why not.

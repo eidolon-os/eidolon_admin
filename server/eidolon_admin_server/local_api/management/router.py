@@ -243,6 +243,80 @@ class MemoryLibraryView(BaseModel):
     truncated: bool
 
 
+class ForgetTargetRequest(BaseModel):
+    """What to forget, in the person's own words."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: str = Field(min_length=1, max_length=512)
+    #: ``delete`` removes it; ``archive`` puts it beyond recall but keeps it.
+    #: Defaulted to the reversible-sounding one being *absent*: a client that
+    #: does not say is asking for what the word "forget" means to a person.
+    action: Literal["delete", "archive"] = "delete"
+
+
+class ForgetConfirmRequest(BaseModel):
+    """The token the preview handed back, unchanged."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: Opaque to every layer above the memory realm. It carries the exact
+    #: entries the person saw, which is what makes confirming safe; a client
+    #: that built one itself would be confirming something nobody looked at.
+    confirmation_token: str = Field(min_length=1, max_length=4096)
+
+
+class ForgetEntryView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    preview: str = Field(default="", max_length=4096)
+    #: 1.0 is an exact match. Lower means the Host is guessing, and a client
+    #: should show that differently rather than presenting a guess as the answer.
+    score: float = Field(ge=0.0, le=1.0)
+
+
+class ForgetProposalView(BaseModel):
+    """What would go, before anything goes.
+
+    ``status`` distinguishes three answers a client must handle differently:
+    ``preview`` (here is what I found), ``not_found`` (nothing matched those
+    words), ``too_broad`` (too much matched to show, so nothing is offered).
+    Collapsing the last two into an empty list would leave a person unable to
+    tell "you never told me that" from "say which one".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    status: Literal["preview", "not_found", "too_broad"]
+    target: str = Field(min_length=1, max_length=512)
+    action: str | None = Field(default=None, max_length=16)
+    entries: list[ForgetEntryView]
+    #: True when the match was inexact or hit more than one thing. A client must
+    #: ask again rather than treating a guess as an instruction.
+    needs_confirmation: bool
+    #: Absent when there is nothing to confirm. A client cannot offer the button.
+    confirmation_token: str | None = Field(default=None, max_length=4096)
+    #: Unix seconds. The preview expires; a decision made ten minutes ago is not
+    #: a decision about now.
+    expires_at: int | None = None
+    detail: str = Field(default="", max_length=1024)
+
+
+class ForgetResultView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    action: str = Field(min_length=1, max_length=16)
+    target: str = Field(min_length=1, max_length=512)
+    entry_count: int = Field(ge=0)
+    #: The Host's word for where the change got to. Publishing is durable and
+    #: applying is a projection that may still be running, so a client must not
+    #: read anything other than the exact status as "done".
+    status: str = Field(min_length=1, max_length=64)
+
+
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
@@ -267,6 +341,14 @@ class ManagementBackendPort(Protocol):
 
     async def memory_library(
         self, *, owner_id: str, companion_id: str | None
+    ) -> dict: ...
+
+    async def forget_preview(
+        self, *, owner_id: str, target: str, action: str
+    ) -> dict: ...
+
+    async def forget_confirm(
+        self, *, owner_id: str, confirmation_token: str
     ) -> dict: ...
 
 
@@ -439,6 +521,60 @@ def register_management_routes(
             entry_count=answer["entry_count"],
             withheld_count=answer["withheld_count"],
             truncated=answer["truncated"],
+        )
+
+    @router.post("/memory/forget/preview", response_model=ForgetProposalView)
+    async def preview_forget(
+        payload: ForgetTargetRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ForgetProposalView:
+        """Show what forgetting this would remove. Nothing changes here.
+
+        Two steps rather than one because a topic is not a set: the words are
+        resolved once, shown, and bound — and the confirm acts on what was
+        shown rather than on what the words match by then.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.forget_preview(
+                owner_id=owner_id, target=payload.target, action=payload.action
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return ForgetProposalView(
+            status=answer["status"],
+            target=answer["target"],
+            action=answer.get("action"),
+            entries=[ForgetEntryView(**entry) for entry in answer["entries"]],
+            needs_confirmation=answer["needs_confirmation"],
+            confirmation_token=answer.get("confirmation_token"),
+            expires_at=answer.get("expires_at"),
+            detail=answer.get("detail", ""),
+        )
+
+    @router.post("/memory/forget/confirm", response_model=ForgetResultView)
+    async def confirm_forget(
+        payload: ForgetConfirmRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ForgetResultView:
+        """Forget exactly what the preview showed.
+
+        The token is passed through untouched. No layer above the memory realm
+        can read it, and none should be able to: it is what ties this decision
+        to the entries the person actually looked at.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.forget_confirm(
+                owner_id=owner_id, confirmation_token=payload.confirmation_token
+            )
+        except ManagementBackendError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        return ForgetResultView(
+            action=answer["action"],
+            target=answer["target"],
+            entry_count=answer["entry_count"],
+            status=answer["status"],
         )
 
     app.include_router(router)

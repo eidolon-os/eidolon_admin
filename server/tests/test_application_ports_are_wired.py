@@ -41,6 +41,7 @@ from eidolon_admin_server.app.management.creation import (
     CompanionProvisioner,
     MemoryReconciler,
 )
+from eidolon_admin_server.app.management.forgetting import MemoryForgetter
 from eidolon_admin_server.app.management.memory import MemoryBrowser
 from eidolon_admin_server.app.management.roster import (
     DefaultCompanionWriter,
@@ -65,6 +66,7 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # things on different clients; the gate below asserts they are not
     # interchangeable.
     "MemoryBrowser": (MemoryBrowser, "memory"),
+    "MemoryForgetter": (MemoryForgetter, "memory"),
     # Admin's own store, constructed by the service rather than reached for on
     # it: there is no authority behind it and nothing to mis-wire.
     "RemovalIntentStore": (None, None),

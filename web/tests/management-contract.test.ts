@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest'
 import type {
   CompanionCreateRequest,
+  ForgetProposalView,
+  ForgetTargetRequest,
   MemoryLibraryView,
   CompanionCreatedView,
   CompanionDetailView,
@@ -398,5 +400,71 @@ describe('management v1 memory library', () => {
   it('keys the library response by the operation a client calls', () => {
     const answer: ManagementResponses['GET /api/management/v1/memory/library'] = LIBRARY
     expect(answer.entry_count).toBe(2)
+  })
+})
+
+describe('management v1 forget', () => {
+  const PROPOSAL: ForgetProposalView = {
+    contract_version: '1',
+    status: 'preview',
+    target: '上周那件事',
+    action: 'delete',
+    entries: [{ entry_id: 'drawer_1', preview: '上周那件事', score: 0.8 }],
+    needs_confirmation: true,
+    confirmation_token: 'opaque',
+    expires_at: 1900000000,
+    detail: '',
+  }
+
+  it('keeps three answers apart instead of one empty list', () => {
+    // "you never told me that" and "say which one" lead a person to different
+    // next steps; a client that saw only entries.length === 0 could not tell.
+    const nothing: ForgetProposalView = {
+      ...PROPOSAL,
+      status: 'not_found',
+      entries: [],
+      confirmation_token: null,
+      needs_confirmation: false,
+    }
+    const tooMuch: ForgetProposalView = { ...nothing, status: 'too_broad', detail: '太多了' }
+
+    expect(nothing.entries).toHaveLength(0)
+    expect(tooMuch.entries).toHaveLength(0)
+    expect(nothing.status).not.toBe(tooMuch.status)
+  })
+
+  it('cannot offer a confirm without a token', () => {
+    const nothing: ForgetProposalView = {
+      ...PROPOSAL,
+      status: 'not_found',
+      entries: [],
+      confirmation_token: null,
+    }
+    // A button built without one would confirm something nobody looked at.
+    expect(nothing.confirmation_token).toBeNull()
+    expect(PROPOSAL.confirmation_token).toBe('opaque')
+  })
+
+  it('treats an inexact match as a question, not an instruction', () => {
+    expect(PROPOSAL.entries[0].score).toBeLessThan(1)
+    expect(PROPOSAL.needs_confirmation).toBe(true)
+  })
+
+  it('does not make a client name an action for the ordinary case', () => {
+    // "forget this" means delete to a person; archive is the deliberate choice.
+    const request: ForgetTargetRequest = { target: '上周那件事' }
+    expect(request.action).toBeUndefined()
+  })
+
+  it('has no way to forget on another Owner\'s behalf', () => {
+    // @ts-expect-error - the Owner comes from the session, not the body
+    const wrong: ForgetTargetRequest = { target: 'x', owner_id: 'owner-2' }
+    expect(wrong).toBeTruthy()
+  })
+
+  it('keys the preview response by the operation a client calls', () => {
+    const answer: ManagementResponses['POST /api/management/v1/memory/forget/preview'] =
+      PROPOSAL
+    expect(answer.target).toBe('上周那件事')
   })
 })

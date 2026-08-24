@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
+from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
 from eidolon_admin_server.app.management.memory import read_library
 from eidolon_admin_server.app.management.roster import (
     read_companion,
@@ -165,6 +166,53 @@ class MemoryLibraryInternal(BaseModel):
     entry_count: int = Field(ge=0)
     withheld_count: int = Field(ge=0)
     truncated: bool
+
+
+class ForgetTargetInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    target: str = Field(min_length=1, max_length=512)
+    action: str = Field(default="delete", min_length=1, max_length=16)
+
+
+class ForgetConfirmInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_token: str = Field(min_length=1, max_length=4096)
+
+
+class ForgetEntryInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: str = Field(min_length=1, max_length=128)
+    preview: str = Field(default="", max_length=4096)
+    score: float = Field(ge=0.0, le=1.0)
+
+
+class ForgetProposalInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.forget-proposal"] = "memory.forget-proposal"
+    status: Literal["preview", "not_found", "too_broad"]
+    target: str = Field(min_length=1, max_length=512)
+    action: str | None = Field(default=None, max_length=16)
+    entries: list[ForgetEntryInternal]
+    needs_confirmation: bool
+    confirmation_token: str | None = Field(default=None, max_length=4096)
+    expires_at: int | None = None
+    detail: str = Field(default="", max_length=1024)
+
+
+class ForgetResultInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.forgotten"] = "memory.forgotten"
+    action: str = Field(min_length=1, max_length=16)
+    target: str = Field(min_length=1, max_length=512)
+    entry_count: int = Field(ge=0)
+    status: str = Field(min_length=1, max_length=64)
 
 
 @router.get("/context", response_model=ManagementContextInternal)
@@ -382,4 +430,64 @@ async def get_memory_library(
         entry_count=library.entry_count,
         withheld_count=library.withheld_count,
         truncated=library.truncated,
+    )
+
+
+@router.post("/memory/forget/preview", response_model=ForgetProposalInternal)
+async def post_forget_preview(
+    request: Request,
+    owner_id: str,
+    payload: ForgetTargetInternal,
+) -> ForgetProposalInternal:
+    """What forgetting this would remove, without removing it."""
+    try:
+        proposal = await propose_forget(
+            owner_id=owner_id,
+            target=payload.target,
+            action=payload.action,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return ForgetProposalInternal(
+        status=proposal.status,
+        target=proposal.target,
+        action=proposal.action,
+        entries=[
+            ForgetEntryInternal(
+                entry_id=entry.entry_id, preview=entry.preview, score=entry.score
+            )
+            for entry in proposal.entries
+        ],
+        needs_confirmation=proposal.needs_confirmation,
+        confirmation_token=proposal.confirmation_token,
+        expires_at=proposal.expires_at,
+        detail=proposal.detail,
+    )
+
+
+@router.post("/memory/forget/confirm", response_model=ForgetResultInternal)
+async def post_forget_confirm(
+    request: Request,
+    owner_id: str,
+    payload: ForgetConfirmInternal,
+) -> ForgetResultInternal:
+    """Apply exactly the set a preview bound."""
+    try:
+        result = await apply_forget(
+            owner_id=owner_id,
+            confirmation_token=payload.confirmation_token,
+            memory=request.app.state.control_plane.memory,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return ForgetResultInternal(
+        action=result.action,
+        target=result.target,
+        entry_count=result.entry_count,
+        status=result.status,
     )
