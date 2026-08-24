@@ -1,0 +1,89 @@
+// Web's obligation while it has no management pages (plan §1.4).
+//
+// A second consumer is the only outside pressure keeping this ABI from quietly
+// taking the shape of one client. So the generated types are consumed here —
+// compiled, narrowed, and asserted against — before any page exists. If the
+// contract drifts into something a large screen cannot render, or into something
+// only Mobile's assumptions satisfy, this is where it shows up.
+//
+// These are type-level assertions as much as runtime ones: the file has to
+// compile under vue-tsc, and several checks exist to make it fail to compile if
+// the contract changes shape.
+
+import { describe, expect, it } from 'vitest'
+import type {
+  ManagementContextView,
+  ManagementResponses,
+  OwnerContextView,
+} from '../src/management/generated/management-v1'
+
+/** A response body exactly as the Host sends it. */
+const CONTEXT: ManagementContextView = {
+  contract_version: '1',
+  owner: { owner_id: 'owner-1', display_name: 'Manson', revision: 3 },
+  default_companion_id: 'companion-a',
+  capabilities: { 'companion.read': false, 'companion.create': false },
+  limits: { max_active_companions: null },
+}
+
+describe('management v1 context', () => {
+  it('names the Owner once, under owner', () => {
+    // @ts-expect-error - a top-level owner_id would be a second place to read it
+    const wrong: ManagementContextView = { ...CONTEXT, owner_id: 'owner-1' }
+    expect(wrong).toBeTruthy()
+
+    const owner: OwnerContextView = CONTEXT.owner
+    expect(owner.owner_id).toBe('owner-1')
+  })
+
+  it('treats the default as a pointer that may be absent', () => {
+    // Null is a real answer — no default-eligible Companion — and a client must
+    // render that rather than choosing a Companion to stand in for it.
+    const none: ManagementContextView = { ...CONTEXT, default_companion_id: null }
+    const chosen = none.default_companion_id ?? null
+    expect(chosen).toBeNull()
+  })
+
+  it('reads a capability as absent-or-false, never as permission', () => {
+    // A name missing from the map is a version skew: this client knows of a
+    // feature the Host does not describe. A name present and false is a feature
+    // gate. Collapsing the two would make an old Host look like a new one with
+    // everything switched off.
+    const known = 'companion.create'
+    const unknownToHost = 'companion.transmogrify'
+    expect(CONTEXT.capabilities[known]).toBe(false)
+    expect(CONTEXT.capabilities[unknownToHost]).toBeUndefined()
+
+    const mayCreate = CONTEXT.capabilities[known] === true
+    expect(mayCreate).toBe(false)
+  })
+
+  it('accepts a null limit without substituting a number', () => {
+    // The plan proposes 8 active Companions. Nobody has measured it, so the
+    // Host sends null and a client that hard-coded a number would outlive the
+    // guess. What a client may do is treat null as "no limit to show".
+    expect(CONTEXT.limits.max_active_companions).toBeNull()
+    const label =
+      CONTEXT.limits.max_active_companions === null
+        ? 'no published limit'
+        : String(CONTEXT.limits.max_active_companions)
+    expect(label).toBe('no published limit')
+  })
+
+  it('keys the response type by the operation a client calls', () => {
+    const answer: ManagementResponses['GET /api/management/v1/context'] = CONTEXT
+    expect(answer.owner.revision).toBe(3)
+  })
+
+  it('has no way to ask on behalf of another Owner', () => {
+    // Asserted by absence: the generated surface carries no request type with an
+    // owner field, because the document declares no such parameter. If one ever
+    // appears, this file is where a large-screen client would have started
+    // sending it.
+    const keys = Object.keys(CONTEXT)
+    expect(keys).not.toContain('owner_id')
+    expect(keys.sort()).toEqual(
+      ['capabilities', 'contract_version', 'default_companion_id', 'limits', 'owner'].sort(),
+    )
+  })
+})

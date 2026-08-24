@@ -1,0 +1,199 @@
+{
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ManagementContextView": {
+        "additionalProperties": false,
+        "description": "What a client reads before it draws anything.\n\n``capabilities`` is discovery, not permission: true means this Host can do\nthe thing at all, and whether this Controller may is answered per action. A\nname absent from the map is one this client has never heard of — a version\nskew — while a name present and false is a feature this Host cannot do yet.\n\n``limits`` values may be null, and a client must not substitute a number of\nits own: a limit nobody has measured is not a limit.",
+        "properties": {
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Capabilities",
+            "type": "object"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "default_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Companion Id"
+          },
+          "limits": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Limits",
+            "type": "object"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/OwnerContextView"
+          }
+        },
+        "required": [
+          "owner",
+          "capabilities",
+          "limits"
+        ],
+        "title": "ManagementContextView",
+        "type": "object"
+      },
+      "OwnerContextView": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "owner_id",
+          "revision"
+        ],
+        "title": "OwnerContextView",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "The single Owner management ABI. Both management clients are generated from this document; no route here accepts an owner_id, because the Owner comes from the authenticated Controller session.",
+    "title": "Eidolon Owner Management",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/management/v1/context": {
+      "get": {
+        "operationId": "get_context_api_management_v1_context_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementContextView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Context",
+        "tags": [
+          "management"
+        ]
+      }
+    }
+  }
+}
