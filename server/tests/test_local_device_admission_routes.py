@@ -328,8 +328,9 @@ async def test_enrollment_page_and_cursor_reach_the_admission_authority(
     assert asked[1].query.cursor is not None
     assert asked[1].query.cursor.resource_id == _ENROLLMENT
     assert str(asked[1].query.cursor.owner_domain_id) == _OWNER_DOMAIN
-    # Read-only paging never carries the scope that could approve something.
-    assert asked[0].actor.granted_scopes == ("device.read",)
+    # The queue of undecided Proposals is the approver's view: Hub shows an
+    # Enrollment nobody has decided only to a principal who could decide it.
+    assert asked[0].actor.granted_scopes == ("device.read", "device.claim.approve")
     # The default page includes acknowledged Grants: a device that finished its
     # handoff while the phone was closed must still be findable by its setup.
     assert "grant_acknowledged" in {str(state) for state in asked[2].query.states}
@@ -356,7 +357,10 @@ async def test_one_enrollment_is_readable_without_deciding_anything(
     assert len(port.recoveries) == 1
     assert port.recoveries[0].enrollment_id == _ENROLLMENT
     assert str(port.recoveries[0].owner_domain_id) == _OWNER_DOMAIN
-    assert port.recoveries[0].actor.granted_scopes == ("device.read",)
+    assert port.recoveries[0].actor.granted_scopes == (
+        "device.read",
+        "device.claim.approve",
+    )
     assert port.decisions == []
 
 

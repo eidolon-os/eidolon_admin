@@ -171,7 +171,7 @@ class LocalEnrollmentDecisionRequest(BaseModel):
                 reason=_REFUSAL_REASONS["conflict"],
             )
         actor = admission_actor(
-            controller_id=controller_id, owner_domain_id=owner_domain_id, approve=True
+            controller_id=controller_id, owner_domain_id=owner_domain_id
         )
         return ControllerEnrollmentDecisionIntent(
             contract_version="1",
@@ -192,13 +192,22 @@ class LocalEnrollmentDecisionRequest(BaseModel):
 
 
 def admission_actor(
-    *, controller_id: str, owner_domain_id: OwnerDomainId, approve: bool = False
+    *, controller_id: str, owner_domain_id: OwnerDomainId
 ) -> ControllerActorRef:
-    scopes = ("device.read", "device.claim.approve") if approve else ("device.read",)
+    """This Controller's authority, which does not change with the operation.
+
+    It used to: reads were sent as `device.read` alone and only the Decision
+    carried `device.claim.approve`. That describes the request, not the
+    principal — and it made the one screen this product needs impossible, because
+    a Proposal nobody has decided yet is visible only to whoever could decide it.
+    A Controller authenticated to this Owner's Host is that person; the Authority
+    still authorizes every command on its own terms.
+    """
+
     return ControllerActorRef(
         principal_id=controller_id,
         owner_domain_id=owner_domain_id,
-        granted_scopes=scopes,
+        granted_scopes=("device.read", "device.claim.approve"),
         authentication_strength="software",
     )
 
