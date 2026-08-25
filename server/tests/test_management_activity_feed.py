@@ -140,6 +140,32 @@ async def test_an_event_arrives_with_the_name_of_what_it_happened_to() -> None:
     assert companions.reads == 1
 
 
+async def test_a_payload_that_names_a_companion_gets_names_too() -> None:
+    """The subject is the obvious place a Companion appears, not the only one.
+
+    "Who answers now changed" is an event about the *Owner* whose whole meaning
+    is two Companions named in its payload. Checking only the subject left those
+    lines showing identifiers — the one thing this layer exists to prevent.
+    """
+
+    companions = _Companions()
+    feed = await read_activity(
+        owner_id="owner-1",
+        history=_History(
+            _event(
+                "owner.default_companion_changed",
+                subject_type="owner",
+                subject_id="owner-1",
+                payload={"companion_id": "companion-b"},
+            )
+        ),
+        companions=companions,
+    )
+
+    assert companions.reads == 1
+    assert feed.moments[0].detail["companion_id_name"] == "阿力"
+
+
 async def test_a_history_that_names_no_companion_costs_no_roster_read() -> None:
     companions = _Companions()
     feed = await read_activity(
@@ -185,6 +211,7 @@ async def test_only_allow_listed_payload_fields_reach_a_person() -> None:
                 subject_type="owner",
                 subject_id="owner-1",
                 payload={
+                    "companion_id": "companion-b",
                     "previous_companion_id": "companion-a",
                     "reason": "retirement",
                     "internal_trace": "not for a person",
@@ -195,7 +222,10 @@ async def test_only_allow_listed_payload_fields_reach_a_person() -> None:
     )
 
     assert feed.moments[0].detail == {
+        "companion_id": "companion-b",
+        "companion_id_name": "阿力",
         "previous_companion_id": "companion-a",
+        "previous_companion_id_name": "小忆",
         "reason": "retirement",
     }
 

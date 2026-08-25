@@ -31,7 +31,11 @@ from eidolon_admin_server.app.management.roster import RosterReader
 #: of a person. What a sentence needs is small and known.
 _DETAIL_FIELDS: dict[str, tuple[str, ...]] = {
     "companion.retirement_begun": ("replacement_companion_id",),
-    "owner.default_companion_changed": ("previous_companion_id", "reason"),
+    "owner.default_companion_changed": (
+        "companion_id",
+        "previous_companion_id",
+        "reason",
+    ),
 }
 
 
@@ -91,7 +95,7 @@ async def read_activity(
     page = await history.list_governance_events(owner_id, limit=limit, before=before)
     names = (
         await _companion_names(owner_id, companions)
-        if any(event.subject_type == "companion" for event in page.events)
+        if any(_names_a_companion(event) for event in page.events)
         else {}
     )
     return ActivityFeed(
@@ -109,6 +113,22 @@ async def read_activity(
             for event in page.events
         ),
         next_cursor=page.next_cursor,
+    )
+
+
+def _names_a_companion(event) -> bool:
+    """Whether this event mentions a Companion anywhere a person will read.
+
+    The subject is the obvious place and not the only one: "who answers now
+    changed" is an event about the *Owner* whose whole meaning is two Companions
+    named in its payload. Checking only the subject left those lines showing
+    identifiers, which is the one thing this layer exists to prevent.
+    """
+
+    if event.subject_type == "companion":
+        return True
+    return any(
+        field.endswith("companion_id") for field in _DETAIL_FIELDS.get(event.action, ())
     )
 
 
