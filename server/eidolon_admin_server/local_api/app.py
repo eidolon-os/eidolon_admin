@@ -12,6 +12,7 @@ projection rather than accepting Hub credentials from Mobile.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -998,6 +999,72 @@ def create_app(
                 target_id=target_id,
             )
 
+    async def _owned_device_ref(owner_id: str, controller_id: str, device_id: str):
+        """The DeviceRef of a device this Owner holds, or a refusal.
+
+        An identifier in a path is not authority. Kernel's Claims are the answer
+        because they are owner-scoped by construction, and mounts that are no
+        longer active still count: a removal that half-completed must be
+        retryable, or the device is stranded in the one state that keeps it from
+        being added again.
+        """
+
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        try:
+            page = await device_admission.query_claims(
+                payload=claim_query(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    query=ClaimQuery(
+                        owner_domain_id=owner_domain_id,
+                        states=(
+                            ClaimState.ACTIVE,
+                            ClaimState.SUSPENDED,
+                            ClaimState.REVOKED,
+                        ),
+                        cursor=None,
+                        limit=200,
+                    ),
+                )
+            )
+        except DeviceAdmissionError as exc:
+            raise ManagementBackendError(
+                str(exc),
+                status_code=exc.status_code,
+                refusal=refusal_for_status(exc.status_code, str(exc)),
+            ) from exc
+        for candidate in page.items:
+            if candidate.device_ref.device_instance_id == device_id:
+                return candidate.device_ref
+        raise ManagementBackendError(
+            "Device does not exist",
+            status_code=404,
+            refusal=refusal_for_status(404, "Device does not exist"),
+        )
+
+    @dataclass(frozen=True, slots=True)
+    class _DeviceSession:
+        """One authenticated Controller, and everything the device calls need.
+
+        Passed whole rather than as three arguments so the management router
+        never has to know that removal needs a reset epoch and an expiry — that
+        is between this boundary and the admission authority.
+        """
+
+        owner_id: str
+        controller_id: str
+        controller_session: Any
+
+    async def management_device_session(authorization: str | None) -> "_DeviceSession":
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        return _DeviceSession(
+            owner_id=owner_id,
+            controller_id=controller_id,
+            controller_session=session,
+        )
+
     class _Devices:
         """The composed device read, from the two clients this process holds.
 
@@ -1008,7 +1075,9 @@ def create_app(
         the management router phrases it and does not merge it.
         """
 
-        async def list_devices(self, *, owner_id: str, controller_id: str):
+        async def list_devices(self, *, session):
+            owner_id = session.owner_id
+            controller_id = session.controller_id
             owner_domain_id, business_owner_id = _admission_scope(owner_id)
             try:
                 mounts = await devices.list_mounts(owner_id)
@@ -1041,19 +1110,56 @@ def create_app(
                     refusal=refusal_for_status(exc.status_code, str(exc)),
                 ) from exc
 
+        async def remove_device(self, *, session, device_id: str, request_id: str):
+            """Withdraw this device's grant, having proved it is this Owner's.
+
+            The proof is the same as everywhere else here — Kernel's mounts are
+            owner-scoped by construction — and it includes mounts that are no
+            longer active on purpose: a removal that half-completed must be
+            retryable, or the device is stranded in the one state that keeps it
+            from being added again.
+            """
+
+            owner = session.owner_id
+            controller = session.controller_id
+            device_ref = await _owned_device_ref(owner, controller, device_id)
+            try:
+                result = await device_admission.remove(
+                    payload=ControllerDeviceRemovalRequest(
+                        contract_version="1",
+                        request_id=request_id,
+                        owner_id=owner,
+                        controller_id=controller,
+                        device_id=device_id,
+                        reason="owner-removed",
+                    ),
+                    controller_reset_epoch=session.controller_session.reset_epoch,
+                    authorization_expires_at=session.controller_session.expires_at,
+                    target_device_ref=device_ref,
+                )
+            except DeviceAdmissionError as exc:
+                raise ManagementBackendError(
+                    device_admission_detail(exc),
+                    status_code=exc.status_code,
+                    refusal=refusal_for_status(
+                        exc.status_code, device_admission_detail(exc)
+                    ),
+                ) from exc
+            return device_removal_progress(
+                owner_id=owner, device_id=device_id, result=result
+            )
+
         async def set_device_companion(
             self,
             *,
-            owner_id: str,
-            controller_id: str,
+            session,
             device_id: str,
             companion_id: str | None,
             expected_revision: int,
             request_id: str,
         ):
-            inventory = await self.list_devices(
-                owner_id=owner_id, controller_id=controller_id
-            )
+            owner_id = session.owner_id
+            inventory = await self.list_devices(session=session)
             if all(item.device_id != device_id for item in inventory.devices):
                 # Absent rather than forbidden, and checked before the mutation:
                 # a device this Owner does not hold must not be reachable by id.
@@ -1079,9 +1185,7 @@ def create_app(
                     status_code=exc.status_code,
                     refusal=refusal_for_status(exc.status_code, str(exc)),
                 ) from exc
-            refreshed = await self.list_devices(
-                owner_id=owner_id, controller_id=controller_id
-            )
+            refreshed = await self.list_devices(session=session)
             for item in refreshed.devices:
                 if item.device_id == device_id:
                     return item
@@ -1109,6 +1213,7 @@ def create_app(
         authenticated_controller_id=management_controller,
         host=host_services,
         devices=owner_device_port or _Devices(),
+        authenticated_controller_session=management_device_session,
     )
 
     return app

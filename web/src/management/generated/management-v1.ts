@@ -153,6 +153,25 @@ export interface DeviceCompanionRequest {
   request_id: string
 }
 
+export interface DeviceRemovalConditionView {
+  authority: string
+  name: string
+  observed_at?: string
+  state: string
+}
+
+export interface DeviceRemovalRequest {
+  request_id: string
+}
+
+export interface DeviceRemovalView {
+  conditions: Array<DeviceRemovalConditionView>
+  contract_version?: "1"
+  device_id: string
+  outcome: string
+  request_id: string
+}
+
 export interface DeviceView {
   answers_as_companion_id?: string | null
   answers_as_companion_name?: string
@@ -460,6 +479,7 @@ export interface ManagementResponses {
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
   'GET /api/management/v1/devices': DevicesView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
+  'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
   'GET /api/management/v1/host/services': HostServiceInventoryView
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView

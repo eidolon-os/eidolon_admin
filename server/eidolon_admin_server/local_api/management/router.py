@@ -1071,6 +1071,56 @@ class DeviceCompanionRequest(BaseModel):
     )
 
 
+class DeviceRemovalRequest(BaseModel):
+    """Take this device off my Host.
+
+    ``request_id`` is the caller's and must be the same on a retry: removal is
+    what makes a device addable again, and asking twice must not turn into two
+    removals racing each other.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(
+        min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+
+
+class DeviceRemovalConditionView(BaseModel):
+    """One thing that has to become true, and whether it has.
+
+    Removal converges across three authorities and this is how it says where it
+    is: not a percentage, but which specific facts are settled. A condition that
+    is not yet met is not a failure.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=64)
+    state: str = Field(min_length=1, max_length=32)
+    authority: str = Field(min_length=1, max_length=64)
+    observed_at: str = Field(default="", max_length=64)
+
+
+class DeviceRemovalView(BaseModel):
+    """Where a removal got to.
+
+    ``outcome`` is deliberately three-valued: done, unfinished, refused. A
+    removal still converging is the normal case and must not read as either of
+    the other two — the Hub, Kernel and the device itself each settle on their
+    own schedule, and this Host does not stand in the middle pretending it is
+    one step.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    device_id: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=1, max_length=128)
+    outcome: str = Field(min_length=1, max_length=32)
+    conditions: list[DeviceRemovalConditionView]
+
+
 class ActivityMomentView(BaseModel):
     """One thing that happened to my things.
 
@@ -1187,13 +1237,14 @@ class OwnerDevicePort(Protocol):
     composition happens here rather than behind the management backend.
     """
 
-    async def list_devices(self, *, owner_id: str, controller_id: str): ...
+    async def list_devices(self, *, session): ...
+
+    async def remove_device(self, *, session, device_id: str, request_id: str): ...
 
     async def set_device_companion(
         self,
         *,
-        owner_id: str,
-        controller_id: str,
+        session,
         device_id: str,
         companion_id: str | None,
         expected_revision: int,
@@ -1410,6 +1461,7 @@ def register_management_routes(
     authenticated_owner,
     controllers: ControllerDirectoryPort,
     authenticated_controller_id,
+    authenticated_controller_session,
     host: HostMachinePort,
     devices: OwnerDevicePort,
 ) -> None:
@@ -1482,15 +1534,12 @@ def register_management_routes(
         listed, because which devices are mine does not depend on what they are
         called.
         """
-        owner_id = await authenticated_owner(authorization)
-        controller_id = await authenticated_controller_id(authorization)
+        session = await authenticated_controller_session(authorization)
         try:
-            inventory = await devices.list_devices(
-                owner_id=owner_id, controller_id=controller_id
-            )
+            inventory = await devices.list_devices(session=session)
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        names = await _companion_names(backend, owner_id)
+        names = await _companion_names(backend, session.owner_id)
         return DevicesView(
             devices=[_device_view(device, names) for device in inventory.devices],
             coverage=_DEVICE_COVERAGE,
@@ -1510,12 +1559,10 @@ def register_management_routes(
         been put away is refused there rather than pre-judged here — and the
         revision is the compare-and-swap over what this phone was looking at.
         """
-        owner_id = await authenticated_owner(authorization)
-        controller_id = await authenticated_controller_id(authorization)
+        session = await authenticated_controller_session(authorization)
         try:
             device = await devices.set_device_companion(
-                owner_id=owner_id,
-                controller_id=controller_id,
+                session=session,
                 device_id=device_id,
                 companion_id=payload.companion_id,
                 expected_revision=payload.expected_revision,
@@ -1523,7 +1570,55 @@ def register_management_routes(
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        return _device_view(device, await _companion_names(backend, owner_id))
+        return _device_view(
+            device, await _companion_names(backend, session.owner_id)
+        )
+
+    @router.post(
+        "/devices/{device_id}/removal", response_model=DeviceRemovalView
+    )
+    async def remove_device(
+        device_id: str,
+        payload: DeviceRemovalRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceRemovalView:
+        """Take a device off my Host.
+
+        This is what makes a device addable again: the Hub refuses to enrol one
+        it already holds, so a device that lost its own credential has no way
+        back until its grant here is withdrawn.
+
+        The answer says which facts are settled rather than a percentage. Three
+        authorities converge on their own schedule and this Host does not stand
+        in the middle pretending it is one step.
+        """
+        session = await authenticated_controller_session(authorization)
+        try:
+            progress = await devices.remove_device(
+                session=session,
+                device_id=device_id,
+                request_id=payload.request_id,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return DeviceRemovalView(
+            device_id=progress.device_id,
+            request_id=progress.request_id,
+            outcome=progress.outcome,
+            conditions=[
+                DeviceRemovalConditionView(
+                    name=condition.name,
+                    state=getattr(condition.state, "value", str(condition.state)),
+                    authority=condition.authority,
+                    observed_at=(
+                        condition.observed_at.isoformat()
+                        if getattr(condition, "observed_at", None) is not None
+                        else ""
+                    ),
+                )
+                for condition in progress.conditions
+            ],
+        )
 
     @router.get("/activity", response_model=ActivityView)
     async def get_activity(

@@ -839,6 +839,106 @@
         "title": "DeviceCompanionRequest",
         "type": "object"
       },
+      "DeviceRemovalConditionView": {
+        "additionalProperties": false,
+        "description": "One thing that has to become true, and whether it has.\n\nRemoval converges across three authorities and this is how it says where it\nis: not a percentage, but which specific facts are settled. A condition that\nis not yet met is not a failure.",
+        "properties": {
+          "authority": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Authority",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "observed_at": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Observed At",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "authority"
+        ],
+        "title": "DeviceRemovalConditionView",
+        "type": "object"
+      },
+      "DeviceRemovalRequest": {
+        "additionalProperties": false,
+        "description": "Take this device off my Host.\n\n``request_id`` is the caller's and must be the same on a retry: removal is\nwhat makes a device addable again, and asking twice must not turn into two\nremovals racing each other.",
+        "properties": {
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "DeviceRemovalRequest",
+        "type": "object"
+      },
+      "DeviceRemovalView": {
+        "additionalProperties": false,
+        "description": "Where a removal got to.\n\n``outcome`` is deliberately three-valued: done, unfinished, refused. A\nremoval still converging is the normal case and must not read as either of\nthe other two — the Hub, Kernel and the device itself each settle on their\nown schedule, and this Host does not stand in the middle pretending it is\none step.",
+        "properties": {
+          "conditions": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceRemovalConditionView"
+            },
+            "title": "Conditions",
+            "type": "array"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "outcome": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Outcome",
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "request_id",
+          "outcome",
+          "conditions"
+        ],
+        "title": "DeviceRemovalView",
+        "type": "object"
+      },
       "DeviceView": {
         "additionalProperties": false,
         "description": "One device this Owner holds, as a person reads it.\n\nReadable and complete, in that order and without trading one for the other:\nthe top of this model is what a screen shows, and the technical facts a\nperson may have to read out to get help — the canonical identifier, the\nclaim's own state, the manifest, the generations — are kept rather than\ndropped.\n\n``label`` is derived by the Host rather than by each client. Nobody has\nnamed devices yet, so it is what the accepted Manifest calls this kind of\nthing, and failing that the tail of the identifier. It is never invented\ninto a name.",
@@ -4022,6 +4122,75 @@
           }
         },
         "summary": "Put Device Companion",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/removal": {
+      "post": {
+        "description": "Take a device off my Host.\n\nThis is what makes a device addable again: the Hub refuses to enrol one\nit already holds, so a device that lost its own credential has no way\nback until its grant here is withdrawn.\n\nThe answer says which facts are settled rather than a percentage. Three\nauthorities converge on their own schedule and this Host does not stand\nin the middle pretending it is one step.",
+        "operationId": "remove_device_api_management_v1_devices__device_id__removal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRemovalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRemovalView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Remove Device",
         "tags": [
           "management"
         ]

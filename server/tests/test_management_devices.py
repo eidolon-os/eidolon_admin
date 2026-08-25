@@ -79,8 +79,10 @@ class _Devices:
         self.asked: list[dict] = []
         self.changed: list[dict] = []
 
-    async def list_devices(self, *, owner_id: str, controller_id: str):
-        self.asked.append({"owner_id": owner_id, "controller_id": controller_id})
+    async def list_devices(self, *, session):
+        self.asked.append(
+            {"owner_id": session.owner_id, "controller_id": session.controller_id}
+        )
         if self.refuse is not None:
             raise self.refuse
         return SimpleNamespace(devices=tuple(self.devices))
@@ -88,8 +90,7 @@ class _Devices:
     async def set_device_companion(
         self,
         *,
-        owner_id: str,
-        controller_id: str,
+        session,
         device_id: str,
         companion_id: str | None,
         expected_revision: int,
@@ -324,3 +325,58 @@ async def test_pointing_a_device_at_an_eidolon_carries_the_revision_and_the_id(
         "attach-2",
     ]
     assert all(call["expected_revision"] == 4 for call in devices.changed)
+
+
+async def test_taking_a_device_off_says_which_facts_are_settled(
+    tmp_path, monkeypatch
+) -> None:
+    """Not a percentage: which specific things are true yet.
+
+    Removal converges across three authorities on their own schedule, and this
+    Host does not stand in the middle pretending it is one step. ``unfinished``
+    is the normal case and must not read as either done or refused.
+    """
+
+    _stub_controller(monkeypatch)
+
+    class _Removing(_Devices):
+        async def remove_device(self, *, session, device_id: str, request_id: str):
+            self.changed.append({"device_id": device_id, "request_id": request_id})
+            return SimpleNamespace(
+                device_id=device_id,
+                request_id=request_id,
+                outcome="unfinished",
+                conditions=(
+                    SimpleNamespace(
+                        name="hub_claim_revoked",
+                        state=SimpleNamespace(value="met"),
+                        authority="hub",
+                        observed_at=datetime(2026, 8, 25, 9, 0, tzinfo=UTC),
+                    ),
+                    SimpleNamespace(
+                        name="device_erase_acknowledged",
+                        state=SimpleNamespace(value="pending"),
+                        authority="device-control",
+                        observed_at=None,
+                    ),
+                ),
+            )
+
+    devices = _Removing(_device())
+    transport = httpx.ASGITransport(app=_app(tmp_path, devices))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        removed = await client.post(
+            f"{_DEVICES}/{_KNOWN}/removal",
+            json={"request_id": "removal-1"},
+            headers=headers,
+        )
+
+    body = removed.json()
+    assert removed.status_code == 200
+    assert body["outcome"] == "unfinished"
+    assert [condition["state"] for condition in body["conditions"]] == ["met", "pending"]
+    # A condition nobody has observed yet says so with an empty time rather than
+    # a made-up one.
+    assert body["conditions"][1]["observed_at"] == ""
+    assert devices.changed == [{"device_id": _KNOWN, "request_id": "removal-1"}]
