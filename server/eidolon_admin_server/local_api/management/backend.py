@@ -15,6 +15,27 @@ import httpx
 from eidolon_admin_server.local_api.management.router import ManagementBackendError
 
 
+def _refusal_code(response: httpx.Response) -> str | None:
+    """The authority's word for this refusal, if the other side gave one.
+
+    Deliberately forgiving: any shape but the one it knows answers ``None``. A
+    boundary that raised while relaying an error would replace a refusal a
+    client could act on with a failure nobody can.
+    """
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        return str(code)[:64] if code else None
+    return None
+
+
 class AdminManagementClient:
     """Calls Admin's internal management ABI over loopback."""
 
@@ -70,6 +91,27 @@ class AdminManagementClient:
             f"{quote(operation_id, safe='')}",
             {"owner_id": owner_id},
             {"display_name": display_name, "kind": kind},
+        )
+
+    async def set_companion_lifecycle(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        lifecycle_state: str,
+        replacement_companion_id: str | None,
+        expected_revision: int | None,
+    ) -> dict:
+        body: dict = {"lifecycle_state": lifecycle_state}
+        if replacement_companion_id is not None:
+            body["replacement_companion_id"] = replacement_companion_id
+        if expected_revision is not None:
+            body["expected_revision"] = expected_revision
+        return await self._put(
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
+            "/lifecycle",
+            {"owner_id": owner_id},
+            body,
         )
 
     async def memory_library(
@@ -282,11 +324,17 @@ class AdminManagementClient:
             # refusal from the other side means. A 409 in particular has to
             # arrive intact — it is the one a client must react to by re-reading
             # rather than by retrying.
+            #
+            # The refusal code travels with it. Relaying the status alone was
+            # enough while every refusal meant "look at this again", but not for
+            # the ones that are a question — "who should answer instead?" — which
+            # a client can only ask if it is told that is what happened.
             raise ManagementBackendError(
                 "Host management backend refused this request",
                 status_code=response.status_code
                 if 400 <= response.status_code < 500
                 else 503,
+                code=_refusal_code(response),
             )
         try:
             payload = response.json()

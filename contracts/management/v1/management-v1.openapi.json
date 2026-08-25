@@ -145,6 +145,98 @@
         "title": "CompanionDetailView",
         "type": "object"
       },
+      "CompanionLifecycleRequest": {
+        "additionalProperties": false,
+        "description": "Where this Eidolon should be: put away, or here again.\n\nA desired end rather than a verb, so a phone that never saw the answer can\nsend the same request again — and so a second tap on a button whose screen\nhad not caught up is a success rather than an error.\n\nOnly two states are expressible. ``retiring`` is a step the Host walks\nthrough on the way to archived, not somewhere a person parks an Eidolon, and\ndeletion is a different conversation entirely: a surface where \"put this\naway\" and \"erase this forever\" are one field apart is a surface that will\neventually erase something.",
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "lifecycle_state": {
+            "enum": [
+              "archived",
+              "active"
+            ],
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "replacement_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replacement Companion Id"
+          }
+        },
+        "required": [
+          "lifecycle_state"
+        ],
+        "title": "CompanionLifecycleRequest",
+        "type": "object"
+      },
+      "CompanionLifecycleView": {
+        "additionalProperties": false,
+        "description": "Where the Eidolon is now, and who answers for me.\n\nBoth in one answer: putting away the one that answers hands the role over in\nthe same breath, and a client that had to ask a second question would show\n\"archived\" beside a stale answer to \"so who talks to me now\".",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "default_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Companion Id"
+          },
+          "lifecycle_state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "lifecycle_state",
+          "revision"
+        ],
+        "title": "CompanionLifecycleView",
+        "type": "object"
+      },
       "CompanionRosterView": {
         "additionalProperties": false,
         "description": "One page of this Owner's Eidolons, oldest first.",
@@ -1906,6 +1998,75 @@
           }
         },
         "summary": "Get Conversation Transcript",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/lifecycle": {
+      "put": {
+        "description": "Put one of my Eidolons away, or bring it back.\n\nPutting away stops new conversations from reaching it — the Host will not\nhand out a runtime snapshot for an Eidolon that is not active — and keeps\neverything it remembers. Nothing is deleted, and bringing it back is the\nsame request with the other state.\n\nBringing one back does not make it the one that answers again. That is a\nseparate thing the Owner said, and reversing it quietly would undo a\ndecision they made.",
+        "operationId": "put_companion_lifecycle_api_management_v1_companions__companion_id__lifecycle_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanionLifecycleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionLifecycleView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Companion Lifecycle",
         "tags": [
           "management"
         ]

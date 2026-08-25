@@ -33,6 +33,20 @@ export interface CompanionDetailView {
   revision: number
 }
 
+export interface CompanionLifecycleRequest {
+  expected_revision?: number | null
+  lifecycle_state: "archived" | "active"
+  replacement_companion_id?: string | null
+}
+
+export interface CompanionLifecycleView {
+  companion_id: string
+  contract_version?: "1"
+  default_companion_id?: string | null
+  lifecycle_state: string
+  revision: number
+}
+
 export interface CompanionRosterView {
   companions: Array<CompanionSummaryView>
   contract_version?: "1"
@@ -292,6 +306,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
   'GET /api/management/v1/companions/{companion_id}/conversations': ConversationPageView
   'GET /api/management/v1/companions/{companion_id}/conversations/{conversation_id}/turns': TranscriptView
+  'PUT /api/management/v1/companions/{companion_id}/lifecycle': CompanionLifecycleView
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
   'GET /api/management/v1/companions/{companion_id}/tasks': TaskPageView

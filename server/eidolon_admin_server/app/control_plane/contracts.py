@@ -126,6 +126,23 @@ class CompanionProvision(StrictModel):
     replayed: bool
 
 
+class CompanionLifecycleResult(StrictModel):
+    """Where a Companion ended up, and who answers for the Owner now.
+
+    ``default_companion_id`` is part of the answer because retiring the
+    Companion an Owner's unaddressed work goes to moves the pointer in the same
+    transaction. A caller that had to read it back would be asking a second
+    question about something this one already settled — and would be reading it
+    from a moment that is no longer the moment it changed.
+    """
+
+    operation: Literal["companion.lifecycle"]
+    companion_id: str = Field(min_length=1, max_length=64)
+    lifecycle_state: CompanionLifecycleState
+    revision: int = Field(ge=1)
+    default_companion_id: str | None = Field(default=None, max_length=64)
+
+
 class MemoryRoom(StrictModel):
     room_id: str = Field(min_length=1, max_length=256)
     drawer_count: int = Field(ge=0)
@@ -707,6 +724,12 @@ class WorkflowFailure(StrictModel):
         "configuration",
     ]
     detail: str
+    #: The upstream authority's refusal code, when it gave one — the domain word
+    #: (``default_replacement_required``, ``revision_stale``), not the transport
+    #: one. Optional because most authorities answer with a sentence only, and a
+    #: consumer must treat its absence as "no further detail" rather than as a
+    #: kind of failure.
+    code: str | None = None
     upstream_status: int | None = None
     retryable: bool
 

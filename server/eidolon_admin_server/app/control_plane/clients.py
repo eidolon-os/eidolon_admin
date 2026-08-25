@@ -35,6 +35,7 @@ from .contracts import (
     TranscriptRows,
     PersonaTimeline,
     CompanionIdentity,
+    CompanionLifecycleResult,
     CompanionProvision,
     CompanionRosterPage,
     DeviceRef,
@@ -68,34 +69,49 @@ def _contract_violation(authority: str, detail: str) -> AuthorityFailure:
     return AuthorityFailure(authority, "contract_violation", detail, 502)
 
 
-def _response_detail(response: httpx.Response) -> str:
+def _response_detail(response: httpx.Response) -> tuple[str, str | None]:
+    """The sentence, and the refusal code when the authority named one.
+
+    Two shapes arrive here. Most routes answer ``{"detail": "some sentence"}``.
+    The ones whose refusals a caller has to *act on* differently answer
+    ``{"detail": {"code": ..., "message": ...}}`` — and before this, that dict
+    was stringified into the sentence, so the code reached the phone as Python
+    ``repr`` inside a message nobody could match on.
+    """
+
     try:
         value = response.json()
-        if isinstance(value, dict) and value.get("detail"):
-            return str(value["detail"])[:500]
     except ValueError:
-        pass
-    return f"upstream returned HTTP {response.status_code}"
+        return f"upstream returned HTTP {response.status_code}", None
+    if isinstance(value, dict):
+        detail = value.get("detail")
+        if isinstance(detail, dict):
+            code = detail.get("code")
+            message = detail.get("message") or f"upstream returned HTTP {response.status_code}"
+            return str(message)[:500], str(code)[:64] if code else None
+        if detail:
+            return str(detail)[:500], None
+    return f"upstream returned HTTP {response.status_code}", None
 
 
 def _raise_status(authority: str, response: httpx.Response) -> None:
     status = response.status_code
-    detail = _response_detail(response)
+    detail, code = _response_detail(response)
     if status == 401:
-        raise AuthorityFailure(authority, "unauthorized", detail, 401, status, False)
+        raise AuthorityFailure(authority, "unauthorized", detail, 401, status, False, code)
     if status == 403:
-        raise AuthorityFailure(authority, "forbidden", detail, 403, status, False)
+        raise AuthorityFailure(authority, "forbidden", detail, 403, status, False, code)
     if status == 404:
-        raise AuthorityFailure(authority, "not_found", detail, 404, status, False)
+        raise AuthorityFailure(authority, "not_found", detail, 404, status, False, code)
     if status in {409, 412}:
-        raise AuthorityFailure(authority, "conflict", detail, 409, status, False)
+        raise AuthorityFailure(authority, "conflict", detail, 409, status, False, code)
     if status == 400:
-        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False)
+        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False, code)
     if status == 422:
-        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False)
+        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False, code)
     if status >= 500:
-        raise AuthorityFailure(authority, "upstream_failure", detail, 502, status, True)
-    raise AuthorityFailure(authority, "upstream_failure", detail, 502, status, False)
+        raise AuthorityFailure(authority, "upstream_failure", detail, 502, status, True, code)
+    raise AuthorityFailure(authority, "upstream_failure", detail, 502, status, False, code)
 
 
 def _parse(authority: str, response: httpx.Response, model: type[ModelT]) -> ModelT:
@@ -660,6 +676,55 @@ class DataWorkspaceAuthorityClient:
                 "data", "Data accepted the default change without applying it"
             )
         return identity
+
+    async def set_companion_lifecycle(
+        self,
+        owner_id: str,
+        *,
+        companion_id: str,
+        lifecycle_state: str,
+        expected_revision: int | None = None,
+        replacement_companion_id: str | None = None,
+    ) -> CompanionLifecycleResult:
+        """Ask for the state this Companion should be in.
+
+        One call per step, and the step is named by the caller above — this
+        client does not decide that archiving goes through retiring, and does not
+        retry. Both would be judgements, and this is a transport.
+
+        The answer is checked for being about the Companion that was asked
+        about, and for actually being in the state that was asked for. A 200 that
+        left it somewhere else would otherwise be relayed upward as done.
+        """
+
+        body: dict[str, Any] = {
+            "owner_id": owner_id,
+            "lifecycle_state": lifecycle_state,
+        }
+        if expected_revision is not None:
+            body["expected_revision"] = expected_revision
+        if replacement_companion_id is not None:
+            body["replacement_companion_id"] = replacement_companion_id
+        response = await _request(
+            "data",
+            self._client,
+            "PUT",
+            f"{await self._base_url()}/api/workspace-authority/v1/companions/"
+            f"{quote(companion_id, safe='')}/lifecycle",
+            timeout=self._timeout,
+            headers=self._headers,
+            json=body,
+        )
+        result = _parse("data", response, CompanionLifecycleResult)
+        if result.companion_id != companion_id:
+            raise _contract_violation(
+                "data", "Data returned a different companion lifecycle result"
+            )
+        if result.lifecycle_state != lifecycle_state:
+            raise _contract_violation(
+                "data", "Data accepted the lifecycle change without applying it"
+            )
+        return result
 
     async def _owner_call(
         self,

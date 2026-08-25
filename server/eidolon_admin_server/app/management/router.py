@@ -32,6 +32,7 @@ from eidolon_admin_server.app.management.activity import (
     read_tasks,
     retry_task,
 )
+from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
 from eidolon_admin_server.app.management.persona import read_history, restore_chapter
 from eidolon_admin_server.app.management.recollecting import recall
 from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
@@ -148,6 +149,38 @@ class CompanionCreateResponseInternal(BaseModel):
     revision: int = Field(ge=1)
     created: bool
     memory_ready: bool
+
+
+class CompanionLifecycleRequestInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Only the two an Owner performs. ``retiring`` is a step on the way, not a
+    #: place a person parks an Eidolon, and ``deleting`` belongs to a separate
+    #: data-governance workflow that this surface must not be one field away
+    #: from.
+    lifecycle_state: Literal["archived", "active"]
+    #: Who answers instead, when the one being put away is the one that answers.
+    #: Named by the person, never chosen here.
+    replacement_companion_id: str | None = Field(
+        default=None, min_length=1, max_length=64
+    )
+    #: What the caller last saw. Optional: when it is absent the projection pins
+    #: the write to the state it just read, so the change is a compare-and-set
+    #: either way — the difference is only how wide the window is.
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CompanionLifecycleResponseInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.lifecycle"] = "companion.lifecycle"
+    companion_id: str = Field(min_length=1, max_length=64)
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    revision: int = Field(ge=1)
+    #: Who answers for this Owner now, because archiving the one that did hands
+    #: the role over in the same transaction.
+    default_companion_id: str | None = Field(default=None, max_length=64)
 
 
 class MemoryRoomInternal(BaseModel):
@@ -1071,6 +1104,58 @@ async def put_persona_restoration(
             status_code=exc.status_code, detail=exc.to_wire().model_dump()
         ) from exc
     return _persona_history_internal(history)
+
+
+@router.put(
+    "/companions/{companion_id}/lifecycle",
+    response_model=CompanionLifecycleResponseInternal,
+)
+async def put_companion_lifecycle(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    payload: CompanionLifecycleRequestInternal,
+) -> CompanionLifecycleResponseInternal:
+    """Put this Eidolon away, or bring it back.
+
+    One route for both, because the body states where it should end up. That is
+    what makes the retry a phone sends after a lost answer safe, and it is why
+    asking for the state it is already in succeeds instead of conflicting.
+
+    The refusals matter as much as the success here, so they are relayed with
+    the authority's own code: "name someone to answer instead" is a question the
+    person can answer, and it must not arrive looking like a lost race.
+    """
+    try:
+        if payload.lifecycle_state == "archived":
+            view = await put_away(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                replacement_companion_id=payload.replacement_companion_id,
+                expected_revision=payload.expected_revision,
+                companions=request.app.state.control_plane.data,
+                owners=request.app.state.control_plane.workspace,
+                lifecycle=request.app.state.control_plane.workspace,
+            )
+        else:
+            view = await bring_back(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                expected_revision=payload.expected_revision,
+                companions=request.app.state.control_plane.data,
+                owners=request.app.state.control_plane.workspace,
+                lifecycle=request.app.state.control_plane.workspace,
+            )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return CompanionLifecycleResponseInternal(
+        companion_id=view.companion_id,
+        lifecycle_state=view.lifecycle_state,
+        revision=view.revision,
+        default_companion_id=view.default_companion_id,
+    )
 
 
 def _persona_history_internal(history) -> PersonaHistoryInternal:

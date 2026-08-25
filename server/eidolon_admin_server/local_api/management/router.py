@@ -21,12 +21,36 @@ from pydantic import BaseModel, ConfigDict, Field
 MANAGEMENT_PREFIX = "/api/management/v1"
 
 
-class ManagementBackendError(RuntimeError):
-    """The backend refused or could not answer; carries the status to relay."""
+def _refused(exc: "ManagementBackendError") -> HTTPException:
+    """The one shape a refusal leaves this surface in.
 
-    def __init__(self, message: str, *, status_code: int = 503) -> None:
+    A plain sentence while the backend gave no code, and ``{"code", "message"}``
+    when it did. Two shapes rather than always the object, because every client
+    reading this API today expects the sentence, and a refusal is the worst
+    moment to hand one something it cannot parse.
+    """
+
+    if exc.code is None:
+        return HTTPException(exc.status_code, str(exc))
+    return HTTPException(exc.status_code, {"code": exc.code, "message": str(exc)})
+
+
+class ManagementBackendError(RuntimeError):
+    """The backend refused or could not answer; carries the status to relay.
+
+    ``code`` is the authority's own word for which refusal this is, when it gave
+    one. It travels because some refusals are questions a person can answer —
+    "this is the Eidolon that answers for you; who should answer instead?" — and
+    a client that could only read a status would have to show the same shrug for
+    that as for a lost race.
+    """
+
+    def __init__(
+        self, message: str, *, status_code: int = 503, code: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 class ManagementContextView(BaseModel):
@@ -154,6 +178,57 @@ class DefaultCompanionView(BaseModel):
     contract_version: Literal["1"] = "1"
     #: Echoed rather than assumed. A client that painted its own choice would be
     #: showing what it asked for instead of what happened.
+    default_companion_id: str | None = Field(default=None, max_length=64)
+
+
+class CompanionLifecycleRequest(BaseModel):
+    """Where this Eidolon should be: put away, or here again.
+
+    A desired end rather than a verb, so a phone that never saw the answer can
+    send the same request again — and so a second tap on a button whose screen
+    had not caught up is a success rather than an error.
+
+    Only two states are expressible. ``retiring`` is a step the Host walks
+    through on the way to archived, not somewhere a person parks an Eidolon, and
+    deletion is a different conversation entirely: a surface where "put this
+    away" and "erase this forever" are one field apart is a surface that will
+    eventually erase something.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    lifecycle_state: Literal["archived", "active"]
+    #: Required only when putting away the Eidolon that answers when nobody was
+    #: named — and the Host says so by refusing with
+    #: ``default_replacement_required`` rather than the client guessing. Nothing
+    #: on the Host will choose for the Owner.
+    replacement_companion_id: str | None = Field(
+        default=None, min_length=1, max_length=64
+    )
+    #: The revision this client last read, when it has one. Optional here, unlike
+    #: the default-companion change: that one is a race between two people
+    #: choosing differently, while this one is a state the request names
+    #: outright, and a phone reopening a screen it had cached should not be
+    #: forced to re-read a Companion to put it away.
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
+class CompanionLifecycleView(BaseModel):
+    """Where the Eidolon is now, and who answers for me.
+
+    Both in one answer: putting away the one that answers hands the role over in
+    the same breath, and a client that had to ask a second question would show
+    "archived" beside a stale answer to "so who talks to me now".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    #: Echoed from the Host. A client that painted its own request would be
+    #: showing what it asked for rather than what happened.
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    revision: int = Field(ge=1)
     default_companion_id: str | None = Field(default=None, max_length=64)
 
 
@@ -628,6 +703,16 @@ class ManagementBackendPort(Protocol):
         kind: str,
     ) -> dict: ...
 
+    async def set_companion_lifecycle(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        lifecycle_state: str,
+        replacement_companion_id: str | None,
+        expected_revision: int | None,
+    ) -> dict: ...
+
     async def memory_library(
         self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
@@ -749,7 +834,7 @@ def register_management_routes(
         try:
             answer = await backend.context(owner_id=owner_id)
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return ManagementContextView(
             owner=OwnerContextView(
                 owner_id=answer["owner_id"],
@@ -776,7 +861,7 @@ def register_management_routes(
         try:
             answer = await backend.roster(owner_id=owner_id, cursor=cursor)
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return CompanionRosterView(
             default_companion_id=answer["default_companion_id"],
             companions=[
@@ -803,7 +888,7 @@ def register_management_routes(
                 owner_id=owner_id, companion_id=companion_id
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return CompanionDetailView(
             companion_id=answer["companion_id"],
             display_name=answer["display_name"],
@@ -833,7 +918,7 @@ def register_management_routes(
                 expected_revision=payload.expected_revision,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return DefaultCompanionView(
             default_companion_id=answer["default_companion_id"]
         )
@@ -860,7 +945,7 @@ def register_management_routes(
                 kind=payload.kind,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return CompanionCreatedView(
             companion_id=answer["companion_id"],
             display_name=answer["display_name"],
@@ -869,6 +954,44 @@ def register_management_routes(
             revision=answer["revision"],
             created=answer["created"],
             memory_ready=answer["memory_ready"],
+        )
+
+    @router.put(
+        "/companions/{companion_id}/lifecycle",
+        response_model=CompanionLifecycleView,
+    )
+    async def put_companion_lifecycle(
+        companion_id: str,
+        payload: CompanionLifecycleRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionLifecycleView:
+        """Put one of my Eidolons away, or bring it back.
+
+        Putting away stops new conversations from reaching it — the Host will not
+        hand out a runtime snapshot for an Eidolon that is not active — and keeps
+        everything it remembers. Nothing is deleted, and bringing it back is the
+        same request with the other state.
+
+        Bringing one back does not make it the one that answers again. That is a
+        separate thing the Owner said, and reversing it quietly would undo a
+        decision they made.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.set_companion_lifecycle(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                lifecycle_state=payload.lifecycle_state,
+                replacement_companion_id=payload.replacement_companion_id,
+                expected_revision=payload.expected_revision,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return CompanionLifecycleView(
+            companion_id=answer["companion_id"],
+            lifecycle_state=answer["lifecycle_state"],
+            revision=answer["revision"],
+            default_companion_id=answer["default_companion_id"],
         )
 
     @router.get("/memory/library", response_model=MemoryLibraryView)
@@ -889,7 +1012,7 @@ def register_management_routes(
                 owner_id=owner_id, companion_id=companion_id
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return MemoryLibraryView(
             wings=[MemoryWingView(**wing) for wing in answer["wings"]],
             entry_count=answer["entry_count"],
@@ -914,7 +1037,7 @@ def register_management_routes(
                 owner_id=owner_id, target=payload.target, action=payload.action
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return ForgetProposalView(
             status=answer["status"],
             target=answer["target"],
@@ -943,7 +1066,7 @@ def register_management_routes(
                 owner_id=owner_id, confirmation_token=payload.confirmation_token
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return ForgetResultView(
             action=answer["action"],
             target=answer["target"],
@@ -975,7 +1098,7 @@ def register_management_routes(
                 companion_id=payload.companion_id,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return MemoryAudienceView(
             entry_id=answer["entry_id"],
             companion_id=answer.get("companion_id", ""),
@@ -1003,7 +1126,7 @@ def register_management_routes(
         try:
             answer = await backend.revoke_runtime_sessions(owner_id=owner_id)
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return RevokedSessionsView(revoked_at=answer["revoked_at"])
 
     @router.get(
@@ -1026,7 +1149,7 @@ def register_management_routes(
                 cursor=cursor,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return ConversationPageView(
             companion_id=answer["companion_id"],
             conversations=[
@@ -1060,7 +1183,7 @@ def register_management_routes(
                 cursor=cursor,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return TranscriptView(
             conversation_id=answer["conversation_id"],
             turns=[
@@ -1097,7 +1220,7 @@ def register_management_routes(
                 cursor=cursor,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return _task_page_view(answer)
 
     @router.get(
@@ -1114,7 +1237,7 @@ def register_management_routes(
                 owner_id=owner_id, companion_id=companion_id, task_id=task_id
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return TaskView(**answer)
 
     @router.post(
@@ -1160,7 +1283,7 @@ def register_management_routes(
                 action=action,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return TaskView(**answer)
 
     @router.get(
@@ -1183,7 +1306,7 @@ def register_management_routes(
                 owner_id=owner_id, companion_id=companion_id
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return _persona_history_view(answer)
 
     @router.put(
@@ -1209,7 +1332,7 @@ def register_management_routes(
                 chapter_id=payload.chapter_id,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return _persona_history_view(answer)
 
     @router.get("/memory/recollections", response_model=RecollectionsView)
@@ -1238,7 +1361,7 @@ def register_management_routes(
                 companion_id=companion_id,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return RecollectionsView(
             query=answer["query"],
             recollections=[
@@ -1264,7 +1387,7 @@ def register_management_routes(
                 owner_id=owner_id, companion_id=companion_id
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return MemoryCopyView(
             taken_at=answer["taken_at"],
             records=[
@@ -1297,7 +1420,7 @@ def register_management_routes(
                 companion_id=companion_id,
             )
         except ManagementBackendError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _refused(exc) from exc
         return MemoryDayView(
             since=answer["since"],
             entries=[MemoryEntryView(**entry) for entry in answer["entries"]],
