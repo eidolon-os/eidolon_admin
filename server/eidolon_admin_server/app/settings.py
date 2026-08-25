@@ -197,6 +197,13 @@ class Settings(BaseSettings):
     agent_admin_api_token: str = Field(
         default="", validation_alias="EIDOLON_AGENT_ADMIN_API_TOKEN"
     )
+    #: Where the global audit stream is, for the index this process keeps.
+    #:
+    #: Empty means no indexer runs — and, because the consumer is what creates
+    #: the stream, it also means every authority's dispatcher publishes into
+    #: nothing, retries with backoff and purges nothing. That is the safe
+    #: direction: no history is lost while this is unset, only delayed.
+    audit_nats_url: str = ""
     system_directory_uds: Path | None = None
     directory_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
     authority_timeout_seconds: float = Field(default=3.0, gt=0, le=30)

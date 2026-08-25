@@ -137,9 +137,12 @@ runtime = [
   "/run/eidolon-removal-capability",
   "/var/lib/eidolon/audit",
 ]
-# The audit index is a projection Admin rebuilds from the records it indexes,
-# so it is listed as disposable rather than as authority. It is under /var/lib
-# because it is expensive to rebuild, not because losing it loses anything.
+# The audit index is a projection Admin rebuilds from the stream it indexes, so
+# it is listed here rather than as authority. "Rebuildable" has a horizon
+# though: the stream keeps thirty days, so a rebuild recovers a month and not a
+# history. It is under /var/lib because losing it costs more than it looks like,
+# and the Owner-facing history it is *not* — that one lives in the Data
+# authority's own tables — is what keeps this a projection rather than a record.
 
 [reset]
 factory = [

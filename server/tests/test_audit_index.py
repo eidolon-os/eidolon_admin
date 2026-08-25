@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from eidolon_admin_server.audit import AuditIndexSettings, AuditIndexStore
@@ -67,3 +68,37 @@ async def test_audit_index_reader_is_query_only(tmp_path) -> None:
                 await connection.execute(text("DELETE FROM audit_events"))
     finally:
         await reader.close()
+
+
+async def test_the_indexer_only_runs_when_a_stream_is_configured(tmp_path) -> None:
+    """Where the loop is decided, asserted rather than trusted.
+
+    The index is Admin's own projection, so the loop that fills it lives in
+    Admin rather than in a unit of its own — a separate service would mean a new
+    entry in the reviewed product topology that every operator's Host config has
+    to agree with, to run a loop beside the process that owns the file anyway.
+
+    With no URL there is no indexer. That also means no authority publishes,
+    because the consumer is what creates the stream — and nothing is lost by
+    that: they keep what they could not send.
+    """
+
+    import asyncio
+
+    from eidolon_admin_server.app.main import create_app
+    from eidolon_admin_server.app.settings import Settings
+
+    settings = Settings(
+        state_dir=tmp_path / "admin",
+        services_file=Path(__file__).resolve().parents[2] / "config/services.yaml",
+    )
+    assert settings.audit_nats_url == ""
+
+    app = create_app(settings=settings)
+    async with app.router.lifespan_context(app):
+        running = [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name() == "eidolon-admin-audit-indexer"
+        ]
+        assert running == []

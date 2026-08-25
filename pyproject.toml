@@ -42,6 +42,7 @@ eidolon-bootstrapctl = "eidolon_admin_server.bootstrap.cli:main"
 eidolon-bootstrap-preflight = "eidolon_admin_server.bootstrap.pi_preflight:main"
 eidolon-local-api = "eidolon_admin_server.local_api.cli:main"
 eidolon-lifecycle-workflow = "eidolon_admin_server.lifecycle_workflow.daemon:main"
+eidolon-audit-index = "eidolon_admin_server.audit.cli:main"
 
 [tool.uv.sources]
 eidolon-sdk = { path = "../eidolon_sdk", editable = true }

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
 import pwd
+from contextlib import asynccontextmanager, suppress
 
 import logging
 
@@ -26,6 +27,7 @@ from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
+from ..audit import run_audit_indexer
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
 from .supervisor.client import SupervisorClient
 from .supervisor.config import ConfigStore
@@ -50,7 +52,23 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         broker = None
+        indexer: asyncio.Task | None = None
         try:
+            # The audit index is this process's own projection, so the loop that
+            # fills it lives here rather than in a unit of its own. Unset URL
+            # means no indexer — and since the consumer is what creates the
+            # stream, no authority publishes either. Nothing is lost by that:
+            # they keep what they could not send.
+            if settings.audit_nats_url:
+                indexer = asyncio.create_task(
+                    run_audit_indexer(
+                        nats_url=settings.audit_nats_url,
+                        sqlite_path=str(
+                            settings.state_dir.parent / "audit" / "audit-index.sqlite3"
+                        ),
+                    ),
+                    name="eidolon-admin-audit-indexer",
+                )
             if settings.removal_capability_socket is not None:
                 try:
                     workflow_uid = pwd.getpwnam(
@@ -75,6 +93,10 @@ def create_app(
             yield
         finally:
             systemd.stopping("Admin control plane stopping")
+            if indexer is not None:
+                indexer.cancel()
+                with suppress(asyncio.CancelledError):
+                    await indexer
             if broker is not None:
                 await broker.close()
             await app.state.control_plane.close()
