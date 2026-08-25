@@ -285,6 +285,7 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "controller.manage",
         "host.read",
         "host.operate",
+        "activity.read",
     ):
         assert context.capabilities[closed] is True, closed
     for still_open in ("device.read", "device.manage"):

@@ -28,6 +28,7 @@ from eidolon_admin_server.app.management.faces import (
     set_face,
 )
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
+from eidolon_admin_server.app.management.activity_feed import read_activity
 from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
 from eidolon_admin_server.app.management.activity import (
@@ -187,6 +188,28 @@ class OwnerNameInternal(BaseModel):
     owner_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     revision: int = Field(ge=1)
+
+
+class ActivityMomentInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=1, max_length=64)
+    action: str = Field(min_length=1, max_length=128)
+    subject_type: str = Field(min_length=1, max_length=64)
+    subject_id: str = Field(min_length=1, max_length=128)
+    subject_name: str = Field(default="", max_length=128)
+    occurred_at: str = Field(min_length=1, max_length=64)
+    outcome: str = Field(min_length=1, max_length=16)
+    detail: dict[str, str] = Field(default_factory=dict)
+
+
+class ActivityFeedInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["owner.activity"] = "owner.activity"
+    moments: list[ActivityMomentInternal]
+    next_cursor: int | None = Field(default=None, ge=1)
 
 
 class CompanionFaceInternal(BaseModel):
@@ -1153,6 +1176,44 @@ async def put_persona_restoration(
             status_code=exc.status_code, detail=exc.to_wire().model_dump()
         ) from exc
     return _persona_history_internal(history)
+
+
+@router.get("/activity", response_model=ActivityFeedInternal)
+async def get_activity(
+    request: Request,
+    owner_id: str,
+    limit: int | None = Query(default=None, ge=1, le=100),
+    before: int | None = Query(default=None, ge=1),
+) -> ActivityFeedInternal:
+    """What has been done to this Owner's things lately."""
+    try:
+        feed = await read_activity(
+            owner_id=owner_id,
+            limit=limit,
+            before=before,
+            history=request.app.state.control_plane.workspace,
+            companions=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return ActivityFeedInternal(
+        moments=[
+            ActivityMomentInternal(
+                event_id=moment.event_id,
+                action=moment.action,
+                subject_type=moment.subject_type,
+                subject_id=moment.subject_id,
+                subject_name=moment.subject_name,
+                occurred_at=moment.occurred_at,
+                outcome=moment.outcome,
+                detail=moment.detail,
+            )
+            for moment in feed.moments
+        ],
+        next_cursor=feed.next_cursor,
+    )
 
 
 @router.get("/companions/{companion_id}/face-state", response_model=CompanionFaceInternal)

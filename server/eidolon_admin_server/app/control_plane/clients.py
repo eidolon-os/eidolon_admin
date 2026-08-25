@@ -38,6 +38,7 @@ from .contracts import (
     CompanionLifecycleResult,
     CompanionProvision,
     CompanionRosterPage,
+    OwnerGovernanceEvents,
     DeviceRef,
     HubClaimRevocationResult,
     KernelMountPage,
@@ -676,6 +677,37 @@ class DataWorkspaceAuthorityClient:
                 "data", "Data accepted the default change without applying it"
             )
         return identity
+
+    async def list_governance_events(
+        self,
+        owner_id: str,
+        *,
+        limit: int | None = None,
+        before: int | None = None,
+    ) -> OwnerGovernanceEvents:
+        """What has been done to this Owner's things, newest first."""
+
+        params: dict[str, str] = {}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if before is not None:
+            params["before"] = str(before)
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/governance-events",
+            timeout=self._timeout,
+            headers=self._headers,
+            params=params or None,
+        )
+        page = _parse("data", response, OwnerGovernanceEvents)
+        if page.owner_id != owner_id:
+            raise _contract_violation(
+                "data", "Data returned another Owner's governance events"
+            )
+        return page
 
     async def set_companion_lifecycle(
         self,

@@ -32,6 +32,20 @@ from eidolon_admin_server.local_api.host_services import (  # noqa: E402
 MANAGEMENT_PREFIX = "/api/management/v1"
 
 
+def _position(cursor: str | None) -> int | None:
+    """Read back a cursor this surface handed out.
+
+    The shape is declared on the parameter, so a value this Host never issued is
+    refused by the boundary itself rather than by a check in here — one fewer
+    place that decides what a refusal looks like, and a client can see the shape
+    in the contract instead of discovering it. It stays opaque in the sense that
+    matters: a client stores it and sends it back, and nothing invites it to
+    build one.
+    """
+
+    return None if cursor is None else int(cursor)
+
+
 def _controller_view(row: dict, *, asking: str) -> "ControllerView":
     """One grant, as a person reads it.
 
@@ -783,6 +797,45 @@ class ForgetResultView(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class ActivityMomentView(BaseModel):
+    """One thing that happened to my things.
+
+    Facts and names, not a sentence: the wording belongs in the client, next to
+    the rest of its language, so a Host does not have to know Chinese to be able
+    to say that an Eidolon was put away.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=1, max_length=64)
+    #: A stable word. A client that has never heard of this one must still show
+    #: that it happened — a history with holes is worse than one with an
+    #: unfamiliar line in it.
+    action: str = Field(min_length=1, max_length=128)
+    subject_type: str = Field(min_length=1, max_length=64)
+    subject_id: str = Field(min_length=1, max_length=128)
+    #: What it is called now. Empty when it was never named, or no longer
+    #: exists — which still happened, and still says so by its identifier.
+    subject_name: str = Field(default="", max_length=128)
+    occurred_at: str = Field(min_length=1, max_length=64)
+    outcome: str = Field(min_length=1, max_length=16)
+    #: The couple of fields a sentence needs, allow-listed by the Host.
+    detail: dict[str, str] = Field(default_factory=dict)
+
+
+class ActivityView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: Newest first.
+    moments: list[ActivityMomentView]
+    #: Send back for the page before this one. Opaque: a client stores it and
+    #: returns it, exactly like the roster's — parsing it would make the Host's
+    #: page boundary part of the client. Null means this is as far back as the
+    #: Host still holds, not that nothing happened before it.
+    next_cursor: str | None = Field(default=None, max_length=128)
+
+
 class HostServiceMutationRequest(BaseModel):
     """Compare-and-swap intent, carried unchanged down to the daemon."""
 
@@ -915,6 +968,10 @@ class ManagementBackendPort(Protocol):
         operation_id: str,
         display_name: str,
         kind: str,
+    ) -> dict: ...
+
+    async def activity(
+        self, *, owner_id: str, limit: int | None, before: int | None
     ) -> dict: ...
 
     async def companion_face_state(
@@ -1083,6 +1140,34 @@ def register_management_routes(
             default_companion_id=answer["default_companion_id"],
             capabilities=answer["capabilities"],
             limits=answer["limits"],
+        )
+
+    @router.get("/activity", response_model=ActivityView)
+    async def get_activity(
+        limit: int | None = Query(default=None, ge=1, le=100),
+        cursor: str | None = Query(default=None, pattern=r"^[0-9]{1,20}$"),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ActivityView:
+        """What has been done to my Eidolons lately.
+
+        The Host's own record of the changes it made, in the order they
+        happened. **Recent rather than complete**: how far back it reaches is
+        how much the Host still holds, and `next_cursor` running out means "no
+        further back from here", never "nothing happened before".
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.activity(
+                owner_id=owner_id, limit=limit, before=_position(cursor)
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        position = answer["next_cursor"]
+        return ActivityView(
+            moments=[
+                ActivityMomentView(**moment) for moment in answer["moments"]
+            ],
+            next_cursor=None if position is None else str(position),
         )
 
     @router.get("/host/vitals", response_model=HostVitalsView)

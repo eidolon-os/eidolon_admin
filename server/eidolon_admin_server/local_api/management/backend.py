@@ -93,6 +93,16 @@ class AdminManagementClient:
             {"display_name": display_name, "kind": kind},
         )
 
+    async def activity(
+        self, *, owner_id: str, limit: int | None, before: int | None
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if before is not None:
+            params["before"] = str(before)
+        return await self._get("/api/internal/v1/management/activity", params)
+
     async def companion_face_state(
         self, *, owner_id: str, companion_id: str
     ) -> dict:

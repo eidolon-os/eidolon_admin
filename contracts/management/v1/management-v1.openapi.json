@@ -1,6 +1,106 @@
 {
   "components": {
     "schemas": {
+      "ActivityMomentView": {
+        "additionalProperties": false,
+        "description": "One thing that happened to my things.\n\nFacts and names, not a sentence: the wording belongs in the client, next to\nthe rest of its language, so a Host does not have to know Chinese to be able\nto say that an Eidolon was put away.",
+        "properties": {
+          "action": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Detail",
+            "type": "object"
+          },
+          "event_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "outcome": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Outcome",
+            "type": "string"
+          },
+          "subject_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Subject Id",
+            "type": "string"
+          },
+          "subject_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Subject Name",
+            "type": "string"
+          },
+          "subject_type": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "action",
+          "subject_type",
+          "subject_id",
+          "occurred_at",
+          "outcome"
+        ],
+        "title": "ActivityMomentView",
+        "type": "object"
+      },
+      "ActivityView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "moments": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityMomentView"
+            },
+            "title": "Moments",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "moments"
+        ],
+        "title": "ActivityView",
+        "type": "object"
+      },
       "CompanionCreateRequest": {
         "additionalProperties": false,
         "description": "Ask for another Eidolon.\n\n``operation_id`` is the client's, and it is what makes asking twice safe:\nevery identifier the Host derives comes from it, so a retry addresses the\nsame Eidolon rather than creating a second one. A client that generates a\nfresh id per attempt has opted out of that protection, which is why it is\nrequired rather than defaulted here.",
@@ -2099,6 +2199,91 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/management/v1/activity": {
+      "get": {
+        "description": "What has been done to my Eidolons lately.\n\nThe Host's own record of the changes it made, in the order they\nhappened. **Recent rather than complete**: how far back it reaches is\nhow much the Host still holds, and `next_cursor` running out means \"no\nfurther back from here\", never \"nothing happened before\".",
+        "operationId": "get_activity_api_management_v1_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9]{1,20}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Activity",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/companions": {
       "get": {
         "description": "This Owner's Eidolons.\n\nThere is no ``owner_id`` parameter and there will not be one: the Owner\nis whoever this session authenticated. ``cursor`` is the one thing a\nclient may vary, and it is a value this boundary handed it.",

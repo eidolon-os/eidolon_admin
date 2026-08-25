@@ -143,6 +143,27 @@ class CompanionLifecycleResult(StrictModel):
     default_companion_id: str | None = Field(default=None, max_length=64)
 
 
+class GovernanceEvent(StrictModel):
+    """One governance fact, consumed as the authority publishes it."""
+
+    event_id: str = Field(min_length=1, max_length=64)
+    action: str = Field(min_length=1, max_length=128)
+    subject_type: str = Field(min_length=1, max_length=64)
+    subject_id: str = Field(min_length=1, max_length=128)
+    outcome: str = Field(min_length=1, max_length=16)
+    severity: str = Field(min_length=1, max_length=16)
+    occurred_at: str = Field(min_length=1, max_length=64)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OwnerGovernanceEvents(StrictModel):
+    contract_version: Literal["1"]
+    operation: Literal["owner.governance-events"]
+    owner_id: str = Field(min_length=1, max_length=64)
+    events: tuple[GovernanceEvent, ...] = ()
+    next_cursor: int | None = None
+
+
 class MemoryRoom(StrictModel):
     room_id: str = Field(min_length=1, max_length=256)
     drawer_count: int = Field(ge=0)

@@ -6,6 +6,23 @@
 // No operation takes an owner_id: the Owner comes from the authenticated
 // Controller session, so it is not expressible from a client.
 
+export interface ActivityMomentView {
+  action: string
+  detail?: Record<string, string>
+  event_id: string
+  occurred_at: string
+  outcome: string
+  subject_id: string
+  subject_name?: string
+  subject_type: string
+}
+
+export interface ActivityView {
+  contract_version?: "1"
+  moments: Array<ActivityMomentView>
+  next_cursor?: string | null
+}
+
 export interface CompanionCreateRequest {
   display_name: string
   kind?: string
@@ -391,6 +408,7 @@ export interface VitalView {
 
 /** Response type per operation, keyed as it is called. */
 export interface ManagementResponses {
+  'GET /api/management/v1/activity': ActivityView
   'GET /api/management/v1/companions': CompanionRosterView
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView

@@ -43,6 +43,7 @@ from eidolon_admin_server.app.management.creation import (
 )
 from eidolon_admin_server.app.management.audience import MemoryAudienceKeeper
 from eidolon_admin_server.app.management.lifecycle import CompanionLifecycleWriter
+from eidolon_admin_server.app.management.activity_feed import GovernanceHistorian
 from eidolon_admin_server.app.management.faces import CompanionFaceKeeper
 from eidolon_admin_server.app.management.naming import CompanionNamer, OwnerNamer
 from eidolon_admin_server.app.management.forgetting import MemoryForgetter
@@ -78,6 +79,8 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     "CompanionNamer": (CompanionNamer, "data"),
     # The face is stored beside the Companion, by the same authority.
     "CompanionFaceKeeper": (CompanionFaceKeeper, "data"),
+    # The governance record lives with the authority that writes it.
+    "GovernanceHistorian": (GovernanceHistorian, "workspace"),
     "OwnerNamer": (OwnerNamer, "workspace"),
     "MemoryReconciler": (MemoryReconciler, "memory_supervisor"),
     # Reading what a memory holds and bringing a realm *up* are different

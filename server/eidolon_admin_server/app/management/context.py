@@ -79,6 +79,10 @@ _CAPABILITIES: tuple[str, ...] = (
     "memory.export",
     "device.read",
     "device.manage",
+    #: The Host's own record of what it did to this Owner's things. Its own name
+    #: rather than part of ``conversation.read``: one is what an Eidolon said,
+    #: the other is what was done to it.
+    "activity.read",
     "conversation.read",
     "task.read",
     "task.manage",
@@ -141,6 +145,9 @@ _ENABLED: frozenset[str] = frozenset(
         # rather than an authority's data.
         "host.read",
         "host.operate",
+        # The governance facts Data writes in the same transaction as each
+        # change. Nothing had ever read them.
+        "activity.read",
         # The Agent answers these and owns the task state machine; this side
         # relays, including its refusals.
         "conversation.read",
