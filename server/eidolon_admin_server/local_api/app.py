@@ -445,47 +445,6 @@ def create_app(
             )
         return workspace_status(operation_id=operation_id, result=result)
 
-    @app.get(
-        "/api/local/v1/workspace/runtime",
-        response_model=WorkspaceRuntimeView,
-    )
-    async def get_workspace_runtime(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> WorkspaceRuntimeView:
-        principal, _session = await authenticated_controller(authorization)
-        owner_id = principal.get("owner_id")
-        if not isinstance(owner_id, str) or not owner_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Host Workspace is not initialized",
-            )
-        operation_id = await operation_id_for_host()
-        try:
-            workspace_operation = await workspace.get(operation_id)
-        except WorkspaceSetupError as exc:
-            code = (
-                status.HTTP_409_CONFLICT
-                if exc.status_code == status.HTTP_404_NOT_FOUND
-                else exc.status_code
-            )
-            raise HTTPException(code, str(exc)) from exc
-        try:
-            runtime_snapshot = await runtime.get_owner_default_runtime(owner_id)
-            companion = await runtime.get_companion(runtime_snapshot.companion_id)
-            return workspace_runtime_view(
-                workspace=workspace_operation,
-                runtime=runtime_snapshot,
-                bound_owner_id=owner_id,
-                companion_display_name=companion.display_name,
-            )
-        except WorkspaceRuntimeError as exc:
-            code = (
-                status.HTTP_409_CONFLICT
-                if exc.status_code == status.HTTP_404_NOT_FOUND
-                else exc.status_code
-            )
-            raise HTTPException(code, str(exc)) from exc
-
     async def _owned_companion(
         companion_id: str,
         authorization: str | None,

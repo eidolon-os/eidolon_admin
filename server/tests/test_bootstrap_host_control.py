@@ -1008,12 +1008,12 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert absent.status_code == 200
             assert absent.json()["state"] == "absent"
-            runtime_before_workspace = await client.get(
-                "/api/local/v1/workspace/runtime",
-                headers=workspace_headers,
-            )
-            assert runtime_before_workspace.status_code == 409
-            assert runtime_client.calls == 0
+            # The Owner's own view is not asserted here any more. It used to be
+            # one call to a runtime projection this test could inject; it is now
+            # composed from five sources, and standing all five up inside a
+            # bootstrap test would be asserting the composition in the one place
+            # least able to explain a failure. It is asserted in
+            # tests/test_management_home.py instead.
             devices_before_workspace = await client.get(
                 "/api/management/v1/devices",
                 headers=workspace_headers,
@@ -1054,21 +1054,10 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert ready.json() == initialized.json()
 
-            runtime = await client.get(
-                "/api/local/v1/workspace/runtime",
-                headers=workspace_headers,
-            )
-            assert runtime.status_code == 200
-            assert runtime.json()["owner"]["owner_id"] == ("owner_workspace_authority")
-            assert (
-                runtime.json()["primary_companion"]["companion_id"]
-                == (initialized.json()["workspace"]["primary_companion_id"])
-            )
-            # The name a person gave this Eidolon reaches the Owner's own view.
-            # It was stored at onboarding and, until now, never read back — the
-            # product showed an identifier where someone had said what to call it.
-            assert runtime.json()["primary_companion"]["display_name"] == "小忆"
-            assert runtime_client.calls == 1
+            # The name a person gave this Eidolon is still what the setup result
+            # carries; that it reaches the Owner's own view is asserted where the
+            # view is composed (tests/test_management_home.py).
+            assert initialized.json()["owner"]["display_name"] == "Manson"
             devices = await client.get(
                 "/api/management/v1/devices",
                 headers=workspace_headers,
@@ -1130,12 +1119,7 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                     "/api/local/v1/setup/workspace",
                     headers=next_headers,
                 )
-                resumed_runtime = await restarted.get(
-                    "/api/local/v1/workspace/runtime",
-                    headers=next_headers,
-                )
                 assert resumed_workspace.json() == initialized.json()
-                assert resumed_runtime.status_code == 200
 
             control = BootstrapControlClient(settings.control_socket)
             refreshed = await client.get(
