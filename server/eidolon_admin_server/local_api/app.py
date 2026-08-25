@@ -84,7 +84,6 @@ from .device_admissions import (
 )
 from .runtime import (
     AdminOwnerRuntimeClient,
-    CompanionFaceView,
     AdminOwnerRuntimePort,
     WorkspaceRuntimeError,
     WorkspaceRuntimeView,
@@ -561,83 +560,6 @@ def create_app(
                 "Companion does not exist",
             )
         return owner_id
-
-    @app.get(
-        "/api/local/v1/companions/{companion_id}/face-state",
-        response_model=CompanionFaceView,
-    )
-    async def companion_face_state(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> CompanionFaceView:
-        """Whether this Eidolon has a face, and whether it is the one you hold."""
-
-        await _owned_companion(companion_id, authorization)
-        try:
-            state = await runtime.get_companion_face_state(companion_id)
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return _face_view(state)
-
-    @app.get(
-        "/api/local/v1/companions/{companion_id}/face",
-        response_class=Response,
-        responses={
-            200: {"content": {"image/jpeg": {}}},
-            204: {"description": "This Eidolon has no face"},
-        },
-    )
-    async def companion_face(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> Response:
-        await _owned_companion(companion_id, authorization)
-        try:
-            face = await runtime.get_companion_face(companion_id)
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        if face is None:
-            return Response(status_code=204)
-        return Response(content=face, media_type="image/jpeg")
-
-    @app.put(
-        "/api/local/v1/companions/{companion_id}/face",
-        response_model=CompanionFaceView,
-    )
-    async def set_companion_face(
-        request: Request,
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> CompanionFaceView:
-        """Give this Eidolon a face.
-
-        The photograph is the body of the request. What may be sent — a JPEG,
-        and not an unbounded one — is decided by the authority that stores it
-        rather than restated here, so there is one answer to "is this a face"
-        instead of two that can drift apart.
-        """
-
-        await _owned_companion(companion_id, authorization)
-        try:
-            state = await runtime.set_companion_face(companion_id, await request.body())
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return _face_view(state)
-
-    @app.delete(
-        "/api/local/v1/companions/{companion_id}/face",
-        response_model=CompanionFaceView,
-    )
-    async def clear_companion_face(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> CompanionFaceView:
-        await _owned_companion(companion_id, authorization)
-        try:
-            state = await runtime.clear_companion_face(companion_id)
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return _face_view(state)
 
     async def owner_device_inventory(
         authorization: str | None,
@@ -1130,15 +1052,6 @@ def create_app(
     )
 
     return app
-
-
-def _face_view(state) -> CompanionFaceView:
-    return CompanionFaceView(
-        companion_id=state.companion_id,
-        has_face=state.has_face,
-        sha256=state.sha256,
-        updated_at=state.updated_at,
-    )
 
 
 def _bearer_token(value: str | None) -> str:

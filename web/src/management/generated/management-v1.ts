@@ -33,6 +33,14 @@ export interface CompanionDetailView {
   revision: number
 }
 
+export interface CompanionFaceView {
+  companion_id: string
+  contract_version?: "1"
+  has_face: boolean
+  sha256?: string | null
+  updated_at?: string | null
+}
+
 export interface CompanionLifecycleRequest {
   expected_revision?: number | null
   lifecycle_state: "archived" | "active"
@@ -325,6 +333,10 @@ export interface ManagementResponses {
   'PATCH /api/management/v1/companions/{companion_id}': CompanionNameView
   'GET /api/management/v1/companions/{companion_id}/conversations': ConversationPageView
   'GET /api/management/v1/companions/{companion_id}/conversations/{conversation_id}/turns': TranscriptView
+  'DELETE /api/management/v1/companions/{companion_id}/face': CompanionFaceView
+  'GET /api/management/v1/companions/{companion_id}/face': Blob
+  'PUT /api/management/v1/companions/{companion_id}/face': CompanionFaceView
+  'GET /api/management/v1/companions/{companion_id}/face-state': CompanionFaceView
   'PUT /api/management/v1/companions/{companion_id}/lifecycle': CompanionLifecycleView
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView

@@ -66,6 +66,10 @@ _CAPABILITIES: tuple[str, ...] = (
     #: ``controller.manage``: renaming yourself is not administering a Host.
     "owner.rename",
     "companion.set_default",
+    #: What an Eidolon looks like: reading the face, giving it one, taking it
+    #: away. Its own name because it is the one part of a Companion a person
+    #: changes by choosing a photograph rather than by typing.
+    "companion.face",
     "companion.archive",
     "companion.restore",
     "persona.read",
@@ -101,6 +105,10 @@ _ENABLED: frozenset[str] = frozenset(
         "companion.read",
         "companion.create",
         "companion.set_default",
+    #: What an Eidolon looks like: reading the face, giving it one, taking it
+    #: away. Its own name because it is the one part of a Companion a person
+    #: changes by choosing a photograph rather than by typing.
+    "companion.face",
         "memory.read",
         "memory.govern",
         # Persona history and going back to a chapter: Data answers, the
@@ -122,6 +130,8 @@ _ENABLED: frozenset[str] = frozenset(
         # explain.
         "companion.rename",
         "owner.rename",
+        # The face, over the same surface as everything else about a Companion.
+        "companion.face",
         # The Agent answers these and owns the task state machine; this side
         # relays, including its refusals.
         "conversation.read",

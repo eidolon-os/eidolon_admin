@@ -93,6 +93,72 @@ class AdminManagementClient:
             {"display_name": display_name, "kind": kind},
         )
 
+    async def companion_face_state(
+        self, *, owner_id: str, companion_id: str
+    ) -> dict:
+        return await self._get(
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
+            "/face-state",
+            {"owner_id": owner_id},
+        )
+
+    async def companion_face(
+        self, *, owner_id: str, companion_id: str, known_etag: str | None
+    ) -> tuple[int, bytes, str | None]:
+        """The photograph, relayed as bytes and never decoded on the way.
+
+        Answers with the upstream status rather than a parsed body: 200 with a
+        face, 204 for an Eidolon that has none, 304 for the one the caller
+        already holds. All three are things a screen does something different
+        with, and flattening them into "here is a body or an error" would make
+        the last one impossible to tell from the second.
+        """
+
+        response = await self._raw(
+            "GET",
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
+            "/face",
+            {"owner_id": owner_id},
+            headers={"If-None-Match": known_etag} if known_etag else None,
+        )
+        if response.status_code not in {200, 204, 304}:
+            raise ManagementBackendError(
+                "Host management backend refused this request",
+                status_code=response.status_code
+                if 400 <= response.status_code < 500
+                else 503,
+                code=_refusal_code(response),
+            )
+        return (
+            response.status_code,
+            response.content,
+            response.headers.get("ETag"),
+        )
+
+    async def set_companion_face(
+        self, *, owner_id: str, companion_id: str, face: bytes
+    ) -> dict:
+        response = await self._raw(
+            "PUT",
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
+            "/face",
+            {"owner_id": owner_id},
+            headers={"Content-Type": "image/jpeg"},
+            content=face,
+        )
+        return self._decoded(response)
+
+    async def clear_companion_face(
+        self, *, owner_id: str, companion_id: str
+    ) -> dict:
+        return await self._put(
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
+            "/face",
+            {"owner_id": owner_id},
+            {},
+            method="DELETE",
+        )
+
     async def rename_companion(
         self, *, owner_id: str, companion_id: str, display_name: str
     ) -> dict:
@@ -311,31 +377,51 @@ class AdminManagementClient:
     async def _get(self, path: str, params: dict[str, str]) -> dict:
         return await self._call("GET", path, params, None)
 
-    async def _call(
-        self, method: str, path: str, params: dict[str, str], body: dict | None
-    ) -> dict:
+    async def _raw(
+        self,
+        method: str,
+        path: str,
+        params: dict[str, str],
+        *,
+        body: dict | None = None,
+        headers: dict[str, str] | None = None,
+        content: bytes | None = None,
+    ) -> httpx.Response:
         """One place that speaks to the other process, whatever the verb.
 
-        Reads and writes differ only in method and body here — deliberately, so
-        that "how a refusal is relayed" cannot come to mean two things.
+        Reads, writes and photographs differ only in method, body and content
+        type here — deliberately, so that "how a refusal is relayed" cannot come
+        to mean two things.
         """
         if not self._service_token:
             raise ManagementBackendError(
                 "Host management backend credential is not configured", status_code=503
             )
         try:
-            response = await self._client.request(
+            return await self._client.request(
                 method,
                 f"{self._base_url}{path}",
                 params=params,
                 json=body,
-                headers={"Authorization": f"Bearer {self._service_token}"},
+                content=content,
+                headers={
+                    "Authorization": f"Bearer {self._service_token}",
+                    **(headers or {}),
+                },
                 timeout=self._timeout,
             )
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             raise ManagementBackendError(
                 "Host management backend is unreachable", status_code=503
             ) from exc
+
+    async def _call(
+        self, method: str, path: str, params: dict[str, str], body: dict | None
+    ) -> dict:
+        return self._decoded(await self._raw(method, path, params, body=body))
+
+    @staticmethod
+    def _decoded(response: httpx.Response) -> dict:
         if response.status_code != 200:
             # Relayed rather than reinterpreted: this side has no credentials and
             # no authority facts, so it is in no position to decide what a

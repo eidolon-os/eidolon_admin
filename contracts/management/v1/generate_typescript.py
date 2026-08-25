@@ -95,12 +95,16 @@ def build_output() -> bytes:
     operations: list[str] = []
     for path, methods in sorted(document["paths"].items()):
         for method, operation in sorted(methods.items()):
-            response = (
-                operation["responses"]["200"]["content"]["application/json"]["schema"]
-            )
-            operations.append(
-                f"  '{method.upper()} {path}': {_type_of(response, where=path)}"
-            )
+            content = operation["responses"]["200"].get("content", {})
+            if "application/json" in content:
+                emitted = _type_of(content["application/json"]["schema"], where=path)
+            else:
+                # A photograph, not a document. Typed as bytes rather than as
+                # some object with a base64 field inside it: every layer that
+                # encoded it would be spending a megabyte to say what the bytes
+                # already say, and no client here has any use for what is inside.
+                emitted = "Blob"
+            operations.append(f"  '{method.upper()} {path}': {emitted}")
 
     body = [
         "// Generated from management-v1.openapi.json. Do not edit.",

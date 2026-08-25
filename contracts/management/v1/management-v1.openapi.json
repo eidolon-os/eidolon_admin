@@ -145,6 +145,58 @@
         "title": "CompanionDetailView",
         "type": "object"
       },
+      "CompanionFaceView": {
+        "additionalProperties": false,
+        "description": "Whether this Eidolon has a face — never the face itself.\n\nA screen asks this before deciding whether a photograph is worth fetching,\nand the answer is small enough to ask on every refresh.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "has_face": {
+            "title": "Has Face",
+            "type": "boolean"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "companion_id",
+          "has_face"
+        ],
+        "title": "CompanionFaceView",
+        "type": "object"
+      },
       "CompanionLifecycleRequest": {
         "additionalProperties": false,
         "description": "Where this Eidolon should be: put away, or here again.\n\nA desired end rather than a verb, so a phone that never saw the answer can\nsend the same request again — and so a second tap on a button whose screen\nhad not caught up is a success rather than an error.\n\nOnly two states are expressible. ``retiring`` is a step the Host walks\nthrough on the way to archived, not somewhere a person parks an Eidolon, and\ndeletion is a different conversation entirely: a surface where \"put this\naway\" and \"erase this forever\" are one field apart is a surface that will\neventually erase something.",
@@ -2152,6 +2204,256 @@
           }
         },
         "summary": "Get Conversation Transcript",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/face": {
+      "delete": {
+        "description": "Take the face away and leave the Eidolon.",
+        "operationId": "delete_companion_face_api_management_v1_companions__companion_id__face_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionFaceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Companion Face",
+        "tags": [
+          "management"
+        ]
+      },
+      "get": {
+        "description": "What this Eidolon looks like.\n\nA photograph is the one thing on this surface worth not sending twice,\nand this is the hop where that matters — a phone over a house's wifi,\nnot a loopback socket. ``If-None-Match`` is answered with 304 and no\nbody.",
+        "operationId": "get_companion_face_api_management_v1_companions__companion_id__face_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-None-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {}
+            },
+            "description": "Successful Response"
+          },
+          "204": {
+            "description": "This Eidolon has no face"
+          },
+          "304": {
+            "description": "The face the caller already holds"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Companion Face",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "description": "Give this Eidolon a face; the photograph is the body.\n\nWhat may be sent — a JPEG, and not an unbounded one — is decided by the\nauthority that stores it rather than restated here, so there is one\nanswer to \"is this a face\" instead of two that can drift apart.",
+        "operationId": "put_companion_face_api_management_v1_companions__companion_id__face_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionFaceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Companion Face",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/face-state": {
+      "get": {
+        "description": "Does this Eidolon have a face, and is it the one I already hold?",
+        "operationId": "get_companion_face_state_api_management_v1_companions__companion_id__face_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionFaceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Companion Face State",
         "tags": [
           "management"
         ]

@@ -15,12 +15,18 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
+from eidolon_admin_server.app.management.faces import (
+    clear_face,
+    read_face,
+    read_face_state,
+    set_face,
+)
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
 from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
@@ -181,6 +187,17 @@ class OwnerNameInternal(BaseModel):
     owner_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     revision: int = Field(ge=1)
+
+
+class CompanionFaceInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.face"] = "companion.face"
+    companion_id: str = Field(min_length=1, max_length=64)
+    has_face: bool
+    sha256: str | None = Field(default=None, max_length=128)
+    updated_at: str | None = Field(default=None, max_length=64)
 
 
 class CompanionLifecycleRequestInternal(BaseModel):
@@ -1136,6 +1153,141 @@ async def put_persona_restoration(
             status_code=exc.status_code, detail=exc.to_wire().model_dump()
         ) from exc
     return _persona_history_internal(history)
+
+
+@router.get("/companions/{companion_id}/face-state", response_model=CompanionFaceInternal)
+async def get_companion_face_state(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+) -> CompanionFaceInternal:
+    """Whether there is a face, without carrying one."""
+    try:
+        view = await read_face_state(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            companions=request.app.state.control_plane.data,
+            faces=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _face_internal(view)
+
+
+@router.get(
+    "/companions/{companion_id}/face",
+    response_class=Response,
+    responses={
+        200: {"content": {"image/jpeg": {}}},
+        204: {"description": "This Eidolon has no face"},
+        304: {"description": "The face the caller already holds"},
+    },
+)
+async def get_companion_face(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+) -> Response:
+    """The face itself.
+
+    Bytes stay bytes the whole way. Every layer between the authority and the
+    phone would otherwise encode and decode a photograph to say the same thing,
+    and none of them has any use for what is inside it.
+    """
+    try:
+        face = await read_face(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            known_sha256=_etag_digest(if_none_match),
+            companions=request.app.state.control_plane.data,
+            faces=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    if face.unchanged:
+        return Response(status_code=304, headers=_face_etag(face.sha256))
+    if face.content is None:
+        return Response(status_code=204)
+    return Response(
+        content=face.content,
+        media_type="image/jpeg",
+        headers=_face_etag(face.sha256),
+    )
+
+
+@router.put("/companions/{companion_id}/face", response_model=CompanionFaceInternal)
+async def put_companion_face(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+) -> CompanionFaceInternal:
+    """Give this Eidolon a face. The photograph is the body of the request."""
+    try:
+        view = await set_face(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            face=await request.body(),
+            companions=request.app.state.control_plane.data,
+            faces=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _face_internal(view)
+
+
+@router.delete("/companions/{companion_id}/face", response_model=CompanionFaceInternal)
+async def delete_companion_face(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+) -> CompanionFaceInternal:
+    try:
+        view = await clear_face(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            companions=request.app.state.control_plane.data,
+            faces=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return _face_internal(view)
+
+
+def _face_internal(view) -> CompanionFaceInternal:
+    return CompanionFaceInternal(
+        companion_id=view.companion_id,
+        has_face=view.has_face,
+        sha256=view.sha256,
+        updated_at=view.updated_at,
+    )
+
+
+def _face_etag(digest: str | None) -> dict[str, str]:
+    return {"ETag": f'"sha256:{digest}"'} if digest else {}
+
+
+def _etag_digest(header: str | None) -> str | None:
+    """The digest inside an ``If-None-Match``, when it is one this Host wrote.
+
+    Anything else — a wildcard, a weak validator, an ETag from some other
+    service — is read as "I have nothing", which costs a photograph and is the
+    safe direction to be wrong in.
+    """
+
+    if not header:
+        return None
+    value = header.strip().strip('"')
+    prefix = "sha256:"
+    return value[len(prefix) :] if value.startswith(prefix) else None
 
 
 @router.patch("/companions/{companion_id}", response_model=CompanionNameInternal)

@@ -173,7 +173,6 @@ class _RuntimeClient:
     def __init__(self, workspace: _WorkspaceClient) -> None:
         self.workspace = workspace
         self.calls = 0
-        self.face: bytes | None = None
         self.recalled: tuple[str, str, int] | None = None
         self.owner_of_companion: str | None = None
 
@@ -209,41 +208,6 @@ class _RuntimeClient:
             }
         )
 
-    async def close(self) -> None:
-        return None
-
-
-    async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
-        return self._face(companion_id)
-
-    async def get_companion_face(self, companion_id: str) -> bytes | None:
-        return self.face
-
-    async def set_companion_face(self, companion_id: str, face: bytes) -> CompanionFace:
-        self.face = face
-        return self._face(companion_id)
-
-    async def clear_companion_face(self, companion_id: str) -> CompanionFace:
-        self.face = None
-        return self._face(companion_id)
-
-    def _face(self, companion_id: str) -> CompanionFace:
-        if self.face is None:
-            return CompanionFace(
-                operation="companion.face",
-                companion_id=companion_id,
-                has_face=False,
-            )
-        return CompanionFace(
-            operation="companion.face",
-            companion_id=companion_id,
-            has_face=True,
-            face_asset_id="face-1",
-            sha256=hashlib.sha256(self.face).hexdigest(),
-            size_bytes=len(self.face),
-            updated_at="2026-08-17T09:00:00Z",
-        )
-
     async def get_companion(self, companion_id: str) -> CompanionIdentity:
         # The name a person gave this Eidolon lives with its identity, not in
         # the snapshot that says how to run it.
@@ -258,6 +222,10 @@ class _RuntimeClient:
             kind="standard",
             revision=1,
         )
+
+    async def close(self) -> None:
+        return None
+
 
 class _DevicesClient:
     def __init__(self) -> None:
@@ -1464,57 +1432,11 @@ async def test_a_history_that_could_not_be_read_never_reads_as_nothing_happened(
         assert "moments" not in answered.text
 
 
-@pytest.mark.asyncio
-async def test_an_owner_gives_their_eidolon_a_face_and_only_their_own(
-    tmp_path: Path,
-    short_runtime_dir: Path,
-) -> None:
-    """A face is bytes, and whose Eidolon it is decided in the same one place."""
-
-    async with _local_api_session(tmp_path, short_runtime_dir) as (
-        client,
-        headers,
-        runtime_client,
-        _devices_client,
-    ):
-        companion_id = "c_11111111111111111111111111111111"
-        path = f"/api/local/v1/companions/{companion_id}/face"
-        jpeg = b"\xff\xd8\xff a face \xff\xd9"
-
-        blank = await client.get(f"{path}-state", headers=headers)
-        assert blank.status_code == 200
-        assert blank.json()["has_face"] is False
-        # The state answer never carries the photograph itself.
-        assert "face" not in blank.json() or isinstance(blank.json().get("sha256"), type(None))
-        assert (await client.get(path, headers=headers)).status_code == 204
-
-        stored = await client.put(path, content=jpeg, headers=headers)
-        assert stored.status_code == 200
-        assert stored.json()["has_face"] is True
-        assert stored.json()["sha256"] == hashlib.sha256(jpeg).hexdigest()
-
-        served = await client.get(path, headers=headers)
-        assert served.status_code == 200
-        assert served.content == jpeg
-        assert served.headers["content-type"] == "image/jpeg"
-
-        cleared = await client.delete(path, headers=headers)
-        assert cleared.status_code == 200
-        assert cleared.json()["has_face"] is False
-        assert (await client.get(path, headers=headers)).status_code == 204
-
-        # The same session, somebody else's Eidolon: absent, not forbidden.
-        runtime_client.owner_of_companion = "owner-somebody-else"
-        assert (
-            await client.put(path, content=jpeg, headers=headers)
-        ).status_code == 404
-        assert (await client.get(path, headers=headers)).status_code == 404
-        assert (await client.delete(path, headers=headers)).status_code == 404
-        assert (await client.get(f"{path}-state", headers=headers)).status_code == 404
-
-        # And without a session at all.
-        assert (await client.get(path)).status_code == 401
-        assert (await client.put(path, content=jpeg)).status_code == 401
+# Faces moved to the management surface with renaming, and the four
+# `/api/local/v1` routes are deleted. What this test held — bytes stay bytes, an
+# Eidolon without one answers 204, and someone else's is absent on every verb —
+# is asserted in ``tests/test_management_faces.py``, which also holds the part
+# that is new: a photograph is not sent to a phone twice.
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,7 @@ from eidolon_admin_server.app.management.creation import (
 )
 from eidolon_admin_server.app.management.audience import MemoryAudienceKeeper
 from eidolon_admin_server.app.management.lifecycle import CompanionLifecycleWriter
+from eidolon_admin_server.app.management.faces import CompanionFaceKeeper
 from eidolon_admin_server.app.management.naming import CompanionNamer, OwnerNamer
 from eidolon_admin_server.app.management.forgetting import MemoryForgetter
 from eidolon_admin_server.app.management.memory import MemoryBrowser
@@ -75,6 +76,8 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # Naming: an Eidolon is Data's, and an Owner is written where the Owner
     # aggregate is written.
     "CompanionNamer": (CompanionNamer, "data"),
+    # The face is stored beside the Companion, by the same authority.
+    "CompanionFaceKeeper": (CompanionFaceKeeper, "data"),
     "OwnerNamer": (OwnerNamer, "workspace"),
     "MemoryReconciler": (MemoryReconciler, "memory_supervisor"),
     # Reading what a memory holds and bringing a realm *up* are different

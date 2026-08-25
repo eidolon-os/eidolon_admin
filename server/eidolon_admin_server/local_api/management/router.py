@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal, Protocol
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MANAGEMENT_PREFIX = "/api/management/v1"
@@ -228,6 +228,24 @@ class OwnerNameView(BaseModel):
     owner_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     revision: int = Field(ge=1)
+
+
+class CompanionFaceView(BaseModel):
+    """Whether this Eidolon has a face — never the face itself.
+
+    A screen asks this before deciding whether a photograph is worth fetching,
+    and the answer is small enough to ask on every refresh.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    has_face: bool
+    #: Changes whenever the face does, which is what lets a client know its copy
+    #: is stale without comparing photographs.
+    sha256: str | None = Field(default=None, max_length=128)
+    updated_at: str | None = Field(default=None, max_length=64)
 
 
 class CompanionLifecycleRequest(BaseModel):
@@ -752,6 +770,22 @@ class ManagementBackendPort(Protocol):
         kind: str,
     ) -> dict: ...
 
+    async def companion_face_state(
+        self, *, owner_id: str, companion_id: str
+    ) -> dict: ...
+
+    async def companion_face(
+        self, *, owner_id: str, companion_id: str, known_etag: str | None
+    ) -> tuple[int, bytes, str | None]: ...
+
+    async def set_companion_face(
+        self, *, owner_id: str, companion_id: str, face: bytes
+    ) -> dict: ...
+
+    async def clear_companion_face(
+        self, *, owner_id: str, companion_id: str
+    ) -> dict: ...
+
     async def rename_companion(
         self, *, owner_id: str, companion_id: str, display_name: str
     ) -> dict: ...
@@ -1009,6 +1043,117 @@ def register_management_routes(
             revision=answer["revision"],
             created=answer["created"],
             memory_ready=answer["memory_ready"],
+        )
+
+    @router.get(
+        "/companions/{companion_id}/face-state", response_model=CompanionFaceView
+    )
+    async def get_companion_face_state(
+        companion_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionFaceView:
+        """Does this Eidolon have a face, and is it the one I already hold?"""
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.companion_face_state(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return CompanionFaceView(
+            companion_id=answer["companion_id"],
+            has_face=answer["has_face"],
+            sha256=answer["sha256"],
+            updated_at=answer["updated_at"],
+        )
+
+    @router.get(
+        "/companions/{companion_id}/face",
+        response_class=Response,
+        responses={
+            200: {"content": {"image/jpeg": {}}},
+            204: {"description": "This Eidolon has no face"},
+            304: {"description": "The face the caller already holds"},
+        },
+    )
+    async def get_companion_face(
+        companion_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+        if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+    ) -> Response:
+        """What this Eidolon looks like.
+
+        A photograph is the one thing on this surface worth not sending twice,
+        and this is the hop where that matters — a phone over a house's wifi,
+        not a loopback socket. ``If-None-Match`` is answered with 304 and no
+        body.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            status_code, content, etag = await backend.companion_face(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                known_etag=if_none_match,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        headers = {"ETag": etag} if etag else {}
+        if status_code == 304:
+            return Response(status_code=304, headers=headers)
+        if status_code == 204 or not content:
+            return Response(status_code=204)
+        return Response(content=content, media_type="image/jpeg", headers=headers)
+
+    @router.put(
+        "/companions/{companion_id}/face", response_model=CompanionFaceView
+    )
+    async def put_companion_face(
+        companion_id: str,
+        request: Request,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionFaceView:
+        """Give this Eidolon a face; the photograph is the body.
+
+        What may be sent — a JPEG, and not an unbounded one — is decided by the
+        authority that stores it rather than restated here, so there is one
+        answer to "is this a face" instead of two that can drift apart.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.set_companion_face(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                face=await request.body(),
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return CompanionFaceView(
+            companion_id=answer["companion_id"],
+            has_face=answer["has_face"],
+            sha256=answer["sha256"],
+            updated_at=answer["updated_at"],
+        )
+
+    @router.delete(
+        "/companions/{companion_id}/face", response_model=CompanionFaceView
+    )
+    async def delete_companion_face(
+        companion_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionFaceView:
+        """Take the face away and leave the Eidolon."""
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.clear_companion_face(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return CompanionFaceView(
+            companion_id=answer["companion_id"],
+            has_face=answer["has_face"],
+            sha256=answer["sha256"],
+            updated_at=answer["updated_at"],
         )
 
     @router.patch(
