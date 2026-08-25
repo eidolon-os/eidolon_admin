@@ -1297,6 +1297,159 @@
         "title": "ForgetTargetRequest",
         "type": "object"
       },
+      "HomeCompanionView": {
+        "additionalProperties": false,
+        "description": "The Eidolon that answers when nobody was named.\n\nSaid in words, with the identifiers underneath. A person opening this app\nwants to know who answers, whether it is ready, and what it has been up to;\nthe genome and realm identifiers are what they will be asked for if it is\nnot, so they are carried rather than shown.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "has_face": {
+            "default": false,
+            "title": "Has Face",
+            "type": "boolean"
+          },
+          "lifecycle_state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Lifecycle State",
+            "type": "string"
+          },
+          "memory": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Memory",
+            "type": "string"
+          },
+          "persona_chapter": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Persona Chapter",
+            "type": "string"
+          },
+          "persona_genome_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Persona Genome Id",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "lifecycle_state",
+          "revision"
+        ],
+        "title": "HomeCompanionView",
+        "type": "object"
+      },
+      "HomeCountsView": {
+        "additionalProperties": false,
+        "description": "How many of a thing there are, split the way a person acts on them.",
+        "properties": {
+          "put_away": {
+            "minimum": 0.0,
+            "title": "Put Away",
+            "type": "integer"
+          },
+          "ready": {
+            "minimum": 0.0,
+            "title": "Ready",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "waiting": {
+            "minimum": 0.0,
+            "title": "Waiting",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "ready",
+          "waiting",
+          "put_away"
+        ],
+        "title": "HomeCountsView",
+        "type": "object"
+      },
+      "HomeView": {
+        "additionalProperties": false,
+        "description": "What is mine, right now, in one read.\n\nThe one call a client makes when it opens. It exists because the alternative\nis four round trips and a screen that renders in pieces — and because the\ncomposition needs facts from five places, which is exactly the kind of thing\na Host should do once rather than a phone doing badly.\n\n**Nothing here is invented, and nothing missing is hidden.** Every part is\nbest-effort: a source this Host could not read leaves its field empty and\nnames itself in ``unavailable``, so a client can say \"the rest of this is\ntrue, and I could not read that one\" instead of drawing a confident blank.",
+        "properties": {
+          "answering": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HomeCompanionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "companions": {
+            "$ref": "#/components/schemas/HomeCountsView"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "devices": {
+            "$ref": "#/components/schemas/HomeCountsView"
+          },
+          "machine_attention": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Machine Attention",
+            "type": "array"
+          },
+          "owner_display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Owner Display Name",
+            "type": "string"
+          },
+          "owner_revision": {
+            "minimum": 1.0,
+            "title": "Owner Revision",
+            "type": "integer"
+          },
+          "unavailable": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "object"
+          }
+        },
+        "required": [
+          "owner_revision",
+          "companions",
+          "devices"
+        ],
+        "title": "HomeView",
+        "type": "object"
+      },
       "HostServiceInventoryView": {
         "additionalProperties": false,
         "properties": {
@@ -4191,6 +4344,56 @@
           }
         },
         "summary": "Remove Device",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/home": {
+      "get": {
+        "description": "What is mine, right now.\n\nOne read when the app opens, composed here because the answer needs five\nsources and a phone composing it badly is four round trips and a screen\nthat renders in pieces.\n\nEvery part is best-effort and every gap is named. A Host that cannot\nreach its own memory service still knows who its Owner is and which\nEidolon answers; saying so beats a blank screen, and saying *which* part\nis missing beats a spinner that never resolves.",
+        "operationId": "get_home_api_management_v1_home_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Home",
         "tags": [
           "management"
         ]

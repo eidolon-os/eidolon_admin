@@ -70,6 +70,10 @@ class ManagementContext:
 #: present and false is a thing this Host cannot do yet. The difference matters:
 #: the first is a version skew, the second is a feature gate.
 _CAPABILITIES: tuple[str, ...] = (
+    #: The one read a client makes when it opens: who I am, who answers, what is
+    #: waiting, and which parts could not be read. Its own name because a client
+    #: has to know whether to ask for it before it has anything else to ask.
+    "home.read",
     "companion.read",
     "companion.create",
     "companion.rename",
@@ -130,10 +134,10 @@ _ENABLED: frozenset[str] = frozenset(
         "companion.read",
         "companion.create",
         "companion.set_default",
-    #: What an Eidolon looks like: reading the face, giving it one, taking it
-    #: away. Its own name because it is the one part of a Companion a person
-    #: changes by choosing a photograph rather than by typing.
-    "companion.face",
+        # The one read a client makes when it opens. Composed here rather than by
+        # each client, because the answer needs five sources and a phone
+        # composing it badly is four round trips and a screen drawn in pieces.
+        "home.read",
         "memory.read",
         "memory.govern",
         # Persona history and going back to a chapter: Data answers, the

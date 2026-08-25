@@ -115,6 +115,172 @@ def refusal_for_status(
     )
 
 
+async def _try(unavailable: dict[str, str], part: str, awaitable):
+    """Run one part of a composed read, and name it if it fails.
+
+    Refusals from a single source do not fail the whole answer: what a person
+    gets is everything the Host could read, plus the names of what it could not.
+    A caught exception is *recorded*, never swallowed — an empty field with no
+    entry here would be indistinguishable from an empty truth.
+    """
+
+    try:
+        return await awaitable
+    except ManagementBackendError as exc:
+        unavailable[part] = str(exc)
+        return None
+    except HostServiceControlError as exc:
+        unavailable[part] = str(exc)
+        return None
+
+
+async def _answering_view(
+    backend,
+    owner_id: str,
+    companion_id: str,
+    roster,
+    unavailable: dict[str, str],
+) -> "HomeCompanionView | None":
+    """The default Eidolon, filled in from as many sources as answered."""
+
+    row = None
+    for candidate in (roster or {}).get("companions", ()):
+        if candidate.get("companion_id") == companion_id:
+            row = candidate
+            break
+    if row is None:
+        detail = await _try(
+            unavailable,
+            "answering",
+            backend.companion(owner_id=owner_id, companion_id=companion_id),
+        )
+        if detail is None:
+            return None
+        row = detail
+
+    face = await _try(
+        unavailable,
+        "answering_face",
+        backend.companion_face_state(owner_id=owner_id, companion_id=companion_id),
+    )
+    persona = await _try(
+        unavailable,
+        "answering_persona",
+        backend.persona_history(owner_id=owner_id, companion_id=companion_id),
+    )
+    memory = await _try(
+        unavailable, "answering_memory", backend.memory_library(owner_id=owner_id)
+    )
+    return HomeCompanionView(
+        companion_id=companion_id,
+        display_name=str(row.get("display_name") or ""),
+        lifecycle_state=str(row.get("lifecycle_state") or "active"),
+        revision=int(row.get("revision") or 1),
+        has_face=bool((face or {}).get("has_face")),
+        persona_chapter=_persona_chapter(persona),
+        memory=_memory_sentence(memory),
+        persona_genome_id=_current_chapter_id(persona),
+    )
+
+
+def _persona_chapter(persona) -> str:
+    """Which chapter it is on, and what changed — not a hash.
+
+    A genome id means nothing to a person. "第 3 章 · 我发现你不喜欢被打断" is the
+    same fact in the form they can act on.
+    """
+
+    if not persona:
+        return ""
+    chapters = list(persona.get("chapters", ()))
+    if not chapters:
+        return ""
+    current = next((row for row in chapters if row.get("is_current")), chapters[0])
+    ordinal = len(chapters)
+    summary = str(current.get("what_changed") or "").strip()
+    return f"第 {ordinal} 章 · {summary}" if summary else f"第 {ordinal} 章"
+
+
+def _current_chapter_id(persona) -> str:
+    if not persona:
+        return ""
+    for row in persona.get("chapters", ()):
+        if row.get("is_current"):
+            return str(row.get("chapter_id") or "")
+    return ""
+
+
+def _memory_sentence(library) -> str:
+    """Whether what it remembers is reachable, in words.
+
+    A realm identifier is not an answer to "does it still remember me". The
+    count is, and an empty memory is a real and ordinary state for a new Eidolon
+    rather than something to hide.
+    """
+
+    if library is None:
+        return ""
+    entries = int(library.get("entry_count") or 0)
+    if entries == 0:
+        return "还没记下什么"
+    withheld = int(library.get("withheld_count") or 0)
+    if withheld:
+        return f"记着 {entries} 条，其中 {withheld} 条只给指定的伙伴"
+    return f"记着 {entries} 条"
+
+
+def _companion_counts(roster) -> "HomeCountsView":
+    rows = list((roster or {}).get("companions", ()))
+    states = [str(row.get("lifecycle_state") or "") for row in rows]
+    return HomeCountsView(
+        total=len(rows),
+        ready=sum(1 for state in states if state == "active"),
+        # Mid-move: the Owner asked for something that is still happening.
+        waiting=sum(1 for state in states if state in {"retiring", "deleting"}),
+        put_away=sum(1 for state in states if state == "archived"),
+    )
+
+
+def _device_counts(inventory) -> "HomeCountsView":
+    devices = list(getattr(inventory, "devices", ()) or ())
+    states: list[str] = []
+    for device in devices:
+        claim_state = getattr(device.claim.state, "value", str(device.claim.state))
+        if claim_state != "active":
+            states.append("access_revoked")
+        elif device.mount.attached_companion_id:
+            states.append("ready")
+        else:
+            states.append("awaiting_companion")
+    return HomeCountsView(
+        total=len(states),
+        ready=sum(1 for state in states if state == "ready"),
+        # The state this product used to ship people into and leave there: a
+        # device mounted, claimed, and answering as nobody.
+        waiting=sum(1 for state in states if state == "awaiting_companion"),
+        put_away=sum(1 for state in states if state == "access_revoked"),
+    )
+
+
+def _machine_attention(vitals) -> list[str]:
+    """What the Host already decided is worth saying, repeated verbatim.
+
+    The judgement is the Host's — thresholds live where the readings are taken —
+    and an unreadable measurement is not a concern. Not knowing is not the same
+    as being fine, and it is said in its own words rather than as an alarm.
+    """
+
+    if vitals is None:
+        return []
+    said: list[str] = []
+    for vital in getattr(vitals, "vitals", ()) or ():
+        if vital.unavailable_reason:
+            said.append(f"{vital.name}：读不到")
+        elif vital.concern in {"watch", "act"}:
+            said.append(f"{vital.name}：{vital.reading}")
+    return said
+
+
 #: What this list does not know, said rather than implied by a short list.
 _DEVICE_COVERAGE = (
     "只包含已经属于你的设备。还在等你确认的设备是另一份清单。"
@@ -980,6 +1146,83 @@ class ForgetResultView(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class HomeCompanionView(BaseModel):
+    """The Eidolon that answers when nobody was named.
+
+    Said in words, with the identifiers underneath. A person opening this app
+    wants to know who answers, whether it is ready, and what it has been up to;
+    the genome and realm identifiers are what they will be asked for if it is
+    not, so they are carried rather than shown.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    #: active / retiring / archived / deleting, as the authority says it.
+    lifecycle_state: str = Field(min_length=1, max_length=32)
+    revision: int = Field(ge=1)
+    #: Whether it has a face, so a screen knows to fetch one.
+    has_face: bool = False
+    #: What its persona has been through, in words: "第 3 章" and what changed.
+    #: Empty when this Host could not read the history, which is not the same as
+    #: an Eidolon that has never changed.
+    persona_chapter: str = Field(default="", max_length=256)
+    #: Whether what it remembers is reachable, in words. Empty when unread.
+    memory: str = Field(default="", max_length=256)
+    #: The identifiers, for the technical corner of a screen and for asking for
+    #: help. Never the thing a person is shown first.
+    persona_genome_id: str = Field(default="", max_length=64)
+
+
+class HomeCountsView(BaseModel):
+    """How many of a thing there are, split the way a person acts on them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total: int = Field(ge=0)
+    #: Ready to be used right now.
+    ready: int = Field(ge=0)
+    #: There, and waiting for something the Owner has to decide.
+    waiting: int = Field(ge=0)
+    #: There, and deliberately not in use.
+    put_away: int = Field(ge=0)
+
+
+class HomeView(BaseModel):
+    """What is mine, right now, in one read.
+
+    The one call a client makes when it opens. It exists because the alternative
+    is four round trips and a screen that renders in pieces — and because the
+    composition needs facts from five places, which is exactly the kind of thing
+    a Host should do once rather than a phone doing badly.
+
+    **Nothing here is invented, and nothing missing is hidden.** Every part is
+    best-effort: a source this Host could not read leaves its field empty and
+    names itself in ``unavailable``, so a client can say "the rest of this is
+    true, and I could not read that one" instead of drawing a confident blank.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    #: What this person is called, and the version a rename compares against.
+    owner_display_name: str = Field(default="", max_length=128)
+    owner_revision: int = Field(ge=1)
+    #: Who answers when nobody was named. Null is a real state — every Eidolon
+    #: put away, or none created yet — and no client may resolve it by picking.
+    answering: HomeCompanionView | None = None
+    companions: HomeCountsView
+    devices: HomeCountsView
+    #: What the machine says needs attention, already phrased. Empty means
+    #: nothing did — which is different from not having been able to look, and
+    #: that difference is in ``unavailable``.
+    machine_attention: list[str] = Field(default_factory=list)
+    #: Which parts could not be read, and why, keyed by the part. A client shows
+    #: what it got and says this much is unknown.
+    unavailable: dict[str, str] = Field(default_factory=dict)
+
+
 class DeviceView(BaseModel):
     """One device this Owner holds, as a person reads it.
 
@@ -1515,6 +1758,58 @@ def register_management_routes(
             # simply learns nothing extra.
             unavailable=answer.get("unavailable") or {},
             limits=answer["limits"],
+        )
+
+    @router.get("/home", response_model=HomeView)
+    async def get_home(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HomeView:
+        """What is mine, right now.
+
+        One read when the app opens, composed here because the answer needs five
+        sources and a phone composing it badly is four round trips and a screen
+        that renders in pieces.
+
+        Every part is best-effort and every gap is named. A Host that cannot
+        reach its own memory service still knows who its Owner is and which
+        Eidolon answers; saying so beats a blank screen, and saying *which* part
+        is missing beats a spinner that never resolves.
+        """
+        session = await authenticated_controller_session(authorization)
+        owner_id = session.owner_id
+        try:
+            context = await backend.context(owner_id=owner_id)
+        except ManagementBackendError as exc:
+            # The one part with no useful degraded form: without the Owner there
+            # is nothing for the rest of this answer to be about.
+            raise _refused(exc) from exc
+
+        unavailable: dict[str, str] = {}
+        roster = await _try(unavailable, "companions", backend.roster(owner_id=owner_id, cursor=None))
+        inventory = await _try(unavailable, "devices", devices.list_devices(session=session))
+        vitals = await _try(unavailable, "machine", host.read_vitals())
+        default_id = context.get("default_companion_id")
+        answering: HomeCompanionView | None = None
+        if default_id:
+            answering = await _answering_view(
+                backend, owner_id, str(default_id), roster, unavailable
+            )
+        elif roster is not None:
+            unavailable["answering"] = "还没有指定由谁回答"
+
+        return HomeView(
+            owner_display_name=str(context.get("owner_display_name") or ""),
+            owner_revision=int(context.get("owner_revision") or 1),
+            answering=answering,
+            companions=_companion_counts(roster),
+            devices=_device_counts(inventory),
+            # Through the same projection ``/host/vitals`` uses, so the words a
+            # person reads here are the words they read there — two phrasings of
+            # one reading is how a screen comes to disagree with itself.
+            machine_attention=_machine_attention(
+                host_vitals(vitals) if vitals is not None else None
+            ),
+            unavailable=unavailable,
         )
 
     @router.get("/devices", response_model=DevicesView)

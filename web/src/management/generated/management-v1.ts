@@ -232,6 +232,35 @@ export interface ForgetTargetRequest {
   target: string
 }
 
+export interface HomeCompanionView {
+  companion_id: string
+  display_name?: string
+  has_face?: boolean
+  lifecycle_state: string
+  memory?: string
+  persona_chapter?: string
+  persona_genome_id?: string
+  revision: number
+}
+
+export interface HomeCountsView {
+  put_away: number
+  ready: number
+  total: number
+  waiting: number
+}
+
+export interface HomeView {
+  answering?: HomeCompanionView | null
+  companions: HomeCountsView
+  contract_version?: "1"
+  devices: HomeCountsView
+  machine_attention?: Array<string>
+  owner_display_name?: string
+  owner_revision: number
+  unavailable?: Record<string, string>
+}
+
 export interface HostServiceInventoryView {
   services?: Array<HostServiceView>
 }
@@ -480,6 +509,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/devices': DevicesView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
+  'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/services': HostServiceInventoryView
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView

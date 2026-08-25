@@ -132,31 +132,6 @@ class AdminManagementClient:
             {"display_name": display_name, "kind": kind},
         )
 
-    async def devices(self, *, owner_id: str) -> dict:
-        return await self._get(
-            "/api/internal/v1/management/devices", {"owner_id": owner_id}
-        )
-
-    async def set_device_companion(
-        self,
-        *,
-        owner_id: str,
-        device_id: str,
-        companion_id: str | None,
-        expected_revision: int,
-        request_id: str,
-    ) -> dict:
-        return await self._put(
-            f"/api/internal/v1/management/devices/{quote(device_id, safe='')}"
-            "/companion",
-            {"owner_id": owner_id},
-            {
-                "companion_id": companion_id,
-                "expected_revision": expected_revision,
-                "request_id": request_id,
-            },
-        )
-
     async def activity(
         self, *, owner_id: str, limit: int | None, before: int | None
     ) -> dict:

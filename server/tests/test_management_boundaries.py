@@ -86,15 +86,52 @@ def test_the_credential_holding_side_serves_no_public_route() -> None:
     assert "control_plane.router" not in router
 
 
+def _route_signatures(source: str) -> list[tuple[str, set[str]]]:
+    """Every function this module mounts as a route, and its parameter names."""
+
+    import ast
+
+    routes: list[tuple[str, set[str]]] = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        mounted = any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == "router"
+            for decorator in node.decorator_list
+        )
+        if not mounted:
+            continue
+        signature = node.args
+        names = {
+            argument.arg
+            for argument in (
+                *signature.posonlyargs,
+                *signature.args,
+                *signature.kwonlyargs,
+            )
+        }
+        routes.append((node.name, names))
+    assert routes, "no routes found — the parser stopped seeing this module"
+    return routes
+
+
 def test_the_owner_is_never_a_public_input() -> None:
     """The public surface derives the Owner; only the internal ABI takes one.
 
     The internal one may, because its single caller is the boundary that just
     verified a Controller session and passes the Owner bound to it.
     """
+    # Read off the route signatures rather than off the text before the first
+    # class. The text proxy went wrong the first time a module-level helper took
+    # an ``owner_id`` — which is not a public input at all — and it would also
+    # have missed a route defined *after* a class, which is the case it exists
+    # to catch. Parsing is both stricter and quieter.
     public = (PUBLIC_MANAGEMENT / "router.py").read_text(encoding="utf-8")
-    assert "owner_id: str = Query" not in public
-    assert "owner_id: str," not in public.split("class ")[0]
+    for name, arguments in _route_signatures(public):
+        assert "owner_id" not in arguments, f"{name} takes an Owner from a caller"
 
     internal = (INTERNAL_MANAGEMENT / "router.py").read_text(encoding="utf-8")
     assert "owner_id: str," in internal
