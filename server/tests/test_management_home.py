@@ -54,6 +54,7 @@ class _Backend:
     def __init__(self, *, fails: set[str] = frozenset(), default: str | None = "c_01") -> None:
         self.fails = set(fails)
         self.default = default
+        self.memory_requests: list[tuple[str, str | None]] = []
 
     def _guard(self, name: str) -> None:
         if name in self.fails:
@@ -116,8 +117,9 @@ class _Backend:
             ],
         }
 
-    async def memory_library(self, *, owner_id: str, companion_id: str | None = None) -> dict:
+    async def memory_library(self, *, owner_id: str, companion_id: str | None) -> dict:
         self._guard("memory")
+        self.memory_requests.append((owner_id, companion_id))
         return {"wings": [], "entry_count": 42, "withheld_count": 2, "truncated": False}
 
     async def companion(self, *, owner_id: str, companion_id: str) -> dict:
@@ -269,8 +271,10 @@ async def test_one_read_says_who_i_am_who_answers_and_what_is_waiting(
     tmp_path, monkeypatch
 ) -> None:
     _stub_controller(monkeypatch)
+    backend = _Backend()
     app = _app(
         tmp_path,
+        backend=backend,
         devices=_Devices(
             _mount("speaker-living-room", companion_id="c_01"),
             _mount("speaker-study", companion_id=None),
@@ -295,6 +299,7 @@ async def test_one_read_says_who_i_am_who_answers_and_what_is_waiting(
     assert home["answering"]["persona_chapter"] == "第 3 章 · 我发现你不喜欢被打断"
     assert home["answering"]["memory"] == "记着 42 条，其中 2 条只给指定的伙伴"
     assert home["answering"]["has_face"] is True
+    assert backend.memory_requests == [("owner-1", "c_01")]
     # The identifier is carried, not shown first.
     assert home["answering"]["persona_genome_id"] == "g_3"
     # Counts split the way a person acts on them: one Eidolon answering, one put

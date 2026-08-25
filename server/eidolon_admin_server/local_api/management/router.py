@@ -171,7 +171,9 @@ async def _answering_view(
         backend.persona_history(owner_id=owner_id, companion_id=companion_id),
     )
     memory = await _try(
-        unavailable, "answering_memory", backend.memory_library(owner_id=owner_id)
+        unavailable,
+        "answering_memory",
+        backend.memory_library(owner_id=owner_id, companion_id=companion_id),
     )
     return HomeCompanionView(
         companion_id=companion_id,
