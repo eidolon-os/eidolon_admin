@@ -26,7 +26,13 @@ from .controller_auth import (
     ControllerSignatureError,
     verify_controller_signature,
 )
-from .domain import ControllerGrant, ControllerRole, NetworkState, generate_setup_code
+from .domain import (
+    CommissioningSessionSeed,
+    ControllerGrant,
+    ControllerRole,
+    NetworkState,
+    generate_setup_code,
+)
 from .endpoint_encoding import GATT_MAX_ATTRIBUTE_BYTES, endpoint_size
 from .host_addresses import local_api_base_urls
 from .ports import (
@@ -42,6 +48,13 @@ logger = logging.getLogger("eidolon.bootstrap.service")
 _HOST_PROOF_PURPOSE = "eidolon-local-api-host-proof-v1"
 _BASE64URL_32_BYTES = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _OWNER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+#: How long a Controller recovery window stays open by default.
+#:
+#: Long enough that whoever ran the command can walk to the phone and type an
+#: eight digit code; short enough that a Host left in this state overnight is
+#: not still offering itself to the next person who finds it.
+RECOVERY_WINDOW_TTL_SECONDS = 900
 
 
 class BootstrapOperationRejected(RuntimeError):
@@ -602,36 +615,77 @@ class BootstrapService:
         session = self._store.latest_commissioning_session()
         return {"current": None if session is None else session.to_dict()}
 
-    def reset_controllers(self) -> dict[str, Any]:
-        """Revoke every Controller Grant so a new phone can claim this Host again.
+    def open_controller_recovery_window(
+        self, ttl_seconds: int | None = None
+    ) -> dict[str, Any]:
+        """Withdraw every Controller Grant and open one bounded way back in.
 
-        This is the recovery path for an Owner who lost every managing phone. It
-        keeps the Host identity, the Owner binding, saved Wi-Fi and every
-        sibling service's data; only the authority to manage this Host is
-        withdrawn, so the normal first-claim flow can run again.
+        This is the recovery path for an Owner whose managing phone no longer
+        holds a credential the Host will accept — a reinstalled App, a lost
+        phone, a replaced one. It keeps the Host identity, the Owner binding,
+        saved Wi-Fi and every sibling service's data; only the authority to
+        manage this Host is withdrawn.
+
+        Revoking and opening the window are one act, in one store transaction.
+        Split into two operator commands, the Host had a state it could come to
+        rest in with no Controller and no window — nobody could manage it,
+        nobody could claim it, and the way out was a second command nothing had
+        told the operator to run.
+
+        Bounded, because a Host advertising an open claim window forever is a
+        Host that belongs to whoever walks past it next. The window is one
+        commissioning session row: it expires, it is one-time, it dies after
+        five wrong codes, and it is the durable record that this happened.
+
+        What authorizes this is reaching the Host's own root-owned control
+        socket. That is operator presence, not physical presence — a Pi has no
+        button, no trusted display and no NFC, and SSH satisfies the same
+        condition. The App must never be able to reach it: a phone that can
+        open this window remotely hands the same key to whoever stole it.
         """
 
+        ttl = ttl_seconds or RECOVERY_WINDOW_TTL_SECONDS
+        if not 60 <= ttl <= 86400:
+            raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
         before = self._store.get_state()
         revoked = [
             grant.controller_id
             for grant in self._store.list_controllers()
-            if grant.revoked_at is None
+            if grant.revoked_at is None and grant.reset_epoch == before.reset_epoch
         ]
+        now = _now()
+        setup_code = self._settings.dev_setup_code or generate_setup_code()
+        session = {
+            "host_id": self._identity_manager.identity.host_id,
+            "commissioning_id": str(uuid.uuid4()),
+            "setup_code": setup_code,
+            "issued_at": _timestamp(now),
+            "expires_at": _timestamp(now + timedelta(seconds=ttl)),
+        }
         after = self._store.reset_authority(
             network_state=before.network_state,
-            now=_timestamp(_now()),
+            now=session["issued_at"],
+            recovery_session=CommissioningSessionSeed(
+                session_id=session["commissioning_id"],
+                secret_hash=hashlib.sha256(setup_code.encode("utf-8")).hexdigest(),
+                expires_at=session["expires_at"],
+            ),
         )
         logger.warning(
-            "controller authority reset reset_epoch=%s owner_id=%s revoked=%s",
+            "controller recovery window opened reset_epoch=%s owner_id=%s "
+            "revoked=%s commissioning_id=%s expires_at=%s",
             after.reset_epoch,
             after.owner_id,
             len(revoked),
+            session["commissioning_id"],
+            session["expires_at"],
         )
         return {
             "host_id": self._identity_manager.identity.host_id,
             "before": before.to_dict(),
             "after": after.to_dict(),
             "revoked_controllers": revoked,
+            "setup_session": session,
             "preserved": [
                 "host_identity",
                 "owner_binding",
@@ -666,6 +720,9 @@ class BootstrapService:
         after = self._store.reset_authority(
             network_state=network.state,
             now=_timestamp(_now()),
+            # A development Host conjures its window from the fixed Setup code
+            # below, so it does not need one minted here.
+            recovery_session=None,
         )
         if forget_wifi_profiles:
             try:

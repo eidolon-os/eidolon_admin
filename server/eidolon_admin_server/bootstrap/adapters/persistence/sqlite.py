@@ -14,6 +14,7 @@ from ...domain import (
     BootstrapOperationType,
     ClaimState,
     CommissioningSessionMetadata,
+    CommissioningSessionSeed,
     ControllerGrant,
     ControllerRole,
     NetworkState,
@@ -25,8 +26,28 @@ from ...ports.state_store import (
 )
 
 
-BOOTSTRAP_SCHEMA_VERSION = 6
+BOOTSTRAP_SCHEMA_VERSION = 7
 _SCHEMA_VERSION = BOOTSTRAP_SCHEMA_VERSION
+
+#: A Grant belongs to one reset epoch, so its identity carries the epoch.
+#: Written once here and reused by the fresh-create and the v6 upgrade, because
+#: the two drifting apart is how the field Host ended up with a table shape no
+#: test covered.
+_CONTROLLER_GRANTS_DDL = """
+CREATE TABLE controller_grants (
+    controller_id TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    public_key_fingerprint TEXT NOT NULL,
+    role TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    reset_epoch INTEGER NOT NULL CHECK (reset_epoch >= 0),
+    created_at TEXT NOT NULL,
+    revoked_at TEXT,
+    PRIMARY KEY (controller_id, reset_epoch),
+    UNIQUE (public_key_fingerprint, reset_epoch)
+);
+"""
 
 
 class SQLiteBootstrapStoreError(RuntimeError):
@@ -57,14 +78,38 @@ class SQLiteBootstrapStateStore:
         self._connection = connection
 
     def initialize(self, now: str) -> None:
+        """Bring this database to the current schema, from wherever it is.
+
+        One ordered ladder rather than a branch per starting version. The
+        branch-per-version form it replaces accepted a v5 database, ran no
+        migration on it, and then stamped it as current — so a Host could sit
+        on a schema nothing had upgraded and nothing would complain.
+        """
+
         version = int(self.connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in (0, 1, 2, 3, 4, 5, _SCHEMA_VERSION):
+        if version > _SCHEMA_VERSION:
             raise SQLiteBootstrapStoreError(
                 f"unsupported bootstrap schema version {version}; expected {_SCHEMA_VERSION}"
             )
         if version == 0:
-            self.connection.executescript(
-                """
+            self._create_at_current_schema(now)
+        else:
+            ladder = (
+                self._migrate_v1_to_v2,
+                self._migrate_v2_to_v3,
+                self._migrate_v3_to_v4,
+                self._migrate_v4_to_v5,
+                self._migrate_v5_to_v6,
+                self._migrate_v6_to_v7,
+            )
+            for step in ladder[version - 1 :]:
+                step()
+        self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        self.connection.commit()
+
+    def _create_at_current_schema(self, now: str) -> None:
+        self.connection.executescript(
+            """
                 CREATE TABLE bootstrap_state (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     reset_epoch INTEGER NOT NULL CHECK (reset_epoch >= 0),
@@ -87,18 +132,6 @@ class SQLiteBootstrapStateStore:
                         CHECK (failed_attempts >= 0)
                 );
 
-                CREATE TABLE controller_grants (
-                    controller_id TEXT PRIMARY KEY,
-                    public_key TEXT NOT NULL,
-                    public_key_fingerprint TEXT NOT NULL UNIQUE,
-                    role TEXT NOT NULL,
-                    display_name TEXT NOT NULL,
-                    platform TEXT NOT NULL,
-                    reset_epoch INTEGER NOT NULL CHECK (reset_epoch >= 0),
-                    created_at TEXT NOT NULL,
-                    revoked_at TEXT
-                );
-
                 CREATE TABLE bootstrap_operations (
                     operation_id TEXT PRIMARY KEY,
                     operation_type TEXT NOT NULL,
@@ -113,52 +146,31 @@ class SQLiteBootstrapStateStore:
                 CREATE INDEX commissioning_sessions_created_idx
                     ON commissioning_sessions(created_at DESC);
                 """
-            )
-            self.connection.execute(
-                """
-                INSERT INTO bootstrap_state (
-                    singleton, reset_epoch, claim_state, network_state,
-                    workspace_state, owner_id, updated_at
-                ) VALUES (1, 0, ?, ?, ?, NULL, ?)
-                """,
-                (
-                    ClaimState.UNCLAIMED.value,
-                    NetworkState.UNCONFIGURED.value,
-                    WorkspaceState.ABSENT.value,
-                    now,
-                ),
-            )
-            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            self.connection.commit()
-        elif version == 1:
-            # v1 stored daemon lifecycle diagnostics in the authority database.
-            # systemd/journald is the correct owner, so the v2 migration removes
-            # only that diagnostic table and preserves all durable product state.
-            self.connection.execute("DROP TABLE IF EXISTS daemon_runs")
-            self._migrate_v2_to_v3()
-            self._migrate_v3_to_v4()
-            self._migrate_v4_to_v5()
-            self._migrate_v5_to_v6()
-            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            self.connection.commit()
-        elif version == 2:
-            self._migrate_v2_to_v3()
-            self._migrate_v3_to_v4()
-            self._migrate_v4_to_v5()
-            self._migrate_v5_to_v6()
-            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            self.connection.commit()
-        elif version == 3:
-            self._migrate_v3_to_v4()
-            self._migrate_v4_to_v5()
-            self._migrate_v5_to_v6()
-            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            self.connection.commit()
-        elif version == 4:
-            self._migrate_v4_to_v5()
-            self._migrate_v5_to_v6()
-            self.connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            self.connection.commit()
+            + _CONTROLLER_GRANTS_DDL
+        )
+        self.connection.execute(
+            """
+            INSERT INTO bootstrap_state (
+                singleton, reset_epoch, claim_state, network_state,
+                workspace_state, owner_id, updated_at
+            ) VALUES (1, 0, ?, ?, ?, NULL, ?)
+            """,
+            (
+                ClaimState.UNCLAIMED.value,
+                NetworkState.UNCONFIGURED.value,
+                WorkspaceState.ABSENT.value,
+                now,
+            ),
+        )
+
+    def _migrate_v1_to_v2(self) -> None:
+        """v1 stored daemon lifecycle diagnostics in the authority database.
+
+        systemd/journald is the correct owner, so this removes only that
+        diagnostic table and preserves all durable product state.
+        """
+
+        self.connection.execute("DROP TABLE IF EXISTS daemon_runs")
 
     def _migrate_v2_to_v3(self) -> None:
         self.connection.executescript(
@@ -220,6 +232,39 @@ class SQLiteBootstrapStateStore:
             """
             ALTER TABLE bootstrap_state
                 DROP COLUMN recovery_state
+            """
+        )
+
+    def _migrate_v6_to_v7(self) -> None:
+        """Scope Grant identity to the reset epoch that issued it.
+
+        v6 made ``controller_id`` the primary key and ``public_key_fingerprint``
+        globally unique, which turned "this phone holds the Host now" into
+        "this key has been seen here once, ever". A recovery reset revokes
+        Grants but keeps the rows as history, so the phone that came back with
+        the same key pair — the one an Owner actually still holds — hit
+        ``UNIQUE constraint failed: controller_grants.public_key_fingerprint``.
+        That left the store as sqlite3.IntegrityError, past every conflict
+        handler, and reached the phone as "internal_error, retryable: true"
+        over a collision that could never stop colliding.
+
+        The rows are kept: they are the only record of who held this Host. What
+        they lose is the power to block the phone that comes back.
+        """
+
+        self.connection.executescript(
+            "ALTER TABLE controller_grants RENAME TO controller_grants_pre_v7;"
+            + _CONTROLLER_GRANTS_DDL
+            + """
+            INSERT INTO controller_grants (
+                controller_id, public_key, public_key_fingerprint, role,
+                display_name, platform, reset_epoch, created_at, revoked_at
+            )
+            SELECT controller_id, public_key, public_key_fingerprint, role,
+                   display_name, platform, reset_epoch, created_at, revoked_at
+              FROM controller_grants_pre_v7;
+
+            DROP TABLE controller_grants_pre_v7;
             """
         )
 
@@ -369,6 +414,21 @@ class SQLiteBootstrapStateStore:
                 raise BootstrapStateConflict(
                     "controller reset epoch does not match host"
                 )
+            held = self._grant_in_epoch(grant, state.reset_epoch)
+            if held is not None:
+                # This phone already holds the Host in this epoch. Refusing the
+                # request told it to start over, and starting over produced the
+                # same request; the older shape of this let sqlite refuse it as
+                # an integrity error and the phone read "try again later".
+                self.connection.execute(
+                    """
+                    UPDATE commissioning_sessions
+                       SET consumed_at = ?, claimed_controller_id = ?
+                     WHERE session_id = ?
+                    """,
+                    (now, held.controller_id, session_id),
+                )
+                return held
             self.connection.execute(
                 """
                 INSERT INTO controller_grants (
@@ -406,10 +466,38 @@ class SQLiteBootstrapStateStore:
             )
         return grant
 
+    def _grant_in_epoch(
+        self, grant: ControllerGrant, reset_epoch: int
+    ) -> ControllerGrant | None:
+        """The Grant this key already holds in this epoch, under either name.
+
+        controller_id and public_key_fingerprint are both derived from the same
+        public key, so a collision on one is a collision on the other. Asked
+        here rather than discovered by the INSERT, because a store that speaks
+        sqlite3 to its caller is a store whose refusals cannot be named.
+        """
+
+        row = self.connection.execute(
+            """
+            SELECT * FROM controller_grants
+             WHERE reset_epoch = ?
+               AND (controller_id = ? OR public_key_fingerprint = ?)
+            """,
+            (reset_epoch, grant.controller_id, grant.public_key_fingerprint),
+        ).fetchone()
+        if row is None:
+            return None
+        held = self._controller_from_row(row)
+        if held.public_key != grant.public_key or held.revoked_at is not None:
+            raise BootstrapStateConflict(
+                "another Controller already holds this identity on this Host"
+            )
+        return held
+
     def get_controller(self, controller_id: str) -> ControllerGrant | None:
         row = self.connection.execute(
-            "SELECT * FROM controller_grants WHERE controller_id = ?",
-            (controller_id,),
+            "SELECT * FROM controller_grants WHERE controller_id = ? AND reset_epoch = ?",
+            (controller_id, self.get_state().reset_epoch),
         ).fetchone()
         return None if row is None else self._controller_from_row(row)
 
@@ -446,8 +534,12 @@ class SQLiteBootstrapStateStore:
                     "the last Controller cannot be revoked; use controller-reset"
                 )
             self.connection.execute(
-                "UPDATE controller_grants SET revoked_at = ? WHERE controller_id = ?",
-                (now, controller_id),
+                """
+                UPDATE controller_grants
+                   SET revoked_at = ?
+                 WHERE controller_id = ? AND reset_epoch = ?
+                """,
+                (now, controller_id, state.reset_epoch),
             )
         result = self.get_controller(controller_id)
         if result is None:
@@ -464,8 +556,11 @@ class SQLiteBootstrapStateStore:
     ) -> ControllerGrant:
         with self.connection:
             row = self.connection.execute(
-                "SELECT * FROM controller_grants WHERE controller_id = ?",
-                (controller_id,),
+                """
+                SELECT * FROM controller_grants
+                 WHERE controller_id = ? AND reset_epoch = ?
+                """,
+                (controller_id, reset_epoch),
             ).fetchone()
             state = self.get_state()
             if (
@@ -641,6 +736,7 @@ class SQLiteBootstrapStateStore:
         *,
         network_state: NetworkState,
         now: str,
+        recovery_session: CommissioningSessionSeed | None,
     ) -> BootstrapState:
         active_states = (
             BootstrapOperationState.PENDING.value,
@@ -693,6 +789,20 @@ class SQLiteBootstrapStateStore:
                     now,
                 ),
             )
+            if recovery_session is not None:
+                self.connection.execute(
+                    """
+                    INSERT INTO commissioning_sessions (
+                        session_id, secret_hash, created_at, expires_at
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        recovery_session.session_id,
+                        recovery_session.secret_hash,
+                        now,
+                        recovery_session.expires_at,
+                    ),
+                )
         return self.get_state()
 
     @staticmethod

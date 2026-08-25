@@ -181,7 +181,7 @@ def test_sqlite_v6_keeps_authority_and_drops_what_no_longer_holds_state(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 6
+        assert version == 7
         assert "daemon_runs" not in tables
         # recovery_state only ever held "normal"; a Host that carried one is
         # migrated out of it without losing the authority beside it.
@@ -267,7 +267,7 @@ def test_sqlite_v4_host_state_migrates_with_unbound_owner(
         controller = migrated.get_controller("ectrl-v4-controller")
         assert controller is not None
         assert migrated.get_state().owner_id is None
-        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 7
     finally:
         migrated.close()
 

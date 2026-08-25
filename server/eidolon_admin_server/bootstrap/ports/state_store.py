@@ -9,6 +9,7 @@ from ..domain import (
     BootstrapOperationState,
     BootstrapState,
     CommissioningSessionMetadata,
+    CommissioningSessionSeed,
     ControllerGrant,
     NetworkState,
 )
@@ -65,7 +66,14 @@ class BootstrapStateStore(Protocol):
         now: str,
     ) -> ControllerGrant: ...
 
-    def get_controller(self, controller_id: str) -> ControllerGrant | None: ...
+    def get_controller(self, controller_id: str) -> ControllerGrant | None:
+        """This Controller's Grant in the Host's current reset epoch, if any.
+
+        Scoped to the epoch because a Grant from a retired one is history: it
+        must stay readable through ``list_controllers`` and must never again
+        answer "who holds this Host".
+        """
+        ...
 
     def list_controllers(self) -> list[ControllerGrant]: ...
 
@@ -110,6 +118,14 @@ class BootstrapStateStore(Protocol):
         *,
         network_state: NetworkState,
         now: str,
-    ) -> BootstrapState: ...
+        recovery_session: CommissioningSessionSeed | None,
+    ) -> BootstrapState:
+        """Advance one authority epoch, optionally opening the way back.
+
+        ``recovery_session`` is applied in the same transaction as the
+        revocation, so the Host cannot come to rest with nobody holding it and
+        no window through which anyone could.
+        """
+        ...
 
     def close(self) -> None: ...

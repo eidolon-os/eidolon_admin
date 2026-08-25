@@ -106,7 +106,32 @@ class CommissioningSessionMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class CommissioningSessionSeed:
+    """Everything needed to open one setup window, minus the secret itself.
+
+    Passed into ``reset_authority`` rather than issued beside it, because
+    withdrawing authority and opening the way back are one intention. Split
+    into two store calls, the Host had a reachable state between them with no
+    Controller and no window: nobody could manage it, no phone could claim it,
+    and leaving required a second operator command nothing had asked for.
+    """
+
+    session_id: str
+    secret_hash: str
+    expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ControllerGrant:
+    """One phone's authority over this Host, inside one reset epoch.
+
+    ``(controller_id, reset_epoch)`` is the identity, not ``controller_id``.
+    The tables used to enforce the second, which silently redefined "this
+    phone has been authorized once, ever" as "this phone may never be
+    authorized again" — so the one phone an Owner actually holds was the one
+    that could not come back after a recovery.
+    """
+
     controller_id: str
     public_key: str
     public_key_fingerprint: str

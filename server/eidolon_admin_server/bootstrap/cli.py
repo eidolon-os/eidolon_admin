@@ -18,13 +18,15 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("health")
     subparsers.add_parser("descriptor")
 
-    subparsers.add_parser(
+    reset = subparsers.add_parser(
         "controller-reset",
         help=(
-            "revoke every Controller Grant so a new phone can claim this Host; "
-            "keeps the Host identity, Owner, network and all component data"
+            "revoke every Controller Grant and open one bounded window in which "
+            "any phone may claim this Host again; keeps the Host identity, "
+            "Owner, network and all component data"
         ),
     )
+    reset.add_argument("--ttl", type=int, default=None)
     code = subparsers.add_parser(
         "commissioning-code",
         help=(
@@ -53,7 +55,8 @@ async def _execute(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "descriptor":
         return await client.request("descriptor")
     if args.command == "controller-reset":
-        return await client.request("controller.reset")
+        parameters = {} if args.ttl is None else {"ttl_seconds": args.ttl}
+        return await client.request("controller.reset", **parameters)
     if args.command == "commissioning-code":
         parameters = {} if args.ttl is None else {"ttl_seconds": args.ttl}
         return await client.request("commissioning.code", **parameters)
@@ -82,6 +85,10 @@ def main() -> None:
         print(f"Commissioning: {result['commissioning_id']}")
         print(f"Expires: {result['expires_at']}")
     else:
+        # controller-reset stays one JSON document and nothing else: the host
+        # agent that wraps it parses stdout, and a friendly line above the
+        # document would make the operator's recovery command fail to parse.
+        # The Setup code travels inside it, under "setup_session".
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
 

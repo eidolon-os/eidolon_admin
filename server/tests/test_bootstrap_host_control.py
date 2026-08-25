@@ -1283,9 +1283,12 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
         with pytest.raises(BootstrapOperationRejected, match="disabled"):
             await production.reset_development_state(forget_wifi_profiles=False)
 
-        result = production.reset_controllers()
+        result = production.open_controller_recovery_window()
         host_id = production.public_descriptor()["host_id"]
-        revoked_grant = store.get_controller(controller_id)
+        # The Grant is history now, so it is no longer the answer to "who holds
+        # this Host" — it is only in the record of who once did.
+        current_grant = store.get_controller(controller_id)
+        history = store.list_controllers()
         preserved_owner = store.get_state().owner_id
     finally:
         service.shutdown()
@@ -1298,7 +1301,14 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
     assert preserved_owner == "owner-1"
     assert result["after"]["network_state"] == result["before"]["network_state"]
     assert result["host_id"] == host_id
-    assert revoked_grant.revoked_at is not None
+    assert current_grant is None
+    assert [(grant.controller_id, grant.revoked_at is not None) for grant in history] == [
+        (controller_id, True)
+    ]
+    # Withdrawing authority and opening the way back are one act, so the
+    # operator is never left holding a Host nobody can claim.
+    assert result["setup_session"]["setup_code"]
+    assert result["setup_session"]["expires_at"] > result["setup_session"]["issued_at"]
 
 
 @pytest.mark.asyncio
@@ -1312,10 +1322,11 @@ async def test_controller_reset_is_reachable_over_the_control_socket(
     await server.start()
     client = BootstrapControlClient(settings.control_socket)
     try:
-        result = await client.request("controller.reset")
+        result = await client.request("controller.reset", ttl_seconds=600)
         assert result["revoked_controllers"] == []
         assert result["after"]["claim_state"] == "unclaimed"
         assert "component_data" in result["preserved"]
+        assert result["setup_session"]["commissioning_id"]
     finally:
         await server.close()
         service.shutdown()

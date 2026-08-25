@@ -163,7 +163,10 @@ class BootstrapControlServer:
                 controller=controller,
             )
         if operation == "controller.reset":
-            return self._service.reset_controllers()
+            raw_ttl = request.get("ttl_seconds")
+            return self._service.open_controller_recovery_window(
+                None if raw_ttl is None else int(raw_ttl)
+            )
         if operation == "commissioning.code":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)

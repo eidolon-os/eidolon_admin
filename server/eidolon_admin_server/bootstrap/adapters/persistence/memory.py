@@ -11,6 +11,7 @@ from ...domain import (
     BootstrapOperationState,
     ClaimState,
     CommissioningSessionMetadata,
+    CommissioningSessionSeed,
     ControllerGrant,
     NetworkState,
     WorkspaceState,
@@ -29,7 +30,12 @@ class InMemoryBootstrapStateStore:
         self._state: BootstrapState | None = None
         self._sessions: list[tuple[CommissioningSessionMetadata, str]] = []
         self._session_controller_ids: dict[str, str] = {}
-        self._controllers: dict[str, ControllerGrant] = {}
+        # Keyed by (reset_epoch, controller_id): a Grant belongs to the epoch
+        # that issued it. Keyed by controller_id alone, a retired Grant kept
+        # answering for the phone that came back, and this adapter refused the
+        # re-claim as "controller already exists" where sqlite refused it as an
+        # integrity error. Two adapters, two wrong answers, same dead end.
+        self._controllers: dict[tuple[int, str], ControllerGrant] = {}
         self._operations: dict[str, BootstrapOperation] = {}
 
     def _require_open(self) -> None:
@@ -140,7 +146,7 @@ class InMemoryBootstrapStateStore:
         self._require_open()
         claimed_controller_id = self._session_controller_ids.get(session_id)
         if claimed_controller_id is not None:
-            existing = self._controllers.get(claimed_controller_id)
+            existing = self.get_controller(claimed_controller_id)
             if (
                 claimed_controller_id == grant.controller_id
                 and existing is not None
@@ -158,10 +164,24 @@ class InMemoryBootstrapStateStore:
             raise BootstrapStateConflict("network must be connected before claim")
         if grant.reset_epoch != state.reset_epoch:
             raise BootstrapStateConflict("controller reset epoch does not match host")
-        if grant.controller_id in self._controllers:
-            raise BootstrapStateConflict("controller already exists")
-        self._controllers[grant.controller_id] = grant
-        self._session_controller_ids[session_id] = grant.controller_id
+        held = self._grant_in_epoch(grant, state.reset_epoch)
+        if held is not None:
+            # Already holds the Host in this epoch: the phone's intention is
+            # satisfied, so say so instead of sending it round the loop again.
+            self._consume_session(session_id, held.controller_id, now)
+            return held
+        self._controllers[(state.reset_epoch, grant.controller_id)] = grant
+        self._consume_session(session_id, grant.controller_id, now)
+        assert self._state is not None
+        self._state = replace(
+            self._state,
+            claim_state=ClaimState.CLAIMED,
+            updated_at=now,
+        )
+        return grant
+
+    def _consume_session(self, session_id: str, controller_id: str, now: str) -> None:
+        self._session_controller_ids[session_id] = controller_id
         self._sessions = [
             (
                 replace(metadata, consumed_at=now)
@@ -171,23 +191,41 @@ class InMemoryBootstrapStateStore:
             )
             for metadata, stored_hash in self._sessions
         ]
-        assert self._state is not None
-        self._state = replace(
-            self._state,
-            claim_state=ClaimState.CLAIMED,
-            updated_at=now,
-        )
-        return grant
+
+    def _grant_in_epoch(
+        self, grant: ControllerGrant, reset_epoch: int
+    ) -> ControllerGrant | None:
+        """The Grant this key already holds in this epoch, under either name."""
+
+        held = self._controllers.get((reset_epoch, grant.controller_id))
+        if held is None:
+            held = next(
+                (
+                    candidate
+                    for (epoch, _), candidate in self._controllers.items()
+                    if epoch == reset_epoch
+                    and candidate.public_key_fingerprint
+                    == grant.public_key_fingerprint
+                ),
+                None,
+            )
+        if held is None:
+            return None
+        if held.public_key != grant.public_key or held.revoked_at is not None:
+            raise BootstrapStateConflict(
+                "another Controller already holds this identity on this Host"
+            )
+        return held
 
     def get_controller(self, controller_id: str) -> ControllerGrant | None:
         self._require_open()
-        return self._controllers.get(controller_id)
+        return self._controllers.get((self.get_state().reset_epoch, controller_id))
 
     def list_controllers(self) -> list[ControllerGrant]:
         self._require_open()
         return sorted(
             self._controllers.values(),
-            key=lambda grant: (grant.created_at, grant.controller_id),
+            key=lambda grant: (grant.created_at, grant.reset_epoch, grant.controller_id),
         )
 
     def revoke_controller(self, *, controller_id: str, now: str) -> ControllerGrant:
@@ -207,7 +245,7 @@ class InMemoryBootstrapStateStore:
                 "the last Controller cannot be revoked; use controller-reset"
             )
         revoked = replace(target, revoked_at=now)
-        self._controllers[controller_id] = revoked
+        self._controllers[(state.reset_epoch, controller_id)] = revoked
         return revoked
 
     def bind_controller_owner(
@@ -219,7 +257,7 @@ class InMemoryBootstrapStateStore:
         now: str,
     ) -> ControllerGrant:
         self._require_open()
-        grant = self._controllers.get(controller_id)
+        grant = self._controllers.get((reset_epoch, controller_id))
         state = self.get_state()
         if (
             grant is None
@@ -348,6 +386,7 @@ class InMemoryBootstrapStateStore:
         *,
         network_state: NetworkState,
         now: str,
+        recovery_session: CommissioningSessionSeed | None,
     ) -> BootstrapState:
         self._require_open()
         self._sessions = [
@@ -360,10 +399,10 @@ class InMemoryBootstrapStateStore:
             for metadata, stored_hash in self._sessions
         ]
         self._controllers = {
-            controller_id: (
+            key: (
                 replace(grant, revoked_at=now) if grant.revoked_at is None else grant
             )
-            for controller_id, grant in self._controllers.items()
+            for key, grant in self._controllers.items()
         }
         active_states = {
             BootstrapOperationState.PENDING,
@@ -392,6 +431,17 @@ class InMemoryBootstrapStateStore:
             network_state=network_state,
             updated_at=now,
         )
+        if recovery_session is not None:
+            self._sessions.append(
+                (
+                    CommissioningSessionMetadata(
+                        session_id=recovery_session.session_id,
+                        created_at=now,
+                        expires_at=recovery_session.expires_at,
+                    ),
+                    recovery_session.secret_hash,
+                )
+            )
         return self._state
 
     def close(self) -> None:
