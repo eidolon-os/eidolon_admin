@@ -1220,8 +1220,6 @@ async def put_companion_lifecycle(
                 companion_id=companion_id,
                 replacement_companion_id=payload.replacement_companion_id,
                 expected_revision=payload.expected_revision,
-                companions=request.app.state.control_plane.data,
-                owners=request.app.state.control_plane.workspace,
                 lifecycle=request.app.state.control_plane.workspace,
             )
         else:
@@ -1229,8 +1227,6 @@ async def put_companion_lifecycle(
                 owner_id=owner_id,
                 companion_id=companion_id,
                 expected_revision=payload.expected_revision,
-                companions=request.app.state.control_plane.data,
-                owners=request.app.state.control_plane.workspace,
                 lifecycle=request.app.state.control_plane.workspace,
             )
     except AuthorityFailure as exc:

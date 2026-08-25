@@ -1,16 +1,16 @@
 """Putting an Eidolon away, and bringing it back.
 
-The interesting part is not that a state changes. It is the handful of ways this
-particular change goes wrong:
+This layer is a relay, and these tests hold the two things a relay can still get
+wrong: which end state it asks for, and whether a refusal arrives as something a
+person can act on.
 
-- the two-step route (``active`` → ``retiring`` → ``archived``) written down a
-  second time in the projection, so that adding a state breaks one copy;
-- the step in between skipped, which is the step where new sessions stop;
-- a replacement for the Owner's default *chosen* by the Host rather than asked
-  of the person;
-- an interrupted archive that cannot be finished by asking again;
-- and the refusal that is really a question — "who should answer instead?" —
-  arriving at the client as an anonymous 409.
+The rest moved to where it belongs. That "archiving goes through retiring" is
+Data's, and it does it in one transaction — an earlier version of this module
+walked the graph itself, which bought a window where a dying Host left a
+Companion `retiring` and no screen offered a way out. Ownership is Data's too:
+the lifecycle route takes the Owner and answers 404 for someone else's, so the
+extra read this module used to make was a second place to be wrong about one
+fact. Both are asserted in ``eidolon_data``.
 """
 
 from __future__ import annotations
@@ -20,11 +20,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from eidolon_admin_server.app.control_plane.contracts import (
-    CompanionIdentity,
-    CompanionLifecycleResult,
-    OwnerIdentity,
-)
+from eidolon_admin_server.app.control_plane.contracts import CompanionLifecycleResult
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
@@ -43,54 +39,12 @@ def _lifecycle_path(companion_id: str = "companion-a") -> str:
     return f"/api/management/v1/companions/{companion_id}/lifecycle"
 
 
-class _Companions:
-    def __init__(self, state: str = "active", revision: int = 4) -> None:
-        self.state = state
-        self.revision = revision
-
-    async def list_owner_companions(self, owner_id, *, cursor=None, limit=None):
-        raise AssertionError("lifecycle never lists")
-
-    async def get_owner_companion(self, owner_id, companion_id):
-        if companion_id != "companion-a":
-            raise AuthorityFailure("data", "not_found", "companion not found", 404)
-        return CompanionIdentity(
-            operation="companion.identity",
-            companion_id=companion_id,
-            owner_id=owner_id,
-            display_name="小忆",
-            lifecycle_state=self.state,
-            kind="conversational",
-            revision=self.revision,
-        )
-
-
-class _Owners:
-    def __init__(self, default_companion_id: str | None = "companion-a") -> None:
-        self.default_companion_id = default_companion_id
-        self.reads = 0
-
-    async def get_owner(self, owner_id: str) -> OwnerIdentity:
-        self.reads += 1
-        return OwnerIdentity(
-            operation="owner.identity",
-            owner_id=owner_id,
-            display_name="主人",
-            lifecycle_state="active",
-            default_companion_id=self.default_companion_id,
-            revision=7,
-        )
-
-
 class _Authority:
     """Data's lifecycle route, remembering exactly what it was asked."""
 
-    def __init__(self, *, refuse_at: str | None = None, code: str = "revision_stale") -> None:
+    def __init__(self, *, refuse: str | None = None) -> None:
         self.calls: list[dict] = []
-        self.refuse_at = refuse_at
-        self.code = code
-        self.revision = 4
-        self.default_companion_id: str | None = "companion-a"
+        self.refuse = refuse
 
     async def set_companion_lifecycle(
         self,
@@ -110,134 +64,62 @@ class _Authority:
                 "replacement_companion_id": replacement_companion_id,
             }
         )
-        if lifecycle_state == self.refuse_at:
+        if self.refuse is not None:
             raise AuthorityFailure(
-                "data", "conflict", "refused", 409, 409, False, self.code
+                "data", "conflict", "refused", 409, 409, False, self.refuse
             )
-        self.revision += 1
-        if replacement_companion_id:
-            self.default_companion_id = replacement_companion_id
         return CompanionLifecycleResult(
             operation="companion.lifecycle",
             companion_id=companion_id,
             lifecycle_state=lifecycle_state,
-            revision=self.revision,
-            default_companion_id=self.default_companion_id,
+            revision=5,
+            default_companion_id=replacement_companion_id or "companion-b",
         )
 
 
 # --- the application ------------------------------------------------------
 
 
-async def test_putting_one_away_goes_through_the_step_where_sessions_stop() -> None:
-    """Two calls, in the order the shared transition table says.
-
-    Not because this module knows that order — it asks for the route — but the
-    behaviour has to be pinned somewhere, because skipping ``retiring`` would
-    archive a Companion that is still being handed runtime snapshots.
-    """
+async def test_putting_one_away_asks_for_where_it_should_end_up() -> None:
+    """One call stating an end, not a walk. The step in between is Data's, and
+    it takes it inside one transaction — so there is no moment where this
+    Companion is neither active nor archived."""
 
     authority = _Authority()
     view = await put_away(
         owner_id="owner-1",
         companion_id="companion-a",
         replacement_companion_id="companion-b",
-        companions=_Companions(),
-        owners=_Owners(),
+        expected_revision=4,
         lifecycle=authority,
     )
 
-    assert [call["lifecycle_state"] for call in authority.calls] == ["retiring", "archived"]
-    # Only the step that hands the role over carries the replacement. Sending it
-    # on both would be relying on the authority to ignore one.
-    assert [call["replacement_companion_id"] for call in authority.calls] == [
-        "companion-b",
-        None,
+    assert authority.calls == [
+        {
+            "owner_id": "owner-1",
+            "companion_id": "companion-a",
+            "lifecycle_state": "archived",
+            "expected_revision": 4,
+            "replacement_companion_id": "companion-b",
+        }
     ]
-    # Each write compares against what the previous one produced, not against a
-    # read that is by then a move out of date.
-    assert [call["expected_revision"] for call in authority.calls] == [4, 5]
     assert view.lifecycle_state == "archived"
     assert view.default_companion_id == "companion-b"
 
 
-async def test_asking_for_the_state_it_is_already_in_writes_nothing() -> None:
-    """The retry after a lost answer, and the second tap on a stale screen."""
+async def test_bringing_one_back_says_nothing_about_who_answers() -> None:
+    """Restoring says "this one is here again". Which Eidolon answers when
+    nobody was named is a separate thing the Owner decided, and quietly
+    reversing it would undo a decision they made."""
 
     authority = _Authority()
-    owners = _Owners(default_companion_id="companion-b")
-    view = await put_away(
-        owner_id="owner-1",
-        companion_id="companion-a",
-        companions=_Companions(state="archived", revision=9),
-        owners=owners,
-        lifecycle=authority,
-    )
-
-    assert authority.calls == []
-    assert view.lifecycle_state == "archived"
-    assert view.revision == 9
-    # Still answers who talks to this person now, so a client parses one shape
-    # whether or not anything moved.
-    assert view.default_companion_id == "companion-b"
-    assert owners.reads == 1
-
-
-async def test_bringing_one_back_does_not_take_the_default_role_back() -> None:
-    """One step, and nothing said about who answers.
-
-    Restoring says "this one is here again". Which Eidolon answers when nobody
-    was named is a separate thing the Owner decided, and quietly reversing it
-    would undo a decision they made.
-    """
-
-    authority = _Authority()
-    authority.default_companion_id = "companion-b"
     view = await bring_back(
-        owner_id="owner-1",
-        companion_id="companion-a",
-        companions=_Companions(state="archived"),
-        owners=_Owners(),
-        lifecycle=authority,
+        owner_id="owner-1", companion_id="companion-a", lifecycle=authority
     )
 
     assert [call["lifecycle_state"] for call in authority.calls] == ["active"]
-    assert all(call["replacement_companion_id"] is None for call in authority.calls)
+    assert authority.calls[0]["replacement_companion_id"] is None
     assert view.default_companion_id == "companion-b"
-
-
-async def test_an_archive_interrupted_halfway_is_finished_by_asking_again() -> None:
-    """Why this workflow needs no journal.
-
-    Each step is an idempotent PUT stating a desired end, and the state in
-    between is durable. A Host that dies after the first step leaves a Companion
-    ``retiring``; the same request again continues from there rather than
-    starting over or refusing.
-    """
-
-    failing = _Authority(refuse_at="archived", code="revision_stale")
-    with pytest.raises(AuthorityFailure):
-        await put_away(
-            owner_id="owner-1",
-            companion_id="companion-a",
-            companions=_Companions(),
-            owners=_Owners(),
-            lifecycle=failing,
-        )
-    assert [call["lifecycle_state"] for call in failing.calls] == ["retiring", "archived"]
-
-    # Asked again, against a Companion the first attempt left retiring.
-    resumed = _Authority()
-    view = await put_away(
-        owner_id="owner-1",
-        companion_id="companion-a",
-        companions=_Companions(state="retiring", revision=5),
-        owners=_Owners(),
-        lifecycle=resumed,
-    )
-
-    assert [call["lifecycle_state"] for call in resumed.calls] == ["archived"]
-    assert view.lifecycle_state == "archived"
 
 
 async def test_the_host_never_picks_who_answers_instead() -> None:
@@ -249,33 +131,14 @@ async def test_the_host_never_picks_who_answers_instead() -> None:
     their life.
     """
 
-    authority = _Authority(refuse_at="retiring", code="default_replacement_required")
+    authority = _Authority(refuse="default_replacement_required")
     with pytest.raises(AuthorityFailure) as refused:
         await put_away(
-            owner_id="owner-1",
-            companion_id="companion-a",
-            companions=_Companions(),
-            owners=_Owners(),
-            lifecycle=authority,
+            owner_id="owner-1", companion_id="companion-a", lifecycle=authority
         )
 
     assert refused.value.code == "default_replacement_required"
-    assert [call["replacement_companion_id"] for call in authority.calls] == [None]
-
-
-async def test_someone_elses_companion_is_a_404_before_anything_is_written() -> None:
-    authority = _Authority()
-    with pytest.raises(AuthorityFailure) as refused:
-        await put_away(
-            owner_id="owner-1",
-            companion_id="companion-nobody-elses",
-            companions=_Companions(),
-            owners=_Owners(),
-            lifecycle=authority,
-        )
-
-    assert refused.value.status_code == 404
-    assert authority.calls == []
+    assert authority.calls[0]["replacement_companion_id"] is None
 
 
 # --- the public boundary ---------------------------------------------------
