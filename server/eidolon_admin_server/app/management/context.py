@@ -136,6 +136,11 @@ _ENABLED: frozenset[str] = frozenset(
         # root rather than by an authority, which is why it is the one part of
         # this surface the LAN process serves directly.
         "controller.manage",
+        # The machine itself: how it is doing, and its services. Beside
+        # ``controller.manage`` and for the same reason — facts about this Host
+        # rather than an authority's data.
+        "host.read",
+        "host.operate",
         # The Agent answers these and owns the task state machine; this side
         # relays, including its refusals.
         "conversation.read",

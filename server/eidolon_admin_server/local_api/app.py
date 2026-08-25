@@ -55,9 +55,9 @@ from .host_services import (
     AdminHostServicesClient,
     AdminHostServicesPort,
     HostServiceControlError,
-    LocalHostServiceInventoryView,
-    LocalHostVitalsView,
-    LocalHostServiceMutationView,
+    HostServiceInventoryView,
+    HostVitalsView,
+    HostServiceMutationView,
     MutationOperation,
     host_service_inventory,
     host_vitals,
@@ -109,14 +109,6 @@ class HostProofRequest(BaseModel):
 
     contract_version: Literal["1"]
     challenge: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
-
-
-class HostServiceMutationRequest(BaseModel):
-    """Compare-and-swap intent, carried unchanged down to eidolond."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    expected_revision: int = Field(ge=1)
 
 
 class ControllerChallengeRequest(BaseModel):
@@ -921,64 +913,6 @@ def create_app(
                 exc.status_code, device_admission_detail(exc)
             ) from exc
 
-    @app.get(
-        "/api/local/v1/host/vitals",
-        response_model=LocalHostVitalsView,
-    )
-    async def host_vitals_view(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalHostVitalsView:
-        """How the machine holding this Eidolon is doing.
-
-        Controller-authenticated like everything else on this boundary, and
-        Owner-independent on purpose: a Host's disk and temperature are facts
-        about the machine, not about whose Companion lives on it.
-        """
-
-        await authenticated_controller(authorization)
-        try:
-            document = await host_services.read_vitals()
-        except HostServiceControlError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return host_vitals(document)
-
-    @app.get(
-        "/api/local/v1/host/services",
-        response_model=LocalHostServiceInventoryView,
-    )
-    async def get_host_services(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalHostServiceInventoryView:
-        principal, _session = await authenticated_controller(authorization)
-        _owner_principal(principal)
-        try:
-            return host_service_inventory(await host_services.list_services())
-        except HostServiceControlError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-
-    @app.post(
-        "/api/local/v1/host/services/{service_id}/{operation}",
-        response_model=LocalHostServiceMutationView,
-    )
-    async def mutate_host_service(
-        service_id: str,
-        operation: MutationOperation,
-        payload: HostServiceMutationRequest,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalHostServiceMutationView:
-        principal, _session = await authenticated_controller(authorization)
-        _owner_principal(principal)
-        try:
-            return host_service_mutation(
-                await host_services.mutate(
-                    service_id=service_id,
-                    operation=operation,
-                    expected_revision=payload.expected_revision,
-                )
-            )
-        except HostServiceControlError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-
     @app.get("/api/local/v1/system/state")
     async def system_state() -> dict:
         result = await request_bootstrap("health")
@@ -1052,6 +986,7 @@ def create_app(
         authenticated_owner=management_owner,
         controllers=controller_directory or _Controllers(),
         authenticated_controller_id=management_controller,
+        host=host_services,
     )
 
     return app

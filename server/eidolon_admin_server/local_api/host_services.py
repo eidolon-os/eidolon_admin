@@ -1,9 +1,15 @@
-"""Host service control for the Mobile product boundary.
+"""The machine this Eidolon lives on: how it is doing, and its services.
 
-Mobile manages the same services the Admin Web does; both go through Admin to
+Mobile acts on the same services the Admin Web does; both go through Admin to
 eidolond, which owns per-service desired state. The view is deliberately
-narrower than Admin's: an Owner acts on "is it running, restart it", not on
+narrower than Admin's: a person acts on "is it running, restart it", not on
 endpoint addresses or contract ids.
+
+Served from the LAN-facing process rather than through the management backend,
+for the same reason the controller list is: these are facts about *the machine*,
+reached with the credential this process is allowed to hold, and the judgement
+that turns a byte count into "worth telling someone about" belongs on the side
+that faces the person.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ class AdminHostServicesPort(Protocol):
     async def close(self) -> None: ...
 
 
-class LocalHostServiceView(BaseModel):
+class HostServiceView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     service_id: str = Field(min_length=1, max_length=128)
@@ -55,13 +61,13 @@ class LocalHostServiceView(BaseModel):
     observed_at: datetime
 
 
-class LocalHostServiceInventoryView(BaseModel):
+class HostServiceInventoryView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    services: tuple[LocalHostServiceView, ...] = ()
+    services: tuple[HostServiceView, ...] = ()
 
 
-class LocalVitalView(BaseModel):
+class VitalView(BaseModel):
     """One thing about the machine, said the way a person reads it.
 
     ``concern`` is decided here and nowhere below. The daemon that reads
@@ -83,16 +89,16 @@ class LocalVitalView(BaseModel):
     unavailable_reason: str | None = None
 
 
-class LocalHostVitalsView(BaseModel):
+class HostVitalsView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    operation: Literal["local.host-vitals"] = "local.host-vitals"
+    operation: Literal["host.vitals"] = "host.vitals"
     contract_version: Literal["1"] = "1"
     observed_at: str
-    vitals: tuple[LocalVitalView, ...] = ()
+    vitals: tuple[VitalView, ...] = ()
 
 
-class LocalHostServiceMutationView(BaseModel):
+class HostServiceMutationView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     service_id: str = Field(min_length=1, max_length=128)
@@ -101,14 +107,14 @@ class LocalHostServiceMutationView(BaseModel):
     revision: int = Field(ge=1)
 
 
-def host_service_inventory(document: dict) -> LocalHostServiceInventoryView:
+def host_service_inventory(document: dict) -> HostServiceInventoryView:
     services = document.get("services")
     if not isinstance(services, list):
         raise HostServiceControlError("Host service inventory is unreadable", status_code=502)
     try:
-        return LocalHostServiceInventoryView(
+        return HostServiceInventoryView(
             services=tuple(
-                LocalHostServiceView(
+                HostServiceView(
                     service_id=item["service_id"],
                     required=item["required"],
                     enabled=item["enabled"],
@@ -126,9 +132,9 @@ def host_service_inventory(document: dict) -> LocalHostServiceInventoryView:
         ) from exc
 
 
-def host_service_mutation(document: dict) -> LocalHostServiceMutationView:
+def host_service_mutation(document: dict) -> HostServiceMutationView:
     try:
-        return LocalHostServiceMutationView(
+        return HostServiceMutationView(
             service_id=document["service_id"],
             operation=document["operation"],
             enabled=document["enabled"],
@@ -246,12 +252,12 @@ _VITAL_LABELS = {
 }
 
 
-def host_vitals(document: dict) -> LocalHostVitalsView:
+def host_vitals(document: dict) -> HostVitalsView:
     """Turn readings into sentences, and say which ones are worth acting on."""
 
     raw = document.get("measurements")
     measurements = raw if isinstance(raw, list) else []
-    shown: list[LocalVitalView] = []
+    shown: list[VitalView] = []
     for measurement in measurements:
         if not isinstance(measurement, dict):
             continue
@@ -259,13 +265,13 @@ def host_vitals(document: dict) -> LocalHostVitalsView:
         if not isinstance(name, str) or name not in _VITAL_LABELS:
             continue
         shown.append(_vital(name, measurement))
-    return LocalHostVitalsView(
+    return HostVitalsView(
         observed_at=str(document.get("observed_at", "")),
         vitals=tuple(shown),
     )
 
 
-def _vital(name: str, measurement: dict) -> LocalVitalView:
+def _vital(name: str, measurement: dict) -> VitalView:
     label = _VITAL_LABELS[name]
     value = measurement.get("value")
     capacity = measurement.get("capacity")
@@ -273,19 +279,19 @@ def _vital(name: str, measurement: dict) -> LocalVitalView:
         # Not knowing is not the same as being fine, and it is not a concern
         # either: nothing here is worth waking someone for, and pretending to
         # a reading would be worse than admitting there is none.
-        return LocalVitalView(
+        return VitalView(
             name=label,
             reading="读不到",
             unavailable_reason=str(measurement.get("unavailable_reason") or ""),
         )
     if name.startswith("disk."):
-        return LocalVitalView(
+        return VitalView(
             name=label,
             reading=f"{_bytes(value)} 可用，共 {_bytes(capacity)}",
             concern=_ratio_concern(value, capacity, _DISK_WATCH, _DISK_ACT),
         )
     if name == "memory.available":
-        return LocalVitalView(
+        return VitalView(
             name=label,
             reading=f"{_bytes(value)} 可用，共 {_bytes(capacity)}",
             concern=_ratio_concern(value, capacity, _MEMORY_WATCH, _MEMORY_ACT),
@@ -293,7 +299,7 @@ def _vital(name: str, measurement: dict) -> LocalVitalView:
     if name == "cpu.load1":
         cores = capacity if isinstance(capacity, (int, float)) and capacity else 1
         per_core = value / cores
-        return LocalVitalView(
+        return VitalView(
             name=label,
             reading=f"{value:.2f}（{int(cores)} 核）",
             concern=(
@@ -305,7 +311,7 @@ def _vital(name: str, measurement: dict) -> LocalVitalView:
             ),
         )
     if name == "temperature":
-        return LocalVitalView(
+        return VitalView(
             name=label,
             reading=f"{value:.1f}°C",
             concern=(
@@ -316,7 +322,7 @@ def _vital(name: str, measurement: dict) -> LocalVitalView:
                 else "none"
             ),
         )
-    return LocalVitalView(name=label, reading=_duration(value))
+    return VitalView(name=label, reading=_duration(value))
 
 
 def _ratio_concern(

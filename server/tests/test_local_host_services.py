@@ -52,6 +52,18 @@ class _HostServicesPort:
     async def list_services(self) -> dict:
         return {"driver": "systemd", "services": [_SERVICE]}
 
+    async def read_vitals(self) -> dict:
+        return {
+            "observed_at": "2026-08-25T09:00:00Z",
+            "measurements": [
+                {
+                    "name": "disk.root",
+                    "value": 31_200_000_000,
+                    "capacity": 58_000_000_000,
+                }
+            ],
+        }
+
     async def mutate(self, *, service_id, operation, expected_revision) -> dict:
         self.mutations.append((service_id, operation, expected_revision))
         return {
@@ -102,7 +114,7 @@ async def _authenticate(client: httpx.AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {session.json()['access_token']}"}
 
 
-async def test_mobile_sees_and_restarts_the_same_services_admin_does(
+async def test_a_phone_sees_and_restarts_the_same_services_admin_does(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     principal = {
@@ -121,16 +133,16 @@ async def test_mobile_sees_and_restarts_the_same_services_admin_does(
     port = _HostServicesPort()
     transport = httpx.ASGITransport(app=_app(tmp_path, port))
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
-        anonymous = await client.get("/api/local/v1/host/services")
+        anonymous = await client.get("/api/management/v1/host/services")
         headers = await _authenticate(client)
-        listed = await client.get("/api/local/v1/host/services", headers=headers)
+        listed = await client.get("/api/management/v1/host/services", headers=headers)
         restarted = await client.post(
-            "/api/local/v1/host/services/eidolon-hub/restart",
+            "/api/management/v1/host/services/eidolon-hub/restart",
             headers=headers,
             json={"expected_revision": 4},
         )
         stale = await client.post(
-            "/api/local/v1/host/services/eidolon-hub/restart",
+            "/api/management/v1/host/services/eidolon-hub/restart",
             headers=headers,
             json={},
         )
@@ -146,6 +158,43 @@ async def test_mobile_sees_and_restarts_the_same_services_admin_does(
     assert restarted.json()["revision"] == 5
     assert port.mutations == [("eidolon-hub", "restart", 4)]
     assert stale.status_code == 422
+
+
+async def test_the_machine_is_readable_by_a_phone_that_holds_this_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deliberately not scoped to an Owner.
+
+    A disk and a temperature are facts about the machine, not about whose
+    Companion lives on it — and a Host whose Workspace was never set up still
+    has a machine somebody may look at. The old route insisted on an Owner for
+    the two service calls beside this one; that was an accident of where they
+    were written, not a rule anyone chose.
+    """
+
+    principal = {
+        "contract_version": "1",
+        "controller_id": _CONTROLLER_ID,
+        "reset_epoch": 0,
+    }
+
+    async def bootstrap_request(self, operation: str, **_parameters):
+        if operation in {"controller.authenticate", "controller.validate"}:
+            return principal
+        raise AssertionError(f"unexpected bootstrap operation: {operation}")
+
+    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    port = _HostServicesPort()
+    transport = httpx.ASGITransport(app=_app(tmp_path, port))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get("/api/management/v1/host/vitals")
+        headers = await _authenticate(client)
+        read = await client.get("/api/management/v1/host/vitals", headers=headers)
+
+    assert anonymous.status_code == 401
+    assert read.status_code == 200
+    assert read.json()["operation"] == "host.vitals"
+    assert read.json()["vitals"]
 
 
 async def test_an_unknown_operation_is_refused_before_reaching_admin(
@@ -167,7 +216,7 @@ async def test_an_unknown_operation_is_refused_before_reaching_admin(
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
         headers = await _authenticate(client)
         response = await client.post(
-            "/api/local/v1/host/services/eidolon-hub/uninstall",
+            "/api/management/v1/host/services/eidolon-hub/uninstall",
             headers=headers,
             json={"expected_revision": 4},
         )

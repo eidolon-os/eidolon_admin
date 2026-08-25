@@ -168,6 +168,38 @@ export interface HTTPValidationError {
   detail?: Array<ValidationError>
 }
 
+export interface HostServiceInventoryView {
+  services?: Array<HostServiceView>
+}
+
+export interface HostServiceMutationRequest {
+  expected_revision: number
+}
+
+export interface HostServiceMutationView {
+  enabled: boolean
+  operation: "restart" | "enable" | "disable"
+  revision: number
+  service_id: string
+}
+
+export interface HostServiceView {
+  detail?: string | null
+  enabled: boolean
+  observed_at: string
+  required: boolean
+  revision: number
+  runtime_state: "unknown" | "inactive" | "starting" | "ready" | "degraded" | "blocked" | "failed"
+  service_id: string
+}
+
+export interface HostVitalsView {
+  contract_version?: "1"
+  observed_at: string
+  operation?: "host.vitals"
+  vitals?: Array<VitalView>
+}
+
 export interface ManagementContextView {
   capabilities: Record<string, boolean>
   contract_version?: "1"
@@ -350,6 +382,13 @@ export interface ValidationError {
   type: string
 }
 
+export interface VitalView {
+  concern?: "none" | "watch" | "act"
+  name: string
+  reading: string
+  unavailable_reason?: string | null
+}
+
 /** Response type per operation, keyed as it is called. */
 export interface ManagementResponses {
   'GET /api/management/v1/companions': CompanionRosterView
@@ -373,6 +412,9 @@ export interface ManagementResponses {
   'GET /api/management/v1/controllers': ControllersView
   'POST /api/management/v1/controllers/invitations': ControllerInvitationView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
+  'GET /api/management/v1/host/services': HostServiceInventoryView
+  'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
+  'GET /api/management/v1/host/vitals': HostVitalsView
   'GET /api/management/v1/memory/entries': MemoryDayView
   'PUT /api/management/v1/memory/entries/{entry_id}/audience': MemoryAudienceView
   'GET /api/management/v1/memory/export': MemoryCopyView

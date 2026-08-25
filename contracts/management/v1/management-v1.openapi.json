@@ -909,6 +909,171 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HostServiceInventoryView": {
+        "additionalProperties": false,
+        "properties": {
+          "services": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HostServiceView"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "title": "HostServiceInventoryView",
+        "type": "object"
+      },
+      "HostServiceMutationRequest": {
+        "additionalProperties": false,
+        "description": "Compare-and-swap intent, carried unchanged down to the daemon.",
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "HostServiceMutationRequest",
+        "type": "object"
+      },
+      "HostServiceMutationView": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "operation": {
+            "enum": [
+              "restart",
+              "enable",
+              "disable"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "service_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "operation",
+          "enabled",
+          "revision"
+        ],
+        "title": "HostServiceMutationView",
+        "type": "object"
+      },
+      "HostServiceView": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "runtime_state": {
+            "enum": [
+              "unknown",
+              "inactive",
+              "starting",
+              "ready",
+              "degraded",
+              "blocked",
+              "failed"
+            ],
+            "title": "Runtime State",
+            "type": "string"
+          },
+          "service_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "required",
+          "enabled",
+          "revision",
+          "runtime_state",
+          "observed_at"
+        ],
+        "title": "HostServiceView",
+        "type": "object"
+      },
+      "HostVitalsView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "observed_at": {
+            "title": "Observed At",
+            "type": "string"
+          },
+          "operation": {
+            "const": "host.vitals",
+            "default": "host.vitals",
+            "title": "Operation",
+            "type": "string"
+          },
+          "vitals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/VitalView"
+            },
+            "title": "Vitals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "observed_at"
+        ],
+        "title": "HostVitalsView",
+        "type": "object"
+      },
       "ManagementContextView": {
         "additionalProperties": false,
         "description": "What a client reads before it draws anything.\n\n``capabilities`` is discovery, not permission: true means this Host can do\nthe thing at all, and whether this Controller may is answered per action. A\nname absent from the map is one this client has never heard of — a version\nskew — while a name present and false is a feature this Host cannot do yet.\n\n``limits`` values may be null, and a client must not substitute a number of\nits own: a limit nobody has measured is not a limit.",
@@ -1880,6 +2045,49 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VitalView": {
+        "additionalProperties": false,
+        "description": "One thing about the machine, said the way a person reads it.\n\n``concern`` is decided here and nowhere below. The daemon that reads\n/proc knows how many bytes are free; whether that is worth telling someone\nabout depends on what this Host is for — and this is the layer that faces\nthe person whose Eidolon lives on it.",
+        "properties": {
+          "concern": {
+            "default": "none",
+            "enum": [
+              "none",
+              "watch",
+              "act"
+            ],
+            "title": "Concern",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "reading": {
+            "title": "Reading",
+            "type": "string"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Reason"
+          }
+        },
+        "required": [
+          "name",
+          "reading"
+        ],
+        "title": "VitalView",
         "type": "object"
       }
     }
@@ -3308,6 +3516,189 @@
           }
         },
         "summary": "Revoke Controller",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/host/services": {
+      "get": {
+        "description": "What is running on this machine, and what is meant to be.",
+        "operationId": "read_host_services_api_management_v1_host_services_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostServiceInventoryView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Host Services",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/host/services/{service_id}/{operation}": {
+      "post": {
+        "description": "Restart it, turn it on, turn it off.\n\n``expected_revision`` is what the caller last read, and it is required:\ntwo phones looking at the same failing service must not both act on a\npicture one of them has already changed.",
+        "operationId": "operate_host_service_api_management_v1_host_services__service_id___operation__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "service_id",
+            "required": true,
+            "schema": {
+              "title": "Service Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "enum": [
+                "restart",
+                "enable",
+                "disable"
+              ],
+              "title": "Operation",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HostServiceMutationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostServiceMutationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Operate Host Service",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/host/vitals": {
+      "get": {
+        "description": "How the machine holding this Eidolon is doing.\n\nAsked by a phone that holds this Host, and deliberately not scoped to an\nOwner: a disk and a temperature are facts about the machine, not about\nwhose Companion lives on it — and a Host whose Workspace was never set\nup still has a machine somebody may look at.",
+        "operationId": "read_host_vitals_api_management_v1_host_vitals_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostVitalsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Host Vitals",
         "tags": [
           "management"
         ]

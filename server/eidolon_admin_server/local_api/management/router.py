@@ -18,6 +18,17 @@ from typing import Literal, Protocol, runtime_checkable
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from eidolon_admin_server.local_api.host_services import (  # noqa: E402
+    HostServiceControlError,
+    HostServiceInventoryView,
+    HostServiceMutationView,
+    HostVitalsView,
+    MutationOperation,
+    host_service_inventory,
+    host_service_mutation,
+    host_vitals,
+)
+
 MANAGEMENT_PREFIX = "/api/management/v1"
 
 
@@ -772,6 +783,14 @@ class ForgetResultView(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class HostServiceMutationRequest(BaseModel):
+    """Compare-and-swap intent, carried unchanged down to the daemon."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1)
+
+
 class ControllerView(BaseModel):
     """One phone that may manage this Host.
 
@@ -828,6 +847,30 @@ class ControllerInvitationView(BaseModel):
     contract_version: Literal["1"] = "1"
     setup_code: str = Field(min_length=1, max_length=64)
     expires_at: str = Field(min_length=1, max_length=64)
+
+
+@runtime_checkable
+class HostMachinePort(Protocol):
+    """The machine this Eidolon lives on, as this surface asks about it.
+
+    Beside the controller directory and for the same reason: these are facts
+    about *the machine* rather than an authority's data, reached with the one
+    credential this process is allowed to hold. The judgement that turns a byte
+    count into "worth telling someone about" already lives here, on the side
+    that faces the person whose Eidolon is on it.
+    """
+
+    async def read_vitals(self) -> dict: ...
+
+    async def list_services(self) -> dict: ...
+
+    async def mutate(
+        self,
+        *,
+        service_id: str,
+        operation: str,
+        expected_revision: int,
+    ) -> dict: ...
 
 
 @runtime_checkable
@@ -1011,6 +1054,7 @@ def register_management_routes(
     authenticated_owner,
     controllers: ControllerDirectoryPort,
     authenticated_controller_id,
+    host: HostMachinePort,
 ) -> None:
     """Mount the public management surface.
 
@@ -1040,6 +1084,62 @@ def register_management_routes(
             capabilities=answer["capabilities"],
             limits=answer["limits"],
         )
+
+    @router.get("/host/vitals", response_model=HostVitalsView)
+    async def read_host_vitals(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostVitalsView:
+        """How the machine holding this Eidolon is doing.
+
+        Asked by a phone that holds this Host, and deliberately not scoped to an
+        Owner: a disk and a temperature are facts about the machine, not about
+        whose Companion lives on it — and a Host whose Workspace was never set
+        up still has a machine somebody may look at.
+        """
+        await authenticated_controller_id(authorization)
+        try:
+            return host_vitals(await host.read_vitals())
+        except HostServiceControlError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @router.get("/host/services", response_model=HostServiceInventoryView)
+    async def read_host_services(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostServiceInventoryView:
+        """What is running on this machine, and what is meant to be."""
+        await authenticated_controller_id(authorization)
+        try:
+            return host_service_inventory(await host.list_services())
+        except HostServiceControlError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+
+    @router.post(
+        "/host/services/{service_id}/{operation}",
+        response_model=HostServiceMutationView,
+    )
+    async def operate_host_service(
+        service_id: str,
+        operation: MutationOperation,
+        payload: HostServiceMutationRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostServiceMutationView:
+        """Restart it, turn it on, turn it off.
+
+        ``expected_revision`` is what the caller last read, and it is required:
+        two phones looking at the same failing service must not both act on a
+        picture one of them has already changed.
+        """
+        await authenticated_controller_id(authorization)
+        try:
+            return host_service_mutation(
+                await host.mutate(
+                    service_id=service_id,
+                    operation=operation,
+                    expected_revision=payload.expected_revision,
+                )
+            )
+        except HostServiceControlError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
 
     @router.get("/controllers", response_model=ControllersView)
     async def list_controllers(
