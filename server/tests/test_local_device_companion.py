@@ -29,6 +29,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
+from eidolon_admin_server.local_api.device_admissions import DeviceAdmissionError
 from eidolon_admin_server.local_api.config import (
     LocalApiSettings,
     VerifiedOwnerDomainOnboardingTarget,
@@ -175,7 +176,7 @@ class _UnusedPort:
         return None
 
 
-def _app(tmp_path: Path, devices):
+def _app(tmp_path: Path, devices, admission=None):
     root = tmp_path / "owner-root.pem"
     signer = tmp_path / "authority-signer.pem"
     for path in (root, signer):
@@ -202,7 +203,7 @@ def _app(tmp_path: Path, devices):
         workspace_client=unused,  # type: ignore[arg-type]
         runtime_client=unused,  # type: ignore[arg-type]
         devices_client=devices,  # type: ignore[arg-type]
-        device_admission_client=_Admission(),  # type: ignore[arg-type]
+        device_admission_client=admission or _Admission(),  # type: ignore[arg-type]
         host_services_client=unused,  # type: ignore[arg-type]
     )
 
@@ -338,3 +339,49 @@ async def test_a_stale_revision_is_the_owner_s_refusal_not_a_silent_win(
 
     assert stale.status_code == 409
     assert len(devices.commands) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_refused_removal_answers_with_the_refusal_not_a_five_hundred(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The conversion at the route, not the two functions it calls.
+
+    ``device_admission_detail`` answers a structured body when a reason is set
+    and a plain string otherwise, and the refusal builder truncates what it is
+    given. So passing the body where the reason belongs raises TypeError the
+    moment anything sets a reason — turning a refusal the caller could act on
+    into a 500. It stayed unreachable only because nothing on the removal path
+    set a reason, which was the other half of the same defect. Unit tests over
+    the two functions cannot see this: what is wrong is which one the route
+    calls.
+    """
+
+    _controller_principal(monkeypatch)
+
+    class _RefusingAdmission(_Admission):
+        async def remove(self, **_values):
+            raise DeviceAdmissionError(
+                "owner authorization was refused by the Hub",
+                status_code=403,
+                reason="主机不再授权这台手机管理设备。",
+            )
+
+    transport = httpx.ASGITransport(
+        app=_app(tmp_path, _Devices(), admission=_RefusingAdmission())
+    )
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _headers(client)
+        refused = await client.post(
+            f"/api/management/v1/devices/{_DEVICE}/removal",
+            headers=headers,
+            json={"request_id": "removal-refused-1"},
+        )
+
+    assert refused.status_code == 403, refused.text
+    # The published refusal envelope, not a shrug and not a 500.
+    detail = refused.json()["detail"]
+    assert detail["reason"] == "主机不再授权这台手机管理设备。"
+    assert detail["kind"] == "denied"

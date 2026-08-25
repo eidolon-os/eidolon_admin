@@ -78,6 +78,7 @@ from .devices import (
     LocalDeviceView,
     owner_device_inventory_view,
 )
+from ..app.control_plane.contracts import ControllerDeviceRemovalRequest
 from .device_admissions import (
     AdminDeviceAdmissionClient,
     AdminDeviceAdmissionPort,
