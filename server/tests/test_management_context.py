@@ -282,9 +282,10 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "companion.restore",
         "companion.rename",
         "companion.face",
+        "controller.manage",
     ):
         assert context.capabilities[closed] is True, closed
-    for still_open in ("device.manage", "host.operate", "controller.manage"):
+    for still_open in ("device.read", "device.manage", "host.operate"):
         assert context.capabilities[still_open] is False, still_open
 
 

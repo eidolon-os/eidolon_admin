@@ -79,6 +79,31 @@ export interface CompanionSummaryView {
   updated_at: string
 }
 
+export interface ControllerInvitationRequest {
+  ttl_seconds?: number | null
+}
+
+export interface ControllerInvitationView {
+  contract_version?: "1"
+  expires_at: string
+  setup_code: string
+}
+
+export interface ControllerView {
+  claimed_at: string
+  controller_id: string
+  display_name?: string
+  fingerprint?: string
+  is_you: boolean
+  platform?: string
+  role: string
+}
+
+export interface ControllersView {
+  contract_version?: "1"
+  controllers: Array<ControllerView>
+}
+
 export interface ConversationPageView {
   companion_id: string
   contract_version?: "1"
@@ -345,6 +370,9 @@ export interface ManagementResponses {
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/cancel': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/retry': TaskView
   'GET /api/management/v1/context': ManagementContextView
+  'GET /api/management/v1/controllers': ControllersView
+  'POST /api/management/v1/controllers/invitations': ControllerInvitationView
+  'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
   'GET /api/management/v1/memory/entries': MemoryDayView
   'PUT /api/management/v1/memory/entries/{entry_id}/audience': MemoryAudienceView
   'GET /api/management/v1/memory/export': MemoryCopyView

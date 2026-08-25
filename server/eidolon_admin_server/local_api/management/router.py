@@ -13,12 +13,36 @@ authenticates, and is passed down as an argument.
 
 from __future__ import annotations
 
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MANAGEMENT_PREFIX = "/api/management/v1"
+
+
+def _controller_view(row: dict, *, asking: str) -> "ControllerView":
+    """One grant, as a person reads it.
+
+    Strict about what it needs and forgiving about what it does not: a Host that
+    grows a field is not a Host this list should refuse to draw.
+    """
+
+    controller_id = str(row.get("controller_id") or "")
+    if not controller_id:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Host answered with a controller that has no identifier",
+        )
+    return ControllerView(
+        controller_id=controller_id,
+        display_name=str(row.get("display_name") or ""),
+        platform=str(row.get("platform") or ""),
+        role=str(row.get("role") or "unknown"),
+        fingerprint=str(row.get("public_key_fingerprint") or ""),
+        claimed_at=str(row.get("created_at") or ""),
+        is_you=controller_id == asking,
+    )
 
 
 def _refused(exc: "ManagementBackendError") -> HTTPException:
@@ -748,6 +772,86 @@ class ForgetResultView(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class ControllerView(BaseModel):
+    """One phone that may manage this Host.
+
+    No public key. A key is how the Host recognises a phone, not how a person
+    does — and handing every controller's key to every other controller is
+    spending authority material to draw a list. The fingerprint is what a person
+    is shown when pairing, so it is what is shown here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    controller_id: str = Field(min_length=1, max_length=64)
+    #: What the phone called itself when it claimed this Host.
+    display_name: str = Field(default="", max_length=128)
+    platform: str = Field(default="", max_length=64)
+    role: str = Field(min_length=1, max_length=32)
+    #: Short, and shown when two phones are hard to tell apart.
+    fingerprint: str = Field(default="", max_length=128)
+    claimed_at: str = Field(min_length=1, max_length=64)
+    #: Whether this is the phone asking. A property of *this answer*, computed
+    #: from the session that made it — never stored, so two of them cannot
+    #: disagree. A list that could not say it would leave a person guessing
+    #: which row is the phone in their hand before revoking one.
+    is_you: bool
+
+
+class ControllersView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    controllers: list[ControllerView]
+
+
+class ControllerInvitationRequest(BaseModel):
+    """Open a window in which one more phone may claim this Host."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: How long the window stays open. The Host decides the bounds and refuses
+    #: what it will not do, so nothing is restated here.
+    ttl_seconds: int | None = Field(default=None, ge=1)
+
+
+class ControllerInvitationView(BaseModel):
+    """A one-time code, and when it stops working.
+
+    The code is a secret with a deadline, so the deadline travels with it: a
+    screen that showed the code without saying when it dies would let someone
+    read it out five minutes too late and think the Host was broken.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    setup_code: str = Field(min_length=1, max_length=64)
+    expires_at: str = Field(min_length=1, max_length=64)
+
+
+@runtime_checkable
+class ControllerDirectoryPort(Protocol):
+    """The Host's own trust root, as this surface asks it.
+
+    Deliberately *not* behind the management backend. That boundary exists so
+    the LAN-facing process holds no authority credential (plan §3.4.1), and the
+    three things here are not an authority's data: they are this Host's own
+    grant record, reached over the control socket this process already
+    authenticates every request against. Routing them through the other process
+    would add a hop that buys nothing and a second place to get "who is asking"
+    wrong.
+    """
+
+    async def list_controllers(self, controller_id: str) -> dict: ...
+
+    async def invite_controller(
+        self, controller_id: str, ttl_seconds: int | None
+    ) -> dict: ...
+
+    async def revoke_controller(self, controller_id: str, target_id: str) -> dict: ...
+
+
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
@@ -905,6 +1009,8 @@ def register_management_routes(
     *,
     backend: ManagementBackendPort,
     authenticated_owner,
+    controllers: ControllerDirectoryPort,
+    authenticated_controller_id,
 ) -> None:
     """Mount the public management surface.
 
@@ -934,6 +1040,59 @@ def register_management_routes(
             capabilities=answer["capabilities"],
             limits=answer["limits"],
         )
+
+    @router.get("/controllers", response_model=ControllersView)
+    async def list_controllers(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ControllersView:
+        """Which phones may manage this Host.
+
+        Asked by one that already may — the Host never decides on its own who
+        belongs on this list, and it does not answer to a phone that is not on
+        it.
+        """
+        asking = await authenticated_controller_id(authorization)
+        answer = await controllers.list_controllers(asking)
+        return ControllersView(
+            controllers=[
+                _controller_view(row, asking=asking)
+                for row in answer.get("controllers", [])
+            ]
+        )
+
+    @router.post("/controllers/invitations", response_model=ControllerInvitationView)
+    async def invite_controller(
+        payload: ControllerInvitationRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ControllerInvitationView:
+        """Let one more phone in, for a while.
+
+        Asked for by a phone that already holds this Host, so nobody is ever
+        added by the Host alone. The answer is a one-time code and the moment it
+        stops working.
+        """
+        asking = await authenticated_controller_id(authorization)
+        answer = await controllers.invite_controller(asking, payload.ttl_seconds)
+        return ControllerInvitationView(
+            setup_code=str(answer["setup_code"]),
+            expires_at=str(answer["expires_at"]),
+        )
+
+    @router.delete("/controllers/{controller_id}", response_model=ControllerView)
+    async def revoke_controller(
+        controller_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ControllerView:
+        """Withdraw a phone's authority over this Host.
+
+        A phone may withdraw its own — what it cannot do is leave the Host with
+        nobody, and the Host refuses that rather than this layer guessing at it.
+        The answer describes the grant that was withdrawn, so a screen can say
+        which phone it just signed out.
+        """
+        asking = await authenticated_controller_id(authorization)
+        answer = await controllers.revoke_controller(asking, controller_id)
+        return _controller_view(answer.get("controller", {}), asking=asking)
 
     @router.get("/companions", response_model=CompanionRosterView)
     async def list_companions(

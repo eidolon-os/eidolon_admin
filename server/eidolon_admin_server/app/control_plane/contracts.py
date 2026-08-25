@@ -706,23 +706,46 @@ class ControllerDeviceRemovalRequest(StrictModel):
     reason: str = Field(default="owner-removed", min_length=1, max_length=128)
 
 
+#: Every bounded context this process calls out to and can be refused by.
+#:
+#: Declared once and imported by the exception that carries a refusal
+#: (``errors.AuthorityFailure``) as well as by the model that puts it on a wire
+#: (``WorkflowFailure``). It used to be written twice, and the second copy is
+#: what made a whole authority unreportable: ``agent`` was added to the client
+#: that raises and not to the model that serialises, so every Agent refusal —
+#: a missing credential, a runtime that is down — died inside the error path and
+#: reached callers as an unexplained 500. One name, two readers: a vocabulary
+#: that cannot be half-extended.
+Authority = Literal["directory", "data", "hub", "kernel", "memory", "agent"]
+
+#: How a refusal is to be *treated*, as distinct from what happened in the
+#: domain (that is ``WorkflowFailure.code``). Same single-declaration rule as
+#: ``Authority`` and for the same reason.
+FailureKind = Literal[
+    "unauthorized",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "invalid_request",
+    "unavailable",
+    #: The authority answers, but the specific Realm/instance the request needs
+    #: is not running. Distinct from ``unavailable`` because the next action
+    #: differs: nothing is wrong with Memory, this one space has to be brought
+    #: up. Reporting it as ``unavailable`` sent people to look at the wrong
+    #: service.
+    "runtime_missing",
+    "upstream_failure",
+    "contract_violation",
+    #: This Host was never given the credential the call needs. Not retryable
+    #: and not a fault of the authority: nothing about the request or the
+    #: upstream service will change until somebody configures this Host.
+    "configuration",
+]
+
+
 class WorkflowFailure(StrictModel):
-    #: Kept in step with ``errors.FailureKind`` and ``errors.AuthorityFailure``:
-    #: a value this model rejects raises inside the router's exception handler,
-    #: which turns a chosen status into an unexplained 500.
-    authority: Literal["directory", "data", "hub", "kernel", "memory"]
-    kind: Literal[
-        "unauthorized",
-        "forbidden",
-        "not_found",
-        "conflict",
-        "invalid_request",
-        "unavailable",
-        "runtime_missing",
-        "upstream_failure",
-        "contract_violation",
-        "configuration",
-    ]
+    authority: Authority
+    kind: FailureKind
     detail: str
     #: The upstream authority's refusal code, when it gave one — the domain word
     #: (``default_replacement_required``, ``revision_stale``), not the transport

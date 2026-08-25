@@ -44,7 +44,11 @@ from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
-from .management.router import ManagementBackendPort, register_management_routes
+from .management.router import (
+    ControllerDirectoryPort,
+    ManagementBackendPort,
+    register_management_routes,
+)
 from ..app.control_plane.contracts import AdmissionDecisionWorkflowResult
 from .config import LocalApiSettings, load_local_api_settings
 from .host_services import (
@@ -115,12 +119,6 @@ class HostServiceMutationRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
-class ControllerInvitationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ttl_seconds: int | None = Field(default=None, ge=60, le=86400)
-
-
 class ControllerChallengeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -171,6 +169,7 @@ def create_app(
     device_admission_client: AdminDeviceAdmissionPort | None = None,
     host_services_client: AdminHostServicesPort | None = None,
     management_backend: ManagementBackendPort | None = None,
+    controller_directory: ControllerDirectoryPort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -352,49 +351,6 @@ def create_app(
             "expires_at": session.expires_at.isoformat().replace("+00:00", "Z"),
             "controller": principal,
         }
-
-    @app.get("/api/local/v1/controllers")
-    async def list_controllers(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> dict:
-        principal, _session = await authenticated_controller(authorization)
-        return await request_bootstrap(
-            "controller.list",
-            authentication=True,
-            controller_id=principal["controller_id"],
-        )
-
-    @app.post("/api/local/v1/controllers/invitations")
-    async def invite_controller(
-        request: ControllerInvitationRequest,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> dict:
-        """Open a window in which one more phone may claim this Host.
-
-        Asked for by a phone that already holds it, so the Host is never left
-        deciding on its own who may join.
-        """
-
-        principal, _session = await authenticated_controller(authorization)
-        return await request_bootstrap(
-            "controller.invite",
-            authentication=True,
-            controller_id=principal["controller_id"],
-            ttl_seconds=request.ttl_seconds,
-        )
-
-    @app.delete("/api/local/v1/controllers/{target_id}")
-    async def revoke_controller(
-        target_id: str,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> dict:
-        principal, _session = await authenticated_controller(authorization)
-        return await request_bootstrap(
-            "controller.revoke",
-            authentication=True,
-            controller_id=principal["controller_id"],
-            target_id=target_id,
-        )
 
     @app.get("/api/local/v1/auth/session")
     async def current_controller_session(
@@ -1047,8 +1003,55 @@ def create_app(
             )
         return owner_id
 
+    class _Controllers:
+        """The Host's own grant record, over the socket this process already uses.
+
+        Not behind the management backend: that boundary exists so this process
+        holds no *authority* credential, and a controller grant is not an
+        authority's data — it is this Host's own trust root, which this process
+        must already be able to reach, because it is what every request here is
+        authenticated against.
+        """
+
+        async def list_controllers(self, controller_id: str) -> dict:
+            return await request_bootstrap(
+                "controller.list", authentication=True, controller_id=controller_id
+            )
+
+        async def invite_controller(
+            self, controller_id: str, ttl_seconds: int | None
+        ) -> dict:
+            return await request_bootstrap(
+                "controller.invite",
+                authentication=True,
+                controller_id=controller_id,
+                ttl_seconds=ttl_seconds,
+            )
+
+        async def revoke_controller(self, controller_id: str, target_id: str) -> dict:
+            return await request_bootstrap(
+                "controller.revoke",
+                authentication=True,
+                controller_id=controller_id,
+                target_id=target_id,
+            )
+
+    async def management_controller(authorization: str | None) -> str:
+        """Which phone is asking — the one thing these three routes need.
+
+        Not the Owner: managing controllers is about who may manage this Host,
+        which is a different question from whose Eidolons these are, and a
+        Host with no Workspace yet still has phones that hold it.
+        """
+        principal, _session = await authenticated_controller(authorization)
+        return principal["controller_id"]
+
     register_management_routes(
-        app, backend=management, authenticated_owner=management_owner
+        app,
+        backend=management,
+        authenticated_owner=management_owner,
+        controllers=controller_directory or _Controllers(),
+        authenticated_controller_id=management_controller,
     )
 
     return app

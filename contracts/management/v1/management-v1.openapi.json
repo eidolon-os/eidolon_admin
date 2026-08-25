@@ -429,6 +429,133 @@
         "title": "CompanionSummaryView",
         "type": "object"
       },
+      "ControllerInvitationRequest": {
+        "additionalProperties": false,
+        "description": "Open a window in which one more phone may claim this Host.",
+        "properties": {
+          "ttl_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ttl Seconds"
+          }
+        },
+        "title": "ControllerInvitationRequest",
+        "type": "object"
+      },
+      "ControllerInvitationView": {
+        "additionalProperties": false,
+        "description": "A one-time code, and when it stops working.\n\nThe code is a secret with a deadline, so the deadline travels with it: a\nscreen that showed the code without saying when it dies would let someone\nread it out five minutes too late and think the Host was broken.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "expires_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Expires At",
+            "type": "string"
+          },
+          "setup_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Setup Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "setup_code",
+          "expires_at"
+        ],
+        "title": "ControllerInvitationView",
+        "type": "object"
+      },
+      "ControllerView": {
+        "additionalProperties": false,
+        "description": "One phone that may manage this Host.\n\nNo public key. A key is how the Host recognises a phone, not how a person\ndoes — and handing every controller's key to every other controller is\nspending authority material to draw a list. The fingerprint is what a person\nis shown when pairing, so it is what is shown here.",
+        "properties": {
+          "claimed_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Claimed At",
+            "type": "string"
+          },
+          "controller_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Controller Id",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "fingerprint": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "is_you": {
+            "title": "Is You",
+            "type": "boolean"
+          },
+          "platform": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Platform",
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "controller_id",
+          "role",
+          "claimed_at",
+          "is_you"
+        ],
+        "title": "ControllerView",
+        "type": "object"
+      },
+      "ControllersView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "controllers": {
+            "items": {
+              "$ref": "#/components/schemas/ControllerView"
+            },
+            "title": "Controllers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "controllers"
+        ],
+        "title": "ControllersView",
+        "type": "object"
+      },
       "ConversationPageView": {
         "additionalProperties": false,
         "description": "When this Eidolon and I talked. Not what was said — that is per turn, and\nthe Host keeps no words on these rows.",
@@ -3012,6 +3139,175 @@
           }
         },
         "summary": "Get Context",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/controllers": {
+      "get": {
+        "description": "Which phones may manage this Host.\n\nAsked by one that already may — the Host never decides on its own who\nbelongs on this list, and it does not answer to a phone that is not on\nit.",
+        "operationId": "list_controllers_api_management_v1_controllers_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControllersView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Controllers",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/controllers/invitations": {
+      "post": {
+        "description": "Let one more phone in, for a while.\n\nAsked for by a phone that already holds this Host, so nobody is ever\nadded by the Host alone. The answer is a one-time code and the moment it\nstops working.",
+        "operationId": "invite_controller_api_management_v1_controllers_invitations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ControllerInvitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControllerInvitationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Invite Controller",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/controllers/{controller_id}": {
+      "delete": {
+        "description": "Withdraw a phone's authority over this Host.\n\nA phone may withdraw its own — what it cannot do is leave the Host with\nnobody, and the Host refuses that rather than this layer guessing at it.\nThe answer describes the grant that was withdrawn, so a screen can say\nwhich phone it just signed out.",
+        "operationId": "revoke_controller_api_management_v1_controllers__controller_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "controller_id",
+            "required": true,
+            "schema": {
+              "title": "Controller Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ControllerView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Controller",
         "tags": [
           "management"
         ]

@@ -132,6 +132,10 @@ _ENABLED: frozenset[str] = frozenset(
         "owner.rename",
         # The face, over the same surface as everything else about a Companion.
         "companion.face",
+        # Which phones may manage this Host. Answered by the Host's own trust
+        # root rather than by an authority, which is why it is the one part of
+        # this surface the LAN process serves directly.
+        "controller.manage",
         # The Agent answers these and owns the task state machine; this side
         # relays, including its refusals.
         "conversation.read",
