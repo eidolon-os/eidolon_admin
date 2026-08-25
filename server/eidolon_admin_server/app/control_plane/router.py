@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
+    BusinessOwnerId,
     ClaimPage,
     EnrollmentProposalPage,
     EnrollmentRecoveryProjection,
@@ -30,6 +31,9 @@ from .contracts import (
     KernelMountPage,
     OwnerIdentity,
     OwnerRenameRequest,
+    OperatorDeviceAdmissionRequest,
+    OperatorDeviceAdmissionResult,
+    OperatorOwnerDeviceInventory,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -53,9 +57,61 @@ router = APIRouter(
     dependencies=[Depends(require_local_api_credential)],
 )
 
+# Browser-facing operator orchestration. This is a first-class current control-
+# plane surface: Hub authorizes the supplied credential against canonical
+# Admission/Claim endpoints, while the internal router below remains protected
+# by the Local API service credential.
+operator_router = APIRouter(
+    prefix="/operator/v1/control-plane",
+    tags=["control-plane-operator"],
+)
+
 
 def _service(request: Request) -> ControlPlaneService:
     return request.app.state.control_plane
+
+
+@operator_router.get(
+    "/owners/{owner_id}/inventory",
+    response_model=OperatorOwnerDeviceInventory,
+)
+async def operator_owner_inventory(
+    owner_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> OperatorOwnerDeviceInventory:
+    try:
+        business_owner_id = BusinessOwnerId(owner_id)
+    except ValueError as exc:
+        raise HTTPException(422, "Owner ID must use the owner_ namespace") from exc
+    return await _service(request).operator_owner_inventory(
+        owner_id=str(business_owner_id),
+        hub_authorization=authorization or "",
+    )
+
+
+@operator_router.put(
+    "/device-admissions/{device_id}",
+    response_model=OperatorDeviceAdmissionResult,
+)
+async def operator_device_admission(
+    device_id: str,
+    payload: OperatorDeviceAdmissionRequest,
+    request: Request,
+    response: Response,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> OperatorDeviceAdmissionResult:
+    if payload.device_id != device_id:
+        raise HTTPException(409, "Device path and request do not match")
+    result = await _service(request).admit_operator_device(
+        payload,
+        hub_authorization=authorization or "",
+    )
+    if result.outcome == "retry_required":
+        response.status_code = 202
+    elif result.outcome == "blocked":
+        response.status_code = 409
+    return result
 
 
 @router.get("/capabilities", response_model=BoundaryCapabilities)

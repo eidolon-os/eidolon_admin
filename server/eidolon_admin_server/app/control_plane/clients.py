@@ -1549,6 +1549,30 @@ class HubManagementClient:
             )
         return page
 
+    async def list_authorized_enrollments(
+        self,
+        *,
+        authorization: str,
+        states: tuple[str, ...],
+        limit: int = 200,
+    ) -> EnrollmentProposalPage:
+        """Read the current Hub page under the operator credential's scope.
+
+        The Hub derives the Owner Domain from the credential. Admin deliberately
+        does not decode or duplicate that authorization decision.
+        """
+
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{await self._base_url()}/api/admission/v1/enrollments",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            params={"states": ",".join(states), "limit": str(limit)},
+        )
+        return _parse("hub", response, EnrollmentProposalPage)
+
     async def list_claims(
         self,
         *,
@@ -1583,6 +1607,26 @@ class HubManagementClient:
                 "hub", "Hub Claim page crossed its requested Owner Domain"
             )
         return page
+
+    async def list_authorized_claims(
+        self,
+        *,
+        authorization: str,
+        states: tuple[str, ...] = ("active", "suspended", "revoked"),
+        limit: int = 200,
+    ) -> ClaimPage:
+        """Read Claims using Hub's credential-derived Owner Domain."""
+
+        response = await _request(
+            "hub",
+            self._client,
+            "GET",
+            f"{await self._base_url()}/api/admission/v1/claims",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            params={"states": ",".join(states), "limit": str(limit)},
+        )
+        return _parse("hub", response, ClaimPage)
 
     async def revoke(
         self,

@@ -11,6 +11,7 @@ from eidolon_sdk.biz.contracts.refusal import Refusal, RefusalKind
 from eidolon_sdk.device_foundation.v1 import (
     BusinessOwnerId,
     ClaimQuery,
+    ClaimRecord,
     ControllerActorRef,
     DecideEnrollment,
     DecideEnrollmentResult,
@@ -581,6 +582,25 @@ class KernelMutationResult(StrictModel):
     replayed: bool
 
 
+class OperatorDeviceAdmissionRequest(StrictModel):
+    """One explicit operator action from the Admin Web control-plane page.
+
+    Hub still owns admission and Kernel still owns mounts. This is only the
+    input needed by Admin to orchestrate those current public contracts.
+    """
+
+    request_id: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+    owner_id: BusinessOwnerId
+    device_id: str = Field(
+        min_length=3, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    )
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    expected_mount_revision: int = Field(default=0, ge=0, strict=True)
+    replace_existing_mount: bool = False
+
+
 class ControllerCommand(StrictModel):
     """A canonical command carried under the authority a Controller holds.
 
@@ -814,11 +834,56 @@ class WorkflowFailure(StrictModel):
 
 
 class WorkflowStep(StrictModel):
-    name: Literal["hub_revocation"]
+    name: Literal[
+        "hub_approval",
+        "kernel_mount",
+        "companion_attachment",
+        "hub_revocation",
+    ]
     state: Literal["committed", "replayed", "failed", "not_requested", "not_attempted"]
     request_id: str | None = None
     revision: int | None = None
     failure: WorkflowFailure | None = None
+
+
+class SourceStatus(StrictModel):
+    state: Literal["ok", "error"]
+    latency_ms: float = Field(ge=0)
+    failure: WorkflowFailure | None = None
+
+
+class OperatorOwnerDeviceInventory(StrictModel):
+    """Current Hub Claims and Kernel mounts, composed for the Admin Web."""
+
+    operation: Literal["admin.operator-device-inventory"] = (
+        "admin.operator-device-inventory"
+    )
+    owner_id: BusinessOwnerId
+    degraded: bool
+    hub: SourceStatus
+    kernel: SourceStatus
+    claims: tuple[ClaimRecord, ...]
+    mounts: tuple[KernelMount, ...]
+
+
+class OperatorDeviceAdmissionResult(StrictModel):
+    """Progress across current Hub Admission and Kernel Mount authorities."""
+
+    operation: Literal["admin.operator-device-admission"] = (
+        "admin.operator-device-admission"
+    )
+    request_id: str = Field(min_length=1, max_length=64)
+    outcome: Literal["completed", "retry_required", "blocked"]
+    completed_stage: Literal[
+        "received", "hub_approved", "kernel_mounted", "companion_attached"
+    ]
+    distributed_atomic: Literal[False] = False
+    compensation: Literal["none-safe-intermediate"] = "none-safe-intermediate"
+    recovery: Literal[
+        "none", "retry-forward-same-request-id", "operator-action-required"
+    ] = "none"
+    steps: tuple[WorkflowStep, ...]
+    mount: KernelMount | None = None
 
 
 class DeviceRemovalResult(StrictModel):

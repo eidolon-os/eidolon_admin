@@ -742,6 +742,62 @@ async def test_enrollment_query_preserves_recoverable_states() -> None:
         await http_client.aclose()
 
 
+async def test_operator_reads_use_the_hub_credential_scope_directly() -> None:
+    seen: list[tuple[str, dict[str, str]]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer operator-jwt"
+        seen.append((request.url.path, dict(request.url.params)))
+        now = datetime.now(UTC).isoformat()
+        if request.url.path.endswith("/enrollments"):
+            return httpx.Response(
+                200,
+                json={
+                    "owner_domain_id": "owner-domain-1",
+                    "items": [],
+                    "next_cursor": None,
+                    "observed_at": now,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "owner_domain_id": "owner-domain-1",
+                "items": [],
+                "next_cursor": None,
+                "observed_at": now,
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = HubManagementClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        await subject.list_authorized_enrollments(
+            authorization="Bearer operator-jwt",
+            states=("pending_review", "grant_acknowledged"),
+        )
+        await subject.list_authorized_claims(
+            authorization="Bearer operator-jwt",
+        )
+    finally:
+        await http_client.aclose()
+
+    assert seen == [
+        (
+            "/api/admission/v1/enrollments",
+            {"states": "pending_review,grant_acknowledged", "limit": "200"},
+        ),
+        (
+            "/api/admission/v1/claims",
+            {"states": "active,suspended,revoked", "limit": "200"},
+        ),
+    ]
+
+
 async def test_timeout_is_unavailable_not_not_found() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("slow", request=request)

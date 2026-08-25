@@ -26,14 +26,9 @@ describe('Data V2 / Kernel control-plane routes', () => {
     }
   })
 
-  it('reaches the cockpit, which owns nothing and only composes', () => {
-    // The one name that left the list above. Every other entry is a surface
-    // for data another component is now the authority for; serving those here
-    // would give a Host two answers to one question. Mission Control is a
-    // view — it was removed because its server half opened the database, and
-    // that half now goes through the same HTTP clients as everything else.
+  it('keeps Mission Control out of the restored target navigation boundary', () => {
     const names = new Set(router.getRoutes().map((route) => route.name))
-    expect(names.has('mission-control')).toBe(true)
+    expect(names.has('mission-control')).toBe(false)
   })
 
   it('reaches Host services through eidolond rather than a platform-locked page', () => {
@@ -52,14 +47,11 @@ describe('Data V2 / Kernel control-plane routes', () => {
   })
 })
 
-describe('nothing is reachable only by typing its URL', () => {
-  it('offers Mission Control in the navigation, not just in the route table', () => {
-    // A route with nothing linking to it is the same fault as a module with
-    // no route: present, working, and invisible. This restore produced both
-    // in turn before it produced neither.
+describe('restored target navigation', () => {
+  it('does not add Mission Control beside the target control-plane home', () => {
     const routed = new Set(
       navigation.flatMap((group) => group.items.map((item) => item.route?.name)),
     )
-    expect(routed.has('mission-control')).toBe(true)
+    expect(routed.has('mission-control')).toBe(false)
   })
 })

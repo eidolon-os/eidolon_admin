@@ -9,16 +9,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: '',
         name: 'home',
-        component: () => import('@/modules/mission-control/MissionControl.vue'),
-      },
-      {
-        // Read-only, and it composes what the authorities answer rather than
-        // owning anything. It was removed with the routes whose subjects moved
-        // to other components, but for a different reason — it read the
-        // product database — and that reason no longer describes it.
-        path: 'mission-control',
-        name: 'mission-control',
-        component: () => import('@/modules/mission-control/MissionControl.vue'),
+        component: () => import('@/modules/control-plane/ControlPlane.vue'),
       },
       {
         path: 'host-services',

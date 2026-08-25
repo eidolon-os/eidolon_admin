@@ -12,6 +12,7 @@ import httpx
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
+    DecideEnrollment,
     EnrollmentProposalPage,
     EnrollmentProposalState,
     EnrollmentRecoveryProjection,
@@ -39,7 +40,11 @@ from .contracts import (
     DeviceRemovalResult,
     KernelMount,
     KernelMountPage,
+    OperatorDeviceAdmissionRequest,
+    OperatorDeviceAdmissionResult,
+    OperatorOwnerDeviceInventory,
     RemovalCondition,
+    SourceStatus,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
     WorkflowStep,
@@ -52,6 +57,22 @@ from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
 from .hub_credentials import HubAdminCredentialIssuer
 from ...lifecycle_workflow.protocol import RemovalOwnerAuthorizationContext
+
+
+_OPERATOR_ENROLLMENT_STATES = (
+    "pending_review",
+    "approved_awaiting_handoff",
+    "grant_delivered",
+    "grant_acknowledged",
+    "rejected",
+    "expired",
+    "canceled",
+    "claim_revoked",
+)
+
+
+def _operator_child_request_id(request_id: str, step: str) -> str:
+    return f"admin:{request_id}:{step}"
 
 
 class ControlPlaneService:
@@ -207,6 +228,296 @@ class ControlPlaneService:
         close = getattr(self.removal_intents, "close", None)
         if close is not None:
             close()
+
+    async def operator_owner_inventory(
+        self, *, owner_id: str, hub_authorization: str
+    ) -> OperatorOwnerDeviceInventory:
+        """Compose current Hub Claims and Kernel mounts for the Web page."""
+
+        async def measured(call):
+            started = time.perf_counter()
+            try:
+                value = await call
+                return value, SourceStatus(
+                    state="ok", latency_ms=(time.perf_counter() - started) * 1000
+                )
+            except AuthorityFailure as exc:
+                return None, SourceStatus(
+                    state="error",
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                    failure=exc.to_wire(),
+                )
+
+        (claim_page, hub_status), (mount_page, kernel_status) = await asyncio.gather(
+            measured(
+                self.hub.list_authorized_claims(
+                    authorization=hub_authorization,
+                )
+            ),
+            measured(self.kernel.list_mounts(owner_id=owner_id)),
+        )
+        if hub_status.failure and hub_status.failure.kind in {
+            "unauthorized",
+            "forbidden",
+        }:
+            failure = hub_status.failure
+            raise AuthorityFailure(
+                "hub",
+                failure.kind,
+                failure.detail,
+                401 if failure.kind == "unauthorized" else 403,
+                failure.upstream_status,
+                code=failure.code,
+            )
+        claims = tuple(
+            claim
+            for claim in (claim_page.items if claim_page is not None else ())
+            if str(claim.business_owner_id) == owner_id
+        )
+        return OperatorOwnerDeviceInventory(
+            owner_id=owner_id,
+            degraded=claim_page is None or mount_page is None,
+            hub=hub_status,
+            kernel=kernel_status,
+            claims=claims,
+            mounts=mount_page.mounts if mount_page is not None else (),
+        )
+
+    async def admit_operator_device(
+        self,
+        payload: OperatorDeviceAdmissionRequest,
+        *,
+        hub_authorization: str,
+    ) -> OperatorDeviceAdmissionResult:
+        """Approve through current Hub Admission, then converge Kernel state."""
+
+        page = await self.hub.list_authorized_enrollments(
+            authorization=hub_authorization,
+            states=_OPERATOR_ENROLLMENT_STATES,
+        )
+        matches = tuple(
+            item
+            for item in page.items
+            if item.proposal.device_instance_candidate_id == payload.device_id
+        )
+        if not matches:
+            raise AuthorityFailure(
+                "hub", "not_found", "Hub has no Enrollment for this device", 404
+            )
+        active = tuple(
+            item
+            for item in matches
+            if item.proposal.state
+            in {
+                EnrollmentProposalState.PENDING_REVIEW,
+                EnrollmentProposalState.APPROVED_AWAITING_HANDOFF,
+                EnrollmentProposalState.GRANT_DELIVERED,
+                EnrollmentProposalState.GRANT_ACKNOWLEDGED,
+            }
+        )
+        if len(active) != 1:
+            raise AuthorityFailure(
+                "hub",
+                "conflict",
+                "Hub Enrollment is terminal or ambiguous for this device",
+                409,
+            )
+        recovery = active[0]
+        proposal = recovery.proposal
+        hub_request_id = _operator_child_request_id(payload.request_id, "hub-approve")
+        hub_step_state = "replayed"
+        if proposal.state == EnrollmentProposalState.PENDING_REVIEW:
+            await self.hub.decide_enrollment(
+                command=DecideEnrollment(
+                    enrollment_id=proposal.enrollment_id,
+                    expected_proposal_revision=proposal.proposal_revision,
+                    decision="approve",
+                    target_owner_domain_id=proposal.requested_owner_domain_id,
+                    target_business_owner_id=payload.owner_id,
+                    reviewed_manifest_ref=proposal.manifest_ref,
+                ),
+                command_id=hub_request_id,
+                correlation_id=payload.request_id,
+                authorization=hub_authorization,
+            )
+            recovery = await self.hub.get_enrollment_recovery(
+                enrollment_id=proposal.enrollment_id,
+                authorization=hub_authorization,
+            )
+            hub_step_state = "committed"
+        decision = recovery.approval_decision
+        if (
+            decision is None
+            or decision.decision != "approve"
+            or str(decision.target_business_owner_id) != str(payload.owner_id)
+        ):
+            raise AuthorityFailure(
+                "hub",
+                "conflict",
+                "Hub Enrollment was not approved for this Owner",
+                409,
+            )
+
+        mount_request_id = _operator_child_request_id(payload.request_id, "kernel-mount")
+        attach_request_id = _operator_child_request_id(payload.request_id, "kernel-attach")
+        steps = [
+            WorkflowStep(
+                name="hub_approval",
+                state=hub_step_state,
+                request_id=hub_request_id,
+            )
+        ]
+        mounted = await self._owner_mount(
+            owner_id=str(payload.owner_id),
+            device_id=payload.device_id,
+            active_only=False,
+        )
+        if mounted is not None and mounted.active:
+            steps.append(
+                WorkflowStep(
+                    name="kernel_mount", state="replayed", revision=mounted.revision
+                )
+            )
+        else:
+            try:
+                result = await self.kernel.mount(
+                    owner_id=str(payload.owner_id),
+                    device_id=payload.device_id,
+                    request_id=mount_request_id,
+                    expected_revision=payload.expected_mount_revision,
+                    replace_existing=payload.replace_existing_mount,
+                )
+                mounted = result.mount
+                steps.append(
+                    WorkflowStep(
+                        name="kernel_mount",
+                        state="replayed" if result.replayed else "committed",
+                        request_id=mount_request_id,
+                        revision=mounted.revision,
+                    )
+                )
+            except AuthorityFailure as exc:
+                waiting = exc
+                retryable = exc.retryable or exc.kind in {
+                    "not_found",
+                    "unavailable",
+                    "upstream_failure",
+                }
+                if exc.kind == "not_found":
+                    waiting = AuthorityFailure(
+                        "kernel",
+                        "unavailable",
+                        "Hub has approved the Enrollment; waiting for the device to acknowledge its Claim",
+                        503,
+                        exc.upstream_status,
+                        True,
+                    )
+                steps.extend(
+                    (
+                        WorkflowStep(
+                            name="kernel_mount",
+                            state="failed",
+                            request_id=mount_request_id,
+                            failure=waiting.to_wire(),
+                        ),
+                        WorkflowStep(
+                            name="companion_attachment",
+                            state=(
+                                "not_attempted"
+                                if payload.companion_id is not None
+                                else "not_requested"
+                            ),
+                            request_id=(
+                                attach_request_id
+                                if payload.companion_id is not None
+                                else None
+                            ),
+                        ),
+                    )
+                )
+                return OperatorDeviceAdmissionResult(
+                    request_id=payload.request_id,
+                    outcome="retry_required" if retryable else "blocked",
+                    completed_stage="hub_approved",
+                    recovery=(
+                        "retry-forward-same-request-id"
+                        if retryable
+                        else "operator-action-required"
+                    ),
+                    steps=tuple(steps),
+                )
+
+        if payload.companion_id is None:
+            steps.append(
+                WorkflowStep(name="companion_attachment", state="not_requested")
+            )
+            return OperatorDeviceAdmissionResult(
+                request_id=payload.request_id,
+                outcome="completed",
+                completed_stage="kernel_mounted",
+                steps=tuple(steps),
+                mount=mounted,
+            )
+        if mounted.attached_companion_id == payload.companion_id:
+            steps.append(
+                WorkflowStep(
+                    name="companion_attachment",
+                    state="replayed",
+                    revision=mounted.revision,
+                )
+            )
+            return OperatorDeviceAdmissionResult(
+                request_id=payload.request_id,
+                outcome="completed",
+                completed_stage="companion_attached",
+                steps=tuple(steps),
+                mount=mounted,
+            )
+        try:
+            attached = await self.kernel.attach(
+                owner_id=str(payload.owner_id),
+                device_id=payload.device_id,
+                companion_id=payload.companion_id,
+                request_id=attach_request_id,
+                expected_revision=mounted.revision,
+            )
+        except AuthorityFailure as exc:
+            steps.append(
+                WorkflowStep(
+                    name="companion_attachment",
+                    state="failed",
+                    request_id=attach_request_id,
+                    revision=mounted.revision,
+                    failure=exc.to_wire(),
+                )
+            )
+            return OperatorDeviceAdmissionResult(
+                request_id=payload.request_id,
+                outcome="retry_required" if exc.retryable else "blocked",
+                completed_stage="kernel_mounted",
+                recovery=(
+                    "retry-forward-same-request-id"
+                    if exc.retryable
+                    else "operator-action-required"
+                ),
+                steps=tuple(steps),
+                mount=mounted,
+            )
+        steps.append(
+            WorkflowStep(
+                name="companion_attachment",
+                state="replayed" if attached.replayed else "committed",
+                request_id=attach_request_id,
+                revision=attached.mount.revision,
+            )
+        )
+        return OperatorDeviceAdmissionResult(
+            request_id=payload.request_id,
+            outcome="completed",
+            completed_stage="companion_attached",
+            steps=tuple(steps),
+            mount=attached.mount,
+        )
 
     async def list_enrollment_recovery(
         self, *, payload: ControllerEnrollmentQuery
