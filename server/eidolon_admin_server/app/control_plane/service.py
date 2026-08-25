@@ -672,6 +672,28 @@ class ControlPlaneService:
             )
         return result.mount
 
+    async def release_device(
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        request_id: str,
+        expected_revision: int,
+    ) -> None:
+        """Let a device stop answering as anyone.
+
+        The same detach the Owner can ask for by hand, reached by the archive
+        workflow so that putting an Eidolon away does not leave a speaker bound
+        to something the runtime will refuse to start.
+        """
+
+        await self.kernel.detach(
+            owner_id=owner_id,
+            device_id=device_id,
+            request_id=request_id,
+            expected_revision=expected_revision,
+        )
+
     async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
         """Return Kernel-owned membership without requiring Hub operator authority.
 

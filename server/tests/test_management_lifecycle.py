@@ -16,6 +16,7 @@ fact. Both are asserted in ``eidolon_data``.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -40,6 +41,30 @@ _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 
 def _lifecycle_path(companion_id: str = "companion-a") -> str:
     return f"/api/management/v1/companions/{companion_id}/lifecycle"
+
+
+class _Bodies:
+    """Kernel's mounts, and letting one go."""
+
+    def __init__(self, *attached: str) -> None:
+        self.mounts = [
+            SimpleNamespace(
+                device_id=device_id,
+                attached_companion_id="companion-a",
+                revision=index + 3,
+                active=True,
+            )
+            for index, device_id in enumerate(attached)
+        ]
+        self.released: list[tuple[str, str, int]] = []
+
+    async def list_owner_device_mounts(self, owner_id: str):
+        return SimpleNamespace(mounts=tuple(self.mounts))
+
+    async def release_device(
+        self, *, owner_id: str, device_id: str, request_id: str, expected_revision: int
+    ) -> None:
+        self.released.append((device_id, request_id, expected_revision))
 
 
 class _Authority:
@@ -95,6 +120,7 @@ async def test_putting_one_away_asks_for_where_it_should_end_up() -> None:
         replacement_companion_id="companion-b",
         expected_revision=4,
         lifecycle=authority,
+        bodies=_Bodies(),
     )
 
     assert authority.calls == [
@@ -137,7 +163,10 @@ async def test_the_host_never_picks_who_answers_instead() -> None:
     authority = _Authority(refuse="default_replacement_required")
     with pytest.raises(AuthorityFailure) as refused:
         await put_away(
-            owner_id="owner-1", companion_id="companion-a", lifecycle=authority
+            owner_id="owner-1",
+            companion_id="companion-a",
+            lifecycle=authority,
+            bodies=_Bodies(),
         )
 
     assert refused.value.code == "default_replacement_required"
@@ -372,3 +401,88 @@ async def test_a_refusal_without_a_domain_code_still_says_which_refusal_it_is(
         # distinction a single sentence could never make.
         "retryable": True,
     }
+
+
+async def test_putting_one_away_releases_the_devices_that_answered_as_it() -> None:
+    """The step §8.4 called Body handling, done where it can be.
+
+    A speaker attached to a Companion that has been put away stops working with
+    no explanation: the runtime refuses to start a session for a Companion that
+    is not active, which is right, and leaves a person with a mute device and
+    nothing on screen. So the mounts go first, and the answer says which.
+
+    Before the state moves, not after — a device pointing at an archived
+    Companion is exactly the broken state — and nothing can re-attach behind it,
+    because Kernel refuses a Companion that is not active.
+    """
+
+    bodies = _Bodies("speaker-living-room", "speaker-study")
+    authority = _Authority()
+
+    view = await put_away(
+        owner_id="owner-1",
+        companion_id="companion-a",
+        lifecycle=authority,
+        bodies=bodies,
+    )
+
+    assert [device for device, _request, _revision in bodies.released] == [
+        "speaker-living-room",
+        "speaker-study",
+    ]
+    # The revision each mount was just read at, so two people archiving at once
+    # do not both write it; and a deterministic request id, so a retry replays
+    # the same mutation instead of making a second one.
+    assert [revision for _device, _request, revision in bodies.released] == [3, 4]
+    assert {request for _device, request, _revision in bodies.released} == {
+        "companion-archive-companion-a-speaker-living-room",
+        "companion-archive-companion-a-speaker-study",
+    }
+    assert view.released_devices == ("speaker-living-room", "speaker-study")
+
+
+async def test_a_device_answering_as_someone_else_is_left_alone() -> None:
+    """Only the ones that answer as *this* Eidolon, and only live mounts."""
+
+    bodies = _Bodies("speaker-living-room")
+    bodies.mounts[0].attached_companion_id = "companion-b"
+    bodies.mounts.append(
+        SimpleNamespace(
+            device_id="speaker-unplugged",
+            attached_companion_id="companion-a",
+            revision=9,
+            active=False,
+        )
+    )
+
+    view = await put_away(
+        owner_id="owner-1",
+        companion_id="companion-a",
+        lifecycle=_Authority(),
+        bodies=bodies,
+    )
+
+    assert bodies.released == []
+    assert view.released_devices == ()
+
+
+async def test_a_device_is_not_handed_to_the_successor_who_answers_instead() -> None:
+    """Naming who answers unaddressed messages is not a decision about hardware.
+
+    Moving a speaker to a different Eidolon on that inference is the kind of
+    helpfulness that makes a system feel out of control. "Answers as nobody" is
+    a state this Host already treats as ordinary.
+    """
+
+    bodies = _Bodies("speaker-living-room")
+
+    await put_away(
+        owner_id="owner-1",
+        companion_id="companion-a",
+        replacement_companion_id="companion-b",
+        lifecycle=_Authority(),
+        bodies=bodies,
+    )
+
+    assert [device for device, _r, _v in bodies.released] == ["speaker-living-room"]
+    assert not hasattr(bodies, "attached"), "nothing was re-attached anywhere"

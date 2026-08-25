@@ -69,6 +69,7 @@ export interface CompanionLifecycleView {
   contract_version?: "1"
   default_companion_id?: string | null
   lifecycle_state: string
+  released_devices?: Array<string>
   revision: number
 }
 

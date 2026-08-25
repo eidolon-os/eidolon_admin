@@ -454,6 +454,11 @@ class CompanionLifecycleView(BaseModel):
     lifecycle_state: str = Field(min_length=1, max_length=32)
     revision: int = Field(ge=1)
     default_companion_id: str | None = Field(default=None, max_length=64)
+    #: Devices that answered as this Eidolon and now answer as nobody. Putting
+    #: one away releases them, because the runtime refuses to start a session
+    #: for a Companion that is not active — a speaker left bound to it would
+    #: simply stop working, with nothing on screen about why.
+    released_devices: list[str] = Field(default_factory=list)
 
 
 class CompanionCreateRequest(BaseModel):
@@ -1720,6 +1725,7 @@ def register_management_routes(
             lifecycle_state=answer["lifecycle_state"],
             revision=answer["revision"],
             default_companion_id=answer["default_companion_id"],
+            released_devices=list(answer.get("released_devices", ())),
         )
 
     @router.get("/memory/library", response_model=MemoryLibraryView)

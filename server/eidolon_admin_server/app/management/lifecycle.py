@@ -29,12 +29,27 @@ should answer instead?" rather than showing them a conflict.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
 from eidolon_sdk.biz.contracts.companion import LIFECYCLE_ACTIVE, LIFECYCLE_ARCHIVED
 
 from eidolon_admin_server.app.control_plane.contracts import CompanionLifecycleResult
+
+
+@runtime_checkable
+class CompanionBodyRegistrar(Protocol):
+    """The mounts this Owner has, and letting one go.
+
+    Kernel's, not Data's: which device answers as which Eidolon is a fact about
+    the Host's body mesh, and this layer only carries a decision to it.
+    """
+
+    async def list_owner_device_mounts(self, owner_id: str): ...
+
+    async def release_device(
+        self, *, owner_id: str, device_id: str, request_id: str, expected_revision: int
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -65,6 +80,10 @@ class CompanionLifecycleView:
     lifecycle_state: str
     revision: int
     default_companion_id: str | None
+    #: Devices that answered as this Eidolon and no longer answer as anyone.
+    #: Named so a screen can say so: a speaker that went quiet without a
+    #: sentence is indistinguishable from a broken one.
+    released_devices: tuple[str, ...] = ()
 
 
 async def put_away(
@@ -74,6 +93,7 @@ async def put_away(
     replacement_companion_id: str | None = None,
     expected_revision: int | None = None,
     lifecycle: CompanionLifecycleWriter,
+    bodies: CompanionBodyRegistrar,
 ) -> CompanionLifecycleView:
     """Archive one of this Owner's Eidolons.
 
@@ -83,7 +103,14 @@ async def put_away(
     can ask the person the question instead of guessing at the answer.
     """
 
-    return _view(
+    # Before the state moves, not after: a device attached to an archived
+    # Companion is exactly the broken state this avoids, and nothing can attach
+    # to one afterwards — Kernel refuses a Companion that is not active, so the
+    # window closes itself rather than needing a second pass.
+    released = await _release_bodies(
+        owner_id=owner_id, companion_id=companion_id, bodies=bodies
+    )
+    view = _view(
         await lifecycle.set_companion_lifecycle(
             owner_id,
             companion_id=companion_id,
@@ -92,6 +119,39 @@ async def put_away(
             replacement_companion_id=replacement_companion_id,
         )
     )
+    return replace(view, released_devices=released)
+
+
+async def _release_bodies(
+    *,
+    owner_id: str,
+    companion_id: str,
+    bodies: CompanionBodyRegistrar,
+) -> tuple[str, ...]:
+    """Let go of every device that answers as this Eidolon.
+
+    Each release carries the revision the mount was just read at, so two people
+    archiving at once do not both write it, and a deterministic request id so a
+    retry replays the same mutation instead of making a second one.
+
+    A device that is no longer there between the read and the release is not an
+    error — it is the same end state — so the refusal is left to the authority
+    and this list says what was actually let go.
+    """
+
+    page = await bodies.list_owner_device_mounts(owner_id)
+    released: list[str] = []
+    for mount in page.mounts:
+        if mount.attached_companion_id != companion_id or not mount.active:
+            continue
+        await bodies.release_device(
+            owner_id=owner_id,
+            device_id=mount.device_id,
+            request_id=f"companion-archive-{companion_id}-{mount.device_id}",
+            expected_revision=mount.revision,
+        )
+        released.append(mount.device_id)
+    return tuple(released)
 
 
 async def bring_back(

@@ -80,6 +80,10 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # the Owner's default pointer, because retiring the Companion that answers
     # hands that role over in the same transaction.
     "CompanionLifecycleWriter": (CompanionLifecycleWriter, "workspace"),
+    # Which device answers as which Eidolon is Kernel's, and the service itself
+    # is what holds that client — so the port names the service rather than one
+    # of its authority attributes.
+    "CompanionBodyRegistrar": (None, None),
     # Naming: an Eidolon is Data's, and an Owner is written where the Owner
     # aggregate is written.
     "CompanionNamer": (CompanionNamer, "data"),

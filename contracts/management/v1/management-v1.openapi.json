@@ -375,6 +375,13 @@
             "title": "Lifecycle State",
             "type": "string"
           },
+          "released_devices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Released Devices",
+            "type": "array"
+          },
           "revision": {
             "minimum": 1.0,
             "title": "Revision",

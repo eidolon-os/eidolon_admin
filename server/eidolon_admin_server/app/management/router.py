@@ -263,6 +263,8 @@ class CompanionLifecycleResponseInternal(BaseModel):
     #: Who answers for this Owner now, because archiving the one that did hands
     #: the role over in the same transaction.
     default_companion_id: str | None = Field(default=None, max_length=64)
+    #: Devices that answered as this Eidolon and now answer as nobody.
+    released_devices: list[str] = Field(default_factory=list)
 
 
 class MemoryRoomInternal(BaseModel):
@@ -1322,6 +1324,9 @@ async def put_companion_lifecycle(
             replacement_companion_id=payload.replacement_companion_id,
             expected_revision=payload.expected_revision,
             lifecycle=request.app.state.control_plane.workspace,
+            # Kernel's, through the service that already holds that client: which
+            # device answers as which Eidolon is a fact about the body mesh.
+            bodies=request.app.state.control_plane,
         )
     else:
         view = await bring_back(
@@ -1335,6 +1340,7 @@ async def put_companion_lifecycle(
         lifecycle_state=view.lifecycle_state,
         revision=view.revision,
         default_companion_id=view.default_companion_id,
+        released_devices=list(view.released_devices),
     )
 
 
