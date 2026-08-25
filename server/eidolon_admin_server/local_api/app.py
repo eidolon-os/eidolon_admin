@@ -561,79 +561,6 @@ def create_app(
             ) from exc
 
     @app.get(
-        "/api/local/v1/devices",
-        response_model=LocalDeviceInventoryView,
-    )
-    async def get_devices(
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalDeviceInventoryView:
-        return await owner_device_inventory(authorization)
-
-    @app.get(
-        "/api/local/v1/devices/{device_id}",
-        response_model=LocalDeviceView,
-    )
-    async def get_device(
-        device_id: str,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalDeviceView:
-        inventory = await owner_device_inventory(authorization)
-        device = next(
-            (item for item in inventory.devices if item.device_id == device_id),
-            None,
-        )
-        if device is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Device is not mounted")
-        return device
-
-    @app.put(
-        "/api/local/v1/devices/{device_id}/companion",
-        response_model=LocalDeviceView,
-    )
-    async def set_device_companion(
-        device_id: Annotated[
-            str,
-            Path(
-                min_length=1,
-                max_length=128,
-                pattern=r"^[A-Za-z0-9._:-]+$",
-            ),
-        ],
-        payload: LocalCompanionAttachmentRequest,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalDeviceView:
-        """Say which Companion answers through this device, or that none does.
-
-        A device can be mounted and answer as nobody — that is what it is
-        between being claimed and being put to use — so this is the other half
-        of adding one, and the only way back from it. Kernel validates the
-        Companion against its own authority; the revision is the Owner's
-        compare-and-swap over what this phone was looking at.
-        """
-
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, _controller_id = _owner_principal(principal)
-        inventory = await owner_device_inventory(authorization)
-        if all(item.device_id != device_id for item in inventory.devices):
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Device is not mounted")
-        try:
-            await devices.set_companion(
-                payload=payload.to_admin(owner_id=owner_id, device_id=device_id)
-            )
-        except DeviceInventoryError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        refreshed = await owner_device_inventory(authorization)
-        device = next(
-            (item for item in refreshed.devices if item.device_id == device_id),
-            None,
-        )
-        if device is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Device stopped being mounted"
-            )
-        return device
-
-    @app.get(
         "/api/local/v1/device-onboarding/target",
         response_model=LocalDeviceOnboardingTarget,
     )
@@ -872,53 +799,6 @@ def create_app(
         if claim is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Device does not exist")
         return owner_id, controller_id, session, claim.device_ref
-
-    @app.post(
-        "/api/local/v1/devices/{device_id}/removal",
-        response_model=LocalDeviceRemovalProgress,
-    )
-    async def remove_device(
-        device_id: Annotated[
-            str,
-            Path(
-                min_length=1,
-                max_length=128,
-                pattern=r"^[A-Za-z0-9._:-]+$",
-            ),
-        ],
-        payload: LocalDeviceRemovalRequest,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> LocalDeviceRemovalProgress:
-        """Take a device off this Host at the Owner's request.
-
-        Removal is what makes a device addable again: the Hub refuses to
-        enroll one it already holds, so a phone that lost its own credential
-        has no way back until its grant here is withdrawn.
-        """
-
-        owner_id, controller_id, session, device_ref = await _owned_device(
-            device_id, authorization
-        )
-        try:
-            result = await device_admission.remove(
-                payload=payload.to_admin(
-                    device_id=device_id,
-                    owner_id=owner_id,
-                    controller_id=controller_id,
-                ),
-                controller_reset_epoch=session.reset_epoch,
-                authorization_expires_at=session.expires_at,
-                target_device_ref=device_ref,
-            )
-            return device_removal_progress(
-                owner_id=owner_id,
-                device_id=device_id,
-                result=result,
-            )
-        except DeviceAdmissionError as exc:
-            raise HTTPException(
-                exc.status_code, device_admission_detail(exc)
-            ) from exc
 
     @app.get("/api/local/v1/system/state")
     async def system_state() -> dict:

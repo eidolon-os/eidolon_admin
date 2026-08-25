@@ -50,6 +50,9 @@ def _descriptor() -> OwnerDomainDescriptor:
         owner_domain_id=_OWNER_DOMAIN,
         owner_domain_generation=3,
         directory_revision=2,
+        descriptor_uri=(
+            "https://eidolon-hub.local:9443/api/device-onboarding/v1/descriptor"
+        ),
         trust_root_refs=("sha256:" + "b" * 64,),
         endpoints=(
             AuthorityEndpoint(
@@ -246,33 +249,31 @@ async def test_a_device_can_be_bound_to_a_companion_and_released(
         transport=transport, base_url="https://local.test"
     ) as client:
         headers = await _headers(client)
-        before = await client.get("/api/local/v1/devices", headers=headers)
+        before = await client.get("/api/management/v1/devices", headers=headers)
         bound = await client.put(
-            f"/api/local/v1/devices/{_DEVICE}/companion",
+            f"/api/management/v1/devices/{_DEVICE}/companion",
             headers=headers,
             json={
-                "contract_version": "1",
                 "request_id": "attach-1",
                 "companion_id": "c_01",
                 "expected_revision": 1,
             },
         )
         released = await client.put(
-            f"/api/local/v1/devices/{_DEVICE}/companion",
+            f"/api/management/v1/devices/{_DEVICE}/companion",
             headers=headers,
             json={
-                "contract_version": "1",
                 "request_id": "detach-1",
                 "companion_id": None,
                 "expected_revision": 2,
             },
         )
 
-    assert before.json()["devices"][0]["mount"]["attached_companion_id"] is None
+    assert before.json()["devices"][0]["answers_as_companion_id"] is None
     assert bound.status_code == 200
-    assert bound.json()["mount"]["attached_companion_id"] == "c_01"
+    assert bound.json()["answers_as_companion_id"] == "c_01"
     assert released.status_code == 200
-    assert released.json()["mount"]["attached_companion_id"] is None
+    assert released.json()["answers_as_companion_id"] is None
 
     # One command, two values — and the Owner's compare-and-swap travels with it.
     assert [command.companion_id for command in devices.commands] == ["c_01", None]
@@ -291,19 +292,17 @@ async def test_binding_a_device_this_owner_does_not_hold_is_not_found(
     ) as client:
         headers = await _headers(client)
         anonymous = await client.put(
-            f"/api/local/v1/devices/{_DEVICE}/companion",
+            f"/api/management/v1/devices/{_DEVICE}/companion",
             json={
-                "contract_version": "1",
                 "request_id": "attach-1",
                 "companion_id": "c_01",
                 "expected_revision": 1,
             },
         )
         missing = await client.put(
-            "/api/local/v1/devices/device-instance-someone-elses/companion",
+            "/api/management/v1/devices/device-instance-someone-elses/companion",
             headers=headers,
             json={
-                "contract_version": "1",
                 "request_id": "attach-2",
                 "companion_id": "c_01",
                 "expected_revision": 1,
@@ -328,10 +327,9 @@ async def test_a_stale_revision_is_the_owner_s_refusal_not_a_silent_win(
     ) as client:
         headers = await _headers(client)
         stale = await client.put(
-            f"/api/local/v1/devices/{_DEVICE}/companion",
+            f"/api/management/v1/devices/{_DEVICE}/companion",
             headers=headers,
             json={
-                "contract_version": "1",
                 "request_id": "attach-1",
                 "companion_id": "c_01",
                 "expected_revision": 1,

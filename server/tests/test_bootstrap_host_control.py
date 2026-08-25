@@ -1015,7 +1015,7 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             assert runtime_before_workspace.status_code == 409
             assert runtime_client.calls == 0
             devices_before_workspace = await client.get(
-                "/api/local/v1/devices",
+                "/api/management/v1/devices",
                 headers=workspace_headers,
             )
             assert devices_before_workspace.status_code == 409
@@ -1070,23 +1070,15 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             assert runtime.json()["primary_companion"]["display_name"] == "小忆"
             assert runtime_client.calls == 1
             devices = await client.get(
-                "/api/local/v1/devices",
+                "/api/management/v1/devices",
                 headers=workspace_headers,
             )
             # Claims are never inferred from Kernel mounts. Without an explicit
             # Owner Domain target the Local API fails closed.
             assert devices.status_code == 503
             assert devices_client.calls == []
-            device = await client.get(
-                "/api/local/v1/devices/device-local-1",
-                headers=workspace_headers,
-            )
-            assert device.status_code == 503
-            removed = await client.get(
-                "/api/local/v1/devices/device-local-removed",
-                headers=workspace_headers,
-            )
-            assert removed.status_code == 503
+            # The per-device reads went with the legacy surface: nothing called
+            # them, and the inventory carries the same facts.
 
             restarted_app = create_app(
                 LocalApiSettings(bootstrap=settings),
@@ -1458,7 +1450,7 @@ async def test_a_directory_that_cannot_be_reached_costs_names_and_nothing_else(
         _runtime_client,
         devices_client,
     ):
-        devices = await client.get("/api/local/v1/devices", headers=headers)
+        devices = await client.get("/api/management/v1/devices", headers=headers)
         assert devices.status_code == 503
 
 
@@ -1467,10 +1459,16 @@ async def test_an_owner_names_a_device_and_the_list_says_so(
     tmp_path: Path,
     short_runtime_dir: Path,
 ) -> None:
-    """A device names itself when it enrols, and never gets to be renamed.
+    """A device names itself when it enrols, and there is no route to rename it.
 
-    An ESP32 reports its board, so two of the same one arrive as the same
-    word. The Owner is the only one who knows which is in the living room.
+    The plan declares ``PATCH /devices/{id}`` for exactly this, and the answer
+    is still no: an ESP32 reports its board, so two of the same one arrive as
+    the same word, and letting an Owner overwrite that would put the only fact
+    the Host actually knows behind a nickname it cannot verify. Telling two
+    apart is what the identifier tail in the list is for.
+
+    It reads as absent rather than as "method not allowed" now, because the
+    management surface has no per-device resource at all.
     """
 
     async with _local_api_session(tmp_path, short_runtime_dir) as (
@@ -1480,12 +1478,12 @@ async def test_an_owner_names_a_device_and_the_list_says_so(
         devices_client,
     ):
         renamed = await client.patch(
-            "/api/local/v1/devices/device-local-1",
+            "/api/management/v1/devices/device-local-1",
             json={"contract_version": "1", "display_name": "  书房的 Box-3  "},
             headers=headers,
         )
 
-        assert renamed.status_code == 405
+        assert renamed.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -1500,15 +1498,17 @@ async def test_a_device_that_is_not_this_owners_cannot_be_renamed(
         devices_client,
     ):
         refused = await client.patch(
-            "/api/local/v1/devices/device-of-someone-else",
+            "/api/management/v1/devices/device-of-someone-else",
             json={"contract_version": "1", "display_name": "我的"},
             headers=headers,
         )
         blank = await client.patch(
-            "/api/local/v1/devices/device-local-1",
+            "/api/management/v1/devices/device-local-1",
             json={"contract_version": "1", "display_name": "   "},
             headers=headers,
         )
 
-        assert refused.status_code == 405
-        assert blank.status_code == 405
+        # The same answer whoever it belongs to — if the two differed, the pair
+        # would say whether a device exists.
+        assert refused.status_code == 404
+        assert blank.status_code == 404
