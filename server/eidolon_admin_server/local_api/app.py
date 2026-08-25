@@ -47,6 +47,7 @@ from .management.backend import AdminManagementClient
 from .management.router import (
     ControllerDirectoryPort,
     ManagementBackendPort,
+    refuse,
     register_management_routes,
 )
 from ..app.control_plane.contracts import AdmissionDecisionWorkflowResult
@@ -927,13 +928,35 @@ def create_app(
 
         The public management surface never accepts an ``owner_id``; it is
         derived here, once, from a session Bootstrap has just re-validated.
+
+        Also the funnel every management request passes through *before* the
+        surface's own routes, which makes it the place to put the refusals into
+        the surface's envelope. Two of them arrive here as plain HTTP: an expired
+        session from the shared Controller check, and a Host that has no Owner
+        yet — and a client that reads only the status cannot tell the second from
+        a lost race, because both are 409. The domain code is what separates
+        them, and it is carried rather than guessed.
         """
-        principal, _session = await authenticated_controller(authorization)
+        try:
+            principal, _session = await authenticated_controller(authorization)
+        except HTTPException as exc:
+            raise refuse(
+                exc.status_code,
+                str(exc.detail),
+                code="controller_session_invalid"
+                if exc.status_code == status.HTTP_401_UNAUTHORIZED
+                else None,
+            ) from exc
         owner_id = principal.get("owner_id")
         if not isinstance(owner_id, str) or not owner_id:
-            raise HTTPException(
+            raise refuse(
                 status.HTTP_409_CONFLICT,
                 "Host Workspace is not initialized",
+                code="host_not_provisioned",
+                # Not a conflict a client can resolve by re-reading: nothing has
+                # been set up yet, and the phone's move is to finish setup rather
+                # than to look again or retry.
+                kind="not_configured",
             )
         return owner_id
 

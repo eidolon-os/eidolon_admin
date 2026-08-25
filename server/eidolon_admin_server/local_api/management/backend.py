@@ -11,29 +11,68 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import httpx
+from pydantic import ValidationError
 
-from eidolon_admin_server.local_api.management.router import ManagementBackendError
+from eidolon_sdk.biz.contracts.refusal import Refusal
+
+from eidolon_admin_server.local_api.management.router import (
+    ManagementBackendError,
+    refusal_for_status,
+)
 
 
-def _refusal_code(response: httpx.Response) -> str | None:
-    """The authority's word for this refusal, if the other side gave one.
+def _relayed_refusal(response: httpx.Response) -> Refusal:
+    """The authority's own refusal, relayed rather than reinterpreted.
 
-    Deliberately forgiving: any shape but the one it knows answers ``None``. A
-    boundary that raised while relaying an error would replace a refusal a
-    client could act on with a failure nobody can.
+    This function is the fix for the hop that lost the answer. It used to read
+    one field — ``code`` — and throw the rest away, so the sentence that
+    identified the fault ("Admin memory service credential is not configured")
+    was constructed by the authority, serialised, received *here*, and dropped,
+    and every screen downstream said 被拒绝 with nothing after it.
+
+    Deliberately forgiving about shape: a body this cannot parse becomes a
+    refusal derived from the status rather than an exception. A boundary that
+    raised while relaying an error would replace a refusal a client could act on
+    with a failure nobody can.
     """
 
     try:
         payload = response.json()
     except ValueError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    detail = payload.get("detail")
+        payload = None
+    detail = payload.get("detail") if isinstance(payload, dict) else None
     if isinstance(detail, dict):
+        if isinstance(detail.get("refusal"), dict):
+            try:
+                return Refusal.model_validate(detail["refusal"])
+            except ValidationError:
+                # A refusal we cannot parse is still a refusal. Falling through
+                # loses the wording, never the fact.
+                pass
+        reason = detail.get("detail") or detail.get("message") or ""
         code = detail.get("code")
-        return str(code)[:64] if code else None
-    return None
+    else:
+        reason = detail if isinstance(detail, str) else ""
+        code = None
+    return refusal_for_status(
+        response.status_code,
+        str(reason),
+        str(code)[:64] if code else None,
+    )
+
+
+def _outside_contract() -> Refusal:
+    """An answer this boundary cannot read is not the client's problem.
+
+    ``upstream`` rather than ``invalid``: nothing about the request produced it
+    and nothing about the request will fix it.
+    """
+
+    return Refusal(
+        kind="upstream",
+        reason="this Host answered outside its own contract",
+        retryable=True,
+    )
 
 
 class AdminManagementClient:
@@ -132,12 +171,13 @@ class AdminManagementClient:
             headers={"If-None-Match": known_etag} if known_etag else None,
         )
         if response.status_code not in {200, 204, 304}:
+            refusal = _relayed_refusal(response)
             raise ManagementBackendError(
-                "Host management backend refused this request",
+                refusal.reason or "Host management backend refused this request",
                 status_code=response.status_code
                 if 400 <= response.status_code < 500
                 else 503,
-                code=_refusal_code(response),
+                refusal=refusal,
             )
         return (
             response.status_code,
@@ -405,7 +445,15 @@ class AdminManagementClient:
         """
         if not self._service_token:
             raise ManagementBackendError(
-                "Host management backend credential is not configured", status_code=503
+                "Host management backend credential is not configured",
+                status_code=503,
+                # Named as configuration, not as the backend being down. They are
+                # the same status and different problems, and telling a person to
+                # try again for one of them is telling them to wait forever.
+                refusal=Refusal(
+                    kind="not_configured",
+                    reason="this Host is not configured to answer management requests",
+                ),
             )
         try:
             return await self._client.request(
@@ -422,7 +470,13 @@ class AdminManagementClient:
             )
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
             raise ManagementBackendError(
-                "Host management backend is unreachable", status_code=503
+                "Host management backend is unreachable",
+                status_code=503,
+                refusal=Refusal(
+                    kind="not_running",
+                    reason="this Host's management service is not answering",
+                    retryable=True,
+                ),
             ) from exc
 
     async def _call(
@@ -439,26 +493,32 @@ class AdminManagementClient:
             # arrive intact — it is the one a client must react to by re-reading
             # rather than by retrying.
             #
-            # The refusal code travels with it. Relaying the status alone was
-            # enough while every refusal meant "look at this again", but not for
-            # the ones that are a question — "who should answer instead?" — which
-            # a client can only ask if it is told that is what happened.
+            # The whole refusal travels, not a field of it. This used to keep
+            # ``code`` and substitute a sentence of its own for everything else,
+            # which is how a Host that had been refusing every memory read for
+            # two weeks told the phone exactly nothing: the authority's kind
+            # ("not configured") and its sentence were both already here.
+            refusal = _relayed_refusal(response)
             raise ManagementBackendError(
-                "Host management backend refused this request",
+                refusal.reason or "Host management backend refused this request",
                 status_code=response.status_code
                 if 400 <= response.status_code < 500
                 else 503,
-                code=_refusal_code(response),
+                refusal=refusal,
             )
         try:
             payload = response.json()
         except ValueError as exc:
             raise ManagementBackendError(
-                "Host management backend answered outside its contract", status_code=502
+                "Host management backend answered outside its contract",
+                status_code=502,
+                refusal=_outside_contract(),
             ) from exc
         if not isinstance(payload, dict):
             raise ManagementBackendError(
-                "Host management backend answered outside its contract", status_code=502
+                "Host management backend answered outside its contract",
+                status_code=502,
+                refusal=_outside_contract(),
             )
         return payload
 

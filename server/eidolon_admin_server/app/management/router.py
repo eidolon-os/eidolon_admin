@@ -9,16 +9,23 @@ Everything under here requires the Local API service credential. It is an
 internal ABI: no browser reaches it, and the Owner it acts for arrives as an
 argument from a boundary that authenticated a Controller, never as something a
 caller may choose.
+
+**No route here catches an ``AuthorityFailure``.** Letting it out is the
+contract: ``control_plane.failure_handler`` converts it to a response and logs
+it, once, for whatever is mounted on this app. Every route used to carry its own
+copy of that conversion — twenty-eight of them — and the copies agreed on the
+status while agreeing to record nothing, which is how a Host refused every
+memory read for two weeks with no line in its journal saying why. A route that
+re-adds an ``except`` here is re-adding that silence.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.faces import (
@@ -71,6 +78,9 @@ class ManagementContextInternal(BaseModel):
     owner_revision: int = Field(ge=1)
     default_companion_id: str | None = Field(default=None, max_length=64)
     capabilities: dict[str, bool]
+    #: Why each false capability is false. See the application projection for
+    #: why the two reasons are not folded into one.
+    unavailable: dict[str, str] = Field(default_factory=dict)
     limits: dict[str, int | None]
 
 
@@ -559,26 +569,25 @@ async def get_context(
     passes the Owner bound to the Controller session it just verified. The
     authority checks ownership again on every read it serves.
     """
-    try:
-        context = await read_context(
-            owner_id=owner_id,
-            # The Owner aggregate is the workspace authority's, not the
-            # Companion authority's. Reaching for ``.data`` here raised
-            # AttributeError at runtime and no test noticed, because every test
-            # injected its own reader. test_management_composition.py now
-            # asserts the composed service satisfies these Protocols.
-            owners=request.app.state.control_plane.workspace,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    context = await read_context(
+        owner_id=owner_id,
+        # The Owner aggregate is the workspace authority's, not the
+        # Companion authority's. Reaching for ``.data`` here raised
+        # AttributeError at runtime and no test noticed, because every test
+        # injected its own reader. test_management_composition.py now
+        # asserts the composed service satisfies these Protocols.
+        owners=request.app.state.control_plane.workspace,
+        # The composed service, because "which authorities does this Host hold a
+        # key to" is a fact about the whole of it rather than about one client.
+        credentials=request.app.state.control_plane,
+    )
     return ManagementContextInternal(
         owner_id=context.owner_id,
         owner_display_name=context.owner_display_name,
         owner_revision=context.owner_revision,
         default_companion_id=context.default_companion_id,
         capabilities=context.capabilities,
+        unavailable=context.unavailable,
         limits=context.limits,
     )
 
@@ -594,16 +603,11 @@ async def list_companions(
     ``cursor`` is forwarded to the authority untouched and never interpreted
     here; the page boundary belongs to whoever built the page.
     """
-    try:
-        roster = await read_roster(
-            owner_id=owner_id,
-            companions=request.app.state.control_plane.data,
-            cursor=cursor,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    roster = await read_roster(
+        owner_id=owner_id,
+        companions=request.app.state.control_plane.data,
+        cursor=cursor,
+    )
     return CompanionRosterInternal(
         owner_id=roster.owner_id,
         default_companion_id=roster.default_companion_id,
@@ -635,17 +639,12 @@ async def get_companion(
     its path. A Companion belonging to someone else is 404 rather than 403, so
     an identifier cannot be probed for existence.
     """
-    try:
-        detail = await read_companion(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            companions=request.app.state.control_plane.data,
-            owners=request.app.state.control_plane.workspace,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    detail = await read_companion(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        companions=request.app.state.control_plane.data,
+        owners=request.app.state.control_plane.workspace,
+    )
     return CompanionDetailInternal(
         companion_id=detail.companion_id,
         display_name=detail.display_name,
@@ -665,17 +664,12 @@ async def put_default_companion(
     payload: DefaultCompanionRequestInternal,
 ) -> DefaultCompanionResponseInternal:
     """Move this Owner's default to one of their Companions."""
-    try:
-        default_companion_id = await set_default_companion(
-            owner_id=owner_id,
-            companion_id=payload.companion_id,
-            expected_revision=payload.expected_revision,
-            owners=request.app.state.control_plane.workspace,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    default_companion_id = await set_default_companion(
+        owner_id=owner_id,
+        companion_id=payload.companion_id,
+        expected_revision=payload.expected_revision,
+        owners=request.app.state.control_plane.workspace,
+    )
     return DefaultCompanionResponseInternal(
         default_companion_id=default_companion_id
     )
@@ -693,19 +687,14 @@ async def put_companion_provision(
 ) -> CompanionCreateResponseInternal:
     """Add a Companion to this Owner, exactly once per operation id."""
     control_plane = request.app.state.control_plane
-    try:
-        created = await create_companion(
-            owner_id=owner_id,
-            operation_id=operation_id,
-            display_name=payload.display_name,
-            kind=payload.kind,
-            companions=control_plane.workspace,
-            memory=getattr(control_plane, "memory_supervisor", None),
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    created = await create_companion(
+        owner_id=owner_id,
+        operation_id=operation_id,
+        display_name=payload.display_name,
+        kind=payload.kind,
+        companions=control_plane.workspace,
+        memory=getattr(control_plane, "memory_supervisor", None),
+    )
     return CompanionCreateResponseInternal(
         companion_id=created.companion_id,
         display_name=created.display_name,
@@ -730,16 +719,11 @@ async def get_memory_library(
     own layer; naming none answers with the Owner layer, which is the safe
     direction for a caller that did not say.
     """
-    try:
-        library = await read_library(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    library = await read_library(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        memory=request.app.state.control_plane.memory,
+    )
     return MemoryLibraryInternal(
         wings=[
             MemoryWingInternal(
@@ -772,17 +756,12 @@ async def post_forget_preview(
     payload: ForgetTargetInternal,
 ) -> ForgetProposalInternal:
     """What forgetting this would remove, without removing it."""
-    try:
-        proposal = await propose_forget(
-            owner_id=owner_id,
-            target=payload.target,
-            action=payload.action,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    proposal = await propose_forget(
+        owner_id=owner_id,
+        target=payload.target,
+        action=payload.action,
+        memory=request.app.state.control_plane.memory,
+    )
     return ForgetProposalInternal(
         status=proposal.status,
         target=proposal.target,
@@ -807,16 +786,11 @@ async def post_forget_confirm(
     payload: ForgetConfirmInternal,
 ) -> ForgetResultInternal:
     """Apply exactly the set a preview bound."""
-    try:
-        result = await apply_forget(
-            owner_id=owner_id,
-            confirmation_token=payload.confirmation_token,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    result = await apply_forget(
+        owner_id=owner_id,
+        confirmation_token=payload.confirmation_token,
+        memory=request.app.state.control_plane.memory,
+    )
     return ForgetResultInternal(
         action=result.action,
         target=result.target,
@@ -839,17 +813,12 @@ async def put_memory_entry_audience(
     entry id names a drawer in the realm's store and is not interpreted here —
     the realm refuses anything that is not one of its own.
     """
-    try:
-        result = await assign_memory_audience(
-            owner_id=owner_id,
-            entry_id=entry_id,
-            companion_id=payload.companion_id or None,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    result = await assign_memory_audience(
+        owner_id=owner_id,
+        entry_id=entry_id,
+        companion_id=payload.companion_id or None,
+        memory=request.app.state.control_plane.memory,
+    )
     return MemoryAudienceInternal(
         entry_id=result.entry_id,
         companion_id=result.companion_id,
@@ -873,15 +842,10 @@ async def post_runtime_session_revocation(
     has to say so — "sign every device out" reads like it might lock someone out
     of their own management app.
     """
-    try:
-        revoked = await revoke_runtime_sessions(
-            owner_id=owner_id,
-            sessions=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    revoked = await revoke_runtime_sessions(
+        owner_id=owner_id,
+        sessions=request.app.state.control_plane.activity,
+    )
     return RevokedSessionsInternal(revoked_at=revoked.revoked_at)
 
 
@@ -901,18 +865,13 @@ async def get_companion_conversations(
     No message bodies: the runtime keeps those per turn and its turn rows carry
     none, so a list here would be timestamps with nothing said.
     """
-    try:
-        page = await read_conversations(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            limit=limit,
-            cursor=cursor,
-            activity=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    page = await read_conversations(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        limit=limit,
+        cursor=cursor,
+        activity=request.app.state.control_plane.activity,
+    )
     return ConversationPageInternal(
         companion_id=companion_id,
         conversations=[
@@ -951,18 +910,13 @@ async def get_conversation_transcript(
     this surface's shape; the check is on the Owner, which is what the runtime
     keys the conversation by.
     """
-    try:
-        transcript = await read_transcript(
-            owner_id=owner_id,
-            conversation_id=conversation_id,
-            limit=limit,
-            cursor=cursor,
-            activity=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    transcript = await read_transcript(
+        owner_id=owner_id,
+        conversation_id=conversation_id,
+        limit=limit,
+        cursor=cursor,
+        activity=request.app.state.control_plane.activity,
+    )
     return TranscriptInternal(
         conversation_id=transcript.conversation_id,
         turns=[
@@ -992,19 +946,14 @@ async def get_companion_tasks(
     cursor: str | None = None,
 ) -> TaskPageInternal:
     """What this Companion was asked to do, and how far it has got."""
-    try:
-        page = await read_tasks(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            limit=limit,
-            status=status,
-            cursor=cursor,
-            activity=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    page = await read_tasks(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        limit=limit,
+        status=status,
+        cursor=cursor,
+        activity=request.app.state.control_plane.activity,
+    )
     return _task_page_internal(companion_id, page)
 
 
@@ -1021,16 +970,11 @@ async def get_companion_task(
     """One task. ``companion_id`` is in the path for the shape of the resource;
     the Owner is what the check is made against, because the runtime keys a task
     by its id alone."""
-    try:
-        task = await read_task(
-            owner_id=owner_id,
-            task_id=task_id,
-            activity=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    task = await read_task(
+        owner_id=owner_id,
+        task_id=task_id,
+        activity=request.app.state.control_plane.activity,
+    )
     return _task_internal(task)
 
 
@@ -1051,16 +995,11 @@ async def post_task_cancel(
     *now*, and that rule lives in the runtime — including its refusal when the
     task finished between the page being read and the button being pressed.
     """
-    try:
-        task = await cancel_task(
-            owner_id=owner_id,
-            task_id=task_id,
-            activity=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    task = await cancel_task(
+        owner_id=owner_id,
+        task_id=task_id,
+        activity=request.app.state.control_plane.activity,
+    )
     return _task_internal(task)
 
 
@@ -1075,16 +1014,11 @@ async def post_task_retry(
     owner_id: str,
 ) -> TaskInternal:
     """Ask for it again. The runtime decides whether that is possible."""
-    try:
-        task = await retry_task(
-            owner_id=owner_id,
-            task_id=task_id,
-            activity=request.app.state.control_plane.activity,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    task = await retry_task(
+        owner_id=owner_id,
+        task_id=task_id,
+        activity=request.app.state.control_plane.activity,
+    )
     return _task_internal(task)
 
 
@@ -1129,17 +1063,12 @@ async def get_persona_history(
     Companion alone, so ownership is proved through the owner-scoped Companion
     route before either of them is called. Someone else's Companion is a 404.
     """
-    try:
-        history = await read_history(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            persona=request.app.state.control_plane.data,
-            companions=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    history = await read_history(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        persona=request.app.state.control_plane.data,
+        companions=request.app.state.control_plane.data,
+    )
     return _persona_history_internal(history)
 
 
@@ -1163,18 +1092,13 @@ async def put_persona_restoration(
     Answers with the history rather than the new chapter, because what someone
     wants after going back is where that leaves them.
     """
-    try:
-        history = await restore_chapter(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            chapter_id=payload.chapter_id,
-            persona=request.app.state.control_plane.data,
-            companions=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    history = await restore_chapter(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        chapter_id=payload.chapter_id,
+        persona=request.app.state.control_plane.data,
+        companions=request.app.state.control_plane.data,
+    )
     return _persona_history_internal(history)
 
 
@@ -1186,18 +1110,13 @@ async def get_activity(
     before: int | None = Query(default=None, ge=1),
 ) -> ActivityFeedInternal:
     """What has been done to this Owner's things lately."""
-    try:
-        feed = await read_activity(
-            owner_id=owner_id,
-            limit=limit,
-            before=before,
-            history=request.app.state.control_plane.workspace,
-            companions=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    feed = await read_activity(
+        owner_id=owner_id,
+        limit=limit,
+        before=before,
+        history=request.app.state.control_plane.workspace,
+        companions=request.app.state.control_plane.data,
+    )
     return ActivityFeedInternal(
         moments=[
             ActivityMomentInternal(
@@ -1223,17 +1142,12 @@ async def get_companion_face_state(
     owner_id: str,
 ) -> CompanionFaceInternal:
     """Whether there is a face, without carrying one."""
-    try:
-        view = await read_face_state(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            companions=request.app.state.control_plane.data,
-            faces=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    view = await read_face_state(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        companions=request.app.state.control_plane.data,
+        faces=request.app.state.control_plane.data,
+    )
     return _face_internal(view)
 
 
@@ -1258,18 +1172,13 @@ async def get_companion_face(
     phone would otherwise encode and decode a photograph to say the same thing,
     and none of them has any use for what is inside it.
     """
-    try:
-        face = await read_face(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            known_sha256=_etag_digest(if_none_match),
-            companions=request.app.state.control_plane.data,
-            faces=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    face = await read_face(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        known_sha256=_etag_digest(if_none_match),
+        companions=request.app.state.control_plane.data,
+        faces=request.app.state.control_plane.data,
+    )
     if face.unchanged:
         return Response(status_code=304, headers=_face_etag(face.sha256))
     if face.content is None:
@@ -1288,18 +1197,13 @@ async def put_companion_face(
     owner_id: str,
 ) -> CompanionFaceInternal:
     """Give this Eidolon a face. The photograph is the body of the request."""
-    try:
-        view = await set_face(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            face=await request.body(),
-            companions=request.app.state.control_plane.data,
-            faces=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    view = await set_face(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        face=await request.body(),
+        companions=request.app.state.control_plane.data,
+        faces=request.app.state.control_plane.data,
+    )
     return _face_internal(view)
 
 
@@ -1309,17 +1213,12 @@ async def delete_companion_face(
     companion_id: str,
     owner_id: str,
 ) -> CompanionFaceInternal:
-    try:
-        view = await clear_face(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            companions=request.app.state.control_plane.data,
-            faces=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    view = await clear_face(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        companions=request.app.state.control_plane.data,
+        faces=request.app.state.control_plane.data,
+    )
     return _face_internal(view)
 
 
@@ -1359,18 +1258,13 @@ async def patch_companion(
     payload: RenameRequestInternal,
 ) -> CompanionNameInternal:
     """Set what this Owner calls their Eidolon."""
-    try:
-        identity = await rename_companion(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            display_name=payload.display_name,
-            companions=request.app.state.control_plane.data,
-            namer=request.app.state.control_plane.data,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    identity = await rename_companion(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        display_name=payload.display_name,
+        companions=request.app.state.control_plane.data,
+        namer=request.app.state.control_plane.data,
+    )
     return CompanionNameInternal(
         companion_id=identity.companion_id,
         display_name=identity.display_name,
@@ -1389,16 +1283,11 @@ async def patch_owner(
     No Owner in the path, and none to prove against: the Owner *is* the scope
     here, and it arrived from the boundary that authenticated a Controller.
     """
-    try:
-        owner = await rename_owner(
-            owner_id=owner_id,
-            display_name=payload.display_name,
-            namer=request.app.state.control_plane.workspace,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    owner = await rename_owner(
+        owner_id=owner_id,
+        display_name=payload.display_name,
+        namer=request.app.state.control_plane.workspace,
+    )
     return OwnerNameInternal(
         owner_id=owner.owner_id,
         display_name=owner.display_name,
@@ -1426,26 +1315,21 @@ async def put_companion_lifecycle(
     the authority's own code: "name someone to answer instead" is a question the
     person can answer, and it must not arrive looking like a lost race.
     """
-    try:
-        if payload.lifecycle_state == "archived":
-            view = await put_away(
-                owner_id=owner_id,
-                companion_id=companion_id,
-                replacement_companion_id=payload.replacement_companion_id,
-                expected_revision=payload.expected_revision,
-                lifecycle=request.app.state.control_plane.workspace,
-            )
-        else:
-            view = await bring_back(
-                owner_id=owner_id,
-                companion_id=companion_id,
-                expected_revision=payload.expected_revision,
-                lifecycle=request.app.state.control_plane.workspace,
-            )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    if payload.lifecycle_state == "archived":
+        view = await put_away(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            replacement_companion_id=payload.replacement_companion_id,
+            expected_revision=payload.expected_revision,
+            lifecycle=request.app.state.control_plane.workspace,
+        )
+    else:
+        view = await bring_back(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            expected_revision=payload.expected_revision,
+            lifecycle=request.app.state.control_plane.workspace,
+        )
     return CompanionLifecycleResponseInternal(
         companion_id=view.companion_id,
         lifecycle_state=view.lifecycle_state,
@@ -1487,18 +1371,13 @@ async def get_memory_recollections(
     found something rather than what it remembers, and dropping them here means
     no client has to decide that again.
     """
-    try:
-        found = await recall(
-            owner_id=owner_id,
-            query=q,
-            limit=limit,
-            companion_id=companion_id,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    found = await recall(
+        owner_id=owner_id,
+        query=q,
+        limit=limit,
+        companion_id=companion_id,
+        memory=request.app.state.control_plane.memory,
+    )
     return RecollectionsInternal(
         query=found.query,
         recollections=[
@@ -1522,16 +1401,11 @@ async def get_memory_export(
     is taken by the operator tool through memory's own admin action, and it never
     passes through here.
     """
-    try:
-        copy = await read_copy(
-            owner_id=owner_id,
-            companion_id=companion_id,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    copy = await read_copy(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        memory=request.app.state.control_plane.memory,
+    )
     return MemoryCopyInternal(
         taken_at=copy.taken_at,
         records=[
@@ -1566,18 +1440,13 @@ async def get_memory_entries(
     where the person is and no layer here knows; a default would answer for the
     wrong day without saying so.
     """
-    try:
-        day = await read_day(
-            owner_id=owner_id,
-            since=since,
-            limit=limit,
-            companion_id=companion_id,
-            memory=request.app.state.control_plane.memory,
-        )
-    except AuthorityFailure as exc:
-        raise HTTPException(
-            status_code=exc.status_code, detail=exc.to_wire().model_dump()
-        ) from exc
+    day = await read_day(
+        owner_id=owner_id,
+        since=since,
+        limit=limit,
+        companion_id=companion_id,
+        memory=request.app.state.control_plane.memory,
+    )
     return MemoryDayInternal(
         since=day.since,
         entries=[

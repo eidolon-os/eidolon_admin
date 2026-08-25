@@ -36,7 +36,10 @@ from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettin
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.management.router import ManagementBackendError
+from eidolon_admin_server.local_api.management.router import (
+    ManagementBackendError,
+    refusal_for_status,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -386,7 +389,11 @@ async def test_a_refused_face_is_relayed_with_the_hosts_status(
 
     class _Refusing(_Backend):
         async def set_companion_face(self, *, owner_id, companion_id, face) -> dict:
-            raise ManagementBackendError("not a JPEG", status_code=415)
+            raise ManagementBackendError(
+                "not a JPEG",
+                status_code=415,
+                refusal=refusal_for_status(415, "not a JPEG"),
+            )
 
     transport = httpx.ASGITransport(app=_app(tmp_path, _Refusing()))
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
@@ -398,7 +405,12 @@ async def test_a_refused_face_is_relayed_with_the_hosts_status(
         )
 
     assert refused.status_code == 415
-    assert refused.json()["detail"] == "not a JPEG"
+    assert refused.json()["detail"] == {
+        "kind": "invalid",
+        "reason": "not a JPEG",
+        "code": None,
+        "retryable": False,
+    }
 
 
 async def test_someone_elses_eidolon_is_absent_on_every_face_verb(
@@ -412,16 +424,32 @@ async def test_someone_elses_eidolon_is_absent_on_every_face_verb(
 
     class _NotYours(_Backend):
         async def companion_face_state(self, *, owner_id, companion_id) -> dict:
-            raise ManagementBackendError("companion not found", status_code=404)
+            raise ManagementBackendError(
+                "companion not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "companion not found"),
+            )
 
         async def companion_face(self, *, owner_id, companion_id, known_etag):
-            raise ManagementBackendError("companion not found", status_code=404)
+            raise ManagementBackendError(
+                "companion not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "companion not found"),
+            )
 
         async def set_companion_face(self, *, owner_id, companion_id, face) -> dict:
-            raise ManagementBackendError("companion not found", status_code=404)
+            raise ManagementBackendError(
+                "companion not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "companion not found"),
+            )
 
         async def clear_companion_face(self, *, owner_id, companion_id) -> dict:
-            raise ManagementBackendError("companion not found", status_code=404)
+            raise ManagementBackendError(
+                "companion not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "companion not found"),
+            )
 
     transport = httpx.ASGITransport(app=_app(tmp_path, _NotYours()))
     path = "/api/management/v1/companions/someone-elses/face"

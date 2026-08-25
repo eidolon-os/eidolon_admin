@@ -31,7 +31,10 @@ from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettin
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.management.router import ManagementBackendError
+from eidolon_admin_server.local_api.management.router import (
+    ManagementBackendError,
+    refusal_for_status,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -185,7 +188,11 @@ class _Backend:
     async def companion(self, *, owner_id: str, companion_id: str) -> dict:
         self.asked.append((owner_id, companion_id))
         if companion_id != "companion-a":
-            raise ManagementBackendError("not found", status_code=404)
+            raise ManagementBackendError(
+                "not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "not found"),
+            )
         return {
             "contract_version": "1",
             "operation": "companion.detail",
@@ -204,7 +211,11 @@ class _Backend:
         if expected_revision != 3:
             # What the authority answers a stale caller. Relayed, not softened:
             # a client must re-read rather than retry.
-            raise ManagementBackendError("owner revision moved", status_code=409)
+            raise ManagementBackendError(
+                "owner revision moved",
+                status_code=409,
+                refusal=refusal_for_status(409, "owner revision moved"),
+            )
         return {
             "contract_version": "1",
             "operation": "owner.default-companion",
@@ -288,7 +299,11 @@ class _Backend:
     ) -> dict:
         self.asked.append((owner_id, entry_id, companion_id))
         if entry_id == "drawer_gone":
-            raise ManagementBackendError("no such memory", status_code=404)
+            raise ManagementBackendError(
+                "no such memory",
+                status_code=404,
+                refusal=refusal_for_status(404, "no such memory"),
+            )
         return {
             "contract_version": "1",
             "operation": "memory.audience",
@@ -301,7 +316,9 @@ class _Backend:
         self.asked.append((owner_id, "revoke-runtime-sessions"))
         if owner_id == "owner-no-kv":
             raise ManagementBackendError(
-                "revocation_kv not configured on agent", status_code=503
+                "revocation_kv not configured on agent",
+                status_code=503,
+                refusal=refusal_for_status(503, "revocation_kv not configured on agent"),
             )
         return {
             "contract_version": "1",
@@ -379,7 +396,11 @@ class _Backend:
     async def task(self, *, owner_id: str, companion_id: str, task_id: str) -> dict:
         self.asked.append((owner_id, companion_id, task_id))
         if task_id == "j-theirs":
-            raise ManagementBackendError("task not found", status_code=404)
+            raise ManagementBackendError(
+                "task not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "task not found"),
+            )
         return self._task()
 
     async def task_action(
@@ -388,7 +409,9 @@ class _Backend:
         self.asked.append((owner_id, companion_id, task_id, action))
         if task_id == "j-done":
             raise ManagementBackendError(
-                "long task already finished as succeeded", status_code=409
+                "long task already finished as succeeded",
+                status_code=409,
+                refusal=refusal_for_status(409, "long task already finished as succeeded"),
             )
         return self._task(status="cancelled" if action == "cancel" else "accepted")
 
@@ -412,7 +435,11 @@ class _Backend:
     async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
         self.asked.append((owner_id, companion_id))
         if companion_id == "companion-elsewhere":
-            raise ManagementBackendError("not found", status_code=404)
+            raise ManagementBackendError(
+                "not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "not found"),
+            )
         return self._history()
 
     async def restore_persona(
@@ -420,10 +447,16 @@ class _Backend:
     ) -> dict:
         self.asked.append((owner_id, companion_id, chapter_id))
         if companion_id == "companion-elsewhere":
-            raise ManagementBackendError("not found", status_code=404)
+            raise ManagementBackendError(
+                "not found",
+                status_code=404,
+                refusal=refusal_for_status(404, "not found"),
+            )
         if chapter_id == "g_never":
             raise ManagementBackendError(
-                "only a committed persona genome can be restored", status_code=409
+                "only a committed persona genome can be restored",
+                status_code=409,
+                refusal=refusal_for_status(409, "only a committed persona genome can be restored"),
             )
         self.current = chapter_id
         return self._history()

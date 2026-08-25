@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
+from eidolon_sdk.biz.contracts.refusal import Refusal, RefusalKind
 from eidolon_sdk.device_foundation.v1 import (
     BusinessOwnerId,
     ClaimQuery,
@@ -764,10 +765,44 @@ FailureKind = Literal[
 ]
 
 
+#: How each internal kind reads to somebody holding a phone.
+#:
+#: Declared here, in the process that owns the internal taxonomy, and sent down
+#: the internal wire — *not* worked out again at the LAN boundary. That boundary
+#: deliberately imports nothing from this half (it is the process that holds no
+#: authority credential), so a table over there would be a second copy of a
+#: vocabulary it cannot see change. Producing the projection here means a new
+#: ``FailureKind`` fails this repository's own test until somebody decides what
+#: it means to a person, which is the only moment that decision is cheap.
+#:
+#: The two vocabularies are deliberately different sizes. ``contract_violation``
+#: and ``upstream_failure`` are one thing to a person and two to an operator;
+#: ``configuration`` and ``unavailable`` are one thing to an operator — "go look
+#: at the Host" — and two to a person, because only one of them is worth waiting
+#: out.
+PUBLIC_REFUSAL_KIND: dict[str, RefusalKind] = {
+    "unauthorized": "denied",
+    "forbidden": "denied",
+    "not_found": "not_found",
+    "conflict": "conflict",
+    "invalid_request": "invalid",
+    "unavailable": "not_running",
+    "runtime_missing": "not_running",
+    "upstream_failure": "upstream",
+    "contract_violation": "upstream",
+    "configuration": "not_configured",
+}
+
+
 class WorkflowFailure(StrictModel):
     authority: Authority
     kind: FailureKind
     detail: str
+    #: The same refusal in the words a client acts on, projected here rather
+    #: than at the boundary that publishes it. Everything above this line is for
+    #: an operator reading a journal; this is for whoever is holding the phone,
+    #: and the LAN process relays it without interpreting it.
+    refusal: Refusal
     #: The upstream authority's refusal code, when it gave one — the domain word
     #: (``default_replacement_required``, ``revision_stale``), not the transport
     #: one. Optional because most authorities answer with a sentence only, and a

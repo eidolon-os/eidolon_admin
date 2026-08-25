@@ -15,6 +15,7 @@ from .benchmarks import router as benchmarks_router
 from .channel.router import router as channel_router
 from .client_web.router import router as client_web_router
 from .configs.router import router as configs_router
+from .control_plane.failure_handler import install_authority_failure_handler
 from .control_plane.router import router as control_plane_router
 from .management.router import router as management_router
 from .control_plane.service import ControlPlaneService
@@ -85,6 +86,9 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
+    # Before any router is mounted, so no route can be added on a version of
+    # this app where an upstream refusal is an unexplained 500.
+    install_authority_failure_handler(app)
     app.state.registry = ServiceRegistry(cfg)
     app.state.gateway_config = cfg
     app.state.settings = settings

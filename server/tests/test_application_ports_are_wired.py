@@ -36,7 +36,10 @@ import httpx
 import pytest
 
 from eidolon_admin_server.app.control_plane.service import ControlPlaneService
-from eidolon_admin_server.app.management.context import OwnerReader
+from eidolon_admin_server.app.management.context import (
+    AuthorityCredentials,
+    OwnerReader,
+)
 from eidolon_admin_server.app.management.creation import (
     CompanionProvisioner,
     MemoryReconciler,
@@ -65,6 +68,9 @@ APP = Path(__file__).resolve().parents[1] / "eidolon_admin_server/app"
 #: Every application-layer Protocol, and the attribute of the composed
 #: ``ControlPlaneService`` that must satisfy it. ``None`` means the port is
 #: deliberately not served by that service — say why, next to the entry.
+#: Stands for "the composed service itself" in the wiring column below.
+SERVICE_ITSELF = "__self__"
+
 PORTS: dict[str, tuple[object | None, str | None]] = {
     "OwnerReader": (OwnerReader, "workspace"),
     "RosterReader": (RosterReader, "data"),
@@ -99,6 +105,11 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # Same client as the reads above: the runtime that holds the sessions is the
     # one that ends them.
     "RuntimeSessionRevoker": (RuntimeSessionRevoker, "activity"),
+    # Which authorities this Host holds a key to. Satisfied by the composed
+    # service itself rather than by one client on it, because the question spans
+    # them: it is what stops ``/context`` advertising a memory feature on a Host
+    # that was never given the memory credential.
+    "AuthorityCredentials": (AuthorityCredentials, SERVICE_ITSELF),
     # Admin's own store, constructed by the service rather than reached for on
     # it: there is no authority behind it and nothing to mis-wire.
     "RemovalIntentStore": (None, None),
@@ -162,6 +173,14 @@ async def test_each_declared_port_is_satisfied_by_what_it_names() -> None:
     try:
         for name, (protocol, attribute) in PORTS.items():
             if protocol is None or attribute is None:
+                continue
+            # ``__self__`` means the composed service satisfies this port
+            # itself, which is right for a question that spans its clients
+            # rather than living on one of them.
+            if attribute == SERVICE_ITSELF:
+                assert isinstance(service, protocol), (
+                    f"ControlPlaneService does not satisfy {name}"
+                )
                 continue
             assert hasattr(service, attribute), (
                 f"{name} names ControlPlaneService.{attribute}, which does not "

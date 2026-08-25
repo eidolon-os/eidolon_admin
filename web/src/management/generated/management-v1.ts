@@ -181,10 +181,6 @@ export interface ForgetTargetRequest {
   target: string
 }
 
-export interface HTTPValidationError {
-  detail?: Array<ValidationError>
-}
-
 export interface HostServiceInventoryView {
   services?: Array<HostServiceView>
 }
@@ -223,6 +219,7 @@ export interface ManagementContextView {
   default_companion_id?: string | null
   limits: Record<string, number | null>
   owner: OwnerContextView
+  unavailable?: Record<string, string>
 }
 
 export interface MemoryAudienceRequest {
@@ -339,6 +336,13 @@ export interface RecollectionsView {
   recollections: Array<RecollectionView>
 }
 
+export interface Refusal {
+  code?: string | null
+  kind: "denied" | "not_found" | "conflict" | "invalid" | "not_configured" | "not_running" | "upstream"
+  reason?: string
+  retryable?: boolean
+}
+
 export interface RenameRequest {
   display_name: string
 }
@@ -389,14 +393,6 @@ export interface TranscriptView {
   conversation_id: string
   next_cursor?: string | null
   turns: Array<TranscriptTurnView>
-}
-
-export interface ValidationError {
-  ctx?: Record<string, unknown>
-  input?: unknown
-  loc: Array<string | number>
-  msg: string
-  type: string
 }
 
 export interface VitalView {

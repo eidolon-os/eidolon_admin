@@ -18,6 +18,8 @@ from typing import Literal, Protocol, runtime_checkable
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from eidolon_sdk.biz.contracts.refusal import Refusal
+
 from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     HostServiceControlError,
     HostServiceInventoryView,
@@ -30,6 +32,87 @@ from eidolon_admin_server.local_api.host_services import (  # noqa: E402
 )
 
 MANAGEMENT_PREFIX = "/api/management/v1"
+
+#: What a refusal means when all that is known about it is its status.
+#:
+#: A fallback, and narrow on purpose. The authority that refuses declares the
+#: public kind itself and sends it down, because it is the only party that knows
+#: its own failure vocabulary. This is for the two cases where nobody said: an
+#: Admin older than that contract, mid-upgrade, and this surface's own guards.
+_KIND_BY_STATUS: dict[int, str] = {
+    400: "invalid",
+    401: "denied",
+    403: "denied",
+    404: "not_found",
+    409: "conflict",
+    412: "conflict",
+    415: "invalid",
+    422: "invalid",
+}
+
+
+def refuse(
+    status_code: int,
+    reason: str,
+    *,
+    code: str | None = None,
+    kind: str | None = None,
+) -> HTTPException:
+    """The only way this surface says no.
+
+    Every refusal from here — relayed from an authority, or this surface's own
+    guard — leaves in one shape, so a client has exactly one thing to parse.
+    ``tests/test_management_refusal_shape.py`` reads this module's source and
+    fails if an ``HTTPException`` is built anywhere else, because "most routes
+    use the helper" is the state this surface was already in: the relaying path
+    had a shape and the guards had a sentence, and the client had to guess which
+    it was holding.
+
+    ``kind`` overrides the status-derived guess for the refusals whose meaning is
+    narrower than their status. A Host with no Owner yet is a 409 and so is a
+    lost race, and those are not the same thing to say to a person — which is
+    the bug this parameter exists to make unrepresentable: the phone used to
+    tell them apart by testing ``statusCode == 409`` twice and getting the same
+    answer both times.
+    """
+
+    refusal = refusal_for_status(status_code, reason, code)
+    if kind is not None:
+        refusal = refusal.model_copy(update={"kind": kind})
+    return _enveloped(status_code, refusal)
+
+
+def _enveloped(status_code: int, refusal: Refusal) -> HTTPException:
+    """The single place this surface builds an error response.
+
+    One line, and it earns its own function: it is the thing the source gate
+    counts. Two ways to build a refusal is how this surface came to have two
+    shapes, and a client cannot be generated against "one of two shapes".
+    """
+
+    return HTTPException(status_code, refusal.model_dump())
+
+
+def refusal_for_status(
+    status_code: int, reason: str = "", code: str | None = None
+) -> Refusal:
+    """The most a caller can honestly say when it only has a status.
+
+    Public because two legitimate callers need it — the loopback adapter, when
+    the other side of a version skew sent no refusal, and this surface's own
+    guards — and because a private copy in each is how the two come to disagree
+    about what a 409 means.
+    """
+
+    kind = _KIND_BY_STATUS.get(status_code)
+    if kind is None:
+        kind = "upstream" if status_code >= 500 else "invalid"
+    return Refusal(
+        kind=kind,
+        reason=reason[:512],
+        code=code,
+        retryable=status_code >= 500,
+    )
 
 
 def _position(cursor: str | None) -> int | None:
@@ -55,7 +138,7 @@ def _controller_view(row: dict, *, asking: str) -> "ControllerView":
 
     controller_id = str(row.get("controller_id") or "")
     if not controller_id:
-        raise HTTPException(
+        raise refuse(
             status.HTTP_502_BAD_GATEWAY,
             "Host answered with a controller that has no identifier",
         )
@@ -71,35 +154,48 @@ def _controller_view(row: dict, *, asking: str) -> "ControllerView":
 
 
 def _refused(exc: "ManagementBackendError") -> HTTPException:
-    """The one shape a refusal leaves this surface in.
+    """The one shape a refusal leaves this surface in — and there is now one.
 
-    A plain sentence while the backend gave no code, and ``{"code", "message"}``
-    when it did. Two shapes rather than always the object, because every client
-    reading this API today expects the sentence, and a refusal is the worst
-    moment to hand one something it cannot parse.
+    There used to be two: a bare sentence when the authority gave no code, and
+    ``{"code", "message"}`` when it did. The reason given for two was that
+    clients expected the sentence and a refusal is the worst moment to hand one
+    something it cannot parse — true, and it stopped being a reason the moment
+    both clients started being *generated* from this surface's document. They are
+    regenerated with this change, so one shape costs nothing and buys the thing
+    two shapes could never express: which refusal this is.
+
+    FastAPI wraps ``detail`` for us, so the body is exactly
+    ``eidolon_sdk.biz.contracts.refusal.refusal_body`` — the envelope every
+    Eidolon surface publishes and every client parses.
     """
 
-    if exc.code is None:
-        return HTTPException(exc.status_code, str(exc))
-    return HTTPException(exc.status_code, {"code": exc.code, "message": str(exc)})
+    return _enveloped(exc.status_code, exc.refusal)
 
 
 class ManagementBackendError(RuntimeError):
-    """The backend refused or could not answer; carries the status to relay.
+    """The backend refused or could not answer; carries what a client reads.
 
-    ``code`` is the authority's own word for which refusal this is, when it gave
-    one. It travels because some refusals are questions a person can answer —
-    "this is the Eidolon that answers for you; who should answer instead?" — and
-    a client that could only read a status would have to show the same shrug for
-    that as for a lost race.
+    ``refusal`` is required, not optional, and that is the whole design. Every
+    raise site — a relayed refusal, an unreachable backend, a credential this
+    Host was never given — has to say what the person holding the phone should
+    be told. Before this it was optional in practice: the relaying path kept one
+    field of the authority's structured refusal and replaced the rest with
+    "Host management backend refused this request", so a missing credential, a
+    stopped service and a lost race all arrived as the same sentence and the
+    screen could only offer the same shrug for all three.
     """
 
     def __init__(
-        self, message: str, *, status_code: int = 503, code: str | None = None
+        self, message: str, *, refusal: Refusal, status_code: int = 503
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
-        self.code = code
+        self.refusal = refusal
+
+    @property
+    def code(self) -> str | None:
+        """The domain word, for callers that only need that much."""
+        return self.refusal.code
 
 
 class ManagementContextView(BaseModel):
@@ -109,6 +205,15 @@ class ManagementContextView(BaseModel):
     the thing at all, and whether this Controller may is answered per action. A
     name absent from the map is one this client has never heard of — a version
     skew — while a name present and false is a feature this Host cannot do yet.
+
+    ``unavailable`` says *why* a false capability is false, for the false names
+    where there is a reason worth acting on. Two values today: ``not_built``
+    (this Host's software cannot do it yet) and ``host_not_configured`` (it can,
+    and this Host was never given the key). A boolean could not tell those apart,
+    and they lead completely different places — one is a release nobody has cut,
+    the other is a command somebody can run tonight. A client that meets a reason
+    it does not know must treat it as "unavailable, no further detail" rather
+    than as a failure.
 
     ``limits`` values may be null, and a client must not substitute a number of
     its own: a limit nobody has measured is not a limit.
@@ -123,6 +228,9 @@ class ManagementContextView(BaseModel):
     #: resolve it by choosing a Companion.
     default_companion_id: str | None = Field(default=None, max_length=64)
     capabilities: dict[str, bool]
+    #: Keyed only by names that are false. A false name absent from here is
+    #: false for no reason this surface can usefully relay.
+    unavailable: dict[str, str] = Field(default_factory=dict)
     limits: dict[str, int | None]
 
 
@@ -1120,7 +1228,26 @@ def register_management_routes(
     imported so this module cannot reach for a different way to decide scope.
     """
 
-    router = APIRouter(prefix=MANAGEMENT_PREFIX, tags=["management"])
+    router = APIRouter(
+        prefix=MANAGEMENT_PREFIX,
+        tags=["management"],
+        # Declared on the router, not on thirty decorators, for the same reason
+        # the service credential is a router dependency rather than a helper:
+        # a rule written once per route is a rule a new route can be added
+        # without. This is what puts the refusal envelope in the generated
+        # contract, and therefore into both generated clients — the document is
+        # the only channel through which a client learns how to read a no.
+        responses={
+            "default": {
+                "model": Refusal,
+                "description": (
+                    "Any answer that is not a success. One shape for all of "
+                    "them: the status says how to treat it, `kind` says which "
+                    "refusal it is."
+                ),
+            }
+        },
+    )
 
     @router.get("/context", response_model=ManagementContextView)
     async def get_context(
@@ -1139,6 +1266,10 @@ def register_management_routes(
             ),
             default_companion_id=answer["default_companion_id"],
             capabilities=answer["capabilities"],
+            # Forgiving about absence: an Admin older than this field is a
+            # version skew, not a broken Host, and a client reading an empty map
+            # simply learns nothing extra.
+            unavailable=answer.get("unavailable") or {},
             limits=answer["limits"],
         )
 
@@ -1185,7 +1316,7 @@ def register_management_routes(
         try:
             return host_vitals(await host.read_vitals())
         except HostServiceControlError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise refuse(exc.status_code, str(exc)) from exc
 
     @router.get("/host/services", response_model=HostServiceInventoryView)
     async def read_host_services(
@@ -1196,7 +1327,7 @@ def register_management_routes(
         try:
             return host_service_inventory(await host.list_services())
         except HostServiceControlError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise refuse(exc.status_code, str(exc)) from exc
 
     @router.post(
         "/host/services/{service_id}/{operation}",
@@ -1224,7 +1355,7 @@ def register_management_routes(
                 )
             )
         except HostServiceControlError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise refuse(exc.status_code, str(exc)) from exc
 
     @router.get("/controllers", response_model=ControllersView)
     async def list_controllers(

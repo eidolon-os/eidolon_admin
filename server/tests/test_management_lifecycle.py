@@ -27,7 +27,10 @@ from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettin
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.management.router import ManagementBackendError
+from eidolon_admin_server.local_api.management.router import (
+    ManagementBackendError,
+    refusal_for_status,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -318,8 +321,10 @@ async def test_a_refusal_that_is_a_question_reaches_the_client_as_one(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend(
         error=ManagementBackendError(
-            "refused", status_code=409, code="default_replacement_required"
-        )
+                "refused",
+                status_code=409,
+                refusal=refusal_for_status(409, "refused", "default_replacement_required"),
+            )
     )
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
@@ -332,17 +337,25 @@ async def test_a_refusal_that_is_a_question_reaches_the_client_as_one(
     assert answered.json()["detail"]["code"] == "default_replacement_required"
 
 
-async def test_a_refusal_without_a_code_still_reads_as_a_sentence(
+async def test_a_refusal_without_a_domain_code_still_says_which_refusal_it_is(
     tmp_path, monkeypatch
 ) -> None:
-    """The shape every other route on this surface has always had.
+    """One shape now, and it carries a kind even when nothing named a code.
 
-    Kept, because a refusal is the worst possible moment to hand an older client
-    something it cannot parse.
+    This used to assert the opposite — a bare sentence — on the grounds that a
+    refusal is the worst moment to hand an older client something it cannot
+    parse. That was right while clients were hand-written. Both are generated
+    from this surface's document and regenerated with this change, and the cost
+    of the old shape was paid every time somebody had to guess whether 被拒绝
+    meant "not configured", "not running" or "you lost a race".
     """
 
     _stub_controller(monkeypatch, owner_id="owner-1")
-    backend = _Backend(error=ManagementBackendError("upstream is away", status_code=503))
+    backend = _Backend(error=ManagementBackendError(
+                "upstream is away",
+                status_code=503,
+                refusal=refusal_for_status(503, "upstream is away"),
+            ))
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
         headers = await _authenticate(client)
@@ -351,4 +364,11 @@ async def test_a_refusal_without_a_code_still_reads_as_a_sentence(
         )
 
     assert answered.status_code == 503
-    assert answered.json()["detail"] == "upstream is away"
+    assert answered.json()["detail"] == {
+        "kind": "upstream",
+        "reason": "upstream is away",
+        "code": None,
+        # Worth waiting out, unlike a Host nobody configured — the one
+        # distinction a single sentence could never make.
+        "retryable": True,
+    }

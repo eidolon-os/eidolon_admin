@@ -50,6 +50,17 @@ class ManagementContext:
     owner_revision: int
     default_companion_id: str | None
     capabilities: dict[str, bool]
+    #: Why each false capability is false, for the ones where there is a reason
+    #: worth acting on. Present only for names in ``capabilities`` that are
+    #: false; a false name absent from here has no further explanation.
+    #:
+    #: The distinction is the whole point. "This Host's software cannot do this
+    #: yet" and "this Host was never given the key" look identical in a boolean
+    #: and lead to completely different places — one is a release nobody has cut,
+    #: the other is a command somebody can run tonight. On this product the Host
+    #: owner and the phone owner are usually one person, so telling them apart is
+    #: not diagnostics: it is the difference between waiting and fixing.
+    unavailable: dict[str, str]
     limits: dict[str, int | None]
 
 
@@ -162,14 +173,82 @@ _ENABLED: frozenset[str] = frozenset(
 )
 
 
-async def read_context(*, owner_id: str, owners: OwnerReader) -> ManagementContext:
+#: Which authority each closed slice actually needs to be reachable at all.
+#:
+#: The docstring at the top of this file has always said a capability means the
+#: code exists *and its authority answers*. Only the first half was ever
+#: checked, and a Host that had never been given the memory credential answered
+#: ``memory.read: true`` — so the phone drew 记忆库, 今天记下的, 导出记忆 and
+#: 让它忘掉, and every one of them failed the moment it was touched. That is the
+#: exact failure the "false until the whole slice is closed" rule was written to
+#: prevent; it was just enforced against the code and not against the Host.
+#:
+#: This is the half a single process can answer for free. Whether a credential
+#: is *configured* is a local fact — no probe, no latency, no flapping — and it
+#: is the half that was missing. Whether the authority is *up right now* stays a
+#: per-action answer, because a capability that flickers with a restart would
+#: make buttons appear and disappear under someone's thumb.
+#:
+#: A name absent from this map needs no authority: it is answered by Data (which
+#: every Host has, or it has no Owner to ask) or by the Host's own trust root.
+_CAPABILITY_AUTHORITIES: dict[str, frozenset[str]] = {
+    "memory.read": frozenset({"memory"}),
+    "memory.govern": frozenset({"memory"}),
+    "memory.export": frozenset({"memory"}),
+    "conversation.read": frozenset({"agent"}),
+    "task.read": frozenset({"agent"}),
+    "task.manage": frozenset({"agent"}),
+    "session.revoke": frozenset({"agent"}),
+}
+
+
+#: Why a capability is being withheld. Two values, because there are two
+#: reasons, and a client that could not tell them apart would have to show the
+#: same shrug for both.
+WITHHELD_NOT_BUILT = "not_built"
+WITHHELD_HOST_NOT_CONFIGURED = "host_not_configured"
+
+WITHHELD_REASONS: tuple[str, ...] = (
+    WITHHELD_NOT_BUILT,
+    WITHHELD_HOST_NOT_CONFIGURED,
+)
+
+
+@runtime_checkable
+class AuthorityCredentials(Protocol):
+    """Which authorities this Host holds a credential for.
+
+    A port rather than a settings import, so this projection stays a pure
+    function of what it is handed and a test can state a Host that holds one
+    credential and not another — which is the state a real Host was in.
+    """
+
+    def configured_authorities(self) -> frozenset[str]: ...
+
+
+async def read_context(
+    *,
+    owner_id: str,
+    owners: OwnerReader,
+    credentials: AuthorityCredentials,
+) -> ManagementContext:
+    held = credentials.configured_authorities()
     owner = await owners.get_owner(owner_id)
+    unavailable: dict[str, str] = {}
+    for name in _CAPABILITIES:
+        if name not in _ENABLED:
+            unavailable[name] = WITHHELD_NOT_BUILT
+        elif not _CAPABILITY_AUTHORITIES.get(name, frozenset()) <= held:
+            # Named as configuration rather than as a missing feature: the code
+            # is here and closed, and what is absent is a key on this machine.
+            unavailable[name] = WITHHELD_HOST_NOT_CONFIGURED
     return ManagementContext(
         owner_id=owner.owner_id,
         owner_display_name=owner.display_name,
         owner_revision=owner.revision,
         default_companion_id=owner.default_companion_id,
-        capabilities={name: name in _ENABLED for name in _CAPABILITIES},
+        capabilities={name: name not in unavailable for name in _CAPABILITIES},
+        unavailable=unavailable,
         # Null rather than a number the client could hard-code. A limit nobody
         # has measured is not a limit; ``max_active_companions`` waits on a
         # capacity result, and until then the client must not invent one.

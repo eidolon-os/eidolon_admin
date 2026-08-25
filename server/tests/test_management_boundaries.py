@@ -117,4 +117,12 @@ def test_capabilities_stay_false_until_a_slice_is_declared_closed() -> None:
     # no other line in this module can make a capability true.
     assert context.count("_ENABLED") == 2, "declared once, read once"
     assert "_ENABLED: frozenset[str] = frozenset(" in context
-    assert "name in _ENABLED" in context
+    # The read withholds rather than grants: a capability is *not* offered
+    # unless its slice is in the set. The distinction matters for this gate,
+    # because the boolean map is now derived from the withheld map rather than
+    # computed beside it — one computation, so the two cannot disagree.
+    assert "if name not in _ENABLED:" in context
+    assert (
+        "capabilities={name: name not in unavailable for name in _CAPABILITIES}"
+        in context
+    ), "the boolean map must be derived from the withheld map, not computed twice"

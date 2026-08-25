@@ -92,6 +92,30 @@ class ControlPlaneService:
         self.removal_intents = removal_intents
         self.removal_observation_timeout_seconds = removal_observation_timeout_seconds
 
+    def configured_authorities(self) -> frozenset[str]:
+        """Which Owner-facing authorities this Host was actually given a key to.
+
+        Answered here because this object is the only one that holds all the
+        clients, and answered at all because ``/context`` promises a capability
+        means "the code exists and its authority answers" — and for two years it
+        only ever checked the first half. A Host installed before the memory and
+        Agent credentials existed advertised every memory and conversation
+        feature and failed all of them on contact.
+
+        Deliberately a question about configuration and not about liveness. A
+        credential either was or was not written into this Host; a service is up
+        or down by the second, and a capability map that tracked the second one
+        would make controls appear and vanish while someone was looking at them.
+        Whether the authority is answering *now* is what a refusal is for, and
+        refusals now say which kind they are.
+        """
+
+        return frozenset(
+            name
+            for name, client in (("memory", self.memory), ("agent", self.activity))
+            if getattr(client, "has_credential", True)
+        )
+
     @classmethod
     def build(
         cls,

@@ -996,19 +996,6 @@
         "title": "ForgetTargetRequest",
         "type": "object"
       },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
-        "type": "object"
-      },
       "HostServiceInventoryView": {
         "additionalProperties": false,
         "properties": {
@@ -1176,7 +1163,7 @@
       },
       "ManagementContextView": {
         "additionalProperties": false,
-        "description": "What a client reads before it draws anything.\n\n``capabilities`` is discovery, not permission: true means this Host can do\nthe thing at all, and whether this Controller may is answered per action. A\nname absent from the map is one this client has never heard of — a version\nskew — while a name present and false is a feature this Host cannot do yet.\n\n``limits`` values may be null, and a client must not substitute a number of\nits own: a limit nobody has measured is not a limit.",
+        "description": "What a client reads before it draws anything.\n\n``capabilities`` is discovery, not permission: true means this Host can do\nthe thing at all, and whether this Controller may is answered per action. A\nname absent from the map is one this client has never heard of — a version\nskew — while a name present and false is a feature this Host cannot do yet.\n\n``unavailable`` says *why* a false capability is false, for the false names\nwhere there is a reason worth acting on. Two values today: ``not_built``\n(this Host's software cannot do it yet) and ``host_not_configured`` (it can,\nand this Host was never given the key). A boolean could not tell those apart,\nand they lead completely different places — one is a release nobody has cut,\nthe other is a command somebody can run tonight. A client that meets a reason\nit does not know must treat it as \"unavailable, no further detail\" rather\nthan as a failure.\n\n``limits`` values may be null, and a client must not substitute a number of\nits own: a limit nobody has measured is not a limit.",
         "properties": {
           "capabilities": {
             "additionalProperties": {
@@ -1219,6 +1206,13 @@
           },
           "owner": {
             "$ref": "#/components/schemas/OwnerContextView"
+          },
+          "unavailable": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Unavailable",
+            "type": "object"
           }
         },
         "required": [
@@ -1814,6 +1808,53 @@
         "title": "RecollectionsView",
         "type": "object"
       },
+      "Refusal": {
+        "additionalProperties": false,
+        "description": "One refusal, in the only shape an Eidolon surface may publish.\n\nCarried under ``detail`` by HTTP surfaces, because that is where FastAPI's\nerror body puts it and where every client already looks. The status code\nstill says how to treat the response at the transport layer; this says what\nhappened, and the two are different questions — which is why a status alone\nwas never enough to draw a screen from.",
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "kind": {
+            "enum": [
+              "denied",
+              "not_found",
+              "conflict",
+              "invalid",
+              "not_configured",
+              "not_running",
+              "upstream"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Reason",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Refusal",
+        "type": "object"
+      },
       "RenameRequest": {
         "additionalProperties": false,
         "description": "What to call it, as the person typed it.\n\nA name of only spaces passes a length check and would erase the one they\nhave, so it is refused here — at the boundary they are actually typing into,\nrather than two services away where the answer would be the same but later.\n\nOne model for a person and for an Eidolon on purpose. The rule is the same,\nand two models would eventually make it differ for no reason anybody could\nname.",
@@ -2107,46 +2148,6 @@
         "title": "TranscriptView",
         "type": "object"
       },
-      "ValidationError": {
-        "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "msg": {
-            "title": "Message",
-            "type": "string"
-          },
-          "type": {
-            "title": "Error Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError",
-        "type": "object"
-      },
       "VitalView": {
         "additionalProperties": false,
         "description": "One thing about the machine, said the way a person reads it.\n\n``concern`` is decided here and nowhere below. The daemon that reads\n/proc knows how many bytes are free; whether that is worth telling someone\nabout depends on what this Host is for — and this is the layer that faces\nthe person whose Eidolon lives on it.",
@@ -2267,15 +2268,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Activity",
@@ -2333,15 +2334,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "List Companions",
@@ -2391,15 +2392,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Create Companion",
@@ -2450,15 +2451,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Companion",
@@ -2517,15 +2518,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Patch Companion",
@@ -2610,15 +2611,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Companion Conversations",
@@ -2712,15 +2713,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Conversation Transcript",
@@ -2771,15 +2772,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Delete Companion Face",
@@ -2846,15 +2847,15 @@
           "304": {
             "description": "The face the caller already holds"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Companion Face",
@@ -2903,15 +2904,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Put Companion Face",
@@ -2962,15 +2963,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Companion Face State",
@@ -3031,15 +3032,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Put Companion Lifecycle",
@@ -3090,15 +3091,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Persona History",
@@ -3159,15 +3160,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Put Persona Restoration",
@@ -3268,15 +3269,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Companion Tasks",
@@ -3335,15 +3336,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Companion Task",
@@ -3403,15 +3404,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Post Companion Task Cancel",
@@ -3471,15 +3472,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Post Companion Task Retry",
@@ -3520,15 +3521,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Context",
@@ -3570,15 +3571,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "List Controllers",
@@ -3630,15 +3631,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Invite Controller",
@@ -3689,15 +3690,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Revoke Controller",
@@ -3739,15 +3740,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Read Host Services",
@@ -3822,15 +3823,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Operate Host Service",
@@ -3872,15 +3873,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Read Host Vitals",
@@ -3963,15 +3964,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Memory Entries",
@@ -4032,15 +4033,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Put Memory Entry Audience",
@@ -4098,15 +4099,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Memory Export",
@@ -4158,15 +4159,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Confirm Forget",
@@ -4218,15 +4219,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Preview Forget",
@@ -4284,15 +4285,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Memory Library",
@@ -4373,15 +4374,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Get Memory Recollections",
@@ -4433,15 +4434,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Patch Owner",
@@ -4483,15 +4484,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Post Revoke Runtime Sessions",
@@ -4543,15 +4544,15 @@
             },
             "description": "Successful Response"
           },
-          "422": {
+          "default": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/Refusal"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
           }
         },
         "summary": "Put Default Companion",

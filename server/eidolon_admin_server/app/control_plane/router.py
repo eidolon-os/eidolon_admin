@@ -35,7 +35,6 @@ from .contracts import (
 )
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
-from .errors import AuthorityFailure
 from .service import ControlPlaneService
 
 #: Every route mounted here requires the Local API service credential, and it
@@ -59,12 +58,6 @@ def _service(request: Request) -> ControlPlaneService:
     return request.app.state.control_plane
 
 
-def _raise(exc: AuthorityFailure) -> None:
-    raise HTTPException(
-        status_code=exc.status_code, detail=exc.to_wire().model_dump()
-    ) from exc
-
-
 @router.get("/capabilities", response_model=BoundaryCapabilities)
 async def capabilities(request: Request) -> BoundaryCapabilities:
     return _service(request).capabilities()
@@ -72,10 +65,7 @@ async def capabilities(request: Request) -> BoundaryCapabilities:
 
 @router.get("/companions/{companion_id}", response_model=CompanionIdentity)
 async def get_companion(companion_id: str, request: Request) -> CompanionIdentity:
-    try:
-        return await _service(request).data.get_companion(companion_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.get_companion(companion_id)
 
 
 @router.patch("/companions/{companion_id}", response_model=CompanionIdentity)
@@ -84,21 +74,15 @@ async def rename_companion(
     payload: CompanionRenameRequest,
     request: Request,
 ) -> CompanionIdentity:
-    try:
-        return await _service(request).data.rename_companion(
-            companion_id,
-            payload.display_name,
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.rename_companion(
+        companion_id,
+        payload.display_name,
+    )
 
 
 @router.get("/companions/{companion_id}/face-state", response_model=CompanionFace)
 async def companion_face_state(companion_id: str, request: Request) -> CompanionFace:
-    try:
-        return await _service(request).data.get_companion_face_state(companion_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.get_companion_face_state(companion_id)
 
 
 @router.get(
@@ -107,10 +91,7 @@ async def companion_face_state(companion_id: str, request: Request) -> Companion
     responses={200: {"content": {"image/jpeg": {}}}, 204: {"description": "No face"}},
 )
 async def companion_face(companion_id: str, request: Request) -> Response:
-    try:
-        face = await _service(request).data.get_companion_face(companion_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    face = await _service(request).data.get_companion_face(companion_id)
     if face is None:
         return Response(status_code=204)
     return Response(content=face, media_type="image/jpeg")
@@ -118,21 +99,15 @@ async def companion_face(companion_id: str, request: Request) -> Response:
 
 @router.put("/companions/{companion_id}/face", response_model=CompanionFace)
 async def set_companion_face(companion_id: str, request: Request) -> CompanionFace:
-    try:
-        return await _service(request).data.set_companion_face(
-            companion_id,
-            await request.body(),
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.set_companion_face(
+        companion_id,
+        await request.body(),
+    )
 
 
 @router.delete("/companions/{companion_id}/face", response_model=CompanionFace)
 async def clear_companion_face(companion_id: str, request: Request) -> CompanionFace:
-    try:
-        return await _service(request).data.clear_companion_face(companion_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.clear_companion_face(companion_id)
 
 
 @router.get(
@@ -140,10 +115,7 @@ async def clear_companion_face(companion_id: str, request: Request) -> Companion
     response_model=PersonaTimeline,
 )
 async def persona_timeline(companion_id: str, request: Request) -> PersonaTimeline:
-    try:
-        return await _service(request).data.get_persona_timeline(companion_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.get_persona_timeline(companion_id)
 
 
 @router.post(
@@ -155,14 +127,11 @@ async def restore_persona(
     payload: PersonaRestoreRequest,
     request: Request,
 ) -> PersonaChapter:
-    try:
-        return await _service(request).data.restore_persona(
-            companion_id,
-            payload.genome_id,
-            payload.change_summary,
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).data.restore_persona(
+        companion_id,
+        payload.genome_id,
+        payload.change_summary,
+    )
 
 
 @router.put(
@@ -174,13 +143,10 @@ async def initialize_workspace(
     payload: WorkspaceInitializeRequest,
     request: Request,
 ) -> WorkspaceOperation:
-    try:
-        return await _service(request).initialize_workspace(
-            operation_id=str(operation_id),
-            payload=payload,
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).initialize_workspace(
+        operation_id=str(operation_id),
+        payload=payload,
+    )
 
 
 @router.get(
@@ -191,18 +157,12 @@ async def get_workspace_operation(
     operation_id: UUID,
     request: Request,
 ) -> WorkspaceOperation:
-    try:
-        return await _service(request).get_workspace_operation(str(operation_id))
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).get_workspace_operation(str(operation_id))
 
 
 @router.get("/owners/{owner_id}", response_model=OwnerIdentity)
 async def get_owner(owner_id: str, request: Request) -> OwnerIdentity:
-    try:
-        return await _service(request).workspace.get_owner(owner_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).workspace.get_owner(owner_id)
 
 
 @router.patch("/owners/{owner_id}", response_model=OwnerIdentity)
@@ -211,13 +171,10 @@ async def rename_owner(
     payload: OwnerRenameRequest,
     request: Request,
 ) -> OwnerIdentity:
-    try:
-        return await _service(request).workspace.rename_owner(
-            owner_id,
-            payload.display_name,
-        )
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).workspace.rename_owner(
+        owner_id,
+        payload.display_name,
+    )
 
 
 @router.get(
@@ -228,10 +185,7 @@ async def get_owner_default_runtime(
     owner_id: str,
     request: Request,
 ) -> CompanionRuntimeSnapshot:
-    try:
-        return await _service(request).get_owner_default_runtime(owner_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).get_owner_default_runtime(owner_id)
 
 
 @router.get(
@@ -244,10 +198,7 @@ async def get_owner_device_mounts(
 ) -> KernelMountPage:
     """Narrow product projection used only by the loopback Local API."""
 
-    try:
-        return await _service(request).list_owner_device_mounts(owner_id)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).list_owner_device_mounts(owner_id)
 
 
 @router.put(
@@ -262,20 +213,14 @@ async def set_device_companion(
 ) -> KernelMount:
     if payload.owner_id != owner_id or payload.device_id != device_id:
         raise HTTPException(409, "Attachment path and command do not match")
-    try:
-        return await _service(request).set_device_companion(payload=payload)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).set_device_companion(payload=payload)
 
 
 @router.post("/admission/enrollment-queries", response_model=EnrollmentProposalPage)
 async def query_enrollment_recovery(
     payload: ControllerEnrollmentQuery, request: Request
 ) -> EnrollmentProposalPage:
-    try:
-        return await _service(request).list_enrollment_recovery(payload=payload)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).list_enrollment_recovery(payload=payload)
 
 
 @router.post(
@@ -285,20 +230,14 @@ async def query_enrollment_recovery(
 async def read_enrollment_recovery(
     payload: ControllerEnrollmentRecoveryQuery, request: Request
 ) -> EnrollmentRecoveryProjection:
-    try:
-        return await _service(request).get_enrollment_recovery(payload=payload)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).get_enrollment_recovery(payload=payload)
 
 
 @router.post("/admission/claim-queries", response_model=ClaimPage)
 async def query_claims(
     payload: ControllerClaimQuery, request: Request
 ) -> ClaimPage:
-    try:
-        return await _service(request).list_claims(payload=payload)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).list_claims(payload=payload)
 
 
 @router.put(
@@ -312,7 +251,4 @@ async def submit_enrollment_decision(
 ) -> AdmissionDecisionWorkflowResult:
     if payload.decision.enrollment_id != enrollment_id:
         raise HTTPException(409, "Enrollment path and Decision do not match")
-    try:
-        return await _service(request).decide_controller_enrollment(payload=payload)
-    except AuthorityFailure as exc:
-        _raise(exc)
+    return await _service(request).decide_controller_enrollment(payload=payload)

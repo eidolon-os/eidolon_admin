@@ -29,7 +29,10 @@ from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettin
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.management.router import ManagementBackendError
+from eidolon_admin_server.local_api.management.router import (
+    ManagementBackendError,
+    refusal_for_status,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -211,7 +214,11 @@ async def test_a_backend_refusal_is_relayed_not_reinterpreted(tmp_path, monkeypa
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _ManagementBackend()
-    backend.failure = ManagementBackendError("backend is unreachable", status_code=503)
+    backend.failure = ManagementBackendError(
+                "backend is unreachable",
+                status_code=503,
+                refusal=refusal_for_status(503, "backend is unreachable"),
+            )
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
         headers = await _authenticate(client)
@@ -263,7 +270,9 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
                 default_companion_id="companion-a",
             )
 
-    context = await read_context(owner_id="owner-1", owners=_Owners())
+    context = await read_context(
+        owner_id="owner-1", owners=_Owners(), credentials=_Holding("memory", "agent")
+    )
 
     assert set(context.capabilities) == set(_CAPABILITIES)
     # Compared against _ENABLED rather than a hard-coded "all false": closing
@@ -292,6 +301,93 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         assert context.capabilities[still_open] is False, still_open
 
 
+class _Holding:
+    """A Host that was given keys to exactly these authorities."""
+
+    def __init__(self, *authorities: str) -> None:
+        self._authorities = frozenset(authorities)
+
+    def configured_authorities(self) -> frozenset[str]:
+        return self._authorities
+
+
+async def _capabilities(*held: str) -> dict[str, bool]:
+    class _Owners:
+        async def get_owner(self, owner_id: str):
+            return SimpleNamespace(
+                owner_id=owner_id,
+                display_name="Manson",
+                revision=3,
+                default_companion_id="companion-a",
+            )
+
+    context = await read_context(
+        owner_id="owner-1", owners=_Owners(), credentials=_Holding(*held)
+    )
+    return context.capabilities
+
+
+async def test_a_host_without_the_memory_key_does_not_offer_memory() -> None:
+    """The state a real Host was in, and the screens it drew anyway.
+
+    Installed before the memory credential existed, it answered
+    ``memory.read: true`` — so the phone offered 记忆库, 今天记下的, 导出记忆 and
+    让它忘掉, and all four failed on contact with a refusal nobody could read.
+    A capability that says "this Host can do this at all" must not be true on a
+    Host that was never given the key.
+    """
+
+    capabilities = await _capabilities("agent")
+
+    for withdrawn in ("memory.read", "memory.govern", "memory.export"):
+        assert capabilities[withdrawn] is False, withdrawn
+    # Unrelated slices are untouched: this is a missing key, not a broken Host.
+    assert capabilities["companion.read"] is True
+    assert capabilities["persona.read"] is True
+    assert capabilities["conversation.read"] is True
+
+
+async def test_a_host_without_the_agent_key_does_not_offer_the_agent_surface() -> None:
+    """The other half of the same Host, and the worse half.
+
+    These refusals did not even arrive as refusals: the Agent authority was
+    missing from the wire model that serialises them, so every one became a 500.
+    """
+
+    capabilities = await _capabilities("memory")
+
+    for withdrawn in ("conversation.read", "task.read", "task.manage", "session.revoke"):
+        assert capabilities[withdrawn] is False, withdrawn
+    assert capabilities["memory.read"] is True
+    assert capabilities["companion.read"] is True
+
+
+async def test_a_capability_needing_no_authority_is_unaffected_by_keys() -> None:
+    """Renaming, faces, the machine itself: Data or this Host's own trust root.
+
+    Asserted so the gate above cannot be satisfied by making everything depend
+    on everything, which would turn one missing key into a Host that offers
+    nothing.
+    """
+
+    capabilities = await _capabilities()
+
+    for independent in (
+        "companion.read",
+        "companion.create",
+        "companion.rename",
+        "owner.rename",
+        "companion.face",
+        "persona.read",
+        "persona.govern",
+        "controller.manage",
+        "host.read",
+        "host.operate",
+        "activity.read",
+    ):
+        assert capabilities[independent] is True, independent
+
+
 async def test_limits_are_null_rather_than_a_number_nobody_measured(
     tmp_path, monkeypatch
 ) -> None:
@@ -307,3 +403,64 @@ async def test_limits_are_null_rather_than_a_number_nobody_measured(
         body = (await client.get(_CONTEXT, headers=headers)).json()
 
     assert body["limits"] == {"max_active_companions": None}
+
+
+async def test_a_withheld_capability_says_which_kind_of_withheld_it_is() -> None:
+    """Two reasons, because they lead to two different places.
+
+    "This Host's software cannot do it yet" is a release nobody has cut. "This
+    Host was never given the key" is a command somebody can run tonight. A
+    boolean shows the same shrug for both, and the shrug is what turned a
+    missing credential into two weeks of guessing.
+    """
+
+    from eidolon_admin_server.app.management.context import (
+        WITHHELD_HOST_NOT_CONFIGURED,
+        WITHHELD_NOT_BUILT,
+    )
+
+    class _Owners:
+        async def get_owner(self, owner_id: str):
+            return SimpleNamespace(
+                owner_id=owner_id,
+                display_name="Manson",
+                revision=3,
+                default_companion_id="companion-a",
+            )
+
+    context = await read_context(
+        owner_id="owner-1", owners=_Owners(), credentials=_Holding("agent")
+    )
+
+    # Closed slice, key missing: fixable here, tonight.
+    assert context.unavailable["memory.read"] == WITHHELD_HOST_NOT_CONFIGURED
+    assert context.unavailable["memory.govern"] == WITHHELD_HOST_NOT_CONFIGURED
+    # Slice not closed: nothing on this Host will change that.
+    assert context.unavailable["device.read"] == WITHHELD_NOT_BUILT
+    # Available capabilities say nothing, so a client can read the map as
+    # "everything in here is off, and this is why".
+    assert "companion.read" not in context.unavailable
+    assert "conversation.read" not in context.unavailable
+    assert set(context.unavailable) == {
+        name for name, value in context.capabilities.items() if not value
+    }
+
+
+async def test_the_reason_map_and_the_boolean_map_cannot_disagree() -> None:
+    """One computation, two shapes. Two computations would drift."""
+
+    class _Owners:
+        async def get_owner(self, owner_id: str):
+            return SimpleNamespace(
+                owner_id=owner_id,
+                display_name="Manson",
+                revision=3,
+                default_companion_id=None,
+            )
+
+    for held in (frozenset(), frozenset({"memory"}), frozenset({"memory", "agent"})):
+        context = await read_context(
+            owner_id="owner-1", owners=_Owners(), credentials=_Holding(*held)
+        )
+        for name, available in context.capabilities.items():
+            assert available is (name not in context.unavailable), name

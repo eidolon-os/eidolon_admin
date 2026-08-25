@@ -899,6 +899,19 @@ class MemoryRecollectionsClient:
         #: and only the read of what a person remembers presents this.
         self._service_token = service_token.strip()
 
+    @property
+    def has_credential(self) -> bool:
+        """Whether this Host was ever given the credential these reads need.
+
+        A local fact, and the one ``/context`` was missing. Asked rather than
+        probed on purpose: "is memory reachable this second" flickers and would
+        make a button appear and disappear under someone's thumb, while "was
+        this Host configured" is stable and is what decides whether the button
+        should exist at all.
+        """
+
+        return bool(self._service_token)
+
     async def recollections(
         self,
         *,
@@ -1222,6 +1235,13 @@ class AgentActivityClient:
         self._client = client
         self._timeout = timeout_seconds
         self._service_token = service_token
+
+    @property
+    def has_credential(self) -> bool:
+        """Whether this Host holds the Agent admin credential. See the memory
+        client's note: a configured fact, not a liveness probe."""
+
+        return bool(self._service_token.strip())
 
     async def list_conversations(
         self,
