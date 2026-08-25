@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import httpx
 from eidolon_sdk.core.streaming import encode_sse_comment, encode_sse_event
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Header, Query, Request
 from fastapi.responses import StreamingResponse
 
 from .blackboard import read_runtime_blackboard
@@ -53,14 +53,48 @@ async def events(
     request: Request,
     owner_id: str | None = Query(default=None),
     mode: str | None = Query(default=None),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> StreamingResponse:
-    return StreamingResponse(_runtime_event_stream(request, owner_id, mode), media_type="text/event-stream")
+    """The runtime stream, resumable.
+
+    ``Last-Event-ID`` is the protocol's own cursor: a browser remembers the last
+    stamped frame and sends it back on reconnect, so a dropped connection
+    resumes where the reader stopped. Before this the tail started at "now" and
+    everything that happened while the connection was down was gone from the
+    stream — the periodic snapshot was the only backstop, and a snapshot is a
+    state, not the events that produced it.
+    """
+
+    return StreamingResponse(
+        _runtime_event_stream(request, owner_id, mode, since=_cursor(last_event_id)),
+        media_type="text/event-stream",
+    )
+
+
+def _cursor(last_event_id: str | None) -> datetime | None:
+    """Read a resume point this stream issued, or start from now.
+
+    Unparseable is treated as absent rather than refused: a reader with a cursor
+    from another version of this stream should get a live connection, not an
+    error it cannot act on. What it loses is the gap — which is what it would
+    have lost anyway.
+    """
+
+    if not (last_event_id or "").strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(last_event_id.strip())
+    except ValueError:
+        return None
+    return _as_utc(parsed)
 
 
 async def _runtime_event_stream(
     request: Request,
     owner_id: str | None,
     mode: str | None = None,
+    *,
+    since: datetime | None = None,
 ) -> AsyncIterator[bytes]:
     if mode == "replay":
         # Recorded demo playback — never touches Hub; every frame is replay-origin.
@@ -81,8 +115,18 @@ async def _runtime_event_stream(
             await queue.put(item)
 
     async def _pump_events() -> None:
-        async for event in _events_tail(request, owner_id):
-            await queue.put(encode_sse_event("runtime_event", event.model_dump(mode="json")))
+        async for event, position in _events_tail(request, owner_id, since=since):
+            # Only the audit tail stamps an id, because it is the only source
+            # with a position to resume from. Stamping a proxied Hub frame or a
+            # keepalive would move the reader's resume point to something it
+            # cannot resume from.
+            await queue.put(
+                encode_sse_event(
+                    "runtime_event",
+                    event.model_dump(mode="json"),
+                    event_id=position.isoformat() if position is not None else None,
+                )
+            )
 
     tasks = [asyncio.create_task(_pump_hub()), asyncio.create_task(_pump_events())]
     try:
@@ -104,13 +148,17 @@ async def _events_tail(
     *,
     interval: float = 1.5,
     since: datetime | None = None,
-) -> AsyncIterator[RuntimeEvent]:
+) -> AsyncIterator[tuple[RuntimeEvent, datetime | None]]:
     """Cursor tail of owner-scoped audit events → live RuntimeEvents.
 
     Cross-process near-real-time without a bus: poll the shared events table by
-    created_at cursor. Starts at 'now' so only NEW events stream (the periodic
-    snapshot carries history and is the miss-backstop). Best-effort: a failed poll
-    never kills the stream; callers dedupe by event_id.
+    created_at cursor. ``since`` is where a reconnecting reader stopped; without
+    one the tail starts at now, which is right for a first connection and wrong
+    for a resumed one — the events in between would exist nowhere in the stream.
+
+    Yields each event with its position so the frame can be stamped. Best-effort:
+    a failed poll never kills the stream, and at-least-once is the contract —
+    a resumed reader may see a frame twice and dedupes by ``event_id``.
     """
     app = getattr(request, "app", None)
     state = getattr(app, "state", None)
@@ -134,7 +182,7 @@ async def _events_tail(
             if row_ts is not None and row_ts > cursor:
                 cursor = row_ts
             for event in _events_from_data([row]):
-                yield await enrich_runtime_event(request, event)
+                yield await enrich_runtime_event(request, event), row_ts
         if len(seen) > 2048:
             seen.clear()  # cursor advanced past all yielded rows; a re-send is client-deduped
         await asyncio.sleep(interval)

@@ -272,3 +272,46 @@ async def test_an_owner_with_no_default_is_shown_as_having_none() -> None:
     assert snapshot.default_companion_id is None
     assert snapshot.companion is None
     assert [row.companion_id for row in snapshot.companions] == ["cmp-1"]
+
+
+async def test_a_reconnecting_reader_resumes_where_it_stopped() -> None:
+    """The cursor is the protocol's own, and it has to be honoured.
+
+    Before this the tail started at "now": a dropped connection meant everything
+    that happened while it was down existed nowhere in the stream, and the
+    periodic snapshot was the only backstop — but a snapshot is a state, not the
+    events that produced it. §11.2 forbids exactly this.
+    """
+
+    from eidolon_admin_server.app.mission_control.router import _cursor
+
+    resumed = _cursor("2026-08-25T09:00:00+00:00")
+    assert resumed is not None
+    assert resumed.tzinfo is not None
+    # A first connection has nothing to resume from, and says so with None
+    # rather than with a date that would silently skip history.
+    assert _cursor(None) is None
+    assert _cursor("   ") is None
+    # A cursor from another version of this stream gets a live connection rather
+    # than an error it cannot act on: it loses the gap, which it would have lost
+    # anyway.
+    assert _cursor("not-a-position") is None
+
+
+async def test_only_the_source_with_a_position_stamps_a_frame() -> None:
+    """An id that does not mean a position would overwrite one that does.
+
+    The stream merges a proxied Hub substream with the audit tail. Only the tail
+    knows where it is, so only its frames carry an id — otherwise a reconnecting
+    reader would resume from a Hub frame it cannot look up.
+    """
+
+    from eidolon_sdk.core.streaming import encode_sse_event
+
+    stamped = encode_sse_event(
+        "runtime_event", {"event_id": "a"}, event_id="2026-08-25T09:00:00+00:00"
+    )
+    unstamped = encode_sse_event("runtime_event", {"event_id": "b"})
+
+    assert stamped.startswith(b"id: 2026-08-25T09:00:00+00:00\n")
+    assert not unstamped.startswith(b"id:")

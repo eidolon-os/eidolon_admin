@@ -90,6 +90,31 @@ function demoActivity(turn: RuntimeTurn): RuntimeActivity {
   }
 }
 
+/** How many live events the screen keeps. Older ones live in the snapshot. */
+export const LIVE_EVENT_CAP = 80
+
+/**
+ * Add one streamed event to the live list, newest first.
+ *
+ * At-least-once is the stream's contract and now also its behaviour: each audit
+ * frame carries its position, the browser sends the last one back on reconnect,
+ * and a resumed connection therefore replays the boundary. Dropping a duplicate
+ * by `event_id` is what makes that safe — without it every reconnect would
+ * leave doubled rows on the screen, which reads as the Host having done
+ * something twice.
+ *
+ * A pure function rather than a line inside the frame handler, because it is a
+ * rule (dedupe, newest first, bounded) and rules are worth naming and testing.
+ */
+export function appendLiveEvent(
+  existing: RuntimeEvent[],
+  event: RuntimeEvent,
+  cap = LIVE_EVENT_CAP,
+): RuntimeEvent[] {
+  if (existing.some((seen) => seen.event_id === event.event_id)) return existing
+  return [event, ...existing].slice(0, cap)
+}
+
 export function useMissionControlStream(opts: MissionControlMode = {}) {
   // Gate the demo hook to dev builds so a stray `?demoFlow` can never fabricate
   // runtime activity in production.
@@ -424,7 +449,7 @@ export function useMissionControlStream(opts: MissionControlMode = {}) {
     onMessage: (data) => {
       try {
         const event = JSON.parse(data) as RuntimeEvent
-        liveEvents.value = [event, ...liveEvents.value].slice(0, 80)
+        liveEvents.value = appendLiveEvent(liveEvents.value, event)
         streamState.value = event.severity === 'warn' && event.type.includes('degraded') ? 'degraded' : 'live'
         if (event.source === 'hub' || event.source === 'mission_control') void refresh()
         if (event.source === 'channel') {

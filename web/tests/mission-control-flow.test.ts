@@ -8,6 +8,7 @@
  *   3. how the loop path + timing are generated (reusing DURATION tokens).
  */
 import { describe, expect, it } from 'vitest'
+import { appendLiveEvent, LIVE_EVENT_CAP } from '../src/modules/mission-control/useMissionControlStream'
 import {
   currentStageKey,
   demoFlowDevice,
@@ -514,5 +515,31 @@ describe('stageMoon', () => {
   it('is empty for an unknown or empty stage', () => {
     expect(stageMoon('')).toBe('')
     expect(stageMoon('nonsense')).toBe('')
+  })
+})
+
+describe('live events survive a reconnect without doubling', () => {
+  const event = (id: string) => ({ event_id: id, type: 'x', source: 'data', severity: 'info' } as never)
+
+  it('drops a frame it has already shown', () => {
+    // The stream stamps each audit frame with its position and the browser
+    // sends the last one back on reconnect, so a resumed connection replays the
+    // boundary. Without this the same act would appear twice, which reads as
+    // the Host having done it twice.
+    const first = appendLiveEvent([], event('a'))
+    const again = appendLiveEvent(first, event('a'))
+
+    expect(first).toHaveLength(1)
+    expect(again).toBe(first)
+  })
+
+  it('keeps the newest first and stays bounded', () => {
+    let events = [] as never[]
+    for (let index = 0; index < LIVE_EVENT_CAP + 5; index += 1) {
+      events = appendLiveEvent(events, event(`e${index}`)) as never[]
+    }
+
+    expect(events).toHaveLength(LIVE_EVENT_CAP)
+    expect((events[0] as { event_id: string }).event_id).toBe(`e${LIVE_EVENT_CAP + 4}`)
   })
 })
