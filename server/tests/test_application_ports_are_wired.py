@@ -43,6 +43,7 @@ from eidolon_admin_server.app.management.creation import (
 )
 from eidolon_admin_server.app.management.audience import MemoryAudienceKeeper
 from eidolon_admin_server.app.management.lifecycle import CompanionLifecycleWriter
+from eidolon_admin_server.app.management.naming import CompanionNamer, OwnerNamer
 from eidolon_admin_server.app.management.forgetting import MemoryForgetter
 from eidolon_admin_server.app.management.memory import MemoryBrowser
 from eidolon_admin_server.app.management.activity import CompanionActivityReader
@@ -71,6 +72,10 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # the Owner's default pointer, because retiring the Companion that answers
     # hands that role over in the same transaction.
     "CompanionLifecycleWriter": (CompanionLifecycleWriter, "workspace"),
+    # Naming: an Eidolon is Data's, and an Owner is written where the Owner
+    # aggregate is written.
+    "CompanionNamer": (CompanionNamer, "data"),
+    "OwnerNamer": (OwnerNamer, "workspace"),
     "MemoryReconciler": (MemoryReconciler, "memory_supervisor"),
     # Reading what a memory holds and bringing a realm *up* are different
     # things on different clients; the gate below asserts they are not

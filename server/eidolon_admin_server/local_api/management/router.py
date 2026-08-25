@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Literal, Protocol
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MANAGEMENT_PREFIX = "/api/management/v1"
 
@@ -179,6 +179,55 @@ class DefaultCompanionView(BaseModel):
     #: Echoed rather than assumed. A client that painted its own choice would be
     #: showing what it asked for instead of what happened.
     default_companion_id: str | None = Field(default=None, max_length=64)
+
+
+class RenameRequest(BaseModel):
+    """What to call it, as the person typed it.
+
+    A name of only spaces passes a length check and would erase the one they
+    have, so it is refused here — at the boundary they are actually typing into,
+    rather than two services away where the answer would be the same but later.
+
+    One model for a person and for an Eidolon on purpose. The rule is the same,
+    and two models would eventually make it differ for no reason anybody could
+    name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("display_name")
+    @classmethod
+    def _must_be_a_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("display_name cannot be blank")
+        return name
+
+
+class CompanionNameView(BaseModel):
+    """What this Eidolon is called, after being told."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    #: Moved, because renaming writes the Companion. A client holding the old
+    #: one would fail its next compare-and-set for a reason it could not see.
+    revision: int = Field(ge=1)
+
+
+class OwnerNameView(BaseModel):
+    """What this person is called, after being told."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    owner_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    revision: int = Field(ge=1)
 
 
 class CompanionLifecycleRequest(BaseModel):
@@ -703,6 +752,12 @@ class ManagementBackendPort(Protocol):
         kind: str,
     ) -> dict: ...
 
+    async def rename_companion(
+        self, *, owner_id: str, companion_id: str, display_name: str
+    ) -> dict: ...
+
+    async def rename_owner(self, *, owner_id: str, display_name: str) -> dict: ...
+
     async def set_companion_lifecycle(
         self,
         *,
@@ -954,6 +1009,59 @@ def register_management_routes(
             revision=answer["revision"],
             created=answer["created"],
             memory_ready=answer["memory_ready"],
+        )
+
+    @router.patch(
+        "/companions/{companion_id}", response_model=CompanionNameView
+    )
+    async def patch_companion(
+        companion_id: str,
+        payload: RenameRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CompanionNameView:
+        """Call this Eidolon something else.
+
+        The name is the Owner's word for it, so nothing here suggests one,
+        trims it into a shape, or refuses a name for being unusual. Only a name
+        that is not one — blank — is refused.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.rename_companion(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                display_name=payload.display_name,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return CompanionNameView(
+            companion_id=answer["companion_id"],
+            display_name=answer["display_name"],
+            revision=answer["revision"],
+        )
+
+    @router.patch("/owner", response_model=OwnerNameView)
+    async def patch_owner(
+        payload: RenameRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> OwnerNameView:
+        """Change what I am called.
+
+        No Owner in the path, and there will not be one: there is exactly one
+        Owner a session can speak for, and letting a client name another would
+        create a question this boundary would then have to answer.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.rename_owner(
+                owner_id=owner_id, display_name=payload.display_name
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return OwnerNameView(
+            owner_id=answer["owner_id"],
+            display_name=answer["display_name"],
+            revision=answer["revision"],
         )
 
     @router.put(

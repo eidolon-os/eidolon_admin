@@ -237,6 +237,41 @@
         "title": "CompanionLifecycleView",
         "type": "object"
       },
+      "CompanionNameView": {
+        "additionalProperties": false,
+        "description": "What this Eidolon is called, after being told.",
+        "properties": {
+          "companion_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "revision"
+        ],
+        "title": "CompanionNameView",
+        "type": "object"
+      },
       "CompanionRosterView": {
         "additionalProperties": false,
         "description": "One page of this Owner's Eidolons, oldest first.",
@@ -1149,6 +1184,41 @@
         "title": "OwnerContextView",
         "type": "object"
       },
+      "OwnerNameView": {
+        "additionalProperties": false,
+        "description": "What this person is called, after being told.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "owner_id",
+          "revision"
+        ],
+        "title": "OwnerNameView",
+        "type": "object"
+      },
       "PersonaChapterView": {
         "additionalProperties": false,
         "description": "One thing my Eidolon has been.\n\nNo version, no hash, no realizer: those are how a Companion is built, and\nwhat I wonder is when it changed and what changed.",
@@ -1298,6 +1368,23 @@
           "recollections"
         ],
         "title": "RecollectionsView",
+        "type": "object"
+      },
+      "RenameRequest": {
+        "additionalProperties": false,
+        "description": "What to call it, as the person typed it.\n\nA name of only spaces passes a length check and would erase the one they\nhave, so it is refused here — at the boundary they are actually typing into,\nrather than two services away where the answer would be the same but later.\n\nOne model for a person and for an Eidolon on purpose. The rule is the same,\nand two models would eventually make it differ for no reason anybody could\nname.",
+        "properties": {
+          "display_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name"
+        ],
+        "title": "RenameRequest",
         "type": "object"
       },
       "RevokedSessionsView": {
@@ -1803,6 +1890,73 @@
           }
         },
         "summary": "Get Companion",
+        "tags": [
+          "management"
+        ]
+      },
+      "patch": {
+        "description": "Call this Eidolon something else.\n\nThe name is the Owner's word for it, so nothing here suggests one,\ntrims it into a shape, or refuses a name for being unusual. Only a name\nthat is not one — blank — is refused.",
+        "operationId": "patch_companion_api_management_v1_companions__companion_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionNameView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Companion",
         "tags": [
           "management"
         ]
@@ -3057,6 +3211,66 @@
           }
         },
         "summary": "Get Memory Recollections",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner": {
+      "patch": {
+        "description": "Change what I am called.\n\nNo Owner in the path, and there will not be one: there is exactly one\nOwner a session can speak for, and letting a client name another would\ncreate a question this boundary would then have to answer.",
+        "operationId": "patch_owner_api_management_v1_owner_patch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerNameView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Owner",
         "tags": [
           "management"
         ]

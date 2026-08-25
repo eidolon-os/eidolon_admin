@@ -47,6 +47,13 @@ export interface CompanionLifecycleView {
   revision: number
 }
 
+export interface CompanionNameView {
+  companion_id: string
+  contract_version?: "1"
+  display_name?: string
+  revision: number
+}
+
 export interface CompanionRosterView {
   companions: Array<CompanionSummaryView>
   contract_version?: "1"
@@ -214,6 +221,13 @@ export interface OwnerContextView {
   revision: number
 }
 
+export interface OwnerNameView {
+  contract_version?: "1"
+  display_name?: string
+  owner_id: string
+  revision: number
+}
+
 export interface PersonaChapterView {
   changed_at: string
   chapter_id: string
@@ -241,6 +255,10 @@ export interface RecollectionsView {
   contract_version?: "1"
   query: string
   recollections: Array<RecollectionView>
+}
+
+export interface RenameRequest {
+  display_name: string
 }
 
 export interface RevokedSessionsView {
@@ -304,6 +322,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions': CompanionRosterView
   'PUT /api/management/v1/companions': CompanionCreatedView
   'GET /api/management/v1/companions/{companion_id}': CompanionDetailView
+  'PATCH /api/management/v1/companions/{companion_id}': CompanionNameView
   'GET /api/management/v1/companions/{companion_id}/conversations': ConversationPageView
   'GET /api/management/v1/companions/{companion_id}/conversations/{conversation_id}/turns': TranscriptView
   'PUT /api/management/v1/companions/{companion_id}/lifecycle': CompanionLifecycleView
@@ -321,6 +340,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'GET /api/management/v1/memory/recollections': RecollectionsView
+  'PATCH /api/management/v1/owner': OwnerNameView
   'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
 }

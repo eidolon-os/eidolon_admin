@@ -32,18 +32,6 @@ class AdminOwnerRuntimePort(Protocol):
 
     async def get_companion(self, companion_id: str) -> CompanionIdentity: ...
 
-    async def rename_companion(
-        self,
-        companion_id: str,
-        display_name: str,
-    ) -> CompanionIdentity: ...
-
-    async def rename_owner(
-        self,
-        owner_id: str,
-        display_name: str,
-    ) -> OwnerIdentity: ...
-
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace: ...
 
     async def get_companion_face(self, companion_id: str) -> bytes | None: ...
@@ -70,40 +58,6 @@ class PrimaryCompanionView(BaseModel):
     lifecycle_state: Literal["active"]
 
 
-class CompanionRenameCommand(BaseModel):
-    """What to call this Companion, as the person typed it.
-
-    A name of only spaces passes a length check and would erase the one they
-    have. It is refused here rather than two services away: the answer is the
-    same either way, and this is the boundary the person is actually talking
-    to.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    display_name: str = Field(min_length=1, max_length=128)
-
-    @field_validator("display_name")
-    @classmethod
-    def _must_be_a_name(cls, value: str) -> str:
-        name = value.strip()
-        if not name:
-            raise ValueError("display_name cannot be blank")
-        return name
-
-
-class CompanionNameView(BaseModel):
-    """What a Companion is called, after being told what to be called."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    operation: Literal["local.companion-name"] = "local.companion-name"
-    contract_version: Literal["1"] = "1"
-    companion_id: str = Field(min_length=1, max_length=64)
-    display_name: str = Field(min_length=1, max_length=128)
-
-
 class CompanionFaceView(BaseModel):
     """Whether this Eidolon has a face — never the face itself.
 
@@ -121,26 +75,6 @@ class CompanionFaceView(BaseModel):
     #: copy is stale without comparing photographs.
     sha256: str | None = None
     updated_at: str | None = None
-
-
-class OwnerRenameCommand(CompanionRenameCommand):
-    """What this person wants to be called.
-
-    Same rule as naming a Companion, and deliberately the same model: a name
-    of only spaces would erase the one they have, and there is no reason for
-    the answer to differ depending on which of the two is being named.
-    """
-
-
-class OwnerNameView(BaseModel):
-    """What an Owner is called, after being told what to be called."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    operation: Literal["local.owner-name"] = "local.owner-name"
-    contract_version: Literal["1"] = "1"
-    owner_id: str = Field(min_length=1, max_length=64)
-    display_name: str = Field(min_length=1, max_length=128)
 
 
 class PersonaRuntimeView(BaseModel):
@@ -289,98 +223,6 @@ class AdminOwnerRuntimeClient:
                 "Admin Companion response returned another Companion"
             )
         return identity
-
-    async def rename_companion(
-        self,
-        companion_id: str,
-        display_name: str,
-    ) -> CompanionIdentity:
-        if not self._token:
-            raise WorkspaceRuntimeError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/companions/"
-            f"{quote(companion_id, safe='')}"
-        )
-        try:
-            response = await self._client.patch(
-                url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                json={"display_name": display_name},
-                timeout=self._timeout,
-            )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise WorkspaceRuntimeError(
-                "Admin Companion control plane is unavailable"
-            ) from exc
-        if response.status_code == 404:
-            raise WorkspaceRuntimeError("Companion does not exist", status_code=404)
-        if response.status_code == 422:
-            raise WorkspaceRuntimeError(
-                "Companion name was rejected", status_code=422
-            )
-        if response.status_code != 200:
-            raise WorkspaceRuntimeError("Admin Companion control plane is unavailable")
-        try:
-            return CompanionIdentity.model_validate(response.json())
-        except (ValueError, TypeError, ValidationError) as exc:
-            raise WorkspaceRuntimeError(
-                "Admin Companion response violated its contract"
-            ) from exc
-
-    async def rename_owner(
-        self,
-        owner_id: str,
-        display_name: str,
-    ) -> OwnerIdentity:
-        """Set what this Owner is called.
-
-        The Owner is not named in any request a client makes — the session
-        says who they are. This method takes the id because it talks to the
-        control plane, which serves every Owner on this Host and therefore has
-        to be told which one.
-        """
-
-        if not self._token:
-            raise WorkspaceRuntimeError(
-                "Local API Admin service credential is not configured"
-            )
-        url = (
-            f"{self._base_url}/api/control-plane/v1/owners/"
-            f"{quote(owner_id, safe='')}"
-        )
-        try:
-            response = await self._client.patch(
-                url,
-                headers={"Authorization": f"Bearer {self._token}"},
-                json={"display_name": display_name},
-                timeout=self._timeout,
-            )
-        except (
-            httpx.TimeoutException,
-            httpx.NetworkError,
-            httpx.RemoteProtocolError,
-        ) as exc:
-            raise WorkspaceRuntimeError(
-                "Admin Owner control plane is unavailable"
-            ) from exc
-        if response.status_code == 404:
-            raise WorkspaceRuntimeError("Owner does not exist", status_code=404)
-        if response.status_code == 422:
-            raise WorkspaceRuntimeError("Owner name was rejected", status_code=422)
-        if response.status_code != 200:
-            raise WorkspaceRuntimeError("Admin Owner control plane is unavailable")
-        try:
-            return OwnerIdentity.model_validate(response.json())
-        except (ValueError, TypeError, ValidationError) as exc:
-            raise WorkspaceRuntimeError(
-                "Admin Owner response violated its contract"
-            ) from exc
 
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
         return await self._companion_request(

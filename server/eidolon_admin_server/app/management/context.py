@@ -62,6 +62,9 @@ _CAPABILITIES: tuple[str, ...] = (
     "companion.read",
     "companion.create",
     "companion.rename",
+    #: What the Owner is called. Its own name rather than part of
+    #: ``controller.manage``: renaming yourself is not administering a Host.
+    "owner.rename",
     "companion.set_default",
     "companion.archive",
     "companion.restore",
@@ -114,6 +117,11 @@ _ENABLED: frozenset[str] = frozenset(
         # that says it did something it did not do.
         "companion.archive",
         "companion.restore",
+        # Naming: both of them, because the same slice closes both and a Host
+        # that could name one but not the other would be an odd thing to
+        # explain.
+        "companion.rename",
+        "owner.rename",
         # The Agent answers these and owns the task state machine; this side
         # relays, including its refusals.
         "conversation.read",

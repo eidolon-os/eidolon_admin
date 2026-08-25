@@ -85,10 +85,6 @@ from .device_admissions import (
 from .runtime import (
     AdminOwnerRuntimeClient,
     CompanionFaceView,
-    CompanionNameView,
-    OwnerNameView,
-    OwnerRenameCommand,
-    CompanionRenameCommand,
     AdminOwnerRuntimePort,
     WorkspaceRuntimeError,
     WorkspaceRuntimeView,
@@ -565,57 +561,6 @@ def create_app(
                 "Companion does not exist",
             )
         return owner_id
-
-    @app.patch(
-        "/api/local/v1/companions/{companion_id}",
-        response_model=CompanionNameView,
-    )
-    async def rename_companion(
-        companion_id: Annotated[str, Path(min_length=1, max_length=128)],
-        payload: CompanionRenameCommand,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> CompanionNameView:
-        """Set what this Owner calls their Eidolon."""
-
-        await _owned_companion(companion_id, authorization)
-        try:
-            renamed = await runtime.rename_companion(
-                companion_id,
-                payload.display_name,
-            )
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return CompanionNameView(
-            companion_id=renamed.companion_id,
-            display_name=renamed.display_name,
-        )
-
-    @app.patch(
-        "/api/local/v1/owner",
-        response_model=OwnerNameView,
-    )
-    async def rename_owner(
-        payload: OwnerRenameCommand,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> OwnerNameView:
-        """Set what this person is called.
-
-        No Owner appears in the path. There is exactly one Owner a session can
-        speak for — its own — and letting a client name a different one would
-        create a question this boundary would then have to answer. It does not
-        arise: the session already said who this is.
-        """
-
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, _controller_id = _owner_principal(principal)
-        try:
-            renamed = await runtime.rename_owner(owner_id, payload.display_name)
-        except WorkspaceRuntimeError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        return OwnerNameView(
-            owner_id=renamed.owner_id,
-            display_name=renamed.display_name,
-        )
 
     @app.get(
         "/api/local/v1/companions/{companion_id}/face-state",

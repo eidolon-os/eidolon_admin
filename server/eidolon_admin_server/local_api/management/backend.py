@@ -93,6 +93,24 @@ class AdminManagementClient:
             {"display_name": display_name, "kind": kind},
         )
 
+    async def rename_companion(
+        self, *, owner_id: str, companion_id: str, display_name: str
+    ) -> dict:
+        return await self._put(
+            f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}",
+            {"owner_id": owner_id},
+            {"display_name": display_name},
+            method="PATCH",
+        )
+
+    async def rename_owner(self, *, owner_id: str, display_name: str) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/owner",
+            {"owner_id": owner_id},
+            {"display_name": display_name},
+            method="PATCH",
+        )
+
     async def set_companion_lifecycle(
         self,
         *,

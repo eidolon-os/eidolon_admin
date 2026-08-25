@@ -173,8 +173,6 @@ class _RuntimeClient:
     def __init__(self, workspace: _WorkspaceClient) -> None:
         self.workspace = workspace
         self.calls = 0
-        self.renamed: tuple[str, str] | None = None
-        self.renamed_owner: tuple[str, str] | None = None
         self.face: bytes | None = None
         self.recalled: tuple[str, str, int] | None = None
         self.owner_of_companion: str | None = None
@@ -215,22 +213,6 @@ class _RuntimeClient:
         return None
 
 
-    async def rename_companion(
-        self,
-        companion_id: str,
-        display_name: str,
-    ) -> CompanionIdentity:
-        self.renamed = (companion_id, display_name)
-        return CompanionIdentity(
-            operation="companion.identity",
-            companion_id=companion_id,
-            owner_id=self.workspace.result.owner.owner_id,
-            display_name=display_name,
-            lifecycle_state="active",
-            kind="standard",
-            revision=2,
-        )
-
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
         return self._face(companion_id)
 
@@ -260,20 +242,6 @@ class _RuntimeClient:
             sha256=hashlib.sha256(self.face).hexdigest(),
             size_bytes=len(self.face),
             updated_at="2026-08-17T09:00:00Z",
-        )
-
-    async def rename_owner(
-        self,
-        owner_id: str,
-        display_name: str,
-    ) -> OwnerIdentity:
-        self.renamed_owner = (owner_id, display_name)
-        return OwnerIdentity(
-            operation="owner.identity",
-            revision=1,
-            owner_id=owner_id,
-            display_name=display_name,
-            lifecycle_state="active",
         )
 
     async def get_companion(self, companion_id: str) -> CompanionIdentity:
@@ -1446,50 +1414,11 @@ def test_a_host_that_cannot_read_its_own_addresses_publishes_none(monkeypatch) -
     assert host_addresses.local_api_base_urls(9002) == []
 
 
-@pytest.mark.asyncio
-async def test_an_owner_names_their_own_companion_and_only_their_own(
-    tmp_path: Path,
-    short_runtime_dir: Path,
-) -> None:
-    """Renaming carries an id, so the id has to be checked against the session.
-
-    An Owner will have more than one Companion, so the path names which. That
-    makes "a valid session plus somebody else's identifier" a reachable
-    request, and the boundary that knows whose session this is has to refuse
-    it — not the control plane beneath, which knows only that Admin asked.
-    """
-
-    async with _local_api_session(tmp_path, short_runtime_dir) as (
-        client,
-        headers,
-        runtime_client,
-        _devices_client,
-    ):
-        companion_id = "c_11111111111111111111111111111111"
-
-        renamed = await client.patch(
-            f"/api/local/v1/companions/{companion_id}",
-            json={"contract_version": "1", "display_name": "小忆"},
-            headers=headers,
-        )
-
-        assert renamed.status_code == 200
-        assert renamed.json()["display_name"] == "小忆"
-        assert runtime_client.renamed == (companion_id, "小忆")
-
-        # The same session, a Companion belonging to somebody else.
-        runtime_client.renamed = None
-        runtime_client.owner_of_companion = "owner-somebody-else"
-        refused = await client.patch(
-            f"/api/local/v1/companions/{companion_id}",
-            json={"contract_version": "1", "display_name": "小忆"},
-            headers=headers,
-        )
-
-        # Answered as absent rather than forbidden: a session that does not
-        # hold this Companion learns nothing about whether it exists.
-        assert refused.status_code == 404
-        assert runtime_client.renamed is None
+# Renaming moved to the management surface, and the two `/api/local/v1` routes
+# that did it are deleted. The properties they held — someone else's Companion
+# reads as absent, a name of spaces is refused where the person types it, and an
+# Owner is never named by a caller — are asserted in
+# ``tests/test_management_naming.py`` against the surface that now serves them.
 
 
 @pytest.mark.asyncio
@@ -1586,88 +1515,6 @@ async def test_an_owner_gives_their_eidolon_a_face_and_only_their_own(
         # And without a session at all.
         assert (await client.get(path)).status_code == 401
         assert (await client.put(path, content=jpeg)).status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_a_person_renames_themselves_without_naming_themselves(
-    tmp_path: Path,
-    short_runtime_dir: Path,
-) -> None:
-    """Unlike a Companion, an Owner carries no identifier in the request.
-
-    There is exactly one Owner a session can speak for. Taking an id here
-    would invent a question — "is this your Owner?" — that the session has
-    already answered, and every place a question is asked twice is a place it
-    can be answered two ways.
-    """
-
-    async with _local_api_session(tmp_path, short_runtime_dir) as (
-        client,
-        headers,
-        runtime_client,
-        _devices_client,
-    ):
-        renamed = await client.patch(
-            "/api/local/v1/owner",
-            json={"contract_version": "1", "display_name": "  曼森  "},
-            headers=headers,
-        )
-
-        assert renamed.status_code == 200
-        assert renamed.json()["display_name"] == "曼森"
-        owner_id, name = runtime_client.renamed_owner
-        assert name == "曼森"
-        # The Owner written to is the session's own, not one a client chose.
-        assert owner_id == runtime_client.workspace.result.owner.owner_id
-
-        runtime_client.renamed_owner = None
-        blank = await client.patch(
-            "/api/local/v1/owner",
-            json={"contract_version": "1", "display_name": "   "},
-            headers=headers,
-        )
-        assert blank.status_code == 422
-        assert runtime_client.renamed_owner is None
-
-        unauthenticated = await client.patch(
-            "/api/local/v1/owner",
-            json={"contract_version": "1", "display_name": "谁"},
-        )
-        assert unauthenticated.status_code == 401
-        assert runtime_client.renamed_owner is None
-
-
-@pytest.mark.asyncio
-async def test_a_name_the_host_cannot_carry_out_is_refused_before_it_is_written(
-    tmp_path: Path,
-    short_runtime_dir: Path,
-) -> None:
-    async with _local_api_session(tmp_path, short_runtime_dir) as (
-        client,
-        headers,
-        runtime_client,
-        _devices_client,
-    ):
-        blank = await client.patch(
-            "/api/local/v1/companions/c_11111111111111111111111111111111",
-            json={"contract_version": "1", "display_name": "   "},
-            headers=headers,
-        )
-
-        # Whitespace is a name that would erase the one they have, and it is
-        # refused where the person is asking rather than two services away.
-        assert blank.status_code == 422
-        assert runtime_client.renamed is None
-
-        # A name is taken as typed, minus the spaces around it.
-        padded = await client.patch(
-            "/api/local/v1/companions/c_11111111111111111111111111111111",
-            json={"contract_version": "1", "display_name": "  小忆  "},
-            headers=headers,
-        )
-
-        assert padded.status_code == 200
-        assert padded.json()["display_name"] == "小忆"
 
 
 @pytest.mark.asyncio

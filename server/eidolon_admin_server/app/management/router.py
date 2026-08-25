@@ -33,6 +33,7 @@ from eidolon_admin_server.app.management.activity import (
     retry_task,
 )
 from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
+from eidolon_admin_server.app.management.naming import rename_companion, rename_owner
 from eidolon_admin_server.app.management.persona import read_history, restore_chapter
 from eidolon_admin_server.app.management.recollecting import recall
 from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
@@ -149,6 +150,37 @@ class CompanionCreateResponseInternal(BaseModel):
     revision: int = Field(ge=1)
     created: bool
     memory_ready: bool
+
+
+class RenameRequestInternal(BaseModel):
+    """One model for both renames: the rule is the same for a person and an
+    Eidolon, and having two would eventually make them differ for no reason."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=128)
+
+
+class CompanionNameInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["companion.name"] = "companion.name"
+    companion_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    #: The version a later write compares against — it moved, because renaming
+    #: writes the Companion.
+    revision: int = Field(ge=1)
+
+
+class OwnerNameInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["owner.name"] = "owner.name"
+    owner_id: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=128)
+    revision: int = Field(ge=1)
 
 
 class CompanionLifecycleRequestInternal(BaseModel):
@@ -1104,6 +1136,61 @@ async def put_persona_restoration(
             status_code=exc.status_code, detail=exc.to_wire().model_dump()
         ) from exc
     return _persona_history_internal(history)
+
+
+@router.patch("/companions/{companion_id}", response_model=CompanionNameInternal)
+async def patch_companion(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    payload: RenameRequestInternal,
+) -> CompanionNameInternal:
+    """Set what this Owner calls their Eidolon."""
+    try:
+        identity = await rename_companion(
+            owner_id=owner_id,
+            companion_id=companion_id,
+            display_name=payload.display_name,
+            companions=request.app.state.control_plane.data,
+            namer=request.app.state.control_plane.data,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return CompanionNameInternal(
+        companion_id=identity.companion_id,
+        display_name=identity.display_name,
+        revision=identity.revision,
+    )
+
+
+@router.patch("/owner", response_model=OwnerNameInternal)
+async def patch_owner(
+    request: Request,
+    owner_id: str,
+    payload: RenameRequestInternal,
+) -> OwnerNameInternal:
+    """Set what this person is called.
+
+    No Owner in the path, and none to prove against: the Owner *is* the scope
+    here, and it arrived from the boundary that authenticated a Controller.
+    """
+    try:
+        owner = await rename_owner(
+            owner_id=owner_id,
+            display_name=payload.display_name,
+            namer=request.app.state.control_plane.workspace,
+        )
+    except AuthorityFailure as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.to_wire().model_dump()
+        ) from exc
+    return OwnerNameInternal(
+        owner_id=owner.owner_id,
+        display_name=owner.display_name,
+        revision=owner.revision,
+    )
 
 
 @router.put(
