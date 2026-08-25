@@ -107,6 +107,13 @@ _ENABLED: frozenset[str] = frozenset(
         "persona.govern",
         # The copy a person keeps, as distinct from the Host backup.
         "memory.export",
+        # Putting one away and bringing it back. True only since a Companion
+        # that is not active stopped being handed runtime snapshots
+        # (eidolon_data@67b5cf6): before that, archiving changed a row and a
+        # device that already knew the id kept talking to it, which is a button
+        # that says it did something it did not do.
+        "companion.archive",
+        "companion.restore",
         # The Agent answers these and owns the task state machine; this side
         # relays, including its refusals.
         "conversation.read",

@@ -273,9 +273,16 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
     assert context.capabilities["companion.read"] is True, "the first closed slice"
     # Named examples on both sides, so the assertion above cannot pass by
     # everything being true or everything being false.
-    for closed in ("memory.export", "task.manage", "persona.govern", "session.revoke"):
+    for closed in (
+        "memory.export",
+        "task.manage",
+        "persona.govern",
+        "session.revoke",
+        "companion.archive",
+        "companion.restore",
+    ):
         assert context.capabilities[closed] is True, closed
-    for still_open in ("companion.archive", "companion.restore", "host.operate"):
+    for still_open in ("companion.rename", "device.manage", "host.operate"):
         assert context.capabilities[still_open] is False, still_open
 
 
