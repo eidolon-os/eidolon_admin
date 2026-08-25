@@ -232,8 +232,56 @@ def _class(name: str, schema: dict) -> str:
         lines.append(f"      {field['name']}: {expression},")
     lines.append("    );")
     lines.append("  }")
+    lines.append("")
+    lines.extend(_to_json(fields))
     lines.append("}")
     return "\n".join(lines)
+
+
+def _to_json(fields: list[dict]) -> list[str]:
+    """The way back out, generated for the same reason the way in is.
+
+    A request body assembled by hand is a second, silent copy of the contract:
+    add a field to a schema and the hand-written map keeps compiling while the
+    field never leaves the phone. Nothing says so — the request succeeds, and
+    whatever the person typed into that field is simply gone.
+
+    Absent fields are omitted rather than sent as null. On these contracts "the
+    client did not say" and "the client said nothing is there" are different
+    requests — one of them replays on retry and the other can conflict — so the
+    difference has to survive serialisation.
+    """
+
+    lines = ["  Map<String, dynamic> toJson() {", "    return {"]
+    for field in fields:
+        value = field["name"]
+        if field["raw_type"].startswith("List<"):
+            inner = field["raw_type"][5:-1]
+            opaque = {"Object", "Object?"} | set(_PRIMITIVES.values())
+            if inner[:1].isupper() and inner not in opaque:
+                value = (
+                    f"{field['name']}{'?' if field['optional'] else ''}"
+                    ".map((entry) => entry.toJson()).toList()"
+                )
+        elif field["raw_type"].startswith("Map<"):
+            inner = field["raw_type"].split(", ", 1)[1][:-1]
+            opaque = {"Object", "Object?"} | set(_PRIMITIVES.values())
+            if inner[:1].isupper() and inner not in opaque:
+                value = (
+                    f"{field['name']}{'?' if field['optional'] else ''}"
+                    ".map((key, entry) => MapEntry(key, entry.toJson()))"
+                )
+        elif field["raw_type"] not in ({"Object?"} | set(_PRIMITIVES.values())):
+            value = f"{field['name']}{'?' if field['optional'] else ''}.toJson()"
+        if field["optional"]:
+            lines.append(
+                f"      if ({field['name']} != null) '{field['wire']}': {value},"
+            )
+        else:
+            lines.append(f"      '{field['wire']}': {value},")
+    lines.append("    };")
+    lines.append("  }")
+    return lines
 
 
 def build_output() -> bytes:
