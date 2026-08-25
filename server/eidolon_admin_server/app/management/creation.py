@@ -24,6 +24,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from eidolon_sdk.biz.persona import PersonaAuthoring
+
 from eidolon_admin_server.app.control_plane.contracts import CompanionProvision
 
 
@@ -36,6 +38,7 @@ class CompanionProvisioner(Protocol):
         operation_id: str,
         companion_display_name: str,
         kind: str,
+        persona: PersonaAuthoring | None,
     ) -> CompanionProvision: ...
 
 
@@ -72,14 +75,20 @@ async def create_companion(
     operation_id: str,
     display_name: str,
     kind: str,
+    persona: PersonaAuthoring | None = None,
     companions: CompanionProvisioner,
     memory: MemoryReconciler | None,
 ) -> CreatedCompanion:
+    # Relayed, never composed. Who an Eidolon starts out as is a genome, and
+    # genomes are the persona authority's to build — this layer deciding what an
+    # unauthored one looks like would be a second default personality waiting to
+    # disagree with the real one.
     provision = await companions.provision_companion(
         owner_id,
         operation_id=operation_id,
         companion_display_name=display_name,
         kind=kind,
+        persona=persona,
     )
 
     memory_ready = True

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import pytest
 
+from eidolon_sdk.biz.persona import PersonaAuthoring
+
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionProvision,
     ProvisionedCompanion,
@@ -54,11 +56,13 @@ class _Authority:
     def __init__(self, provision: CompanionProvision) -> None:
         self.provision = provision
         self.calls: list[tuple[str, str, str, str]] = []
+        self.personas: list[object] = []
 
     async def provision_companion(
-        self, owner_id, *, operation_id, companion_display_name, kind
+        self, owner_id, *, operation_id, companion_display_name, kind, persona=None
     ):
         self.calls.append((owner_id, operation_id, companion_display_name, kind))
+        self.personas.append(persona)
         return self.provision
 
 
@@ -158,3 +162,51 @@ async def test_the_operation_id_reaches_the_authority_unchanged() -> None:
     assert authority.calls == [
         ("owner-1", _OPERATION, "阿力", "conversational")
     ]
+
+
+async def test_the_authoring_reaches_the_authority_unchanged() -> None:
+    """Relayed, not interpreted.
+
+    Who an Eidolon starts out as is a genome, and genomes belong to the persona
+    authority. If this layer touched the authoring — filled a blank, normalised
+    a list, chose a default — it would become a second place that decides what
+    an Eidolon is, and the two would eventually disagree.
+    """
+
+    authored = PersonaAuthoring(self_concept="我记得你说过的话", values=["诚实"])
+    authority = _Authority(_provision(realm_created=False))
+
+    await create_companion(
+        owner_id="owner-1",
+        operation_id=_OPERATION,
+        display_name="小南",
+        kind="conversational",
+        persona=authored,
+        companions=authority,
+        memory=None,
+    )
+
+    assert authority.personas == [authored]
+
+
+async def test_asking_for_nothing_says_nothing_about_the_persona() -> None:
+    """``None`` travels as ``None``.
+
+    A layer that turned "nobody authored anything" into an empty draft would be
+    stating a personality on the person's behalf — and an empty draft is not the
+    same request as no draft, which matters because the authority fingerprints
+    what it receives.
+    """
+
+    authority = _Authority(_provision(realm_created=False))
+
+    await create_companion(
+        owner_id="owner-1",
+        operation_id=_OPERATION,
+        display_name="小南",
+        kind="conversational",
+        companions=authority,
+        memory=None,
+    )
+
+    assert authority.personas == [None]

@@ -6,6 +6,7 @@ from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.biz.persona import PersonaAuthoring
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
@@ -598,6 +599,27 @@ class DataWorkspaceAuthorityClient:
             "PATCH", owner_id, json={"display_name": display_name}
         )
 
+    async def persona_authoring_template(self) -> PersonaAuthoring:
+        """Who an Eidolon is before anybody has said anything about it.
+
+        Fetched rather than constructed, every time, because the value of this
+        read is that it is *the authority's* answer: what would be written if a
+        form came back untouched. A copy here would be a second default
+        personality, and the day the two disagree the person is editing a
+        description of an Eidolon this Host will not create.
+        """
+
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{await self._base_url()}"
+            "/api/workspace-authority/v1/persona-authoring-template",
+            timeout=self._timeout,
+            headers=self._headers,
+        )
+        return _parse("data", response, PersonaAuthoring)
+
     async def provision_companion(
         self,
         owner_id: str,
@@ -605,12 +627,19 @@ class DataWorkspaceAuthorityClient:
         operation_id: str,
         companion_display_name: str,
         kind: str,
+        persona: PersonaAuthoring | None = None,
     ) -> CompanionProvision:
         """Add a Companion to this Owner, exactly once per operation id.
 
         The operation id is the caller's, not ours: it is what makes a retry
         idempotent, and generating one here would make every retry a new
         operation. The authority derives every identifier from it.
+
+        ``persona`` is omitted from the body when absent rather than sent as
+        null, so "nobody authored anything" is expressed by saying nothing. It
+        also keeps the request the authority fingerprints identical to what an
+        older client sends, which is what makes a retry across an upgrade still
+        replay instead of conflicting.
         """
 
         response = await _request(
@@ -625,6 +654,11 @@ class DataWorkspaceAuthorityClient:
             json={
                 "companion_display_name": companion_display_name,
                 "kind": kind,
+                **(
+                    {}
+                    if persona is None
+                    else {"persona": persona.model_dump(mode="json")}
+                ),
             },
         )
         result = _parse("data", response, CompanionProvision)

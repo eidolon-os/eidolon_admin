@@ -26,6 +26,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from eidolon_sdk.biz.persona import PersonaAuthoring
+
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.faces import (
@@ -153,6 +155,10 @@ class CompanionCreateRequestInternal(BaseModel):
 
     display_name: str = Field(min_length=1, max_length=128)
     kind: str = Field(default="conversational", min_length=1, max_length=32)
+    #: The SDK's shape, used rather than restated. Every hand-written copy of
+    #: this is a place a field can be dropped in transit, and a dropped field
+    #: here is a sentence somebody wrote about their Eidolon that never arrived.
+    persona: PersonaAuthoring | None = None
 
 
 class CompanionCreateResponseInternal(BaseModel):
@@ -677,6 +683,23 @@ async def put_default_companion(
     )
 
 
+@router.get("/persona-authoring-template", response_model=PersonaAuthoring)
+async def get_persona_authoring_template(request: Request) -> PersonaAuthoring:
+    """The starting point a create form shows, from the authority that writes it.
+
+    Owner-independent, so it takes no Owner — a product default is nobody's
+    data, and asking per Owner would invite a per-Owner default nobody asked
+    for.
+
+    Relayed rather than answered here even though this process holds the same
+    SDK. The value of the read is that it is what *Data* would write, and a copy
+    on this side would be a second default personality that agrees right up
+    until one of the two is upgraded.
+    """
+
+    return await request.app.state.control_plane.workspace.persona_authoring_template()
+
+
 @router.put(
     "/companion-provisions/{operation_id}",
     response_model=CompanionCreateResponseInternal,
@@ -694,6 +717,7 @@ async def put_companion_provision(
         operation_id=operation_id,
         display_name=payload.display_name,
         kind=payload.kind,
+        persona=payload.persona,
         companions=control_plane.workspace,
         memory=getattr(control_plane, "memory_supervisor", None),
     )

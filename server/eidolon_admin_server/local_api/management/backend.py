@@ -124,12 +124,28 @@ class AdminManagementClient:
         operation_id: str,
         display_name: str,
         kind: str,
+        persona: dict | None = None,
     ) -> dict:
         return await self._put(
             "/api/internal/v1/management/companion-provisions/"
             f"{quote(operation_id, safe='')}",
             {"owner_id": owner_id},
-            {"display_name": display_name, "kind": kind},
+            {
+                "display_name": display_name,
+                "kind": kind,
+                # Omitted rather than null when nobody authored anything, so the
+                # request the authority fingerprints is byte-identical to what an
+                # older client sends. That is what keeps a retry across an
+                # upgrade a replay instead of a conflict.
+                **({} if persona is None else {"persona": persona}),
+            },
+        )
+
+    async def persona_authoring_template(self) -> dict:
+        """What an Eidolon would be if the create form came back untouched."""
+
+        return await self._get(
+            "/api/internal/v1/management/persona-authoring-template", {}
         )
 
     async def activity(

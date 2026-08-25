@@ -19,6 +19,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from eidolon_sdk.biz.contracts.refusal import Refusal
+from eidolon_sdk.biz.persona import PersonaAuthoring
 
 from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     HostServiceControlError,
@@ -711,6 +712,16 @@ class CompanionCreateRequest(BaseModel):
 
     operation_id: str = Field(min_length=36, max_length=36)
     display_name: str = Field(min_length=1, max_length=128)
+    #: Who this Eidolon starts out as, in the person's own words: what it thinks
+    #: it is, how it comes across, what it will not do, how it speaks. Absent
+    #: means the template — somebody who just wants another Eidolon should not
+    #: have to describe one.
+    #:
+    #: The SDK's shape rather than a copy, so the form a phone shows, the request
+    #: it sends and the genome the authority builds are one thing. Each restated
+    #: copy would be a place a field goes missing, and a field missing here is a
+    #: sentence about somebody's Eidolon that never arrived.
+    persona: PersonaAuthoring | None = None
     #: Absent means an ordinary conversational Eidolon. A client should not have
     #: to know the other values exist to create the normal thing.
     kind: str = Field(default="conversational", min_length=1, max_length=32)
@@ -2129,6 +2140,35 @@ def register_management_routes(
             default_companion_id=answer["default_companion_id"]
         )
 
+    @router.get("/persona-authoring-template", response_model=PersonaAuthoring)
+    async def get_persona_authoring_template(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaAuthoring:
+        """What an Eidolon would be if the create form came back untouched.
+
+        A form starts from this instead of from blanks, and that is a product
+        decision rather than a convenience: an empty box labelled 人格画像 asks
+        somebody to invent a personality from nothing, while a filled one asks
+        them to change something they can already read. It also makes the whole
+        screen skippable — "继续、继续、创建" gives the Eidolon the Host would
+        have made anyway.
+
+        Not its own capability. A client that may create an Eidolon needs to see
+        what it is starting from; two flags could disagree, and "you may create
+        one but not see who it will be" is not a state worth being able to
+        express.
+
+        Top-level rather than under ``/companions`` so it can never be confused
+        with a Companion whose id happens to be a word.
+        """
+
+        await authenticated_owner(authorization)
+        try:
+            answer = await backend.persona_authoring_template()
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return PersonaAuthoring.model_validate(answer)
+
     @router.put("/companions", response_model=CompanionCreatedView)
     async def create_companion(
         payload: CompanionCreateRequest,
@@ -2149,6 +2189,10 @@ def register_management_routes(
                 operation_id=payload.operation_id,
                 display_name=payload.display_name,
                 kind=payload.kind,
+                persona=(
+                    None if payload.persona is None
+                    else payload.persona.model_dump(mode="json")
+                ),
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc

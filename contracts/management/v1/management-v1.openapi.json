@@ -123,6 +123,16 @@
             "minLength": 36,
             "title": "Operation Id",
             "type": "string"
+          },
+          "persona": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonaAuthoring"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2111,6 +2121,102 @@
         "title": "OwnerNameView",
         "type": "object"
       },
+      "PersonaAuthoring": {
+        "additionalProperties": false,
+        "description": "What a person can decide about an Eidolon before it has been anything.\n\nSplit from :class:`PersonaAuthoringDraft` so the name is the only difference\nbetween them. That split is what lets this be a *wire* shape: when someone\nasks for another Eidolon they already said what to call it, and a request\ncarrying the name twice is a request that can disagree with itself.\n\nEvery field has the value the template would have used, so this doubles as\nthe starting point a screen shows. A person opening the form sees what their\nEidolon would be if they typed nothing, and edits from there — which is a\ndifferent act from filling in blanks and imagining the result.\n\nDeliberately open. These are sentences and lists a person writes, not\nvalidated policy; the canonical genome is what gets validated, and it is\nbuilt from this by :func:`build_persona_genome_from_draft` rather than\nstored as typed.",
+        "properties": {
+          "archetype": {
+            "default": "companion",
+            "title": "Archetype",
+            "type": "string"
+          },
+          "behavior_guidance": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Behavior Guidance",
+            "type": "array"
+          },
+          "boundaries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Boundaries",
+            "type": "array"
+          },
+          "character_portrait": {
+            "default": "一个沉稳、专注、愿意长期理解 owner 的伙伴。",
+            "title": "Character Portrait",
+            "type": "string"
+          },
+          "commitments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Commitments",
+            "type": "array"
+          },
+          "dialogue_examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dialogue Examples",
+            "type": "array"
+          },
+          "modality_notes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Modality Notes",
+            "type": "object"
+          },
+          "pinned_facts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pinned Facts",
+            "type": "array"
+          },
+          "relationship_narrative": {
+            "default": "",
+            "title": "Relationship Narrative",
+            "type": "string"
+          },
+          "safety_boundaries": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Safety Boundaries",
+            "type": "array"
+          },
+          "self_concept": {
+            "default": "",
+            "title": "Self Concept",
+            "type": "string"
+          },
+          "traits": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PersonaTraitState"
+            },
+            "title": "Traits",
+            "type": "object"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "array"
+          },
+          "voice_portrait": {
+            "default": "温暖、清晰、具体，不用空泛语言填补回应。",
+            "title": "Voice Portrait",
+            "type": "string"
+          }
+        },
+        "title": "PersonaAuthoring",
+        "type": "object"
+      },
       "PersonaChapterView": {
         "additionalProperties": false,
         "description": "One thing my Eidolon has been.\n\nNo version, no hash, no realizer: those are how a Companion is built, and\nwhat I wonder is when it changed and what changed.",
@@ -2203,6 +2309,45 @@
           "chapter_id"
         ],
         "title": "PersonaRestoreRequest",
+        "type": "object"
+      },
+      "PersonaTraitState": {
+        "additionalProperties": false,
+        "description": "An observable evolution coordinate, not a prompt instruction.",
+        "properties": {
+          "confidence": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "last_changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Changed At"
+          },
+          "source": {
+            "default": "template",
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "title": "PersonaTraitState",
         "type": "object"
       },
       "RecollectionView": {
@@ -5248,6 +5393,56 @@
           }
         },
         "summary": "Put Default Companion",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persona-authoring-template": {
+      "get": {
+        "description": "What an Eidolon would be if the create form came back untouched.\n\nA form starts from this instead of from blanks, and that is a product\ndecision rather than a convenience: an empty box labelled 人格画像 asks\nsomebody to invent a personality from nothing, while a filled one asks\nthem to change something they can already read. It also makes the whole\nscreen skippable — \"继续、继续、创建\" gives the Eidolon the Host would\nhave made anyway.\n\nNot its own capability. A client that may create an Eidolon needs to see\nwhat it is starting from; two flags could disagree, and \"you may create\none but not see who it will be\" is not a state worth being able to\nexpress.\n\nTop-level rather than under ``/companions`` so it can never be confused\nwith a Companion whose id happens to be a word.",
+        "operationId": "get_persona_authoring_template_api_management_v1_persona_authoring_template_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaAuthoring"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Persona Authoring Template",
         "tags": [
           "management"
         ]

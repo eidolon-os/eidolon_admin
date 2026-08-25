@@ -22,6 +22,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from eidolon_sdk.biz.persona import PersonaAuthoring
+
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionRosterPage,
     CompanionSummary,
@@ -159,6 +161,7 @@ async def test_times_are_instants_a_client_can_still_reason_about() -> None:
 class _Backend:
     def __init__(self) -> None:
         self.asked: list[tuple[str, str | None]] = []
+        self.personas: list[dict | None] = []
         self.current = "g_2"
 
     async def context(self, *, owner_id: str) -> dict:
@@ -222,9 +225,21 @@ class _Backend:
             "default_companion_id": companion_id,
         }
 
+    async def persona_authoring_template(self) -> dict:
+        """Whatever the authority says, relayed. This stub is the authority."""
+
+        return PersonaAuthoring().model_dump(mode="json")
+
     async def create_companion(
-        self, *, owner_id: str, operation_id: str, display_name: str, kind: str
+        self,
+        *,
+        owner_id: str,
+        operation_id: str,
+        display_name: str,
+        kind: str,
+        persona: dict | None = None,
     ) -> dict:
+        self.personas.append(persona)
         self.asked.append((owner_id, operation_id, display_name, kind))
         already = self.asked.count((owner_id, operation_id, display_name, kind)) > 1
         return {
@@ -1852,3 +1867,145 @@ async def test_what_was_said_that_time_is_readable(tmp_path, monkeypatch) -> Non
         for message in turn["messages"]
     ]
     assert said == [("user", "周末去哪"), ("assistant", "去公园吧")]
+
+
+async def test_who_it_starts_out_as_reaches_the_host_verbatim(
+    tmp_path, monkeypatch
+) -> None:
+    """The sentences a person wrote, unedited, through the public boundary.
+
+    Every layer between the form and the genome is a place a field can be
+    dropped or "helpfully" normalised, and the failure is silent: the Eidolon is
+    created, the screen says it worked, and a sentence somebody chose about who
+    it is simply is not there.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        response = await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={
+                "operation_id": _OPERATION,
+                "display_name": "小南",
+                "persona": {
+                    "self_concept": "我是一个会记得你说过的话的伙伴",
+                    "values": ["诚实"],
+                    "dialogue_examples": ["「今天怎么样？」"],
+                },
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    sent = backend.personas[-1]
+    assert sent["self_concept"] == "我是一个会记得你说过的话的伙伴"
+    assert sent["values"] == ["诚实"]
+    assert sent["dialogue_examples"] == ["「今天怎么样？」"]
+
+
+async def test_asking_for_nothing_sends_nothing_rather_than_a_blank_person(
+    tmp_path, monkeypatch
+) -> None:
+    """Absent authoring stays absent all the way down.
+
+    A boundary that turned "no form filled in" into an empty draft would be
+    stating a personality on somebody's behalf — and, because the authority
+    fingerprints what it receives, it would also make a retry from an older
+    client a conflict instead of a replay.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={"operation_id": _OPERATION, "display_name": "阿力"},
+        )
+
+    assert backend.personas == [None]
+
+
+async def test_an_invented_authoring_field_is_refused_rather_than_dropped(
+    tmp_path, monkeypatch
+) -> None:
+    """422, not a silent trim.
+
+    A misspelled field that is quietly ignored is how somebody loses a sentence
+    and never finds out. The Eidolon would be created either way, so nothing on
+    the screen would say which fields arrived.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={
+                "operation_id": _OPERATION,
+                "display_name": "阿力",
+                "persona": {"favourite_colour": "青"},
+            },
+        )
+
+    assert answered.status_code == 422
+    assert backend.asked == []
+
+
+async def test_the_form_starts_from_what_the_host_would_write(
+    tmp_path, monkeypatch
+) -> None:
+    """The template is served, not invented by the phone.
+
+    A client filling its own defaults would show a personality this Host might
+    not use, and the person would have edited a description of something else.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.get(
+            "/api/management/v1/persona-authoring-template", headers=headers
+        )
+
+    assert answered.status_code == 200, answered.text
+    body = answered.json()
+    assert body["character_portrait"], "a starting portrait, not an empty box"
+    assert body["values"], "and something to disagree with"
+    assert "name" not in body, "the name is the create request's, said once"
+
+
+async def test_the_template_is_for_whoever_signed_in(tmp_path, monkeypatch) -> None:
+    """Anonymous gets nothing, even though the answer is nobody's data.
+
+    The rule on this boundary is that it answers a signed-in Owner, and an
+    exception for reads that "do not matter" is how the next exception gets
+    made.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        anonymous = await client.get("/api/management/v1/persona-authoring-template")
+
+    assert anonymous.status_code == 401

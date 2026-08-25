@@ -27,6 +27,7 @@ export interface CompanionCreateRequest {
   display_name: string
   kind?: string
   operation_id: string
+  persona?: PersonaAuthoring | null
 }
 
 export interface CompanionCreatedView {
@@ -387,6 +388,23 @@ export interface OwnerNameView {
   revision: number
 }
 
+export interface PersonaAuthoring {
+  archetype?: string
+  behavior_guidance?: Array<string>
+  boundaries?: Array<string>
+  character_portrait?: string
+  commitments?: Array<string>
+  dialogue_examples?: Array<string>
+  modality_notes?: Record<string, string>
+  pinned_facts?: Array<string>
+  relationship_narrative?: string
+  safety_boundaries?: Array<string>
+  self_concept?: string
+  traits?: Record<string, PersonaTraitState>
+  values?: Array<string>
+  voice_portrait?: string
+}
+
 export interface PersonaChapterView {
   changed_at: string
   chapter_id: string
@@ -403,6 +421,13 @@ export interface PersonaHistoryView {
 
 export interface PersonaRestoreRequest {
   chapter_id: string
+}
+
+export interface PersonaTraitState {
+  confidence?: number
+  last_changed_at?: string | null
+  source?: string
+  value?: number
 }
 
 export interface RecollectionView {
@@ -523,4 +548,5 @@ export interface ManagementResponses {
   'PATCH /api/management/v1/owner': OwnerNameView
   'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
+  'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
 }
