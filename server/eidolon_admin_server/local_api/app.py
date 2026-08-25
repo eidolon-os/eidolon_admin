@@ -46,7 +46,10 @@ from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
 from .management.router import (
     ControllerDirectoryPort,
+    ManagementBackendError,
     ManagementBackendPort,
+    OwnerDevicePort,
+    refusal_for_status,
     refuse,
     register_management_routes,
 )
@@ -68,6 +71,7 @@ from .devices import (
     AdminOwnerDevicesClient,
     AdminOwnerDevicesPort,
     DeviceInventoryError,
+    ControllerCompanionAttachment,
     LocalCompanionAttachmentRequest,
     LocalDeviceInventoryView,
     LocalDeviceView,
@@ -163,6 +167,7 @@ def create_app(
     host_services_client: AdminHostServicesPort | None = None,
     management_backend: ManagementBackendPort | None = None,
     controller_directory: ControllerDirectoryPort | None = None,
+    owner_device_port: OwnerDevicePort | None = None,
 ) -> FastAPI:
     resolved = settings or load_local_api_settings()
     workspace = workspace_client or AdminWorkspaceClient(
@@ -993,6 +998,99 @@ def create_app(
                 target_id=target_id,
             )
 
+    class _Devices:
+        """The composed device read, from the two clients this process holds.
+
+        It lives here for the same reason the controller list does: the
+        admission authority authorises by *actor*, and the authenticated
+        Controller only exists at this boundary. What it hands upward is already
+        composed — Hub's Claim and Kernel's mount agreeing about one device — so
+        the management router phrases it and does not merge it.
+        """
+
+        async def list_devices(self, *, owner_id: str, controller_id: str):
+            owner_domain_id, business_owner_id = _admission_scope(owner_id)
+            try:
+                mounts = await devices.list_mounts(owner_id)
+                claims = await device_admission.query_claims(
+                    payload=claim_query(
+                        controller_id=controller_id,
+                        owner_domain_id=owner_domain_id,
+                        business_owner_id=business_owner_id,
+                        query=ClaimQuery(
+                            owner_domain_id=owner_domain_id,
+                            states=(
+                                ClaimState.ACTIVE,
+                                ClaimState.SUSPENDED,
+                                ClaimState.REVOKED,
+                            ),
+                            cursor=None,
+                            limit=200,
+                        ),
+                    )
+                )
+                return owner_device_inventory_view(
+                    mounts=mounts,
+                    bound_owner_id=owner_id,
+                    claims=claims,
+                )
+            except (DeviceInventoryError, DeviceAdmissionError) as exc:
+                raise ManagementBackendError(
+                    str(exc),
+                    status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc)),
+                ) from exc
+
+        async def set_device_companion(
+            self,
+            *,
+            owner_id: str,
+            controller_id: str,
+            device_id: str,
+            companion_id: str | None,
+            expected_revision: int,
+            request_id: str,
+        ):
+            inventory = await self.list_devices(
+                owner_id=owner_id, controller_id=controller_id
+            )
+            if all(item.device_id != device_id for item in inventory.devices):
+                # Absent rather than forbidden, and checked before the mutation:
+                # a device this Owner does not hold must not be reachable by id.
+                raise ManagementBackendError(
+                    "Device is not mounted",
+                    status_code=404,
+                    refusal=refusal_for_status(404, "Device is not mounted"),
+                )
+            try:
+                await devices.set_companion(
+                    payload=ControllerCompanionAttachment(
+                        contract_version="1",
+                        request_id=request_id,
+                        owner_id=owner_id,
+                        device_id=device_id,
+                        companion_id=companion_id,
+                        expected_revision=expected_revision,
+                    )
+                )
+            except DeviceInventoryError as exc:
+                raise ManagementBackendError(
+                    str(exc),
+                    status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc)),
+                ) from exc
+            refreshed = await self.list_devices(
+                owner_id=owner_id, controller_id=controller_id
+            )
+            for item in refreshed.devices:
+                if item.device_id == device_id:
+                    return item
+            raise ManagementBackendError(
+                "Device stopped being mounted",
+                status_code=409,
+                refusal=refusal_for_status(409, "Device stopped being mounted"),
+            )
+
     async def management_controller(authorization: str | None) -> str:
         """Which phone is asking — the one thing these three routes need.
 
@@ -1010,6 +1108,7 @@ def create_app(
         controllers=controller_directory or _Controllers(),
         authenticated_controller_id=management_controller,
         host=host_services,
+        devices=owner_device_port or _Devices(),
     )
 
     return app

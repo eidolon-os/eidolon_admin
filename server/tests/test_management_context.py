@@ -295,9 +295,11 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "host.read",
         "host.operate",
         "activity.read",
+        "device.read",
+        "device.manage",
     ):
         assert context.capabilities[closed] is True, closed
-    for still_open in ("device.read", "device.manage"):
+    for still_open in ("device.identify", "body.assign"):
         assert context.capabilities[still_open] is False, still_open
 
 
@@ -384,6 +386,8 @@ async def test_a_capability_needing_no_authority_is_unaffected_by_keys() -> None
         "host.read",
         "host.operate",
         "activity.read",
+        "device.read",
+        "device.manage",
     ):
         assert capabilities[independent] is True, independent
 
@@ -435,8 +439,10 @@ async def test_a_withheld_capability_says_which_kind_of_withheld_it_is() -> None
     # Closed slice, key missing: fixable here, tonight.
     assert context.unavailable["memory.read"] == WITHHELD_HOST_NOT_CONFIGURED
     assert context.unavailable["memory.govern"] == WITHHELD_HOST_NOT_CONFIGURED
-    # Slice not closed: nothing on this Host will change that.
-    assert context.unavailable["device.read"] == WITHHELD_NOT_BUILT
+    # Slice not closed: nothing on this Host will change that. ``device.identify``
+    # is the honest example — no producer can make a device announce itself, and
+    # inferring it from "online" is exactly what the plan forbids.
+    assert context.unavailable["device.identify"] == WITHHELD_NOT_BUILT
     # Available capabilities say nothing, so a client can read the map as
     # "everything in here is off, and this is why".
     assert "companion.read" not in context.unavailable

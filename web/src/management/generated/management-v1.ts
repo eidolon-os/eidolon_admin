@@ -147,6 +147,37 @@ export interface DefaultCompanionView {
   default_companion_id?: string | null
 }
 
+export interface DeviceCompanionRequest {
+  companion_id?: string | null
+  expected_revision: number
+  request_id: string
+}
+
+export interface DeviceView {
+  answers_as_companion_id?: string | null
+  answers_as_companion_name?: string
+  claim_generation: number
+  claim_state: string
+  device_id: string
+  kind?: string
+  label: string
+  manifest_id?: string
+  manifest_revision?: number | null
+  online?: "unknown" | "online" | "offline"
+  online_reason?: string
+  owner_domain_generation: number
+  revision: number
+  state: string
+  trust_epoch: number
+  updated_at: string
+}
+
+export interface DevicesView {
+  contract_version?: "1"
+  coverage?: string
+  devices: Array<DeviceView>
+}
+
 export interface ForgetConfirmRequest {
   confirmation_token: string
 }
@@ -427,6 +458,8 @@ export interface ManagementResponses {
   'GET /api/management/v1/controllers': ControllersView
   'POST /api/management/v1/controllers/invitations': ControllerInvitationView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
+  'GET /api/management/v1/devices': DevicesView
+  'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'GET /api/management/v1/host/services': HostServiceInventoryView
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView

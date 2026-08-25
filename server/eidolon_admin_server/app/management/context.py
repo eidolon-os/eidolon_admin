@@ -90,6 +90,16 @@ _CAPABILITIES: tuple[str, ...] = (
     "memory.export",
     "device.read",
     "device.manage",
+    #: Blink or buzz, so a person can tell which box on the shelf is which.
+    #: Declared and false: nothing on this Host can make a device announce
+    #: itself, and guessing from "it is online" is exactly what the plan forbids
+    #: — an acknowledgement is the only evidence that a device did anything.
+    "device.identify",
+    #: The canonical ``ReplaceAssignment`` over a Body endpoint, with policy
+    #: refs. False until the source of those refs is reviewed: what this Host
+    #: can do today is point a *device* at an Eidolon, which is a narrower thing
+    #: with a narrower name.
+    "body.assign",
     #: The Host's own record of what it did to this Owner's things. Its own name
     #: rather than part of ``conversation.read``: one is what an Eidolon said,
     #: the other is what was done to it.
@@ -156,6 +166,12 @@ _ENABLED: frozenset[str] = frozenset(
         # rather than an authority's data.
         "host.read",
         "host.operate",
+        # The devices this Owner holds, and pointing one at an Eidolon. The
+        # composition needs the authenticated Controller — the admission
+        # authority authorises by actor — so it is served where that identity
+        # exists, like the controller list beside it.
+        "device.read",
+        "device.manage",
         # The governance facts Data writes in the same transaction as each
         # change. Nothing had ever read them.
         "activity.read",

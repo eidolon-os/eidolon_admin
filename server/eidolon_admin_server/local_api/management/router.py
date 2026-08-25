@@ -115,6 +115,76 @@ def refusal_for_status(
     )
 
 
+#: What this list does not know, said rather than implied by a short list.
+_DEVICE_COVERAGE = (
+    "只包含已经属于你的设备。还在等你确认的设备是另一份清单。"
+    "这台主机不观测设备是否开着，所以每一行的在线状态都是「不知道」。"
+)
+
+
+async def _companion_names(backend, owner_id: str) -> dict[str, str]:
+    """What this Owner's Eidolons are called, for the device rows.
+
+    Best-effort on purpose: a roster this read cannot get costs the names and
+    nothing else. Which devices are mine does not depend on what my Eidolons are
+    called, and refusing the whole list over a missing name would be the tail
+    wagging the dog.
+    """
+
+    try:
+        page = await backend.roster(owner_id=owner_id, cursor=None)
+    except ManagementBackendError:
+        return {}
+    return {
+        str(row.get("companion_id")): str(row.get("display_name") or "")
+        for row in page.get("companions", ())
+    }
+
+
+def _device_view(device, names: dict[str, str]) -> "DeviceView":
+    """One composed device, phrased for a person and complete underneath."""
+
+    claim = device.claim
+    reference = claim.device_ref
+    device_id = reference.device_instance_id
+    manifest = claim.manifest_ref
+    kind = str(getattr(manifest, "manifest_id", "") or "")
+    attached = device.mount.attached_companion_id
+    claim_state = getattr(claim.state, "value", str(claim.state))
+    return DeviceView(
+        device_id=device_id,
+        # Nobody has named devices yet, so what the Manifest calls this kind of
+        # thing — and failing that the tail of the identifier, which is at least
+        # something a person can read out when asking for help. Never invented.
+        label=kind or _identifier_tail(device_id),
+        kind=kind,
+        state=(
+            "access_revoked"
+            if claim_state != "active"
+            else ("ready" if attached else "awaiting_companion")
+        ),
+        answers_as_companion_id=attached,
+        answers_as_companion_name=names.get(attached or "", ""),
+        revision=device.mount.revision,
+        updated_at=claim.updated_at.isoformat(),
+        # Never inferred. An active Claim and a Kernel mount both say this device
+        # is *known*, and neither says it is switched on; a screen that read one
+        # as the other would tell someone their unplugged speaker is fine.
+        online="unknown",
+        online_reason="这台主机没有任何东西在观测设备是否开着",
+        claim_state=claim_state,
+        claim_generation=reference.claim_generation,
+        trust_epoch=reference.trust_epoch,
+        owner_domain_generation=reference.owner_domain_generation,
+        manifest_id=kind,
+        manifest_revision=getattr(manifest, "revision", None),
+    )
+
+
+def _identifier_tail(device_id: str) -> str:
+    return device_id if len(device_id) <= 16 else f"…{device_id[-12:]}"
+
+
 def _position(cursor: str | None) -> int | None:
     """Read back a cursor this surface handed out.
 
@@ -910,6 +980,97 @@ class ForgetResultView(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
+class DeviceView(BaseModel):
+    """One device this Owner holds, as a person reads it.
+
+    Readable and complete, in that order and without trading one for the other:
+    the top of this model is what a screen shows, and the technical facts a
+    person may have to read out to get help — the canonical identifier, the
+    claim's own state, the manifest, the generations — are kept rather than
+    dropped.
+
+    ``label`` is derived by the Host rather than by each client. Nobody has
+    named devices yet, so it is what the accepted Manifest calls this kind of
+    thing, and failing that the tail of the identifier. It is never invented
+    into a name.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str = Field(min_length=1, max_length=128)
+    #: What to show. Empty is not a state this returns: there is always the
+    #: identifier's tail to fall back to.
+    label: str = Field(min_length=1, max_length=128)
+    #: What kind of thing the Manifest says it is. Empty when the Manifest does
+    #: not say, which is different from the label being absent.
+    kind: str = Field(default="", max_length=128)
+    #: What a person can act on: it is ready, it is waiting to be given an
+    #: Eidolon, or its access was withdrawn. A client that meets a value it does
+    #: not know must show the row and not the word.
+    state: str = Field(min_length=1, max_length=32)
+    #: Which Eidolon answers through it, and what that Eidolon is called. Null
+    #: is a real state and the ordinary one for a device nobody has pointed
+    #: anywhere yet.
+    answers_as_companion_id: str | None = Field(default=None, max_length=64)
+    answers_as_companion_name: str = Field(default="", max_length=128)
+    #: The mount version a change must carry, so two phones cannot both win.
+    revision: int = Field(ge=1)
+    #: When the Claim last moved. The nearest thing to "since when is this mine"
+    #: that any authority actually knows.
+    updated_at: str = Field(min_length=1, max_length=64)
+    #: Always ``unknown`` today, and it must stay that way until something
+    #: actually observes presence: neither an active Claim nor a Kernel mount is
+    #: evidence that a device is switched on, and a screen that inferred it
+    #: would be telling people their speaker is fine while it sits unplugged.
+    online: Literal["unknown", "online", "offline"] = "unknown"
+    online_reason: str = Field(default="", max_length=256)
+    #: The canonical state word from the Claim, kept beside the readable one.
+    claim_state: str = Field(min_length=1, max_length=32)
+    #: The generations that make an identifier mean one physical device rather
+    #: than a name that was reused. Carried because a person asking for help
+    #: will be asked for them.
+    claim_generation: int = Field(ge=0)
+    trust_epoch: int = Field(ge=0)
+    owner_domain_generation: int = Field(ge=0)
+    manifest_id: str = Field(default="", max_length=128)
+    manifest_revision: int | None = Field(default=None, ge=0)
+
+
+class DevicesView(BaseModel):
+    """Every device this Owner holds, and what this list does not know.
+
+    ``coverage`` is said out loud rather than implied by a short list: devices
+    still waiting to be let in are a different read, and nothing on this Host
+    observes whether a device is switched on.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    devices: list[DeviceView]
+    coverage: str = Field(default="", max_length=512)
+
+
+class DeviceCompanionRequest(BaseModel):
+    """Which Eidolon answers through this device, or that none does.
+
+    One command with two values rather than two commands: a null
+    ``companion_id`` is "nothing answers through it", which is an ordinary
+    state and the way back from every other one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    #: What this phone was looking at. Required: two Controllers pointing the
+    #: same device at different Eidolons must not take turns without noticing.
+    expected_revision: int = Field(ge=1)
+    #: The caller's own id for this attempt, so asking twice is the same ask.
+    request_id: str = Field(
+        min_length=1, max_length=96, pattern=r"^[A-Za-z0-9._:-]+$"
+    )
+
+
 class ActivityMomentView(BaseModel):
     """One thing that happened to my things.
 
@@ -1013,6 +1174,31 @@ class ControllerInvitationView(BaseModel):
     contract_version: Literal["1"] = "1"
     setup_code: str = Field(min_length=1, max_length=64)
     expires_at: str = Field(min_length=1, max_length=64)
+
+
+@runtime_checkable
+class OwnerDevicePort(Protocol):
+    """The devices this Owner holds, composed where both halves are visible.
+
+    Two authorities keep the halves — Hub's Claim says whether a device is still
+    this Owner's, Kernel's mount says which Eidolon answers through it — and the
+    admission authority authorises by *actor*, not by Owner alone. The
+    authenticated Controller only exists at this boundary, which is why the
+    composition happens here rather than behind the management backend.
+    """
+
+    async def list_devices(self, *, owner_id: str, controller_id: str): ...
+
+    async def set_device_companion(
+        self,
+        *,
+        owner_id: str,
+        controller_id: str,
+        device_id: str,
+        companion_id: str | None,
+        expected_revision: int,
+        request_id: str,
+    ): ...
 
 
 @runtime_checkable
@@ -1225,6 +1411,7 @@ def register_management_routes(
     controllers: ControllerDirectoryPort,
     authenticated_controller_id,
     host: HostMachinePort,
+    devices: OwnerDevicePort,
 ) -> None:
     """Mount the public management surface.
 
@@ -1277,6 +1464,66 @@ def register_management_routes(
             unavailable=answer.get("unavailable") or {},
             limits=answer["limits"],
         )
+
+    @router.get("/devices", response_model=DevicesView)
+    async def get_devices(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DevicesView:
+        """Every device that is mine.
+
+        Composed from two authorities that each keep their own half — the Claim
+        says whether this device is still mine, the mount says which Eidolon
+        answers through it — and a disagreement between them is a refusal rather
+        than a merged row.
+
+        The names of the Eidolons are asked for once, from the roster, so a row
+        can say 由「小忆」应答 rather than an identifier. A roster this read
+        cannot get costs the names and nothing else: the devices are still
+        listed, because which devices are mine does not depend on what they are
+        called.
+        """
+        owner_id = await authenticated_owner(authorization)
+        controller_id = await authenticated_controller_id(authorization)
+        try:
+            inventory = await devices.list_devices(
+                owner_id=owner_id, controller_id=controller_id
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        names = await _companion_names(backend, owner_id)
+        return DevicesView(
+            devices=[_device_view(device, names) for device in inventory.devices],
+            coverage=_DEVICE_COVERAGE,
+        )
+
+    @router.put(
+        "/devices/{device_id}/companion", response_model=DeviceView
+    )
+    async def put_device_companion(
+        device_id: str,
+        payload: DeviceCompanionRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceView:
+        """Say which of my Eidolons answers through this device, or that none does.
+
+        The Host validates the Eidolon against its own authority — one that has
+        been put away is refused there rather than pre-judged here — and the
+        revision is the compare-and-swap over what this phone was looking at.
+        """
+        owner_id = await authenticated_owner(authorization)
+        controller_id = await authenticated_controller_id(authorization)
+        try:
+            device = await devices.set_device_companion(
+                owner_id=owner_id,
+                controller_id=controller_id,
+                device_id=device_id,
+                companion_id=payload.companion_id,
+                expected_revision=payload.expected_revision,
+                request_id=payload.request_id,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return _device_view(device, await _companion_names(backend, owner_id))
 
     @router.get("/activity", response_model=ActivityView)
     async def get_activity(

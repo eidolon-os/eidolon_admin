@@ -802,6 +802,200 @@
         "title": "DefaultCompanionView",
         "type": "object"
       },
+      "DeviceCompanionRequest": {
+        "additionalProperties": false,
+        "description": "Which Eidolon answers through this device, or that none does.\n\nOne command with two values rather than two commands: a null\n``companion_id`` is \"nothing answers through it\", which is an ordinary\nstate and the way back from every other one.",
+        "properties": {
+          "companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Companion Id"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "request_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "request_id"
+        ],
+        "title": "DeviceCompanionRequest",
+        "type": "object"
+      },
+      "DeviceView": {
+        "additionalProperties": false,
+        "description": "One device this Owner holds, as a person reads it.\n\nReadable and complete, in that order and without trading one for the other:\nthe top of this model is what a screen shows, and the technical facts a\nperson may have to read out to get help — the canonical identifier, the\nclaim's own state, the manifest, the generations — are kept rather than\ndropped.\n\n``label`` is derived by the Host rather than by each client. Nobody has\nnamed devices yet, so it is what the accepted Manifest calls this kind of\nthing, and failing that the tail of the identifier. It is never invented\ninto a name.",
+        "properties": {
+          "answers_as_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answers As Companion Id"
+          },
+          "answers_as_companion_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Answers As Companion Name",
+            "type": "string"
+          },
+          "claim_generation": {
+            "minimum": 0.0,
+            "title": "Claim Generation",
+            "type": "integer"
+          },
+          "claim_state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Claim State",
+            "type": "string"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "kind": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "manifest_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Manifest Id",
+            "type": "string"
+          },
+          "manifest_revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Revision"
+          },
+          "online": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "online",
+              "offline"
+            ],
+            "title": "Online",
+            "type": "string"
+          },
+          "online_reason": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Online Reason",
+            "type": "string"
+          },
+          "owner_domain_generation": {
+            "minimum": 0.0,
+            "title": "Owner Domain Generation",
+            "type": "integer"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "State",
+            "type": "string"
+          },
+          "trust_epoch": {
+            "minimum": 0.0,
+            "title": "Trust Epoch",
+            "type": "integer"
+          },
+          "updated_at": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "label",
+          "state",
+          "revision",
+          "updated_at",
+          "claim_state",
+          "claim_generation",
+          "trust_epoch",
+          "owner_domain_generation"
+        ],
+        "title": "DeviceView",
+        "type": "object"
+      },
+      "DevicesView": {
+        "additionalProperties": false,
+        "description": "Every device this Owner holds, and what this list does not know.\n\n``coverage`` is said out loud rather than implied by a short list: devices\nstill waiting to be let in are a different read, and nothing on this Host\nobserves whether a device is switched on.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "coverage": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Coverage",
+            "type": "string"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceView"
+            },
+            "title": "Devices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "title": "DevicesView",
+        "type": "object"
+      },
       "ForgetConfirmRequest": {
         "additionalProperties": false,
         "description": "The token the preview handed back, unchanged.",
@@ -3709,6 +3903,125 @@
           }
         },
         "summary": "Revoke Controller",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices": {
+      "get": {
+        "description": "Every device that is mine.\n\nComposed from two authorities that each keep their own half — the Claim\nsays whether this device is still mine, the mount says which Eidolon\nanswers through it — and a disagreement between them is a refusal rather\nthan a merged row.\n\nThe names of the Eidolons are asked for once, from the roster, so a row\ncan say 由「小忆」应答 rather than an identifier. A roster this read\ncannot get costs the names and nothing else: the devices are still\nlisted, because which devices are mine does not depend on what they are\ncalled.",
+        "operationId": "get_devices_api_management_v1_devices_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Devices",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/companion": {
+      "put": {
+        "description": "Say which of my Eidolons answers through this device, or that none does.\n\nThe Host validates the Eidolon against its own authority — one that has\nbeen put away is refused there rather than pre-judged here — and the\nrevision is the compare-and-swap over what this phone was looking at.",
+        "operationId": "put_device_companion_api_management_v1_devices__device_id__companion_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCompanionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Device Companion",
         "tags": [
           "management"
         ]
