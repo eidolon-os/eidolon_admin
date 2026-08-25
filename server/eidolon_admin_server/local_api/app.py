@@ -88,6 +88,7 @@ from .device_admissions import (
     LocalDeviceRemovalRequest,
     claim_query,
     device_admission_detail,
+    device_admission_reason,
     device_removal_progress,
     enrollment_query,
     enrollment_recovery_query,
@@ -981,7 +982,7 @@ def create_app(
                     device_admission_detail(exc),
                     status_code=exc.status_code,
                     refusal=refusal_for_status(
-                        exc.status_code, device_admission_detail(exc)
+                        exc.status_code, device_admission_reason(exc)
                     ),
                 ) from exc
             return device_removal_progress(

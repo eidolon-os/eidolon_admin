@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+import tempfile
+from pathlib import Path
+from typing import get_args
 
 import httpx
 import pytest
@@ -20,9 +24,23 @@ from eidolon_admin_server.app.control_plane.contracts import (
     DeviceRemovalResult,
     RemovalCondition,
 )
+from eidolon_admin_server.app.control_plane.contracts import (
+    ControllerDeviceRemovalRequest,
+)
+from eidolon_admin_server.lifecycle_workflow.protocol import (
+    LifecycleWorkflowProblem,
+    LifecycleWorkflowReply,
+    read_frame,
+    write_frame,
+)
+from eidolon_admin_server.local_api.management.router import refusal_for_status
 from eidolon_admin_server.local_api.device_admissions import (
+    _WORKFLOW_PROBLEM_KINDS,
     AdminDeviceAdmissionClient,
     DeviceAdmissionError,
+    device_admission_detail,
+    device_admission_reason,
+    workflow_problem_reason,
     LocalEnrollmentDecisionRequest,
     claim_query,
     device_removal_progress,
@@ -250,3 +268,114 @@ def test_empty_enrollment_page_is_only_an_observation_not_completion() -> None:
     )
     assert page.items == ()
     assert not hasattr(page, "completed")
+
+
+def test_a_reason_is_a_sentence_and_a_body_is_a_body() -> None:
+    """One function answering both made the type depend on the data.
+
+    ``refusal_for_status`` truncates the reason it is given, so a structured
+    body arriving there raises TypeError and turns a refusal the caller could
+    act on into a 500. It stayed unreachable only because nothing on the
+    removal path set a reason — which was itself the other half of the defect.
+    """
+
+    structured = DeviceAdmissionError("operator prose", status_code=409, reason="给人看的一句话")
+    plain = DeviceAdmissionError("operator prose", status_code=503)
+
+    assert device_admission_detail(structured) == {"reason": "给人看的一句话"}
+    assert device_admission_reason(structured) == "给人看的一句话"
+    assert device_admission_detail(plain) == "operator prose"
+    assert device_admission_reason(plain) == "operator prose"
+
+    # The refusal builder must accept what the reason function returns, for
+    # both shapes. This is the call that produced the 500.
+    for error in (structured, plain):
+        refusal = refusal_for_status(error.status_code, device_admission_reason(error))
+        assert isinstance(refusal.reason, str) and refusal.reason
+
+
+def test_every_workflow_problem_has_a_sentence_for_the_person_reading_it() -> None:
+    """Removal answers over a socket, so it never passed through ``_refusal``.
+
+    The planned Chinese reason table was therefore never consulted on the one
+    path an Owner uses to remove a device: refusals arrived as English operator
+    prose. The mapping has to cover the workflow's own closed vocabulary, so a
+    new problem code cannot ship without a sentence.
+    """
+
+    declared = set(get_args(LifecycleWorkflowProblem.model_fields["code"].annotation))
+
+    assert set(_WORKFLOW_PROBLEM_KINDS) == declared
+    for code in declared:
+        reason = workflow_problem_reason(code)
+        assert reason, code
+        # A sentence for a person, not a kind name leaking through.
+        assert reason not in _WORKFLOW_PROBLEM_KINDS.values()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_removal_reaches_the_phone_as_a_sentence() -> None:
+    """End to end over the real socket frame: refusal in, sentence out."""
+
+    # A short path: AF_UNIX names are capped well below a pytest tmp_path.
+    with tempfile.TemporaryDirectory(dir="/tmp") as directory:
+        socket_path = Path(directory) / "w.sock"
+        await _refused_removal_reaches_the_phone(socket_path)
+
+
+async def _refused_removal_reaches_the_phone(socket_path: Path) -> None:
+
+    async def _serve(reader, writer):
+        await read_frame(reader)
+        await write_frame(
+            writer,
+            LifecycleWorkflowReply(
+                problem=LifecycleWorkflowProblem(
+                    code="AUTHZ_DENIED",
+                    detail="owner authorization was refused by the Hub",
+                    status_code=403,
+                )
+            ),
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_unix_server(_serve, path=str(socket_path))
+    try:
+        client = AdminDeviceAdmissionClient(
+            base_url="http://127.0.0.1:1",
+            service_token="t" * 40,
+            timeout_seconds=5.0,
+            workflow_socket_path=socket_path,
+        )
+        with pytest.raises(DeviceAdmissionError) as failure:
+            await client.remove(
+                payload=ControllerDeviceRemovalRequest(
+                    contract_version="1",
+                    request_id="req-" + "a" * 20,
+                    owner_id="owner-business-1",
+                    controller_id="ectrl-" + "b" * 20,
+                    device_id="device-instance-" + "c" * 48,
+                    reason="owner-removed",
+                ),
+                controller_reset_epoch=1,
+                authorization_expires_at=datetime(2026, 8, 26, tzinfo=UTC),
+                target_device_ref=DeviceRef(
+                    device_instance_id="device-instance-" + "c" * 48,
+                    owner_domain_id=DOMAIN,
+                    owner_domain_generation=1,
+                    claim_generation=1,
+                    trust_epoch=1,
+                ),
+            )
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert failure.value.status_code == 403
+    assert failure.value.reason == "主机不再授权这台手机管理设备。"
+    refusal = refusal_for_status(
+        failure.value.status_code, device_admission_reason(failure.value)
+    )
+    assert refusal.reason == "主机不再授权这台手机管理设备。"
+    assert refusal.kind == "denied"

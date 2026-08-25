@@ -72,7 +72,45 @@ class DeviceAdmissionError(RuntimeError):
 
 
 def device_admission_detail(exc: DeviceAdmissionError) -> str | dict[str, str]:
+    """The HTTP body for this refusal. Not a reason string — see below."""
+
     return {"reason": exc.reason} if exc.reason is not None else str(exc)
+
+
+def device_admission_reason(exc: DeviceAdmissionError) -> str:
+    """The one sentence a person is shown, always a string.
+
+    Kept apart from the body because they are different facts with different
+    types, and one function answering both made the type depend on whether a
+    reason happened to be set. The refusal builder truncates what it is given,
+    so a structured body reaching it raises TypeError and turns a refusal the
+    caller could act on into a 500. Nothing set a reason on the removal path,
+    so that stayed unreachable right up until this change set one.
+    """
+
+    return exc.reason if exc.reason is not None else str(exc)
+
+
+#: Which refusal each Lifecycle Workflow problem is, in the vocabulary the
+#: phone's reason table is keyed by.
+#:
+#: Removal answers over a Unix socket, not HTTP, so it never passed through
+#: ``_refusal`` and never consulted ``_REFUSAL_REASONS``. Every removal refusal
+#: reached the phone as English operator prose or as a kind guessed from a
+#: status code. The workflow states its own closed vocabulary, so it is mapped
+#: here once, and a test requires the mapping to cover that vocabulary exactly
+#: — a new problem code cannot ship without a sentence for the person reading it.
+_WORKFLOW_PROBLEM_KINDS = {
+    "AUTHN_INVALID": "unauthorized",
+    "AUTHZ_DENIED": "forbidden",
+    "INVALID_REQUEST": "invalid_request",
+    "WORKFLOW_UNAVAILABLE": "unavailable",
+    "WORKFLOW_FAILURE": "upstream_failure",
+}
+
+
+def workflow_problem_reason(code: str) -> str | None:
+    return _REFUSAL_REASONS.get(_WORKFLOW_PROBLEM_KINDS.get(code, ""))
 
 
 def _refusal(response: httpx.Response, *, operation: str) -> DeviceAdmissionError:
@@ -485,7 +523,9 @@ class AdminDeviceAdmissionClient:
             raise DeviceAdmissionError("Lifecycle Workflow is unavailable") from exc
         if reply.problem is not None:
             raise DeviceAdmissionError(
-                reply.problem.detail, status_code=reply.problem.status_code
+                reply.problem.detail,
+                status_code=reply.problem.status_code,
+                reason=workflow_problem_reason(reply.problem.code),
             )
         if reply.result is None or reply.result.request_id != payload.request_id:
             raise DeviceAdmissionError(
