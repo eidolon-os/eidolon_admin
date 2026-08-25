@@ -10,7 +10,6 @@ from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
     ClaimQuery,
-    ClaimRecord,
     DecideEnrollment,
     DecideEnrollmentResult,
     DeviceLocalEraseOperationStatus,
@@ -1550,32 +1549,6 @@ class HubManagementClient:
                 "hub", "Hub Claim page crossed its requested Owner Domain"
             )
         return page
-
-    async def get_claim(
-        self,
-        *,
-        owner_domain_id: str,
-        device_instance_id: str,
-        authorization: str,
-    ) -> ClaimRecord:
-        base_url = await self._base_url()
-        response = await _request(
-            "hub",
-            self._client,
-            "GET",
-            f"{base_url}/api/admission/v1/claims/{quote(device_instance_id, safe='')}",
-            timeout=self._timeout,
-            headers=self._headers(authorization),
-        )
-        claim = _parse("hub", response, ClaimRecord)
-        if (
-            str(claim.device_ref.owner_domain_id) != owner_domain_id
-            or claim.device_ref.device_instance_id != device_instance_id
-        ):
-            raise _contract_violation(
-                "hub", "Hub exact Claim query crossed its requested Owner Domain"
-            )
-        return claim
 
     async def revoke(
         self,

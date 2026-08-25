@@ -59,16 +59,6 @@ class HubAdminCredentialIssuer:
         )
         return f"Bearer {token}"
 
-    def issue_removal_discovery(
-        self, *, controller_id: str, owner_id: str, device_id: str
-    ) -> str:
-        return self._issue_scoped(
-            controller_id=controller_id,
-            owner_id=owner_id,
-            scopes=["device.read"],
-            target_device_id=device_id,
-        )
-
     def issue_removal_intent(
         self,
         *,

@@ -401,7 +401,17 @@ class ControlPlaneService:
         workload_principal_id: str,
         authorization_context: RemovalOwnerAuthorizationContext,
     ) -> DeviceRemovalResult:
-        """Create/resume a durable intent and observe independent authorities."""
+        """Create/resume a durable intent and observe independent authorities.
+
+        Nothing here re-decides whether the Claim may be revoked. This workflow
+        used to re-read it from Hub first and refuse the Owner outright when the
+        two references disagreed or the read simply failed — a projection making
+        an authority's decision, which is how a removal died on an unreachable
+        read while the Claim it targeted was perfectly revocable. Hub validates
+        Owner Domain, business Owner and all three generations on the revoke
+        itself and answers ``GENERATION_CONFLICT`` when the target has moved, so
+        the exact DeviceRef the Owner authorized is carried straight to it.
+        """
 
         if self.hub_credentials is None:
             raise AuthorityFailure(
@@ -410,25 +420,7 @@ class ControlPlaneService:
                 "Hub Owner credential issuer is unavailable",
                 503,
             )
-        discovery_authorization = self.hub_credentials.issue_removal_discovery(
-            controller_id=payload.controller_id,
-            owner_id=str(authorization_context.target_device_ref.owner_domain_id),
-            device_id=payload.device_id,
-        )
-        claim = await self.hub.get_claim(
-            owner_domain_id=str(
-                authorization_context.target_device_ref.owner_domain_id
-            ),
-            device_instance_id=payload.device_id,
-            authorization=discovery_authorization,
-        )
-        if claim.device_ref != authorization_context.target_device_ref:
-            raise AuthorityFailure(
-                "hub",
-                "conflict",
-                "Hub Claim reference changed after Local authorization",
-                409,
-            )
+        target_device_ref = authorization_context.target_device_ref
         authorization_context_json = json.dumps(
             authorization_context.model_dump(mode="json"),
             ensure_ascii=False,
@@ -443,8 +435,8 @@ class ControlPlaneService:
         try:
             intent = self.removal_intents.get_or_create(
                 ingress_request_id=payload.request_id,
-                owner_domain_id=str(claim.device_ref.owner_domain_id),
-                device_ref=claim.device_ref,
+                owner_domain_id=str(target_device_ref.owner_domain_id),
+                device_ref=target_device_ref,
                 actor_controller_id=payload.controller_id,
                 workload_principal_id=workload_principal_id,
                 controller_reset_epoch=authorization_context.reset_epoch,

@@ -55,6 +55,9 @@ def _descriptor() -> OwnerDomainDescriptor:
         owner_domain_id=_OWNER_DOMAIN,
         owner_domain_generation=3,
         directory_revision=2,
+        descriptor_uri=(
+            "https://eidolon-hub.local:9443/api/device-onboarding/v1/descriptor"
+        ),
         trust_root_refs=("sha256:" + "b" * 64,),
         endpoints=(
             AuthorityEndpoint(

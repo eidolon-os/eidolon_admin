@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from eidolon_sdk.device_foundation.v1 import BusinessOwnerId, ClaimRecord, ClaimState, ManifestRef
 
 from eidolon_admin_server.app.control_plane.contracts import (
     DeviceRef,
@@ -17,7 +16,6 @@ from eidolon_admin_server.lifecycle_workflow.capability import (
     BrokerMarkerIssuer,
     RemovalCapabilityBroker,
     RemovalCapabilityReady,
-    ResolveRemovalTarget,
     RevokeRemovalTarget,
 )
 from eidolon_admin_server.app.settings import GatewayConfig, get_settings
@@ -36,29 +34,12 @@ def _ref() -> DeviceRef:
     )
 
 
-def _claim() -> ClaimRecord:
-    return ClaimRecord(
-        device_ref=_ref(),
-        business_owner_id=BusinessOwnerId("owner_account_1"),
-        manifest_ref=ManifestRef(
-            manifest_id="manifest-1", revision=1, digest="sha256:" + "a" * 64
-        ),
-        state=ClaimState.ACTIVE,
-        revision=1,
-        updated_at=datetime.now(UTC),
-    )
-
-
 class _Credentials:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
     def issue(self, **_kwargs):
         raise AssertionError("generic hub-admin issuer must never be used")
-
-    def issue_removal_discovery(self, **kwargs) -> str:
-        self.calls.append(("discovery", kwargs))
-        return "Bearer removal-discovery"
 
     def issue_removal_intent(self, **kwargs) -> str:
         self.calls.append(("revoke", kwargs))
@@ -69,9 +50,8 @@ class _Hub:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
-    async def get_claim(self, **kwargs):
-        self.calls.append(("get", kwargs))
-        return _claim()
+    async def get_claim(self, **_kwargs):
+        raise AssertionError("the broker no longer brokers a Claim read")
 
     async def revoke(self, **kwargs):
         self.calls.append(("revoke", kwargs))
@@ -97,13 +77,6 @@ async def test_broker_dispatch_has_no_generic_hub_admin_operation() -> None:
     )
 
     ready = await broker._dispatch(RemovalCapabilityReady())
-    resolved = await broker._dispatch(
-        ResolveRemovalTarget(
-            owner_domain_id="owner-1",
-            controller_id="ectrl-0123456789abcdefabcd",
-            device_id="device-1",
-        )
-    )
     revoked = await broker._dispatch(
         RevokeRemovalTarget(
             controller_id="ectrl-0123456789abcdefabcd",
@@ -115,11 +88,12 @@ async def test_broker_dispatch_has_no_generic_hub_admin_operation() -> None:
     )
 
     assert ready.ready is True
-    assert resolved.claim is not None
-    assert resolved.claim.device_ref == _ref()
     assert revoked.revocation is not None
-    assert [name for name, _ in credentials.calls] == ["discovery", "revoke"]
-    assert hub.calls[1][1]["device_ref"] == _ref()
+    # Two operations, both generation-bound. A Claim read is no longer one of
+    # them: the workflow used to re-derive its target and could refuse an
+    # Owner's removal on that read alone.
+    assert [name for name, _ in credentials.calls] == ["revoke"]
+    assert hub.calls[0][1]["device_ref"] == _ref()
 
 
 def test_workflow_marker_is_not_a_bearer_credential() -> None:

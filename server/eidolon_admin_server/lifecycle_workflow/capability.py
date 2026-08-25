@@ -2,7 +2,12 @@
 
 The Workflow never receives Hub's generic management signing key.  The Admin
 process already owns that key for unrelated approval operations and exposes
-only these three generation-bound removal operations over this UDS.
+only these two generation-bound removal operations over this UDS.
+
+There used to be a third, a Claim read, because the workflow re-derived its
+target before revoking it. It decided nothing Hub does not decide again on the
+revoke, and it could refuse an Owner's removal on its own — so the capability
+went with the read.
 """
 
 from __future__ import annotations
@@ -13,10 +18,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from eidolon_sdk.device_foundation.v1 import (
-    ClaimRecord,
-    DeviceLocalEraseOperationStatus,
-)
+from eidolon_sdk.device_foundation.v1 import DeviceLocalEraseOperationStatus
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..app.control_plane.contracts import (
@@ -35,13 +37,6 @@ class _StrictModel(BaseModel):
 
 class RemovalCapabilityReady(_StrictModel):
     operation: Literal["hub.removal-capability.ready"] = "hub.removal-capability.ready"
-
-
-class ResolveRemovalTarget(_StrictModel):
-    operation: Literal["hub.removal-target.resolve"] = "hub.removal-target.resolve"
-    owner_domain_id: str = Field(min_length=3, max_length=128)
-    controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
-    device_id: str = Field(min_length=1, max_length=128)
 
 
 class RevokeRemovalTarget(_StrictModel):
@@ -64,7 +59,6 @@ class ObserveRemovalDelivery(_StrictModel):
 RemovalCapabilityCall = Annotated[
     Union[
         RemovalCapabilityReady,
-        ResolveRemovalTarget,
         RevokeRemovalTarget,
         ObserveRemovalDelivery,
     ],
@@ -82,13 +76,12 @@ class RemovalCapabilityProblem(_StrictModel):
 class RemovalCapabilityReply(_StrictModel):
     operation: Literal["hub.removal-capability-reply"] = "hub.removal-capability-reply"
     ready: Literal[True] | None = None
-    claim: ClaimRecord | None = None
     revocation: HubClaimRevocationResult | None = None
     delivery: DeviceLocalEraseOperationStatus | None = None
     problem: RemovalCapabilityProblem | None = None
 
     def model_post_init(self, __context: object) -> None:
-        values = (self.ready, self.claim, self.revocation, self.delivery, self.problem)
+        values = (self.ready, self.revocation, self.delivery, self.problem)
         if sum(value is not None for value in values) != 1:
             raise ValueError("capability reply must contain exactly one result")
 
@@ -191,19 +184,6 @@ class RemovalCapabilityBroker:
             raise AuthorityFailure(
                 "hub", "configuration", "Hub issuer unavailable", 503
             )
-        if isinstance(call, ResolveRemovalTarget):
-            authorization = credentials.issue_removal_discovery(
-                controller_id=call.controller_id,
-                owner_id=call.owner_domain_id,
-                device_id=call.device_id,
-            )
-            return RemovalCapabilityReply(
-                claim=await self._service.hub.get_claim(
-                    owner_domain_id=call.owner_domain_id,
-                    device_instance_id=call.device_id,
-                    authorization=authorization,
-                )
-            )
         authorization = credentials.issue_removal_intent(
             controller_id=call.controller_id,
             intent_id=call.intent_id,
@@ -242,25 +222,12 @@ class BrokeredRemovalHubClient:
                 "hub", "unavailable", "Removal capability broker is not ready", 503
             )
 
-    async def get_claim(
-        self, *, owner_domain_id, device_instance_id, authorization
-    ) -> ClaimRecord:
-        reply = await self._exchange(
-            ResolveRemovalTarget(
-                owner_domain_id=owner_domain_id,
-                controller_id=_controller(authorization),
-                device_id=device_instance_id,
-            )
-        )
-        assert reply.claim is not None
-        return reply.claim
-
     async def revoke(
         self, *, device_ref, reason, command_id, correlation_id, authorization
     ) -> HubClaimRevocationResult:
         reply = await self._exchange(
             RevokeRemovalTarget(
-                controller_id=_controller(authorization),
+                controller_id=_controller_and_intent(authorization)[0],
                 intent_id=correlation_id,
                 device_ref=device_ref,
                 reason=reason,
@@ -316,21 +283,18 @@ class BrokeredRemovalHubClient:
 class BrokerMarkerIssuer:
     """Non-credential correlation marker consumed only by the broker adapter."""
 
-    def issue_removal_discovery(self, *, controller_id, **_kwargs) -> str:
-        return f"broker:{controller_id}"
-
     def issue_removal_intent(self, *, controller_id, intent_id, **_kwargs) -> str:
         return f"broker:{controller_id}:{intent_id}"
 
 
-def _controller(marker: str) -> str:
-    parts = marker.split(":")
-    if len(parts) < 2 or parts[0] != "broker":
-        raise AuthorityFailure("hub", "configuration", "Broker marker is invalid", 503)
-    return parts[1]
-
-
 def _controller_and_intent(marker: str) -> tuple[str, str]:
+    """The one parse of a broker marker.
+
+    There were two, differing only in how strict they were about the shape, and
+    only one marker shape is issued — which is how one spelling of a value
+    becomes two rules about it.
+    """
+
     parts = marker.split(":")
     if len(parts) != 3 or parts[0] != "broker":
         raise AuthorityFailure("hub", "configuration", "Broker marker is invalid", 503)
