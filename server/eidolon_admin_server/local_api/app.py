@@ -58,7 +58,7 @@ from ..app.control_plane.contracts import AdmissionDecisionWorkflowResult
 from .config import LocalApiSettings, load_local_api_settings
 from .host_services import (
     AdminHostServicesClient,
-    AdminHostServicesPort,
+    HostMachinePort,
     HostServiceControlError,
     HostServiceInventoryView,
     HostVitalsView,
@@ -167,7 +167,7 @@ def create_app(
     runtime_client: AdminOwnerRuntimePort | None = None,
     devices_client: AdminOwnerDevicesPort | None = None,
     device_admission_client: AdminDeviceAdmissionPort | None = None,
-    host_services_client: AdminHostServicesPort | None = None,
+    host_services_client: HostMachinePort | None = None,
     management_backend: ManagementBackendPort | None = None,
     controller_directory: ControllerDirectoryPort | None = None,
     owner_device_port: OwnerDevicePort | None = None,
@@ -203,6 +203,8 @@ def create_app(
         service_token=resolved.admin_service_token,
         timeout_seconds=resolved.admin_timeout_seconds,
     )
+    if host_services_client is None and not isinstance(host_services, HostMachinePort):
+        raise TypeError("Local API HostMachinePort production wiring is incomplete")
     owns_host_services_client = host_services_client is None
     management = management_backend or AdminManagementClient(
         base_url=resolved.admin_base_url,

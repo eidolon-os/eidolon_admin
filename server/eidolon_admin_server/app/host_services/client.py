@@ -15,12 +15,12 @@ from urllib.parse import quote, urlparse
 
 import httpx
 from pydantic import ValidationError
+from eidolon_sdk.system.v1 import HostVitalsWire
 
 from .contracts import (
     HostService,
     HostServiceMutationResult,
     HostServicePage,
-    HostVitals,
     MutationOperation,
 )
 from .errors import HostServiceError
@@ -55,16 +55,11 @@ class HostServiceClient:
             )
             self._client = httpx.AsyncClient(transport=transport, trust_env=False)
 
-    async def read_vitals(self) -> HostVitals:
+    async def read_vitals(self) -> HostVitalsWire:
         document = await self._request("GET", "/api/system/v1/vitals")
         try:
-            return HostVitals.model_validate(
-                {
-                    "observed_at": document["observed_at"],
-                    "measurements": document.get("measurements", []),
-                }
-            )
-        except (KeyError, ValidationError) as exc:
+            return HostVitalsWire.model_validate(document)
+        except ValidationError as exc:
             raise self._invalid("host vitals did not match the expected shape") from exc
 
     async def list_services(self) -> HostServicePage:

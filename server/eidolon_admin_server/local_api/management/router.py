@@ -25,6 +25,7 @@ from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     HostServiceControlError,
     HostServiceInventoryView,
     HostServiceMutationView,
+    HostMachinePort,
     HostVitalsView,
     MutationOperation,
     host_service_inventory,
@@ -1504,30 +1505,6 @@ class OwnerDevicePort(Protocol):
         expected_revision: int,
         request_id: str,
     ): ...
-
-
-@runtime_checkable
-class HostMachinePort(Protocol):
-    """The machine this Eidolon lives on, as this surface asks about it.
-
-    Beside the controller directory and for the same reason: these are facts
-    about *the machine* rather than an authority's data, reached with the one
-    credential this process is allowed to hold. The judgement that turns a byte
-    count into "worth telling someone about" already lives here, on the side
-    that faces the person whose Eidolon is on it.
-    """
-
-    async def read_vitals(self) -> dict: ...
-
-    async def list_services(self) -> dict: ...
-
-    async def mutate(
-        self,
-        *,
-        service_id: str,
-        operation: str,
-        expected_revision: int,
-    ) -> dict: ...
 
 
 @runtime_checkable

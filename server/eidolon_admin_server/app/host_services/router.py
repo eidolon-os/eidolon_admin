@@ -16,12 +16,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from eidolon_sdk.system.v1 import HostVitalsWire
 
 from .contracts import (
     HostService,
     HostServiceMutationResult,
     HostServicePage,
-    HostVitals,
 )
 from .errors import HostServiceError
 
@@ -65,8 +65,8 @@ async def list_capabilities(request: Request) -> dict[str, object]:
     return {"workstation": [item.to_wire() for item in capabilities]}
 
 
-@router.get("/vitals", response_model=HostVitals)
-async def host_vitals(request: Request) -> HostVitals:
+@router.get("/vitals", response_model=HostVitalsWire)
+async def host_vitals(request: Request) -> HostVitalsWire:
     try:
         return await _client(request).read_vitals()
     except HostServiceError as exc:

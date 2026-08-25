@@ -4,12 +4,19 @@ from pathlib import Path
 
 import httpx
 import pytest
+from eidolon_sdk.system.v1 import HostVitalsWire
 
+import eidolon_admin_server.local_api.app as local_api_app
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.host_services import host_vitals
+from eidolon_admin_server.local_api.host_services import (
+    AdminHostServicesClient,
+    HostMachinePort,
+    HostServiceControlError,
+    host_vitals,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -52,17 +59,19 @@ class _HostServicesPort:
     async def list_services(self) -> dict:
         return {"driver": "systemd", "services": [_SERVICE]}
 
-    async def read_vitals(self) -> dict:
-        return {
-            "observed_at": "2026-08-25T09:00:00Z",
-            "measurements": [
-                {
-                    "name": "disk.root",
-                    "value": 31_200_000_000,
-                    "capacity": 58_000_000_000,
-                }
-            ],
-        }
+    async def read_vitals(self) -> HostVitalsWire:
+        return _vitals(
+            {
+                "observed_at": "2026-08-25T09:00:00Z",
+                "measurements": [
+                    {
+                        "name": "disk.root",
+                        "value": 31_200_000_000,
+                        "capacity": 58_000_000_000,
+                    }
+                ],
+            }
+        )
 
     async def mutate(self, *, service_id, operation, expected_revision) -> dict:
         self.mutations.append((service_id, operation, expected_revision))
@@ -97,6 +106,122 @@ def _app(tmp_path: Path, host_services) -> object:
         device_admission_client=unused,  # type: ignore[arg-type]
         host_services_client=host_services,  # type: ignore[arg-type]
     )
+
+
+def _vitals(document: dict) -> HostVitalsWire:
+    measurements = [
+        {
+            "value": None,
+            "unit": "",
+            "capacity": None,
+            "unavailable_reason": None,
+            **measurement,
+        }
+        for measurement in document.get("measurements", [])
+    ]
+    return HostVitalsWire.model_validate({
+        "operation": "system.host-vitals",
+        "observed_at": "2026-08-18T00:00:00Z",
+        **document,
+        "measurements": measurements,
+    })
+
+
+async def test_production_adapter_consumes_the_shared_host_vitals_contract() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "operation": "system.host-vitals",
+                "observed_at": "2026-08-26T00:00:00Z",
+                "measurements": [
+                    {
+                        "name": "temperature",
+                        "value": 47.2,
+                        "unit": "celsius",
+                        "capacity": None,
+                        "unavailable_reason": None,
+                    }
+                ],
+            },
+        )
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = AdminHostServicesClient(
+        base_url="http://127.0.0.1:9000",
+        service_token="local-api-service",
+        timeout_seconds=2,
+        client=http,
+    )
+    try:
+        answer = await adapter.read_vitals()
+    finally:
+        await http.aclose()
+
+    assert isinstance(adapter, HostMachinePort)
+    assert answer.measurements[0].name == "temperature"
+    assert seen[0].url.path == "/api/host/vitals"
+    assert seen[0].headers["authorization"] == "Bearer local-api-service"
+
+
+async def test_production_adapter_rejects_internal_contract_drift() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "operation": "system.host-vitals",
+                "observed_at": "2026-08-26T00:00:00Z",
+                "measurements": [],
+                "health": "fine",
+            },
+        )
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = AdminHostServicesClient(
+        base_url="http://127.0.0.1:9000",
+        service_token="local-api-service",
+        timeout_seconds=2,
+        client=http,
+    )
+    try:
+        with pytest.raises(HostServiceControlError) as error:
+            await adapter.read_vitals()
+    finally:
+        await http.aclose()
+
+    assert error.value.status_code == 502
+
+
+def test_production_composition_rejects_an_incomplete_host_machine_port(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class MissingVitals:
+        async def list_services(self):
+            return {}
+
+        async def mutate(self, **_kwargs):
+            return {}
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(
+        local_api_app,
+        "AdminHostServicesClient",
+        lambda **_kwargs: MissingVitals(),
+    )
+    unused = _UnusedPort()
+    with pytest.raises(TypeError, match="HostMachinePort production wiring"):
+        create_app(
+            LocalApiSettings(bootstrap=_bootstrap(tmp_path)),
+            workspace_client=unused,  # type: ignore[arg-type]
+            runtime_client=unused,  # type: ignore[arg-type]
+            devices_client=unused,  # type: ignore[arg-type]
+            device_admission_client=unused,  # type: ignore[arg-type]
+        )
 
 
 async def _authenticate(client: httpx.AsyncClient) -> dict[str, str]:
@@ -194,6 +319,7 @@ async def test_the_machine_is_readable_by_a_phone_that_holds_this_host(
     assert anonymous.status_code == 401
     assert read.status_code == 200
     assert read.json()["operation"] == "host.vitals"
+    assert read.json()["observed_at"] == "2026-08-25T09:00:00Z"
     assert read.json()["vitals"]
 
 
@@ -234,8 +360,7 @@ def test_a_reading_the_host_could_not_take_is_not_reported_as_healthy() -> None:
     """
 
     view = host_vitals(
-        {
-            "observed_at": "2026-08-18T00:00:00Z",
+        _vitals({
             "measurements": [
                 {
                     "name": "disk.state",
@@ -243,7 +368,7 @@ def test_a_reading_the_host_could_not_take_is_not_reported_as_healthy() -> None:
                     "unavailable_reason": "/var/lib/eidolon: No such file or directory",
                 }
             ],
-        }
+        })
     )
 
     disk = view.vitals[0]
@@ -261,12 +386,11 @@ def test_the_judgement_is_made_here_and_reads_the_same_at_any_size() -> None:
 
     def concern(free: float, total: float) -> str:
         view = host_vitals(
-            {
-                "observed_at": "2026-08-18T00:00:00Z",
+            _vitals({
                 "measurements": [
                     {"name": "disk.state", "value": free, "capacity": total}
                 ],
-            }
+            })
         )
         return view.vitals[0].concern
 
@@ -281,12 +405,11 @@ def test_the_judgement_is_made_here_and_reads_the_same_at_any_size() -> None:
 def test_load_is_read_against_the_cores_it_is_spread_over() -> None:
     def concern(load: float, cores: int) -> str:
         view = host_vitals(
-            {
-                "observed_at": "2026-08-18T00:00:00Z",
+            _vitals({
                 "measurements": [
                     {"name": "cpu.load1", "value": load, "capacity": cores}
                 ],
-            }
+            })
         )
         return view.vitals[0].concern
 
@@ -298,13 +421,12 @@ def test_load_is_read_against_the_cores_it_is_spread_over() -> None:
 
 def test_readings_nobody_named_are_dropped_rather_than_shown_raw() -> None:
     view = host_vitals(
-        {
-            "observed_at": "2026-08-18T00:00:00Z",
+        _vitals({
             "measurements": [
                 {"name": "some.future.counter", "value": 1.0},
                 {"name": "temperature", "value": 48.6},
             ],
-        }
+        })
     )
 
     # A Host that grows a new reading does not get to put its internal name on

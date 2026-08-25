@@ -25,11 +25,13 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from eidolon_sdk.system.v1 import HostVitalsWire
 
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
+from eidolon_admin_server.local_api.host_services import HostServiceControlError
 from eidolon_admin_server.local_api.management.router import (
     ManagementBackendError,
     refusal_for_status,
@@ -176,13 +178,23 @@ class _Host:
         self.vitals = list(vitals)
         self.fails = fails
 
-    async def read_vitals(self) -> dict:
+    async def read_vitals(self) -> HostVitalsWire:
         if self.fails:
-            raise _refused("eidolond is away")
-        return {
+            raise HostServiceControlError("eidolond is away")
+        return HostVitalsWire.model_validate({
+            "operation": "system.host-vitals",
             "observed_at": "2026-08-25T09:00:00Z",
-            "measurements": list(self.vitals),
-        }
+            "measurements": [
+                {
+                    "value": None,
+                    "unit": "",
+                    "capacity": None,
+                    "unavailable_reason": None,
+                    **measurement,
+                }
+                for measurement in self.vitals
+            ],
+        })
 
     async def list_services(self) -> dict:
         raise AssertionError("home never lists services")

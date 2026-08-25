@@ -15,11 +15,12 @@ that faces the person.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, runtime_checkable
 from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from eidolon_sdk.system.v1 import HostVitalsWire
 
 RuntimeState = Literal[
     "unknown", "inactive", "starting", "ready", "degraded", "blocked", "failed"
@@ -33,10 +34,13 @@ class HostServiceControlError(RuntimeError):
         self.status_code = status_code
 
 
-class AdminHostServicesPort(Protocol):
+@runtime_checkable
+class HostMachinePort(Protocol):
+    """The complete machine-scoped capability the product ingress consumes."""
+
     async def list_services(self) -> dict: ...
 
-    async def read_vitals(self) -> dict: ...
+    async def read_vitals(self) -> HostVitalsWire: ...
 
     async def mutate(
         self,
@@ -164,6 +168,15 @@ class AdminHostServicesClient:
     async def list_services(self) -> dict:
         return await self._request("GET", "/api/host/services")
 
+    async def read_vitals(self) -> HostVitalsWire:
+        document = await self._request("GET", "/api/host/vitals")
+        try:
+            return HostVitalsWire.model_validate(document)
+        except ValidationError as exc:
+            raise HostServiceControlError(
+                "Host vitals did not match the shared contract", status_code=502
+            ) from exc
+
     async def mutate(
         self,
         *,
@@ -252,21 +265,18 @@ _VITAL_LABELS = {
 }
 
 
-def host_vitals(document: dict) -> HostVitalsView:
+def host_vitals(document: HostVitalsWire) -> HostVitalsView:
     """Turn readings into sentences, and say which ones are worth acting on."""
 
-    raw = document.get("measurements")
-    measurements = raw if isinstance(raw, list) else []
+    measurements = document.measurements
     shown: list[VitalView] = []
     for measurement in measurements:
-        if not isinstance(measurement, dict):
-            continue
-        name = measurement.get("name")
+        name = measurement.name
         if not isinstance(name, str) or name not in _VITAL_LABELS:
             continue
-        shown.append(_vital(name, measurement))
+        shown.append(_vital(name, measurement.model_dump()))
     return HostVitalsView(
-        observed_at=str(document.get("observed_at", "")),
+        observed_at=document.model_dump(mode="json")["observed_at"],
         vitals=tuple(shown),
     )
 
