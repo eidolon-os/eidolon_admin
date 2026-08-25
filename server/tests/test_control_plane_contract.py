@@ -429,3 +429,38 @@ def test_mission_control_is_registered_only_while_it_stays_second_hand() -> None
         text = path.read_text(encoding="utf-8")
         for forbidden in ("import eidolon_data", "from eidolon_data", "sqlalchemy"):
             assert forbidden not in text, f"{path.name} went back to the database"
+
+
+def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> None:
+    """One rule, declared once, that a new command cannot be added without.
+
+    Each Controller command used to restate the same two-line invariant in its
+    own validator, naming its required scope inline. Three copies agreed, which
+    is what a rule looks like right up until one of them does not: reads were
+    minted with `device.read` alone while the Decision carried
+    `device.claim.approve`, so an ActorRef described the request rather than the
+    principal, and the pending-device queue — which only an approver may read —
+    answered 403 on the Host while every test passed.
+    """
+
+    import inspect
+
+    from eidolon_admin_server.app.control_plane import contracts
+
+    commands = [
+        value
+        for _name, value in inspect.getmembers(contracts, inspect.isclass)
+        if issubclass(value, contracts.ControllerCommand)
+        and value is not contracts.ControllerCommand
+    ]
+    assert {command.__name__ for command in commands} == {
+        "ControllerEnrollmentQuery",
+        "ControllerEnrollmentRecoveryQuery",
+        "ControllerClaimQuery",
+        "ControllerEnrollmentDecisionIntent",
+    }
+    for command in commands:
+        # Declared, not restated: the scope lives on the command that needs it.
+        assert command.required_scope in {"device.read", "device.claim.approve"}
+        # And the check itself is inherited, never re-implemented.
+        assert "_authority" not in vars(command)

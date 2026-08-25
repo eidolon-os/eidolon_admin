@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
@@ -542,24 +542,54 @@ class KernelMutationResult(StrictModel):
     replayed: bool
 
 
-class ControllerEnrollmentQuery(StrictModel):
-    """Authenticated Local context wrapped around the canonical Hub query."""
+class ControllerCommand(StrictModel):
+    """A canonical command carried under the authority a Controller holds.
+
+    Every command here answers the same two questions — is the actor acting in
+    the Owner Domain the command targets, and does it hold what the command
+    requires — so both are asked once, here, rather than restated per command.
+
+    They used to be restated. Three copies agreed, which is what a rule looks
+    like right up until one of them does not: reads were minted carrying
+    `device.read` alone while only the Decision carried `device.claim.approve`.
+    That describes the request rather than the principal, and the pending-device
+    queue, which only an approver may read, answered 403 on the Host while every
+    test passed.
+    """
 
     contract_version: Literal["1"]
     actor: ControllerActorRef
-    business_owner_id: BusinessOwnerId
-    query: EnrollmentProposalQuery
+
+    #: What this command requires of whoever issues it. Declared by the command,
+    #: because it is a property of the command and not of any one call site.
+    required_scope: ClassVar[str]
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        raise NotImplementedError
 
     @model_validator(mode="after")
-    def _scope(self) -> "ControllerEnrollmentQuery":
-        if self.actor.owner_domain_id != self.query.owner_domain_id:
-            raise ValueError("Enrollment query actor and Owner Domain do not match")
-        if "device.read" not in self.actor.granted_scopes:
-            raise ValueError("Enrollment query actor lacks device.read")
+    def _authority(self) -> "ControllerCommand":
+        name = type(self).__name__
+        if self.actor.owner_domain_id != self.target_owner_domain_id():
+            raise ValueError(f"{name} actor and target Owner Domain do not match")
+        if self.required_scope not in self.actor.granted_scopes:
+            raise ValueError(f"{name} actor lacks {self.required_scope}")
         return self
 
 
-class ControllerEnrollmentRecoveryQuery(StrictModel):
+class ControllerEnrollmentQuery(ControllerCommand):
+    """Authenticated Local context wrapped around the canonical Hub query."""
+
+    required_scope: ClassVar[str] = "device.read"
+
+    business_owner_id: BusinessOwnerId
+    query: EnrollmentProposalQuery
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.query.owner_domain_id
+
+
+class ControllerEnrollmentRecoveryQuery(ControllerCommand):
     """One Enrollment's projection, read in the Controller's own Owner Domain.
 
     A page query answers "what is waiting"; this answers "what happened to the
@@ -567,53 +597,38 @@ class ControllerEnrollmentRecoveryQuery(StrictModel):
     read cannot be reached by widening a page query's scope.
     """
 
-    contract_version: Literal["1"]
-    actor: ControllerActorRef
+    required_scope: ClassVar[str] = "device.read"
+
     business_owner_id: BusinessOwnerId
     owner_domain_id: OwnerDomainId
     enrollment_id: str = Field(
         min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"
     )
 
-    @model_validator(mode="after")
-    def _scope(self) -> "ControllerEnrollmentRecoveryQuery":
-        if self.actor.owner_domain_id != self.owner_domain_id:
-            raise ValueError("Enrollment recovery actor and Owner Domain do not match")
-        if "device.read" not in self.actor.granted_scopes:
-            raise ValueError("Enrollment recovery actor lacks device.read")
-        return self
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.owner_domain_id
 
 
-class ControllerClaimQuery(StrictModel):
-    contract_version: Literal["1"]
-    actor: ControllerActorRef
+class ControllerClaimQuery(ControllerCommand):
+    required_scope: ClassVar[str] = "device.read"
+
     business_owner_id: BusinessOwnerId
     query: ClaimQuery
 
-    @model_validator(mode="after")
-    def _scope(self) -> "ControllerClaimQuery":
-        if self.actor.owner_domain_id != self.query.owner_domain_id:
-            raise ValueError("Claim query actor and Owner Domain do not match")
-        if "device.read" not in self.actor.granted_scopes:
-            raise ValueError("Claim query actor lacks device.read")
-        return self
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.query.owner_domain_id
 
 
-class ControllerEnrollmentDecisionIntent(StrictModel):
+class ControllerEnrollmentDecisionIntent(ControllerCommand):
     """Admin workflow input; the Decision itself is the SDK binding."""
 
-    contract_version: Literal["1"]
+    required_scope: ClassVar[str] = "device.claim.approve"
+
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
-    actor: ControllerActorRef
     decision: DecideEnrollment
 
-    @model_validator(mode="after")
-    def _scope(self) -> "ControllerEnrollmentDecisionIntent":
-        if self.actor.owner_domain_id != self.decision.target_owner_domain_id:
-            raise ValueError("Decision actor and target Owner Domain do not match")
-        if "device.claim.approve" not in self.actor.granted_scopes:
-            raise ValueError("Decision actor lacks device.claim.approve")
-        return self
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.decision.target_owner_domain_id
 
 
 class AdmissionDecisionWorkflowResult(StrictModel):
