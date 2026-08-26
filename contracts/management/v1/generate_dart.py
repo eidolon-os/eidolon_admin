@@ -215,9 +215,20 @@ def _class(name: str, schema: dict) -> str:
             )
         elif field["raw_type"].startswith("Map<"):
             inner = field["raw_type"].split(", ", 1)[1][:-1]
+            #: Same rule as the list branch above, and it was missing here until
+            #: a contract first carried a map of objects. A cast where a
+            #: ``fromJson`` belongs compiles, passes every test whose fixture
+            #: leaves the map empty, and throws on the device the first time the
+            #: Host answers with one — which is exactly what happened.
+            opaque = {"Object", "Object?"} | set(_PRIMITIVES.values())
+            element = (
+                f"{inner}.fromJson(entry as Map<String, dynamic>)"
+                if inner[:1].isupper() and inner not in opaque
+                else f"entry as {inner}"
+            )
             mapping = (
                 f"(({accessor} as Map<String, dynamic>)"
-                f".map((key, entry) => MapEntry(key, entry as {inner})))"
+                f".map((key, entry) => MapEntry(key, {element})))"
             )
             expression = (
                 f"{accessor} == null ? null : {mapping}" if field["optional"] else mapping
