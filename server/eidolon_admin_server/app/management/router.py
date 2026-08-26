@@ -718,9 +718,13 @@ async def get_persona_authoring_template(request: Request) -> PersonaAuthoring:
     SDK. The value of the read is that it is what *Data* would write, and a copy
     on this side would be a second default personality that agrees right up
     until one of the two is upgraded.
+
+    From the persona authority, beside the genome routes. It was first taken
+    from the Owner-scoped one because that is where provisioning lives, which
+    put the Owner/Companion boundary one route to the left of where it is.
     """
 
-    return await request.app.state.control_plane.workspace.persona_authoring_template()
+    return await request.app.state.control_plane.data.persona_authoring_template()
 
 
 @router.put(

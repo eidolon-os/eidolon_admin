@@ -372,6 +372,44 @@ class DataAuthorityClient:
             json={"genome_id": genome_id, "change_summary": change_summary},
         )
 
+    async def persona_authoring_template(self) -> PersonaAuthoring:
+        """Who an Eidolon is before anybody has said anything about it.
+
+        Fetched rather than constructed, every time, because the value of this
+        read is that it is *the authority's* answer: what would be written if a
+        form came back untouched. A copy here would be a second default
+        personality, and the day the two disagree the person is editing a
+        description of an Eidolon this Host will not create.
+        """
+
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        # Not through ``_companion_call``: that helper builds
+        # ``/companions/{id}/…`` and this route has no Companion in it, which is
+        # the whole reason it is a template. Bending the helper to accept a
+        # missing id would let every other caller pass one too.
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{endpoint.address.rstrip('/')}"
+            "/api/companion-authority/v1/persona-authoring-template",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+        return _parse("data", response, PersonaAuthoring)
+
     async def get_persona(self, companion_id: str) -> PersonaAuthoring:
         """Who this Companion is now, in the part a person wrote."""
 
@@ -628,27 +666,6 @@ class DataWorkspaceAuthorityClient:
         return await self._owner_call(
             "PATCH", owner_id, json={"display_name": display_name}
         )
-
-    async def persona_authoring_template(self) -> PersonaAuthoring:
-        """Who an Eidolon is before anybody has said anything about it.
-
-        Fetched rather than constructed, every time, because the value of this
-        read is that it is *the authority's* answer: what would be written if a
-        form came back untouched. A copy here would be a second default
-        personality, and the day the two disagree the person is editing a
-        description of an Eidolon this Host will not create.
-        """
-
-        response = await _request(
-            "data",
-            self._client,
-            "GET",
-            f"{await self._base_url()}"
-            "/api/workspace-authority/v1/persona-authoring-template",
-            timeout=self._timeout,
-            headers=self._headers,
-        )
-        return _parse("data", response, PersonaAuthoring)
 
     async def provision_companion(
         self,
