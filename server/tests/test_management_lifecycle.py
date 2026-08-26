@@ -23,7 +23,11 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.contracts import CompanionLifecycleResult
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
-from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
+from eidolon_admin_server.app.management.lifecycle import (
+    _release_request_id,
+    bring_back,
+    put_away,
+)
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
@@ -446,8 +450,8 @@ async def test_putting_one_away_releases_the_devices_that_answered_as_it() -> No
     # replays the same mutation instead of making a second one.
     assert [revision for _d, _r, revision, _reason in bodies.released] == [3, 4]
     assert {request for _d, request, _v, _reason in bodies.released} == {
-        "companion-archive-companion-a-speaker-living-room",
-        "companion-archive-companion-a-speaker-study",
+        _release_request_id("companion-a", "speaker-living-room"),
+        _release_request_id("companion-a", "speaker-study"),
     }
     # The reason goes on the record, not just into this answer. Both of these
     # leave a Body answering as nobody; only one of them is something the person
@@ -508,3 +512,42 @@ async def test_a_device_is_not_handed_to_the_successor_who_answers_instead() -> 
         "speaker-living-room"
     ]
     assert not hasattr(bodies, "assigned_to"), "nothing was re-assigned anywhere"
+
+
+async def test_archiving_survives_identifiers_of_the_length_devices_actually_use() -> None:
+    """A real device_instance_id must not overflow the request id.
+
+    This is the case the product is for — an Eidolon that actually answers
+    through a speaker — and it was refused outright: a canonical
+    ``device-instance-<64 hex>`` is 78 characters, so spelling the pair into the
+    request id blew past its 96-character cap and the Host replied
+    ``string_too_long`` before touching the assignment. Every earlier test used
+    names like ``speaker-study`` and stayed comfortably short, which is exactly
+    how the fixtures came to agree with the bug.
+    """
+
+    device_id = "device-instance-" + "d2" * 32
+    companion_id = "c_" + "6a" * 16
+    bodies = _Bodies(device_id)
+    bodies.endpoints[0].assignment.companion_id = companion_id
+    authority = _Authority()
+
+    view = await put_away(
+        owner_id="owner-1",
+        companion_id=companion_id,
+        lifecycle=authority,
+        bodies=bodies,
+    )
+
+    assert view.released_devices == (device_id,)
+    request_ids = [request for _d, request, _v, _reason in bodies.released]
+    assert request_ids == [_release_request_id(companion_id, device_id)]
+    assert all(1 <= len(request) <= 96 for request in request_ids)
+    # Deterministic, and only for this pair: a retry replays the same mutation,
+    # and a different device does not.
+    assert _release_request_id(companion_id, device_id) == _release_request_id(
+        companion_id, device_id
+    )
+    assert _release_request_id(companion_id, device_id) != _release_request_id(
+        companion_id, device_id + "0"
+    )

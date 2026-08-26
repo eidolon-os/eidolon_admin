@@ -29,6 +29,7 @@ should answer instead?" rather than showing them a conflict.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, replace
 from typing import Protocol, runtime_checkable
 
@@ -164,12 +165,31 @@ async def _release_bodies(
         await bodies.release_device(
             owner_id=owner_id,
             device_id=endpoint.device_id,
-            request_id=f"companion-archive-{companion_id}-{endpoint.device_id}",
+            request_id=_release_request_id(companion_id, endpoint.device_id),
             expected_assignment_revision=assignment.revision,
             change_reason="companion-archived",
         )
         released.append(endpoint.device_id)
     return tuple(released)
+
+
+def _release_request_id(companion_id: str, device_id: str) -> str:
+    """A deterministic request id that two long identifiers cannot overflow.
+
+    Both inputs are Identifiers, so either may be 128 characters, while a
+    request id is capped at 96 — and a real ``device_instance_id`` is already 78
+    (``device-instance-`` plus a 64-character digest). Spelling the pair out
+    therefore refused every archive of an Eidolon that actually answered
+    through a device, which is the one case this function exists for. The unit
+    tests missed it because their fixtures used names like ``speaker-study``.
+
+    Digesting keeps what the id is for — the same pair replays the same
+    mutation instead of making a second one — and makes the length a property
+    of this function rather than of the caller's identifiers.
+    """
+
+    digest = hashlib.sha256(f"{companion_id}\0{device_id}".encode()).hexdigest()
+    return f"companion-archive-{digest}"  # 18 + 64 = 82 characters.
 
 
 async def bring_back(
