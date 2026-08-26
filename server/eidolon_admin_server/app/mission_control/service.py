@@ -177,10 +177,21 @@ async def compose_runtime(
     companion = _default_companion(companions, default_companion_id)
     guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
     runtime_blackboard = await _runtime_blackboard(request, owner_id, ledger)
-    hub_devices = await _hub_devices(request, ledger)
+    # No Hub list. `app.state.hub_device_client` is read nowhere else in this
+    # process and set nowhere at all, so that source could only ever report
+    # "Hub client unavailable" — a permanently failing read is the same dead
+    # code that looks alive as the enrichment above, and it would hold the
+    # devices lane at `degraded` forever for a client that does not exist.
+    #
+    # Hub publishes no device list to replace it with: the Owner's inventory is
+    # Claims (Hub) joined with mounts (Kernel), and both want a credential this
+    # process does not hold. So this composition answers what it can see —
+    # presence, from the owner-isolated blackboard — and the Owner's plane joins
+    # it with the inventory it already reads on the Owner's behalf
+    # (local_api/management/mission_control.py).
     runtime_devices = _merge_devices(
         devices,
-        hub_devices,
+        [],
         runtime_blackboard=runtime_blackboard,
         owner_id=owner_id,
         companions=companions,
@@ -460,21 +471,6 @@ async def _select_owner(
     except Exception as exc:  # noqa: BLE001
         ledger.record("data.owners", ok=False, detail=str(exc))
         return None
-
-
-async def _hub_devices(request: Request, ledger: LaneLedger) -> list[Any]:
-    client = getattr(request.app.state, "hub_device_client", None)
-    if client is None:
-        ledger.record("hub", ok=False, detail="Hub client unavailable")
-        return []
-    started = time.perf_counter()
-    try:
-        rows = await client.list_devices()
-    except Exception as exc:  # noqa: BLE001 - degraded view is expected in dev
-        ledger.record("hub", ok=False, detail=str(exc))
-        return []
-    ledger.record("hub", ok=True, detail=f"{len(rows)} devices", started=started)
-    return rows
 
 
 async def _runtime_blackboard(

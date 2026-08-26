@@ -141,8 +141,21 @@ def test_mission_control_cannot_change_anything(app) -> None:
     assert writes == []
 
 
+#: The Admin process's Mission Control composition — the thing whose
+#: availability must never gate a management mutation. Matched precisely,
+#: because the Owner's plane has a module of its own by the same name (the
+#: devices join, which composes nothing and reaches no authority) and a check
+#: that went by the word rather than the package would call that a dependency.
+_ADMIN_COMPOSITION = (
+    "from eidolon_admin_server.app.mission_control",
+    "from ..mission_control",
+    "from ...app.mission_control",
+    "import eidolon_admin_server.app.mission_control",
+)
+
+
 def _imports_mission_control(path: pathlib.Path) -> bool:
-    """Whether this module depends on Mission Control at import time.
+    """Whether this module depends on the Admin composition at import time.
 
     An import is the dependency that matters. A loopback HTTP call to the
     internal plane is not one — that is how Local API reaches every capability,
@@ -151,7 +164,7 @@ def _imports_mission_control(path: pathlib.Path) -> bool:
     """
 
     return any(
-        line.startswith(("import ", "from ")) and "mission_control" in line
+        line.startswith(_ADMIN_COMPOSITION)
         for line in (
             raw.strip() for raw in path.read_text(encoding="utf-8").splitlines()
         )
@@ -216,4 +229,12 @@ def test_local_api_reaches_mission_control_the_way_it_reaches_everything() -> No
 
     backend = (_SERVER / "local_api/management/backend.py").read_text(encoding="utf-8")
     assert "/api/internal/v1/management/mission-control/snapshot" in backend
-    assert not _imports_mission_control(_SERVER / "local_api/management/backend.py")
+    for relative in (
+        "local_api/management/backend.py",
+        "local_api/management/router.py",
+        # The Owner plane's own join module: it takes a payload and an inventory
+        # and returns a payload. It composes nothing and reaches no authority,
+        # which is why it may share the name without sharing the dependency.
+        "local_api/management/mission_control.py",
+    ):
+        assert not _imports_mission_control(_SERVER / relative), relative

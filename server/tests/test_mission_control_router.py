@@ -196,18 +196,20 @@ async def test_a_removed_upstream_method_costs_one_lane_not_the_map() -> None:
     ledger = LaneLedger()
     result = await service._safe(
         ledger,
-        "hub",
-        lambda: _Gone().list_devices(owner_id="owner-1"),
+        "runtime.blackboard",
+        lambda: _Gone().read_snapshot(owner_id="owner-1"),
         ["fallback"],
     )
 
     assert result == ["fallback"]
-    status = next(row for row in ledger.statuses() if row.source == "hub")
+    status = next(
+        row for row in ledger.statuses() if row.source == "runtime.blackboard"
+    )
     assert status.ok is False
     assert "AttributeError" in status.detail
     # The failure is attributed, so it can reach a screen rather than a log.
     assert ledger.outcome("devices").state == "unavailable"
-    assert "list_devices" in ledger.outcome("devices").detail
+    assert "read_snapshot" in ledger.outcome("devices").detail
 
 
 async def test_the_retired_hub_capabilities_are_said_rather_than_asked_for() -> None:

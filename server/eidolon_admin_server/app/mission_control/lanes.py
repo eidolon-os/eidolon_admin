@@ -73,11 +73,11 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # lane that came back empty, and `build_snapshot` returns early for it.
     "data.owners": (),
     "data.companions": (),
-    # Bodies. Hub owns the inventory and the runtime blackboard owns presence;
-    # either failing leaves the lane partly known, which is `degraded` below —
-    # a Host that can see who is present but not who exists knows something
-    # worth drawing, and knows it is not the whole picture.
-    "hub": ("devices",),
+    # Bodies, as this process can see them: the owner-isolated runtime
+    # blackboard, which is the presence authority. Existence is not here — the
+    # inventory is Claims joined with mounts, both behind a credential this
+    # process does not hold — so the Owner's plane joins that in on the way out
+    # and says so if it could not.
     "runtime.blackboard": ("devices",),
     # Retired capabilities, kept registered because the composition still says
     # out loud that it is not asking for them. They decide nothing: the lane

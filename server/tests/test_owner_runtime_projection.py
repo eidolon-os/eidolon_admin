@@ -235,7 +235,6 @@ def _audit(seq: int = 41, **overrides) -> IndexedAuditEvent:
 def _healthy_ledger() -> LaneLedger:
     ledger = LaneLedger()
     for source in (
-        "hub",
         "runtime.blackboard",
         "services",
         "agent.turns",
@@ -268,11 +267,10 @@ def test_projection_satisfies_the_sdk_contract() -> None:
 
 
 def test_a_lane_nobody_could_read_carries_no_rows() -> None:
-    # Every source this lane has, gone. Not one of two — none.
+    # The devices lane's only source in this process, gone.
     ledger = LaneLedger()
     for source in ("services", "agent.turns", "agent.long_tasks", "audit.index"):
         ledger.record(source, ok=True)
-    ledger.record("hub", ok=False, detail="Hub 连接超时")
     ledger.record("runtime.blackboard", ok=False, detail="NATS KV 不可用")
 
     payload = owner_runtime_projection(
@@ -283,7 +281,6 @@ def test_a_lane_nobody_could_read_carries_no_rows() -> None:
 
     devices = payload["devices"]
     assert devices["state"] == "unavailable"
-    assert "Hub 连接超时" in devices["detail"]
     assert "NATS KV" in devices["detail"]
     # Composed rows existed. They were not observed on this reading, so they do
     # not ship: an unreadable lane with rows in it is a failure nobody can see.
@@ -297,23 +294,23 @@ def test_a_lane_nobody_could_read_carries_no_rows() -> None:
 def test_one_source_of_two_leaves_a_lane_partly_known() -> None:
     """Degraded, not unavailable — and not ok either.
 
-    A Host that can see who is present but not who exists knows something worth
-    drawing, and knows it is not the whole picture. Calling that unavailable
-    throws away what was read; calling it ok hides what was not.
+    Held on the turns lane, which really does have two sources in this process.
+    Calling a partial answer unavailable throws away what was read; calling it
+    ok hides what was not.
     """
 
     ledger = _healthy_ledger()
-    ledger.record("hub", ok=False, detail="Hub client unavailable")
+    ledger.record("data.conversations", ok=False, detail="Data 不发布对话历史")
 
     payload = owner_runtime_projection(
         RuntimeComposition(snapshot=_snapshot(), ledger=ledger),
         audit_events=[_audit()],
     )
     _validator().validate(payload)
-    assert payload["devices"]["state"] == "degraded"
-    assert "Hub client unavailable" in payload["devices"]["detail"]
-    # And it still carries what the blackboard answered.
-    assert payload["devices"]["items"]
+    assert payload["turns"]["state"] == "degraded"
+    assert "Data 不发布对话历史" in payload["turns"]["detail"]
+    # And it still carries what the Agent answered.
+    assert payload["turns"]["items"]
 
 
 def test_a_retired_capability_decides_no_lane() -> None:
@@ -388,7 +385,7 @@ def test_a_cut_short_lane_says_so() -> None:
                 online=True,
                 approved=True,
                 capabilities=[],
-                signals={"presence_source": "hub"},
+                signals={"presence_source": "runtime_blackboard"},
             )
             for index in range(limit + 5)
         ]

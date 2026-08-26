@@ -21,6 +21,7 @@ is the SDK contract's and ``test_owner_runtime_projection.py`` validates it:
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -87,12 +88,29 @@ class _Backend:
         return _payload(owner_id)
 
 
+class _Devices:
+    """The Owner's device inventory, as this plane reads it from the session.
+
+    Present here because the route joins existence with presence — the two facts
+    have different authorities and only one of them is reachable from the process
+    that composes Mission Control. What that join means is held in
+    ``test_owner_devices_join.py``; this file only holds the boundary.
+    """
+
+    def __init__(self) -> None:
+        self.sessions: list[str] = []
+
+    async def list_devices(self, *, session):
+        self.sessions.append(session.owner_id)
+        return SimpleNamespace(devices=[])
+
+
 class _Unused:
     def __getattr__(self, name: str):  # pragma: no cover - must never be reached
         raise AssertionError(f"this test should not need {name}")
 
 
-def _app(tmp_path: Path, backend: _Backend):
+def _app(tmp_path: Path, backend: _Backend, devices: _Devices | None = None):
     unused = _Unused()
     return create_app(
         LocalApiSettings(
@@ -110,7 +128,7 @@ def _app(tmp_path: Path, backend: _Backend):
         device_admission_client=unused,  # type: ignore[arg-type]
         host_services_client=unused,  # type: ignore[arg-type]
         management_backend=backend,
-        owner_device_port=unused,  # type: ignore[arg-type]
+        owner_device_port=devices or _Devices(),
     )
 
 
@@ -149,7 +167,8 @@ async def _authenticate(client: httpx.AsyncClient) -> dict[str, str]:
 async def test_the_owner_comes_from_the_session(tmp_path: Path, monkeypatch) -> None:
     _stub_controller(monkeypatch)
     backend = _Backend()
-    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    devices = _Devices()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend, devices))
     async with httpx.AsyncClient(transport=transport, base_url="http://host") as client:
         headers = await _authenticate(client)
         answer = await client.get(_SNAPSHOT, headers=headers)
@@ -160,6 +179,9 @@ async def test_the_owner_comes_from_the_session(tmp_path: Path, monkeypatch) -> 
     # The session's Owner, not one the caller chose.
     assert backend.asked == ["owner-1"]
     assert body["asked_for"] == "owner-1"
+    # Both halves of the devices lane are asked about the same Owner, and that
+    # Owner is the session's.
+    assert devices.sessions == ["owner-1"]
 
 
 async def test_a_caller_cannot_ask_about_another_owner(tmp_path: Path, monkeypatch) -> None:

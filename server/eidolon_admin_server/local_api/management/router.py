@@ -32,6 +32,7 @@ from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     host_service_mutation,
     host_vitals,
 )
+from .mission_control import join_owner_devices
 
 MANAGEMENT_PREFIX = "/api/management/v1"
 
@@ -1791,11 +1792,28 @@ def register_management_routes(
         intact — rather than an error that costs the reader everything, or an
         empty list that reads as a quiet house.
         """
-        owner_id = await authenticated_owner(authorization)
+        session = await authenticated_controller_session(authorization)
         try:
-            return await backend.mission_control_snapshot(owner_id=owner_id)
+            snapshot = await backend.mission_control_snapshot(owner_id=session.owner_id)
         except ManagementBackendError as exc:
+            # The only part with no degraded form: without a reading there is
+            # nothing for the join below to be about.
             raise _refused(exc) from exc
+
+        # Presence came from the Admin process's blackboard; existence is this
+        # plane's to read, from the Controller session. Joined here so the
+        # Owner's map and their device list cannot disagree about how many
+        # bodies they have — see local_api/management/mission_control.py.
+        inventory_failure = ""
+        try:
+            inventory = await devices.list_devices(session=session)
+        except ManagementBackendError as exc:
+            inventory, inventory_failure = None, str(exc)
+        return join_owner_devices(
+            snapshot,
+            inventory=inventory,
+            failure=inventory_failure,
+        )
 
     @router.get("/home", response_model=HomeView)
     async def get_home(
