@@ -44,6 +44,9 @@ from eidolon_admin_server.local_api.device_admissions import (
     LocalEnrollmentDecisionRequest,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+
 pytestmark = pytest.mark.asyncio
 
 NOW = datetime(2026, 8, 25, tzinfo=UTC)
@@ -61,7 +64,7 @@ def _proposal(state: EnrollmentProposalState) -> EnrollmentProposal:
         enrollment_id=ENROLLMENT,
         proposal_revision=1,
         state=state,
-        device_instance_candidate_id="device-instance-" + "c" * 64,
+        device_instance_candidate_id=named_device_instance_id("device-c"),
         requested_owner_domain_id=DOMAIN,
         hardware_evidence_digest="sha256:" + "b" * 64,
         manifest_ref=MANIFEST,

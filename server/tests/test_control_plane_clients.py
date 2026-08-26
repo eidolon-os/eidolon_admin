@@ -41,6 +41,12 @@ from eidolon_admin_server.app.control_plane.workspace_policy import (
     workspace_request_fingerprint,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
 
@@ -589,7 +595,7 @@ async def test_hub_decision_uses_exact_canonical_contract() -> None:
 
 async def test_hub_revocation_uses_exact_canonical_claim_command() -> None:
     device_ref = DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=_DEVICE_1,
         owner_domain_id=OwnerDomainId("owner-1"),
         owner_domain_generation=2,
         claim_generation=3,
@@ -598,7 +604,7 @@ async def test_hub_revocation_uses_exact_canonical_claim_command() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.raw_path == b"/api/admission/v1/claims/device-1:revoke"
+        assert request.url.raw_path == f"/api/admission/v1/claims/{_DEVICE_1}:revoke".encode()
         assert request.headers["authorization"] == "Bearer owner-jwt"
         body = json.loads(request.content)
         assert body == {
@@ -644,7 +650,7 @@ async def test_hub_revocation_uses_exact_canonical_claim_command() -> None:
 
 async def test_device_erase_status_uses_source_event_and_full_generation() -> None:
     device_ref = DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=_DEVICE_1,
         owner_domain_id=OwnerDomainId("owner-1"),
         owner_domain_generation=2,
         claim_generation=3,
@@ -654,7 +660,7 @@ async def test_device_erase_status_uses_source_event_and_full_generation() -> No
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.path == (
-            "/api/device-control/v1/owners/owner-1/devices/device-1/erase-operations"
+            f"/api/device-control/v1/owners/owner-1/devices/{_DEVICE_1}/erase-operations"
         )
         assert dict(request.url.params) == {
             "source_claim_event_id": "claim-event-1",
@@ -883,7 +889,7 @@ async def test_kernel_page_cannot_cross_owner_scope() -> None:
                 "mounts": [
                     {
                         "operation": "kernel.device-mount",
-                        "device_id": "device-1",
+                        "device_id": _DEVICE_1,
                         "owner_id": "owner-other",
                         "attached_companion_id": None,
                         "revision": 1,

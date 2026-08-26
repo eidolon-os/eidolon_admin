@@ -25,13 +25,19 @@ from eidolon_admin_server.lifecycle_workflow.capability import (
 )
 from eidolon_admin_server.app.settings import GatewayConfig, get_settings
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 
 pytestmark = pytest.mark.unit
 
 
 def _ref() -> DeviceRef:
     return DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=_DEVICE_1,
         owner_domain_id="owner-1",
         owner_domain_generation=1,
         claim_generation=3,

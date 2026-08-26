@@ -41,6 +41,12 @@ from eidolon_admin_server.lifecycle_workflow.protocol import (
 )
 from eidolon_admin_server.lifecycle_workflow.settings import LifecycleWorkflowSettings
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_LINUX_PEER = named_device_instance_id("device-linux-peer")
+
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -55,7 +61,7 @@ NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 def _result() -> DeviceRemovalResult:
     ref = DeviceRef(
-        device_instance_id="device-linux-peer",
+        device_instance_id=_DEVICE_LINUX_PEER,
         owner_domain_id="owner-linux-peer",
         owner_domain_generation=1,
         claim_generation=1,
@@ -98,7 +104,7 @@ def _call() -> LifecycleRemovalCall:
         request_id="linux-peer-removal-1",
         owner_id="owner-linux-peer",
         controller_id="ectrl-0123456789abcdefabcd",
-        device_id="device-linux-peer",
+        device_id=_DEVICE_LINUX_PEER,
     )
     return LifecycleRemovalCall(
         payload=payload,

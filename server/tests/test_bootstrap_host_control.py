@@ -72,6 +72,13 @@ from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
 from eidolon_admin_server.local_api.workspace import WorkspaceSetupError
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_LOCAL_1 = named_device_instance_id("device-local-1")
+_DEVICE_LOCAL_REMOVED = named_device_instance_id("device-local-removed")
+
 
 def _settings(
     tmp_path: Path,
@@ -240,10 +247,10 @@ class _DevicesClient:
                 "mounts": [
                     {
                         "operation": "kernel.device-mount",
-                        "device_id": "device-local-1",
+                        "device_id": _DEVICE_LOCAL_1,
                         "owner_id": owner_id,
                         "device_ref": {
-                            "device_instance_id": "device-local-1",
+                            "device_instance_id": _DEVICE_LOCAL_1,
                             "owner_domain_id": owner_id,
                             "owner_domain_generation": 1,
                             "claim_generation": 1,
@@ -259,10 +266,10 @@ class _DevicesClient:
                     },
                     {
                         "operation": "kernel.device-mount",
-                        "device_id": "device-local-removed",
+                        "device_id": _DEVICE_LOCAL_REMOVED,
                         "owner_id": owner_id,
                         "device_ref": {
-                            "device_instance_id": "device-local-removed",
+                            "device_instance_id": _DEVICE_LOCAL_REMOVED,
                             "owner_domain_id": owner_id,
                             "owner_domain_generation": 1,
                             "claim_generation": 1,

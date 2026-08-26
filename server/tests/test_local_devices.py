@@ -20,6 +20,14 @@ from eidolon_admin_server.local_api.devices import (
     owner_device_inventory_view,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_MOUNTED = named_device_instance_id("device-mounted")
+_DEVICE_READY = named_device_instance_id("device-ready")
+_DEVICE_REMOVED = named_device_instance_id("device-removed")
+
 
 def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
     now = datetime(2026, 8, 9, 10, 0, tzinfo=UTC)
@@ -30,10 +38,10 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
             "mounts": [
                 {
                     "operation": "kernel.device-mount",
-                    "device_id": "device-ready",
+                    "device_id": _DEVICE_READY,
                     "owner_id": owner_id,
                     "device_ref": {
-                        "device_instance_id": "device-ready",
+                        "device_instance_id": _DEVICE_READY,
                         "owner_domain_id": owner_id,
                         "owner_domain_generation": 1,
                         "claim_generation": 1,
@@ -49,10 +57,10 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                 },
                 {
                     "operation": "kernel.device-mount",
-                    "device_id": "device-mounted",
+                    "device_id": _DEVICE_MOUNTED,
                     "owner_id": owner_id,
                     "device_ref": {
-                        "device_instance_id": "device-mounted",
+                        "device_instance_id": _DEVICE_MOUNTED,
                         "owner_domain_id": owner_id,
                         "owner_domain_generation": 1,
                         "claim_generation": 1,
@@ -68,10 +76,10 @@ def _mount_page(*, owner_id: str = "owner-1") -> KernelMountPage:
                 },
                 {
                     "operation": "kernel.device-mount",
-                    "device_id": "device-removed",
+                    "device_id": _DEVICE_REMOVED,
                     "owner_id": owner_id,
                     "device_ref": {
-                        "device_instance_id": "device-removed",
+                        "device_instance_id": _DEVICE_REMOVED,
                         "owner_domain_id": owner_id,
                         "owner_domain_generation": 1,
                         "claim_generation": 1,
@@ -168,8 +176,8 @@ def test_mobile_device_projection_drops_the_mounts_removal_left_behind() -> None
     )
 
     assert [item.device_id for item in view.devices] == [
-        "device-ready",
-        "device-mounted",
+        _DEVICE_READY,
+        _DEVICE_MOUNTED,
     ]
 
 

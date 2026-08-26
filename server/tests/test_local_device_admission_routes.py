@@ -37,6 +37,10 @@ from eidolon_admin_server.app.control_plane.contracts import (
     AdmissionDecisionWorkflowResult,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+_DEVICE_A = named_device_instance_id("device-a")
+
 pytestmark = pytest.mark.asyncio
 
 _AUTH_CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
@@ -81,7 +85,7 @@ def _projection(state: str = "pending_review") -> dict:
             "enrollment_id": _ENROLLMENT,
             "proposal_revision": 2,
             "state": EnrollmentProposalState(state),
-            "device_instance_candidate_id": "device-a",
+            "device_instance_candidate_id": _DEVICE_A,
             "requested_owner_domain_id": _OWNER_DOMAIN,
             "hardware_evidence_digest": "sha256:" + "d" * 64,
             "manifest_ref": _MANIFEST.model_dump(mode="json"),
@@ -429,7 +433,7 @@ async def test_claim_page_cursor_stays_inside_this_owner_domain(
             headers=headers,
             params={
                 "after_sort_key": _NOW.isoformat(),
-                "after_resource_id": "device-a",
+                "after_resource_id": _DEVICE_A,
             },
         )
 

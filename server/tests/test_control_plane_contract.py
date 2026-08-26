@@ -30,6 +30,12 @@ from eidolon_admin_server.app.control_plane.workspace_policy import (
     workspace_request_fingerprint,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 pytestmark = pytest.mark.contract
 
 ADMIN_ROOT = Path(__file__).resolve().parents[2]
@@ -69,10 +75,10 @@ def _now() -> str:
 def _mount() -> KernelMount:
     return KernelMount(
         operation="kernel.device-mount",
-        device_id="device-1",
+        device_id=_DEVICE_1,
         owner_id="owner-1",
         device_ref=DeviceRef(
-            device_instance_id="device-1",
+            device_instance_id=_DEVICE_1,
             owner_domain_id="owner-1",
             owner_domain_generation=1,
             claim_generation=1,

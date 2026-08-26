@@ -27,6 +27,10 @@ from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.control_plane.hub_credentials import HubAdminCredentialIssuer
 from eidolon_admin_server.app.control_plane.service import ControlPlaneService
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+_DEVICE_A = named_device_instance_id("device-a")
+
 NOW = datetime(2026, 8, 24, tzinfo=UTC)
 DOMAIN = OwnerDomainId("owner-domain-a")
 BUSINESS_OWNER = BusinessOwnerId("owner_account_a")
@@ -62,7 +66,7 @@ def _proposal(state: EnrollmentProposalState, revision: int = 7):
         enrollment_id="enrollment-a",
         proposal_revision=revision,
         state=state,
-        device_instance_candidate_id="device-a",
+        device_instance_candidate_id=_DEVICE_A,
         requested_owner_domain_id=DOMAIN,
         hardware_evidence_digest="sha256:" + "b" * 64,
         manifest_ref=MANIFEST,

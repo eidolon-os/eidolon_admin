@@ -46,6 +46,12 @@ from eidolon_admin_server.local_api.device_admissions import (
     device_removal_progress,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_A = named_device_instance_id("device-a")
+
 NOW = datetime(2026, 8, 24, tzinfo=UTC)
 DOMAIN = OwnerDomainId("owner-domain-a")
 BUSINESS_OWNER = BusinessOwnerId("owner_account_a")
@@ -122,7 +128,7 @@ async def test_local_admin_adapter_uses_only_canonical_decision_route() -> None:
             "enrollment_id": "enrollment-a",
             "proposal_revision": 2,
             "state": "approved_awaiting_handoff",
-            "device_instance_candidate_id": "device-a",
+            "device_instance_candidate_id": _DEVICE_A,
             "requested_owner_domain_id": str(DOMAIN),
             "hardware_evidence_digest": "sha256:" + "b" * 64,
             "manifest_ref": MANIFEST.model_dump(mode="json"),
@@ -214,7 +220,7 @@ async def test_cross_owner_claim_page_is_rejected_not_filtered_to_empty() -> Non
 
 def test_removal_requires_exact_authority_condition_projection() -> None:
     ref = DeviceRef(
-        device_instance_id="device-a",
+        device_instance_id=_DEVICE_A,
         owner_domain_id=DOMAIN,
         owner_domain_generation=1,
         claim_generation=2,
@@ -250,14 +256,14 @@ def test_removal_requires_exact_authority_condition_projection() -> None:
     )
     assert (
         device_removal_progress(
-            owner_id=str(BUSINESS_OWNER), device_id="device-a", result=result
+            owner_id=str(BUSINESS_OWNER), device_id=_DEVICE_A, result=result
         ).outcome
         == "done"
     )
     with pytest.raises(DeviceAdmissionError):
         device_removal_progress(
             owner_id=str(BUSINESS_OWNER),
-            device_id="device-a",
+            device_id=_DEVICE_A,
             result=result.model_copy(update={"conditions": conditions[:-1]}),
         )
 
@@ -355,7 +361,7 @@ async def _refused_removal_reaches_the_phone(socket_path: Path) -> None:
                     request_id="req-" + "a" * 20,
                     owner_id="owner-business-1",
                     controller_id="ectrl-" + "b" * 20,
-                    device_id="device-instance-" + "c" * 48,
+                    device_id=named_device_instance_id("device-c"),
                     reason="owner-removed",
                 ),
                 controller_reset_epoch=1,
@@ -366,7 +372,7 @@ async def _refused_removal_reaches_the_phone(socket_path: Path) -> None:
                 # timer says nothing about the code.
                 authorization_expires_at=datetime.now(UTC) + timedelta(minutes=5),
                 target_device_ref=DeviceRef(
-                    device_instance_id="device-instance-" + "c" * 48,
+                    device_instance_id=named_device_instance_id("device-c"),
                     owner_domain_id=DOMAIN,
                     owner_domain_generation=1,
                     claim_generation=1,

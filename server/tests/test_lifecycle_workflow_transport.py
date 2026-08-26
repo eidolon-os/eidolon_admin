@@ -48,6 +48,12 @@ from eidolon_admin_server.lifecycle_workflow.settings import (
     LifecycleWorkflowSettings,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -59,7 +65,7 @@ def _request() -> ControllerDeviceRemovalRequest:
         request_id="mobile-removal-1",
         owner_id="owner-1",
         controller_id="ectrl-0123456789abcdefabcd",
-        device_id="device-1",
+        device_id=_DEVICE_1,
     )
 
 
@@ -96,7 +102,7 @@ def _call() -> LifecycleRemovalCall:
 
 def _result() -> DeviceRemovalResult:
     device_ref = DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=_DEVICE_1,
         owner_domain_id="owner-1",
         owner_domain_generation=1,
         claim_generation=1,

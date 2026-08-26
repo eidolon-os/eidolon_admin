@@ -22,6 +22,12 @@ from eidolon_admin_server.app.control_plane.service import ControlPlaneService
 from eidolon_admin_server.app.main import create_app
 from eidolon_admin_server.app.settings import AdminBindConfig, GatewayConfig, Settings
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
@@ -40,7 +46,7 @@ class ProducerState:
         now = datetime.now(UTC).isoformat()
         return {
             "operation": "device.directory-entry",
-            "device_id": "device-1",
+            "device_id": _DEVICE_1,
             "owner_scope": "owner-1",
             "display_name": "Test Device",
             "device_kind": "test",
@@ -54,7 +60,7 @@ class ProducerState:
             },
             "manifest_revision": "sha256:" + "a" * 64,
             "device_ref": {
-                "device_instance_id": "device-1",
+                "device_instance_id": _DEVICE_1,
                 "owner_domain_id": "owner-1",
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
@@ -70,10 +76,10 @@ class ProducerState:
         now = datetime.now(UTC).isoformat()
         return {
             "operation": "kernel.device-mount",
-            "device_id": "device-1",
+            "device_id": _DEVICE_1,
             "owner_id": "owner-1",
             "device_ref": {
-                "device_instance_id": "device-1",
+                "device_instance_id": _DEVICE_1,
                 "owner_domain_id": "owner-1",
                 "owner_domain_generation": 1,
                 "claim_generation": 1,
@@ -351,7 +357,7 @@ def producer_app(state: ProducerState) -> FastAPI:
     ):
         if authorization != "Bearer operator":
             raise HTTPException(403, "management scope denied")
-        if device_id != "device-1":
+        if device_id != _DEVICE_1:
             raise HTTPException(404, "device not found")
         state.approval_requests.add(payload["request_id"])
         return {
@@ -454,7 +460,7 @@ def workflow_payload() -> dict:
     return {
         "request_id": "workflow-integration-1",
         "owner_id": "owner-1",
-        "device_id": "device-1",
+        "device_id": _DEVICE_1,
         "companion_id": "companion-1",
         "expected_mount_revision": 0,
         "replace_existing_mount": False,

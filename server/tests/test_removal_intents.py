@@ -14,13 +14,19 @@ from eidolon_admin_server.app.control_plane.removal_intents import (
     SqliteRemovalIntentStore,
 )
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
 
 def _ref(*, owner_generation: int = 1, generation: int = 1) -> DeviceRef:
     return DeviceRef(
-        device_instance_id="device-1",
+        device_instance_id=_DEVICE_1,
         owner_domain_id="owner-1",
         owner_domain_generation=owner_generation,
         claim_generation=generation,

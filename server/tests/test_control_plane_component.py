@@ -20,6 +20,12 @@ from eidolon_admin_server.app.control_plane.contracts import (
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.settings import Settings
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_MOUNTED_1 = named_device_instance_id("device-mounted-1")
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
 
@@ -102,10 +108,10 @@ class StubControlPlane:
             mounts=(
                 KernelMount(
                     operation="kernel.device-mount",
-                    device_id="device-mounted-1",
+                    device_id=_DEVICE_MOUNTED_1,
                     owner_id=owner_id,
                     device_ref=DeviceRef(
-                        device_instance_id="device-mounted-1",
+                        device_instance_id=_DEVICE_MOUNTED_1,
                         owner_domain_id=owner_id,
                         owner_domain_generation=1,
                         claim_generation=1,
@@ -314,7 +320,7 @@ async def test_owner_device_mounts_are_narrow_and_require_local_api_credential(
     assert missing.status_code == 401
     assert accepted.status_code == 200
     assert accepted.json()["mounts"][0]["owner_id"] == "owner-1"
-    assert accepted.json()["mounts"][0]["device_id"] == "device-mounted-1"
+    assert accepted.json()["mounts"][0]["device_id"] == _DEVICE_MOUNTED_1
 
 
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:

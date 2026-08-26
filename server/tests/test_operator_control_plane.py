@@ -27,6 +27,12 @@ from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.control_plane.service import ControlPlaneService
 from eidolon_admin_server.app.control_plane.router import operator_router
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+# Tests name the device they mean; the name becomes a real device
+# instance id, which is a digest of a key and never a chosen string.
+_DEVICE_1 = named_device_instance_id("device-1")
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
 OWNER_DOMAIN = OwnerDomainId("owner-domain-1")
@@ -72,7 +78,7 @@ def recovery(state: EnrollmentProposalState) -> EnrollmentRecoveryProjection:
                 "enrollment_id": "enrollment-1",
                 "proposal_revision": 1,
                 "state": state,
-                "device_instance_candidate_id": "device-1",
+                "device_instance_candidate_id": _DEVICE_1,
                 "requested_owner_domain_id": OWNER_DOMAIN,
                 "hardware_evidence_digest": "sha256:" + "b" * 64,
                 "manifest_ref": MANIFEST,
@@ -102,10 +108,10 @@ def mount(*, companion_id: str | None = None, revision: int = 1) -> KernelMount:
     now = datetime.now(UTC)
     return KernelMount(
         operation="kernel.device-mount",
-        device_id="device-1",
+        device_id=_DEVICE_1,
         owner_id=str(BUSINESS_OWNER),
         device_ref=DeviceRef(
-            device_instance_id="device-1",
+            device_instance_id=_DEVICE_1,
             owner_domain_id=OWNER_DOMAIN,
             owner_domain_generation=1,
             claim_generation=1,
@@ -190,7 +196,7 @@ def request(*, companion_id: str | None = None) -> OperatorDeviceAdmissionReques
     return OperatorDeviceAdmissionRequest(
         request_id="operator-1",
         owner_id=BUSINESS_OWNER,
-        device_id="device-1",
+        device_id=_DEVICE_1,
         companion_id=companion_id,
         expected_mount_revision=0,
         replace_existing_mount=False,
