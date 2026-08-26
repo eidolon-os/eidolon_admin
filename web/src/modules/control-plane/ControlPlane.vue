@@ -24,6 +24,9 @@ const error = ref('')
 const mountsByDevice = computed(() =>
   new Map((inventory.value?.mounts || []).map((mount) => [mount.device_id, mount])),
 )
+const bodiesByDevice = computed(() =>
+  new Map((inventory.value?.body_endpoints || []).map((body) => [body.device_id, body])),
+)
 const deviceRows = computed(() =>
   (inventory.value?.claims || []).map((claim) => ({
     device_id: claim.device_ref.device_instance_id,
@@ -171,14 +174,28 @@ async function submitWorkflow() {
         <el-table-column prop="device_id" label="Device" min-width="180" />
         <el-table-column prop="display_name" label="Name" min-width="150" />
         <el-table-column prop="lifecycle_state" label="Admission" width="150" />
-        <el-table-column label="Mount" min-width="220">
+        <el-table-column label="Mount" min-width="180">
           <template #default="scope">
             <template v-if="mountsByDevice.get(scope.row.device_id)">
               r{{ mountsByDevice.get(scope.row.device_id)?.revision }} ·
-              {{ mountsByDevice.get(scope.row.device_id)?.active ? 'active' : 'inactive' }} ·
-              {{ mountsByDevice.get(scope.row.device_id)?.attached_companion_id || 'unattached' }}
+              {{ mountsByDevice.get(scope.row.device_id)?.active ? 'active' : 'inactive' }}
             </template>
             <span v-else>unmounted</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Body assignment" min-width="260">
+          <template #default="scope">
+            <template v-if="bodiesByDevice.get(scope.row.device_id)?.assignment">
+              a{{ bodiesByDevice.get(scope.row.device_id)?.assignment?.revision }}/g{{
+                bodiesByDevice.get(scope.row.device_id)?.assignment?.generation
+              }}
+              ·
+              {{ bodiesByDevice.get(scope.row.device_id)?.assignment?.companion_id || 'nobody' }}
+              ·
+              {{ bodiesByDevice.get(scope.row.device_id)?.assignment?.selection_provenance }}
+            </template>
+            <span v-else-if="bodiesByDevice.get(scope.row.device_id)">undecided</span>
+            <span v-else>no body</span>
           </template>
         </el-table-column>
       </el-table>

@@ -84,7 +84,6 @@ def _mount() -> KernelMount:
             claim_generation=1,
             trust_epoch=1,
         ),
-        attached_companion_id=None,
         revision=1,
         created_at=_now(),
         updated_at=_now(),

@@ -44,27 +44,38 @@ def _lifecycle_path(companion_id: str = "companion-a") -> str:
 
 
 class _Bodies:
-    """Kernel's mounts, and letting one go."""
+    """Kernel's Bodies, and letting one go."""
 
-    def __init__(self, *attached: str) -> None:
-        self.mounts = [
+    def __init__(self, *assigned: str) -> None:
+        self.endpoints = [
             SimpleNamespace(
                 device_id=device_id,
-                attached_companion_id="companion-a",
-                revision=index + 3,
-                active=True,
+                body_endpoint_id=f"{device_id}:body",
+                present=True,
+                assignment=SimpleNamespace(
+                    companion_id="companion-a",
+                    revision=index + 3,
+                ),
             )
-            for index, device_id in enumerate(attached)
+            for index, device_id in enumerate(assigned)
         ]
-        self.released: list[tuple[str, str, int]] = []
+        self.released: list[tuple[str, str, int, str]] = []
 
-    async def list_owner_device_mounts(self, owner_id: str):
-        return SimpleNamespace(mounts=tuple(self.mounts))
+    async def list_owner_body_endpoints(self, owner_id: str):
+        return SimpleNamespace(endpoints=tuple(self.endpoints))
 
     async def release_device(
-        self, *, owner_id: str, device_id: str, request_id: str, expected_revision: int
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        request_id: str,
+        expected_assignment_revision: int,
+        change_reason: str,
     ) -> None:
-        self.released.append((device_id, request_id, expected_revision))
+        self.released.append(
+            (device_id, request_id, expected_assignment_revision, change_reason)
+        )
 
 
 class _Authority:
@@ -426,32 +437,41 @@ async def test_putting_one_away_releases_the_devices_that_answered_as_it() -> No
         bodies=bodies,
     )
 
-    assert [device for device, _request, _revision in bodies.released] == [
+    assert [device for device, _r, _v, _reason in bodies.released] == [
         "speaker-living-room",
         "speaker-study",
     ]
-    # The revision each mount was just read at, so two people archiving at once
-    # do not both write it; and a deterministic request id, so a retry replays
-    # the same mutation instead of making a second one.
-    assert [revision for _device, _request, revision in bodies.released] == [3, 4]
-    assert {request for _device, request, _revision in bodies.released} == {
+    # The revision each assignment was just read at, so two people archiving at
+    # once do not both write it; and a deterministic request id, so a retry
+    # replays the same mutation instead of making a second one.
+    assert [revision for _d, _r, revision, _reason in bodies.released] == [3, 4]
+    assert {request for _d, request, _v, _reason in bodies.released} == {
         "companion-archive-companion-a-speaker-living-room",
         "companion-archive-companion-a-speaker-study",
     }
+    # The reason goes on the record, not just into this answer. Both of these
+    # leave a Body answering as nobody; only one of them is something the person
+    # did to that speaker, and tomorrow the record is all a screen will have.
+    assert {reason for _d, _r, _v, reason in bodies.released} == {"companion-archived"}
     assert view.released_devices == ("speaker-living-room", "speaker-study")
 
 
 async def test_a_device_answering_as_someone_else_is_left_alone() -> None:
-    """Only the ones that answer as *this* Eidolon, and only live mounts."""
+    """Only the Bodies that answer as *this* Eidolon.
+
+    A Body nobody has decided about is left alone for the same reason and by a
+    different route: it has no assignment row at all, so there is nothing to
+    replace and no revision to compare against.
+    """
 
     bodies = _Bodies("speaker-living-room")
-    bodies.mounts[0].attached_companion_id = "companion-b"
-    bodies.mounts.append(
+    bodies.endpoints[0].assignment.companion_id = "companion-b"
+    bodies.endpoints.append(
         SimpleNamespace(
-            device_id="speaker-unplugged",
-            attached_companion_id="companion-a",
-            revision=9,
-            active=False,
+            device_id="speaker-undecided",
+            body_endpoint_id="speaker-undecided:body",
+            present=True,
+            assignment=None,
         )
     )
 
@@ -484,5 +504,7 @@ async def test_a_device_is_not_handed_to_the_successor_who_answers_instead() -> 
         bodies=bodies,
     )
 
-    assert [device for device, _r, _v in bodies.released] == ["speaker-living-room"]
-    assert not hasattr(bodies, "attached"), "nothing was re-attached anywhere"
+    assert [device for device, _r, _v, _reason in bodies.released] == [
+        "speaker-living-room"
+    ]
+    assert not hasattr(bodies, "assigned_to"), "nothing was re-assigned anywhere"

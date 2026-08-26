@@ -12,8 +12,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     BoundaryCapabilities,
     CompanionIdentity,
     DeviceRef,
-    KernelMount,
-    KernelMountPage,
+    KernelBodyEndpointPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -21,6 +20,8 @@ from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.settings import Settings
 
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+from tests.body_mesh_support import endpoint_document, endpoint_page
 
 # Tests name the device they mean; the name becomes a real device
 # instance id, which is a digest of a key and never a chosen string.
@@ -100,32 +101,16 @@ class StubControlPlane:
             }
         )
 
-    async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
-        now = datetime.now(UTC)
-        return KernelMountPage(
-            operation="kernel.device-mount-page",
-            next_cursor=None,
-            mounts=(
-                KernelMount(
-                    operation="kernel.device-mount",
+    async def list_owner_body_endpoints(self, owner_id: str) -> KernelBodyEndpointPage:
+        return KernelBodyEndpointPage.model_validate(
+            endpoint_page(
+                endpoint_document(
                     device_id=_DEVICE_MOUNTED_1,
                     owner_id=owner_id,
-                    device_ref=DeviceRef(
-                        device_instance_id=_DEVICE_MOUNTED_1,
-                        owner_domain_id=owner_id,
-                        owner_domain_generation=1,
-                        claim_generation=1,
-                        trust_epoch=1,
-                    ),
-                    attached_companion_id="companion-1",
-                    revision=2,
-                    created_at=now,
-                    updated_at=now,
-                    request_id="device-mount-read-fixture",
-                    fingerprint="sha256:" + "0" * 64,
-                    active=True,
-                ),
-            ),
+                    companion_id="companion-1",
+                    mount_revision=2,
+                )
+            )
         )
 
 
@@ -302,12 +287,12 @@ async def test_owner_runtime_requires_local_api_credential_and_derives_owner_pat
     assert accepted.json()["companion_id"] == "companion-1"
 
 
-async def test_owner_device_mounts_are_narrow_and_require_local_api_credential(
+async def test_owner_body_endpoints_are_narrow_and_require_local_api_credential(
     app,
 ) -> None:
     app.state.control_plane = StubControlPlane()
     app.state.settings = Settings(local_api_service_token="local-api-secret")
-    path = "/api/control-plane/v1/owners/owner-1/device-mounts"
+    path = "/api/control-plane/v1/owners/owner-1/body-endpoints"
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://admin.test"
     ) as client:
@@ -319,8 +304,9 @@ async def test_owner_device_mounts_are_narrow_and_require_local_api_credential(
 
     assert missing.status_code == 401
     assert accepted.status_code == 200
-    assert accepted.json()["mounts"][0]["owner_id"] == "owner-1"
-    assert accepted.json()["mounts"][0]["device_id"] == _DEVICE_MOUNTED_1
+    assert accepted.json()["endpoints"][0]["owner_id"] == "owner-1"
+    assert accepted.json()["endpoints"][0]["device_id"] == _DEVICE_MOUNTED_1
+    assert accepted.json()["endpoints"][0]["assignment"]["companion_id"] == "companion-1"
 
 
 async def test_authority_unavailable_is_not_rewritten_as_not_found(app) -> None:

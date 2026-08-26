@@ -45,10 +45,16 @@ class CompanionBodyRegistrar(Protocol):
     the Host's body mesh, and this layer only carries a decision to it.
     """
 
-    async def list_owner_device_mounts(self, owner_id: str): ...
+    async def list_owner_body_endpoints(self, owner_id: str): ...
 
     async def release_device(
-        self, *, owner_id: str, device_id: str, request_id: str, expected_revision: int
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        request_id: str,
+        expected_assignment_revision: int,
+        change_reason: str,
     ) -> None: ...
 
 
@@ -103,10 +109,14 @@ async def put_away(
     can ask the person the question instead of guessing at the answer.
     """
 
-    # Before the state moves, not after: a device attached to an archived
-    # Companion is exactly the broken state this avoids, and nothing can attach
-    # to one afterwards — Kernel refuses a Companion that is not active, so the
-    # window closes itself rather than needing a second pass.
+    # Before the state moves, not after: a Body assigned to an archived
+    # Companion is exactly the broken state this avoids, and nothing can be
+    # assigned to one afterwards — Kernel refuses a Companion that is not
+    # active, so the window closes itself rather than needing a second pass.
+    #
+    # This is also what makes "no orphan active assignment" a checkable claim
+    # rather than a hope: the reconciler converges any that survive a crash
+    # here, so the two together leave none.
     released = await _release_bodies(
         owner_id=owner_id, companion_id=companion_id, bodies=bodies
     )
@@ -128,29 +138,37 @@ async def _release_bodies(
     companion_id: str,
     bodies: CompanionBodyRegistrar,
 ) -> tuple[str, ...]:
-    """Let go of every device that answers as this Eidolon.
+    """Let go of every Body that answers as this Eidolon.
 
-    Each release carries the revision the mount was just read at, so two people
-    archiving at once do not both write it, and a deterministic request id so a
-    retry replays the same mutation instead of making a second one.
+    Each release carries the revision the assignment was just read at, so two
+    people archiving at once do not both write it, and a deterministic request
+    id so a retry replays the same mutation instead of making a second one.
 
-    A device that is no longer there between the read and the release is not an
+    It carries ``companion-archived`` rather than nothing, and the authority
+    records that the Eidolon was put away rather than that somebody cleared the
+    speaker. Both leave a Body answering as nobody; only one of them is
+    something a person did to that device, and the difference is all a screen
+    will have to work with tomorrow.
+
+    A Body that is no longer there between the read and the release is not an
     error — it is the same end state — so the refusal is left to the authority
     and this list says what was actually let go.
     """
 
-    page = await bodies.list_owner_device_mounts(owner_id)
+    page = await bodies.list_owner_body_endpoints(owner_id)
     released: list[str] = []
-    for mount in page.mounts:
-        if mount.attached_companion_id != companion_id or not mount.active:
+    for endpoint in page.endpoints:
+        assignment = endpoint.assignment
+        if assignment is None or assignment.companion_id != companion_id:
             continue
         await bodies.release_device(
             owner_id=owner_id,
-            device_id=mount.device_id,
-            request_id=f"companion-archive-{companion_id}-{mount.device_id}",
-            expected_revision=mount.revision,
+            device_id=endpoint.device_id,
+            request_id=f"companion-archive-{companion_id}-{endpoint.device_id}",
+            expected_assignment_revision=assignment.revision,
+            change_reason="companion-archived",
         )
-        released.append(mount.device_id)
+        released.append(endpoint.device_id)
     return tuple(released)
 
 

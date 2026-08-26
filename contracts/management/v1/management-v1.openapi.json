@@ -876,7 +876,7 @@
             "title": "Companion Id"
           },
           "expected_revision": {
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Expected Revision",
             "type": "integer"
           },
@@ -1085,8 +1085,14 @@
             "title": "Owner Domain Generation",
             "type": "integer"
           },
+          "quiet_because": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Quiet Because",
+            "type": "string"
+          },
           "revision": {
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Revision",
             "type": "integer"
           },

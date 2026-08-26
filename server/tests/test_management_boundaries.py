@@ -163,3 +163,33 @@ def test_capabilities_stay_false_until_a_slice_is_declared_closed() -> None:
         "capabilities={name: name not in unavailable for name in _CAPABILITIES}"
         in context
     ), "the boolean map must be derived from the withheld map, not computed twice"
+
+
+def test_neither_a_policy_ref_nor_an_act_is_a_public_input() -> None:
+    """The two things a client must not be able to say about a Body assignment.
+
+    ``policy_refs`` is on the canonical command and empty on every Host, because
+    nothing in this product defines or evaluates a resource policy. A client
+    that could name refs would be storing names no evaluator ever reads, which
+    reads like a constraint and enforces nothing. When a policy authority exists
+    this is the review to hold; until then the field is not offered.
+
+    ``origin`` says which act a change is part of — a person choosing, or an
+    archive letting a Body go — and the authority derives the recorded
+    provenance from it. A client that could name the act could claim its own
+    change was somebody else's consequence, and provenance is exactly what a
+    screen later turns into "you cleared this" rather than "it was put away".
+    """
+
+    public = (PUBLIC_MANAGEMENT / "router.py").read_text(encoding="utf-8")
+    for name, arguments in _route_signatures(public):
+        assert "policy_refs" not in arguments, f"{name} takes policy refs from a caller"
+        assert "origin" not in arguments, f"{name} takes an act from a caller"
+    assert "policy_refs" not in public
+    # The request models are where a body field would hide from a signature.
+    assert "origin: " not in public
+
+    # And the internal ABI, which may name the act, still may not name the refs:
+    # its caller knows which workflow it is running, and nobody knows a policy.
+    internal = (INTERNAL_MANAGEMENT / "router.py").read_text(encoding="utf-8")
+    assert "policy_refs" not in internal

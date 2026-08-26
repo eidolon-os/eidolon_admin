@@ -192,6 +192,7 @@ export interface DeviceView {
   online?: "unknown" | "online" | "offline"
   online_reason?: string
   owner_domain_generation: number
+  quiet_because?: string
   revision: number
   state: string
   trust_epoch: number

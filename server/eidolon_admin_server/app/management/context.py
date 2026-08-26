@@ -100,10 +100,11 @@ _CAPABILITIES: tuple[str, ...] = (
     #: itself, and guessing from "it is online" is exactly what the plan forbids
     #: — an acknowledgement is the only evidence that a device did anything.
     "device.identify",
-    #: The canonical ``ReplaceAssignment`` over a Body endpoint, with policy
-    #: refs. False until the source of those refs is reviewed: what this Host
-    #: can do today is point a *device* at an Eidolon, which is a narrower thing
-    #: with a narrower name.
+    #: Saying which Eidolon answers through a device — the canonical
+    #: ``ReplaceAssignment`` over its Body. Its own name rather than part of
+    #: ``device.manage``: that one is about which devices are on this Host at
+    #: all, and a Host could reasonably let a person point a speaker somewhere
+    #: without letting them take it off the shelf.
     "body.assign",
     #: The Host's own record of what it did to this Owner's things. Its own name
     #: rather than part of ``conversation.read``: one is what an Eidolon said,
@@ -177,12 +178,19 @@ _ENABLED: frozenset[str] = frozenset(
         # rather than an authority's data.
         "host.read",
         "host.operate",
-        # The devices this Owner holds, and pointing one at an Eidolon. The
+        # The devices this Owner holds, and taking one off the Host. The
         # composition needs the authenticated Controller — the admission
         # authority authorises by actor — so it is served where that identity
         # exists, like the controller list beside it.
         "device.read",
         "device.manage",
+        # Which Eidolon answers through a device. True since the Body became a
+        # resource with its own revision and provenance rather than a field on
+        # the Kernel mount, and since the one thing that was holding it back was
+        # answered: `policy_refs` has no source because nothing on this Host
+        # defines or evaluates a resource policy, so the surface does not offer
+        # a client any way to name one.
+        "body.assign",
         # The governance facts Data writes in the same transaction as each
         # change. Nothing had ever read them.
         "activity.read",

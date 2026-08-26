@@ -18,9 +18,10 @@ from eidolon_sdk.device_foundation.v1 import (
 )
 
 from eidolon_admin_server.app.control_plane.contracts import (
+    KernelBodyEndpoint,
+    KernelBodyEndpointPage,
     KernelMount,
     KernelMountPage,
-    KernelMutationResult,
     OperatorDeviceAdmissionRequest,
 )
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
@@ -28,6 +29,8 @@ from eidolon_admin_server.app.control_plane.service import ControlPlaneService
 from eidolon_admin_server.app.control_plane.router import operator_router
 
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+from tests.body_mesh_support import endpoint_document, endpoint_page
 
 # Tests name the device they mean; the name becomes a real device
 # instance id, which is a digest of a key and never a chosen string.
@@ -117,7 +120,6 @@ def mount(*, companion_id: str | None = None, revision: int = 1) -> KernelMount:
             claim_generation=1,
             trust_epoch=1,
         ),
-        attached_companion_id=companion_id,
         revision=revision,
         created_at=now,
         updated_at=now,
@@ -154,6 +156,9 @@ class WaitingKernel:
             operation="kernel.device-mount-page", next_cursor=None, mounts=()
         )
 
+    async def list_body_endpoints(self, **_kwargs):
+        return KernelBodyEndpointPage.model_validate(endpoint_page())
+
     async def mount(self, **_kwargs):
         raise AuthorityFailure("kernel", "not_found", "claim not visible", 404)
 
@@ -161,6 +166,7 @@ class WaitingKernel:
 class MountedKernel:
     def __init__(self) -> None:
         self.current = mount()
+        self.assigned: str | None = None
 
     async def list_mounts(self, **_kwargs):
         return KernelMountPage(
@@ -169,13 +175,28 @@ class MountedKernel:
             mounts=(self.current,),
         )
 
-    async def attach(self, *, companion_id: str, **_kwargs):
-        self.current = mount(companion_id=companion_id, revision=2)
-        return KernelMutationResult(
-            operation="kernel.device-mount-mutation-result",
-            mount=self.current,
-            audit_position=2,
-            replayed=False,
+    async def list_body_endpoints(self, **_kwargs):
+        return KernelBodyEndpointPage.model_validate(
+            endpoint_page(
+                endpoint_document(
+                    device_id=_DEVICE_1,
+                    owner_id=str(BUSINESS_OWNER),
+                    owner_domain_id=str(OWNER_DOMAIN),
+                    companion_id=self.assigned,
+                    assigned=self.assigned is not None,
+                )
+            )
+        )
+
+    async def replace_assignment(self, *, companion_id: str | None, **_kwargs):
+        self.assigned = companion_id
+        return KernelBodyEndpoint.model_validate(
+            endpoint_document(
+                device_id=_DEVICE_1,
+                owner_id=str(BUSINESS_OWNER),
+                owner_domain_id=str(OWNER_DOMAIN),
+                companion_id=companion_id,
+            )
         )
 
 
@@ -219,24 +240,25 @@ async def test_pending_enrollment_is_decided_then_waits_for_claim_ack() -> None:
     assert [step.name for step in result.steps] == [
         "hub_approval",
         "kernel_mount",
-        "companion_attachment",
+        "body_assignment",
     ]
     assert result.steps[1].failure is not None
     assert result.steps[1].failure.retryable is True
 
 
-async def test_existing_approval_and_mount_continue_to_companion_attachment() -> None:
+async def test_existing_approval_and_mount_continue_to_the_body_assignment() -> None:
     hub = Hub(recovery(EnrollmentProposalState.APPROVED_AWAITING_HANDOFF))
-    result = await service(hub, MountedKernel()).admit_operator_device(
+    kernel = MountedKernel()
+    result = await service(hub, kernel).admit_operator_device(
         request(companion_id="companion-1"),
         hub_authorization="Bearer operator-jwt",
     )
 
     assert hub.decision is None
     assert result.outcome == "completed"
-    assert result.completed_stage == "companion_attached"
+    assert result.completed_stage == "body_assigned"
     assert result.mount is not None
-    assert result.mount.attached_companion_id == "companion-1"
+    assert kernel.assigned == "companion-1"
     assert [step.state for step in result.steps] == [
         "replayed",
         "replayed",

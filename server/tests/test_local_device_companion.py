@@ -22,9 +22,9 @@ from eidolon_sdk.device_foundation.v1 import (
 )
 
 from eidolon_admin_server.app.control_plane.contracts import (
-    ControllerCompanionAttachment,
-    KernelMount,
-    KernelMountPage,
+    ControllerBodyAssignment,
+    KernelBodyEndpoint,
+    KernelBodyEndpointPage,
 )
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
@@ -37,6 +37,8 @@ from eidolon_admin_server.local_api.config import (
 from eidolon_admin_server.local_api.devices import DeviceInventoryError
 
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+from tests.body_mesh_support import endpoint_document, endpoint_page
 
 pytestmark = pytest.mark.asyncio
 
@@ -73,26 +75,19 @@ def _descriptor() -> OwnerDomainDescriptor:
     )
 
 
-def _mount(*, companion_id: str | None, revision: int) -> dict:
-    return {
-        "operation": "kernel.device-mount",
-        "device_id": _DEVICE,
-        "owner_id": _BUSINESS_OWNER,
-        "device_ref": {
-            "device_instance_id": _DEVICE,
-            "owner_domain_id": _OWNER_DOMAIN,
-            "owner_domain_generation": 3,
-            "claim_generation": 2,
-            "trust_epoch": 1,
-        },
-        "attached_companion_id": companion_id,
-        "revision": revision,
-        "created_at": _NOW.isoformat(),
-        "updated_at": _NOW.isoformat(),
-        "request_id": "internal-request-not-for-mobile",
-        "fingerprint": "sha256:" + "0" * 64,
-        "active": True,
-    }
+def _endpoint(*, companion_id: str | None, revision: int) -> dict:
+    return endpoint_document(
+        device_id=_DEVICE,
+        owner_id=_BUSINESS_OWNER,
+        owner_domain_id=_OWNER_DOMAIN,
+        owner_domain_generation=3,
+        claim_generation=2,
+        trust_epoch=1,
+        companion_id=companion_id,
+        assignment_revision=max(revision, 1),
+        assigned=revision >= 1,
+        updated_at=_NOW.isoformat(),
+    )
 
 
 def _claims() -> ClaimPage:
@@ -131,28 +126,24 @@ class _Devices:
     def __init__(self, *, refuse: DeviceInventoryError | None = None) -> None:
         self.companion_id: str | None = None
         self.revision = 1
-        self.commands: list[ControllerCompanionAttachment] = []
+        self.commands: list[ControllerBodyAssignment] = []
         self.refuse = refuse
 
-    async def list_mounts(self, owner_id: str) -> KernelMountPage:
-        return KernelMountPage.model_validate(
-            {
-                "operation": "kernel.device-mount-page",
-                "next_cursor": None,
-                "mounts": [
-                    _mount(companion_id=self.companion_id, revision=self.revision)
-                ],
-            }
+    async def list_body_endpoints(self, owner_id: str) -> KernelBodyEndpointPage:
+        return KernelBodyEndpointPage.model_validate(
+            endpoint_page(
+                _endpoint(companion_id=self.companion_id, revision=self.revision)
+            )
         )
 
-    async def set_companion(self, *, payload) -> KernelMount:
+    async def set_companion(self, *, payload) -> KernelBodyEndpoint:
         self.commands.append(payload)
         if self.refuse is not None:
             raise self.refuse
         self.companion_id = payload.companion_id
-        self.revision = payload.expected_revision + 1
-        return KernelMount.model_validate(
-            _mount(companion_id=self.companion_id, revision=self.revision)
+        self.revision = payload.expected_assignment_revision + 1
+        return KernelBodyEndpoint.model_validate(
+            _endpoint(companion_id=self.companion_id, revision=self.revision)
         )
 
     async def close(self) -> None:
@@ -280,7 +271,7 @@ async def test_a_device_can_be_bound_to_a_companion_and_released(
 
     # One command, two values — and the Owner's compare-and-swap travels with it.
     assert [command.companion_id for command in devices.commands] == ["c_01", None]
-    assert [command.expected_revision for command in devices.commands] == [1, 2]
+    assert [command.expected_assignment_revision for command in devices.commands] == [1, 2]
     assert all(command.owner_id == _BUSINESS_OWNER for command in devices.commands)
 
 

@@ -33,13 +33,13 @@ from .contracts import (
     ControllerClaimQuery,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
-    ControllerCompanionAttachment,
+    ControllerBodyAssignment,
     ControllerEnrollmentRecoveryQuery,
     BoundaryCapabilities,
     ControllerDeviceRemovalRequest,
     DeviceRemovalResult,
-    KernelMount,
-    KernelMountPage,
+    KernelBodyEndpoint,
+    KernelBodyEndpointPage,
     OperatorDeviceAdmissionRequest,
     OperatorDeviceAdmissionResult,
     OperatorOwnerDeviceInventory,
@@ -359,7 +359,7 @@ class ControlPlaneService:
             )
 
         mount_request_id = _operator_child_request_id(payload.request_id, "kernel-mount")
-        attach_request_id = _operator_child_request_id(payload.request_id, "kernel-attach")
+        assign_request_id = _operator_child_request_id(payload.request_id, "kernel-assign")
         steps = [
             WorkflowStep(
                 name="hub_approval",
@@ -421,14 +421,14 @@ class ControlPlaneService:
                             failure=waiting.to_wire(),
                         ),
                         WorkflowStep(
-                            name="companion_attachment",
+                            name="body_assignment",
                             state=(
                                 "not_attempted"
                                 if payload.companion_id is not None
                                 else "not_requested"
                             ),
                             request_id=(
-                                attach_request_id
+                                assign_request_id
                                 if payload.companion_id is not None
                                 else None
                             ),
@@ -448,9 +448,7 @@ class ControlPlaneService:
                 )
 
         if payload.companion_id is None:
-            steps.append(
-                WorkflowStep(name="companion_attachment", state="not_requested")
-            )
+            steps.append(WorkflowStep(name="body_assignment", state="not_requested"))
             return OperatorDeviceAdmissionResult(
                 request_id=payload.request_id,
                 outcome="completed",
@@ -458,35 +456,26 @@ class ControlPlaneService:
                 steps=tuple(steps),
                 mount=mounted,
             )
-        if mounted.attached_companion_id == payload.companion_id:
-            steps.append(
-                WorkflowStep(
-                    name="companion_attachment",
-                    state="replayed",
-                    revision=mounted.revision,
-                )
-            )
-            return OperatorDeviceAdmissionResult(
-                request_id=payload.request_id,
-                outcome="completed",
-                completed_stage="companion_attached",
-                steps=tuple(steps),
-                mount=mounted,
-            )
+        endpoint = await self._owner_body_endpoint(
+            owner_id=str(payload.owner_id), device_id=payload.device_id
+        )
         try:
-            attached = await self.kernel.attach(
+            assigned = await self.kernel.replace_assignment(
                 owner_id=str(payload.owner_id),
                 device_id=payload.device_id,
                 companion_id=payload.companion_id,
-                request_id=attach_request_id,
-                expected_revision=mounted.revision,
+                request_id=assign_request_id,
+                expected_assignment_revision=(
+                    0 if endpoint is None else endpoint.assignment_revision
+                ),
+                origin="owner",
             )
         except AuthorityFailure as exc:
             steps.append(
                 WorkflowStep(
-                    name="companion_attachment",
+                    name="body_assignment",
                     state="failed",
-                    request_id=attach_request_id,
+                    request_id=assign_request_id,
                     revision=mounted.revision,
                     failure=exc.to_wire(),
                 )
@@ -505,18 +494,18 @@ class ControlPlaneService:
             )
         steps.append(
             WorkflowStep(
-                name="companion_attachment",
-                state="replayed" if attached.replayed else "committed",
-                request_id=attach_request_id,
-                revision=attached.mount.revision,
+                name="body_assignment",
+                state="committed",
+                request_id=assign_request_id,
+                revision=assigned.assignment_revision,
             )
         )
         return OperatorDeviceAdmissionResult(
             request_id=payload.request_id,
             outcome="completed",
-            completed_stage="companion_attached",
+            completed_stage="body_assigned",
             steps=tuple(steps),
-            mount=attached.mount,
+            mount=mounted,
         )
 
     async def list_enrollment_recovery(
@@ -950,31 +939,24 @@ class ControlPlaneService:
         return None
 
     async def set_device_companion(
-        self, *, payload: ControllerCompanionAttachment
-    ) -> KernelMount:
-        """Bind a device to one Companion, or to none.
+        self, *, payload: ControllerBodyAssignment
+    ) -> KernelBodyEndpoint:
+        """Point a device's Body at one Companion, or at none.
 
-        Kernel owns the mount and validates the Companion against its own
-        authority; this only carries the Owner's decision to it, under the
-        revision the Owner was looking at.
+        Kernel owns the Body and validates the Companion against its own
+        authority; this only carries the decision to it, under the assignment
+        revision the caller was looking at and the act it is part of.
         """
 
-        if payload.companion_id is None:
-            result = await self.kernel.detach(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
-                request_id=payload.request_id,
-                expected_revision=payload.expected_revision,
-            )
-        else:
-            result = await self.kernel.attach(
-                owner_id=payload.owner_id,
-                device_id=payload.device_id,
-                companion_id=payload.companion_id,
-                request_id=payload.request_id,
-                expected_revision=payload.expected_revision,
-            )
-        return result.mount
+        return await self.kernel.replace_assignment(
+            owner_id=payload.owner_id,
+            device_id=payload.device_id,
+            companion_id=payload.companion_id,
+            request_id=payload.request_id,
+            expected_assignment_revision=payload.expected_assignment_revision,
+            origin=payload.origin,
+            change_reason=payload.change_reason,
+        )
 
     async def release_device(
         self,
@@ -982,31 +964,44 @@ class ControlPlaneService:
         owner_id: str,
         device_id: str,
         request_id: str,
-        expected_revision: int,
+        expected_assignment_revision: int,
+        change_reason: str,
     ) -> None:
-        """Let a device stop answering as anyone.
+        """Let a device stop answering as anyone, and say why on the record.
 
-        The same detach the Owner can ask for by hand, reached by the archive
-        workflow so that putting an Eidolon away does not leave a speaker bound
-        to something the runtime will refuse to start.
+        The same replace the Owner can ask for by hand, reached by the archive
+        workflow — but carrying ``companion-lifecycle`` rather than ``owner``, so
+        what is recorded afterwards is that the Eidolon was put away and not that
+        somebody cleared the speaker. That difference is the only thing a screen
+        has to work with once the sentence that explained it is gone.
         """
 
-        await self.kernel.detach(
+        await self.kernel.replace_assignment(
             owner_id=owner_id,
             device_id=device_id,
+            companion_id=None,
             request_id=request_id,
-            expected_revision=expected_revision,
+            expected_assignment_revision=expected_assignment_revision,
+            origin="companion-lifecycle",
+            change_reason=change_reason,
         )
 
-    async def list_owner_device_mounts(self, owner_id: str) -> KernelMountPage:
-        """Return Kernel-owned membership without requiring Hub operator authority.
+    async def list_owner_body_endpoints(self, owner_id: str) -> KernelBodyEndpointPage:
+        """Return Kernel-owned Bodies without requiring Hub operator authority.
 
         This narrow read is consumed by the Controller-authenticated Local API.
         It deliberately excludes pending Hub enrollments and directory metadata:
         those require the separate Device admission authority contract.
         """
 
-        return await self.kernel.list_mounts(owner_id=owner_id)
+        return await self.kernel.list_body_endpoints(owner_id=owner_id)
+
+    async def _owner_body_endpoint(self, *, owner_id: str, device_id: str):
+        page = await self.kernel.list_body_endpoints(owner_id=owner_id)
+        for endpoint in page.endpoints:
+            if endpoint.device_id == device_id:
+                return endpoint
+        return None
 
     @staticmethod
     def capabilities() -> BoundaryCapabilities:

@@ -45,7 +45,10 @@ from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 # Tests name the device they mean; the name becomes a real device
 # instance id, which is a digest of a key and never a chosen string.
+from tests.body_mesh_support import endpoint_document
+
 _DEVICE_1 = named_device_instance_id("device-1")
+_DEVICE_2 = named_device_instance_id("device-2")
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
@@ -891,7 +894,6 @@ async def test_kernel_page_cannot_cross_owner_scope() -> None:
                         "operation": "kernel.device-mount",
                         "device_id": _DEVICE_1,
                         "owner_id": "owner-other",
-                        "attached_companion_id": None,
                         "revision": 1,
                         "created_at": now,
                         "updated_at": now,
@@ -975,3 +977,90 @@ async def test_uds_directory_constructs_and_closes_owned_transport(
     assert subject._owns_client is True
     await subject.close()
     assert subject._client.is_closed is True
+
+
+async def test_replacing_an_assignment_sends_the_canonical_command_and_no_policy_refs() -> None:
+    """What actually goes on the wire, checked rather than assumed.
+
+    Two halves of one decision recorded here. The request must carry the
+    canonical ``ReplaceAssignment`` — the Body's own revision, and the act the
+    change is part of — and it must *not* carry policy refs, because nothing on
+    this Host defines or evaluates a resource policy and a name no evaluator
+    reads is worse than absent.
+    """
+
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        assert request.method == "PUT"
+        # The colon is percent-encoded on the wire and decoded back in ``path``.
+        assert request.url.path.endswith(f"/body-endpoints/{_DEVICE_1}:body/assignment")
+        assert "%3Abody" in str(request.url)
+        return httpx.Response(
+            200,
+            json=endpoint_document(
+                device_id=_DEVICE_1, owner_id="owner-1", companion_id="companion-1"
+            ),
+        )
+
+    http_client = client(handler)
+    try:
+        subject = KernelMountClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        endpoint = await subject.replace_assignment(
+            owner_id="owner-1",
+            device_id=_DEVICE_1,
+            companion_id="companion-1",
+            request_id="assign-1",
+            expected_assignment_revision=0,
+            origin="owner",
+        )
+    finally:
+        await http_client.aclose()
+
+    assert endpoint.assignment is not None
+    assert endpoint.assignment.companion_id == "companion-1"
+    assert sent == [
+        {
+            "operation": "body.replace-assignment",
+            "request_id": "assign-1",
+            "expected_assignment_revision": 0,
+            "companion_id": "companion-1",
+            "origin": "owner",
+        }
+    ]
+
+
+async def test_an_assignment_answer_about_another_device_is_refused() -> None:
+    """A wrong-target answer is a contract violation, not something to project."""
+
+    http_client = client(
+        lambda _request: httpx.Response(
+            200,
+            json=endpoint_document(
+                device_id=_DEVICE_2, owner_id="owner-1", companion_id="companion-1"
+            ),
+        )
+    )
+    try:
+        subject = KernelMountClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            timeout_seconds=1,
+        )
+        with pytest.raises(AuthorityFailure) as caught:
+            await subject.replace_assignment(
+                owner_id="owner-1",
+                device_id=_DEVICE_1,
+                companion_id="companion-1",
+                request_id="assign-1",
+                expected_assignment_revision=0,
+                origin="owner",
+            )
+    finally:
+        await http_client.aclose()
+    assert caught.value.kind == "contract_violation"

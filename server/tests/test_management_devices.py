@@ -43,6 +43,7 @@ _AUTH_CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 _DEVICES = "/api/management/v1/devices"
 _KNOWN = "10:51:db:7e:24:44:aa:bb:cc:dd:ee:ff:00:11"
+_OTHER = "10:51:db:7e:24:44:aa:bb:cc:dd:ee:ff:00:22"
 
 
 def _device(
@@ -65,9 +66,12 @@ def _device(
             state=SimpleNamespace(value=state),
             updated_at=datetime(2026, 8, 20, 9, 0, tzinfo=UTC),
         ),
-        mount=SimpleNamespace(
-            attached_companion_id=companion_id,
-            revision=4,
+        body=SimpleNamespace(
+            body_endpoint_id=f"{device_id}:body",
+            mount_revision=4,
+            assignment_revision=0 if companion_id is None else 4,
+            answering_companion_id=companion_id,
+            selection_provenance=None if companion_id is None else "user_selected",
         ),
     )
 
@@ -93,14 +97,14 @@ class _Devices:
         session,
         device_id: str,
         companion_id: str | None,
-        expected_revision: int,
+        expected_assignment_revision: int,
         request_id: str,
     ):
         self.changed.append(
             {
                 "device_id": device_id,
                 "companion_id": companion_id,
-                "expected_revision": expected_revision,
+                "expected_revision": expected_assignment_revision,
                 "request_id": request_id,
             }
         )
@@ -380,3 +384,66 @@ async def test_taking_a_device_off_says_which_facts_are_settled(
     # a made-up one.
     assert body["conditions"][1]["observed_at"] == ""
     assert devices.changed == [{"device_id": _KNOWN, "request_id": "removal-1"}]
+
+
+async def test_a_body_nobody_decided_about_carries_zero_and_can_still_be_pointed(
+    tmp_path, monkeypatch
+) -> None:
+    """Zero is a value the phone sends, not a value it is missing.
+
+    A device that has just been claimed has a Body and no assignment. The first
+    change to it compares against zero, and refusing to accept zero would make
+    the only device state a person ever starts from the one state they could not
+    act on.
+    """
+
+    _stub_controller(monkeypatch)
+    devices = _Devices(_device(companion_id=None))
+    transport = httpx.ASGITransport(app=_app(tmp_path, devices))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        listed = await client.get(_DEVICES, headers=headers)
+        pointed = await client.put(
+            f"{_DEVICES}/{_KNOWN}/companion",
+            json={
+                "companion_id": "companion-b",
+                "expected_revision": 0,
+                "request_id": "first-choice",
+            },
+            headers=headers,
+        )
+
+    assert listed.json()["devices"][0]["revision"] == 0
+    assert listed.json()["devices"][0]["quiet_because"] == ""
+    assert pointed.status_code == 200
+    assert devices.changed[0]["expected_revision"] == 0
+
+
+async def test_a_speaker_that_went_quiet_says_which_way_it_went_quiet(
+    tmp_path, monkeypatch
+) -> None:
+    """The three ways of answering as nobody are not one state.
+
+    They leave the same empty assignment behind. A person who cleared a speaker
+    knows why it is silent; a person whose Eidolon was put away is owed the
+    sentence; and a speaker nobody ever pointed anywhere was never quiet at all.
+    A screen with only "nobody answers" would have to say the same thing to all
+    three, and one of them would read as a fault.
+    """
+
+    _stub_controller(monkeypatch)
+    cleared = _device(companion_id=None)
+    cleared.body.selection_provenance = "user_cleared"
+    put_away = _device(device_id=_OTHER, companion_id=None)
+    put_away.body.selection_provenance = "companion_deleted"
+    devices = _Devices(cleared, put_away)
+    transport = httpx.ASGITransport(app=_app(tmp_path, devices))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        listed = await client.get(_DEVICES, headers=headers)
+
+    rows = {row["device_id"]: row for row in listed.json()["devices"]}
+    assert rows[_KNOWN]["quiet_because"] == "you_cleared_it"
+    assert rows[_OTHER]["quiet_because"] == "companion_put_away"
+    # And a Body that is answering says nothing about being quiet.
+    assert all(row["state"] == "awaiting_companion" for row in rows.values())

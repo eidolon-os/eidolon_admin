@@ -577,11 +577,18 @@ class WorkspaceOperation(StrictModel):
 
 
 class KernelMount(StrictModel):
+    """Whether a device belongs to this Owner's Host, and at which generation.
+
+    It no longer says which Eidolon answers through it. That was a field here
+    once, which meant a device being re-claimed silently forgot its Eidolon and
+    two Controllers changing unrelated things about one device collided; it is a
+    Body assignment with its own revision now.
+    """
+
     operation: Literal["kernel.device-mount"]
     device_id: str = Field(min_length=1, max_length=128)
     owner_id: str = Field(min_length=1, max_length=64)
     device_ref: DeviceRef
-    attached_companion_id: str | None = Field(default=None, min_length=1, max_length=64)
     revision: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
@@ -596,6 +603,89 @@ class KernelMountPage(StrictModel):
     mounts: tuple[KernelMount, ...] = Field(default=(), max_length=100)
 
     @field_validator("mounts", mode="before")
+    @classmethod
+    def _array(cls, value: Any) -> Any:
+        return tuple(value) if isinstance(value, list) else value
+
+
+class KernelBodyAssignment(StrictModel):
+    """Which Companion answers through one Body, and why it says so.
+
+    ``selection_provenance`` is what lets a screen tell "you cleared this" apart
+    from "the Eidolon it answered as was put away". Both leave the same
+    ``companion_id: null`` behind, and a speaker that went quiet without a
+    sentence is indistinguishable from a broken one.
+    """
+
+    operation: Literal["kernel.body-assignment"]
+    assignment_id: str = Field(min_length=1, max_length=160)
+    body_endpoint_id: str = Field(min_length=1, max_length=128)
+    device_id: str = Field(min_length=1, max_length=128)
+    endpoint_id: str = Field(min_length=1, max_length=64)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
+    selection_provenance: Literal[
+        "user_selected", "user_cleared", "companion_deleted", "policy_reconciled"
+    ]
+    change_reason: str | None = Field(default=None, min_length=1, max_length=256)
+    mode: Literal["default"]
+    policy_refs: tuple[str, ...] = Field(default=(), max_length=16)
+    revision: int = Field(ge=1)
+    generation: int = Field(ge=1)
+    updated_at: datetime
+    status: dict[str, Any]
+
+    @field_validator("policy_refs", mode="before")
+    @classmethod
+    def _array(cls, value: Any) -> Any:
+        return tuple(value) if isinstance(value, list) else value
+
+    @property
+    def effective_companion_id(self) -> str | None:
+        """Who is actually answering, as the authority reports it.
+
+        Not ``companion_id``: a Body whose device is gone keeps its assignment
+        on purpose, and the status is where the authority says whether it is in
+        force.
+        """
+
+        value = self.status.get("effective_companion_id")
+        return value if isinstance(value, str) and value else None
+
+
+class KernelBodyEndpoint(StrictModel):
+    operation: Literal["kernel.body-endpoint"]
+    body_endpoint_id: str = Field(min_length=1, max_length=128)
+    device_id: str = Field(min_length=1, max_length=128)
+    owner_id: str = Field(min_length=1, max_length=64)
+    endpoint_id: str = Field(min_length=1, max_length=64)
+    device_ref: DeviceRef
+    mount_revision: int = Field(ge=1)
+    roles: tuple[str, ...] = Field(default=(), max_length=8)
+    assignment_policy: Literal["required", "optional", "forbidden"]
+    risk_class: Literal["safe", "sensitive", "hazardous"]
+    concurrency: Literal["shared", "exclusive", "leased"]
+    source: Literal["derived", "manifest"]
+    present: bool
+    assignment: KernelBodyAssignment | None = None
+
+    @field_validator("roles", mode="before")
+    @classmethod
+    def _array(cls, value: Any) -> Any:
+        return tuple(value) if isinstance(value, list) else value
+
+    @property
+    def assignment_revision(self) -> int:
+        """What a change has to carry. Zero for a Body nobody has decided about."""
+
+        return 0 if self.assignment is None else self.assignment.revision
+
+
+class KernelBodyEndpointPage(StrictModel):
+    operation: Literal["kernel.body-endpoint-page"]
+    endpoints: tuple[KernelBodyEndpoint, ...] = Field(default=(), max_length=100)
+
+    @field_validator("endpoints", mode="before")
     @classmethod
     def _array(cls, value: Any) -> Any:
         return tuple(value) if isinstance(value, list) else value
@@ -738,13 +828,20 @@ class AdmissionDecisionWorkflowResult(StrictModel):
         return self
 
 
-class ControllerCompanionAttachment(StrictModel):
+class ControllerBodyAssignment(StrictModel):
     """Which Companion answers through one device, or none.
 
-    Attaching and detaching are the same decision with two values, so they are
-    one command: `companion_id = None` is "nothing answers through it". The
-    expected revision is the Owner's compare-and-swap — two phones changing the
-    same device's Companion must not silently take turns.
+    Choosing and clearing are the same decision with two values, so they are one
+    command: `companion_id = None` is "nothing answers through it". The expected
+    revision is the Owner's compare-and-swap over the *assignment* — zero for a
+    Body nobody has decided about yet, which is why the bound is zero and not
+    one.
+
+    ``origin`` says which act this is part of, and it is set by the Admin-side
+    caller rather than by any client: the Owner choosing on a device, or the
+    archive workflow letting a Body go because the Eidolon it answered as is
+    being put away. The Kernel derives the recorded provenance from it, so no
+    caller can assert why something happened.
     """
 
     contract_version: Literal["1"]
@@ -752,7 +849,9 @@ class ControllerCompanionAttachment(StrictModel):
     owner_id: str = Field(min_length=1, max_length=64)
     device_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
     companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    expected_revision: int = Field(ge=1)
+    expected_assignment_revision: int = Field(ge=0)
+    origin: Literal["owner", "companion-lifecycle"] = "owner"
+    change_reason: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class ControllerDeviceRemovalRequest(StrictModel):
@@ -863,7 +962,7 @@ class WorkflowStep(StrictModel):
     name: Literal[
         "hub_approval",
         "kernel_mount",
-        "companion_attachment",
+        "body_assignment",
         "hub_revocation",
     ]
     state: Literal["committed", "replayed", "failed", "not_requested", "not_attempted"]
@@ -890,6 +989,7 @@ class OperatorOwnerDeviceInventory(StrictModel):
     kernel: SourceStatus
     claims: tuple[ClaimRecord, ...]
     mounts: tuple[KernelMount, ...]
+    body_endpoints: tuple[KernelBodyEndpoint, ...] = ()
 
 
 class OperatorDeviceAdmissionResult(StrictModel):
@@ -901,7 +1001,7 @@ class OperatorDeviceAdmissionResult(StrictModel):
     request_id: str = Field(min_length=1, max_length=64)
     outcome: Literal["completed", "retry_required", "blocked"]
     completed_stage: Literal[
-        "received", "hub_approved", "kernel_mounted", "companion_attached"
+        "received", "hub_approved", "kernel_mounted", "body_assigned"
     ]
     distributed_atomic: Literal[False] = False
     compensation: Literal["none-safe-intermediate"] = "none-safe-intermediate"

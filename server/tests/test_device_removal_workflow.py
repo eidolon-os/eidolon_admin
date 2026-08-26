@@ -164,7 +164,6 @@ class Kernel:
                     device_id=DEVICE,
                     owner_id=owner_id,
                     device_ref=_ref(),
-                    attached_companion_id="c_683f963f",
                     revision=2,
                     created_at=NOW,
                     updated_at=NOW,

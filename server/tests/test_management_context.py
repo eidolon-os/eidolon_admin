@@ -297,9 +297,10 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "activity.read",
         "device.read",
         "device.manage",
+        "body.assign",
     ):
         assert context.capabilities[closed] is True, closed
-    for still_open in ("device.identify", "body.assign"):
+    for still_open in ("device.identify",):
         assert context.capabilities[still_open] is False, still_open
 
 

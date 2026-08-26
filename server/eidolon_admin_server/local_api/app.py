@@ -72,8 +72,7 @@ from .devices import (
     AdminOwnerDevicesClient,
     AdminOwnerDevicesPort,
     DeviceInventoryError,
-    ControllerCompanionAttachment,
-    LocalCompanionAttachmentRequest,
+    ControllerBodyAssignment,
     LocalDeviceInventoryView,
     LocalDeviceView,
     owner_device_inventory_view,
@@ -486,7 +485,7 @@ def create_app(
         owner_id, controller_id = _owner_principal(principal)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
-            mounts = await devices.list_mounts(owner_id)
+            endpoints = await devices.list_body_endpoints(owner_id)
             claims = await device_admission.query_claims(
                 payload=claim_query(
                     controller_id=controller_id,
@@ -501,7 +500,7 @@ def create_app(
                 )
             )
             return owner_device_inventory_view(
-                mounts=mounts,
+                endpoints=endpoints,
                 bound_owner_id=owner_id,
                 claims=claims,
             )
@@ -923,7 +922,7 @@ def create_app(
             controller_id = session.controller_id
             owner_domain_id, business_owner_id = _admission_scope(owner_id)
             try:
-                mounts = await devices.list_mounts(owner_id)
+                endpoints = await devices.list_body_endpoints(owner_id)
                 claims = await device_admission.query_claims(
                     payload=claim_query(
                         controller_id=controller_id,
@@ -942,7 +941,7 @@ def create_app(
                     )
                 )
                 return owner_device_inventory_view(
-                    mounts=mounts,
+                    endpoints=endpoints,
                     bound_owner_id=owner_id,
                     claims=claims,
                 )
@@ -998,7 +997,7 @@ def create_app(
             session,
             device_id: str,
             companion_id: str | None,
-            expected_revision: int,
+            expected_assignment_revision: int,
             request_id: str,
         ):
             owner_id = session.owner_id
@@ -1013,13 +1012,18 @@ def create_app(
                 )
             try:
                 await devices.set_companion(
-                    payload=ControllerCompanionAttachment(
+                    payload=ControllerBodyAssignment(
                         contract_version="1",
                         request_id=request_id,
                         owner_id=owner_id,
                         device_id=device_id,
                         companion_id=companion_id,
-                        expected_revision=expected_revision,
+                        expected_assignment_revision=expected_assignment_revision,
+                        # Named here rather than accepted from the phone: this
+                        # boundary only ever carries a person acting on a device,
+                        # and what is recorded is what a screen later turns into
+                        # "you cleared this" rather than "it was put away".
+                        origin="owner",
                     )
                 )
             except DeviceInventoryError as exc:

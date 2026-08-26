@@ -17,7 +17,7 @@ from .contracts import (
     BoundaryCapabilities,
     AdmissionDecisionWorkflowResult,
     ControllerClaimQuery,
-    ControllerCompanionAttachment,
+    ControllerBodyAssignment,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
     ControllerEnrollmentRecoveryQuery,
@@ -27,8 +27,8 @@ from .contracts import (
     PersonaChapter,
     PersonaRestoreRequest,
     PersonaTimeline,
-    KernelMount,
-    KernelMountPage,
+    KernelBodyEndpoint,
+    KernelBodyEndpointPage,
     OwnerIdentity,
     OwnerRenameRequest,
     OperatorDeviceAdmissionRequest,
@@ -245,30 +245,30 @@ async def get_owner_default_runtime(
 
 
 @router.get(
-    "/owners/{owner_id}/device-mounts",
-    response_model=KernelMountPage,
+    "/owners/{owner_id}/body-endpoints",
+    response_model=KernelBodyEndpointPage,
 )
-async def get_owner_device_mounts(
+async def get_owner_body_endpoints(
     owner_id: str,
     request: Request,
-) -> KernelMountPage:
+) -> KernelBodyEndpointPage:
     """Narrow product projection used only by the loopback Local API."""
 
-    return await _service(request).list_owner_device_mounts(owner_id)
+    return await _service(request).list_owner_body_endpoints(owner_id)
 
 
 @router.put(
-    "/owners/{owner_id}/device-mounts/{device_id}/companion",
-    response_model=KernelMount,
+    "/owners/{owner_id}/body-endpoints/{device_id}/assignment",
+    response_model=KernelBodyEndpoint,
 )
-async def set_device_companion(
+async def set_body_assignment(
     owner_id: str,
     device_id: str,
-    payload: ControllerCompanionAttachment,
+    payload: ControllerBodyAssignment,
     request: Request,
-) -> KernelMount:
+) -> KernelBodyEndpoint:
     if payload.owner_id != owner_id or payload.device_id != device_id:
-        raise HTTPException(409, "Attachment path and command do not match")
+        raise HTTPException(409, "Assignment path and command do not match")
     return await _service(request).set_device_companion(payload=payload)
 
 

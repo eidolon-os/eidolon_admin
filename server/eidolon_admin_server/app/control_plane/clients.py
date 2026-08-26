@@ -42,6 +42,8 @@ from .contracts import (
     OwnerGovernanceEvents,
     DeviceRef,
     HubClaimRevocationResult,
+    KernelBodyEndpoint,
+    KernelBodyEndpointPage,
     KernelMountPage,
     CompanionFace,
     KernelMutationResult,
@@ -1821,76 +1823,73 @@ class KernelMountClient:
             )
         return result
 
-    async def attach(
+    async def replace_assignment(
         self,
         *,
         owner_id: str,
         device_id: str,
-        companion_id: str,
+        companion_id: str | None,
         request_id: str,
-        expected_revision: int,
-    ) -> KernelMutationResult:
-        response = await _request(
-            "kernel",
-            self._client,
-            "POST",
-            f"{await self._base_url()}/api/kernel/v1/device-mounts/devices/"
-            f"{quote(device_id, safe='')}/attachment",
-            timeout=self._timeout,
-            headers=self._headers(owner_id),
-            json={
-                "operation": "companion.attach",
-                "request_id": request_id,
-                "companion_id": companion_id,
-                "expected_revision": expected_revision,
-            },
-        )
-        result = _parse("kernel", response, KernelMutationResult)
-        if (
-            result.mount.device_id != device_id
-            or result.mount.owner_id != owner_id
-            or result.mount.attached_companion_id != companion_id
-            or not result.mount.active
-        ):
-            raise _contract_violation(
-                "kernel",
-                "Kernel Attachment response did not confirm the requested identities",
-            )
-        return result
+        expected_assignment_revision: int,
+        origin: str,
+        change_reason: str | None = None,
+    ) -> KernelBodyEndpoint:
+        """Point one Body at one Companion, or at nobody.
 
-    async def detach(
-        self,
-        *,
-        owner_id: str,
-        device_id: str,
-        request_id: str,
-        expected_revision: int,
-    ) -> KernelMutationResult:
+        One call for both, because they are the same decision with two values —
+        and because replacing under a compare-and-swap has no window in which a
+        Body briefly answers as nobody, which delete-then-create would.
+        """
+
+        body_endpoint_id = f"{device_id}:body"
+        payload: dict[str, Any] = {
+            "operation": "body.replace-assignment",
+            "request_id": request_id,
+            "expected_assignment_revision": expected_assignment_revision,
+            "companion_id": companion_id,
+            "origin": origin,
+        }
+        if change_reason is not None:
+            payload["change_reason"] = change_reason
         response = await _request(
             "kernel",
             self._client,
-            "POST",
-            f"{await self._base_url()}/api/kernel/v1/device-mounts/devices/"
-            f"{quote(device_id, safe='')}/attachment/detach",
+            "PUT",
+            f"{await self._base_url()}/api/kernel/v1/body-endpoints/"
+            f"{quote(body_endpoint_id, safe='')}/assignment",
             timeout=self._timeout,
             headers=self._headers(owner_id),
-            json={
-                "operation": "companion.detach",
-                "request_id": request_id,
-                "expected_revision": expected_revision,
-            },
+            json=payload,
         )
-        result = _parse("kernel", response, KernelMutationResult)
+        endpoint = _parse("kernel", response, KernelBodyEndpoint)
+        assigned = None if endpoint.assignment is None else endpoint.assignment.companion_id
         if (
-            result.mount.device_id != device_id
-            or result.mount.owner_id != owner_id
-            or result.mount.attached_companion_id is not None
+            endpoint.device_id != device_id
+            or endpoint.owner_id != owner_id
+            or endpoint.body_endpoint_id != body_endpoint_id
+            or assigned != companion_id
         ):
             raise _contract_violation(
                 "kernel",
-                "Kernel Detachment response did not confirm the requested identities",
+                "Kernel Body assignment response did not confirm the requested identities",
             )
-        return result
+        return endpoint
+
+    async def list_body_endpoints(self, *, owner_id: str) -> KernelBodyEndpointPage:
+        response = await _request(
+            "kernel",
+            self._client,
+            "GET",
+            f"{await self._base_url()}/api/kernel/v1/body-endpoints",
+            timeout=self._timeout,
+            headers=self._headers(owner_id),
+        )
+        page = _parse("kernel", response, KernelBodyEndpointPage)
+        if any(endpoint.owner_id != owner_id for endpoint in page.endpoints):
+            raise _contract_violation(
+                "kernel", "Kernel Body endpoint page crossed the requested owner scope"
+            )
+        return page
 
     async def list_mounts(self, *, owner_id: str, limit: int = 100) -> KernelMountPage:
         response = await _request(

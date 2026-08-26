@@ -179,7 +179,13 @@ def _mount(device_id: str, *, companion_id: str | None, state: str = "active"):
             state=SimpleNamespace(value=state),
             updated_at=datetime(2026, 8, 20, 9, 0, tzinfo=UTC),
         ),
-        mount=SimpleNamespace(attached_companion_id=companion_id, revision=2),
+        body=SimpleNamespace(
+            body_endpoint_id=f"{device_id}:body",
+            mount_revision=2,
+            assignment_revision=0 if companion_id is None else 2,
+            answering_companion_id=companion_id,
+            selection_provenance=None if companion_id is None else "user_selected",
+        ),
     )
 
 

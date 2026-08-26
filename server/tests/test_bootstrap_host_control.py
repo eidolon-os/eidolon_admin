@@ -61,7 +61,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     CompanionFace,
     CompanionIdentity,
     OwnerIdentity,
-    KernelMountPage,
+    KernelBodyEndpointPage,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -238,17 +238,18 @@ class _DevicesClient:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def list_mounts(self, owner_id: str) -> KernelMountPage:
+    async def list_body_endpoints(self, owner_id: str) -> KernelBodyEndpointPage:
         self.calls.append(owner_id)
-        return KernelMountPage.model_validate(
+        return KernelBodyEndpointPage.model_validate(
             {
-                "operation": "kernel.device-mount-page",
-                "next_cursor": None,
-                "mounts": [
+                "operation": "kernel.body-endpoint-page",
+                "endpoints": [
                     {
-                        "operation": "kernel.device-mount",
+                        "operation": "kernel.body-endpoint",
+                        "body_endpoint_id": f"{_DEVICE_LOCAL_1}:body",
                         "device_id": _DEVICE_LOCAL_1,
                         "owner_id": owner_id,
+                        "endpoint_id": "body",
                         "device_ref": {
                             "device_instance_id": _DEVICE_LOCAL_1,
                             "owner_domain_id": owner_id,
@@ -256,18 +257,41 @@ class _DevicesClient:
                             "claim_generation": 1,
                             "trust_epoch": 1,
                         },
-                        "attached_companion_id": "companion-device-1",
-                        "revision": 2,
-                        "created_at": "2026-08-09T08:00:00Z",
-                        "updated_at": "2026-08-09T08:10:00Z",
-                        "request_id": "internal-device-request",
-                        "fingerprint": "sha256:" + "0" * 64,
-                        "active": True,
+                        "mount_revision": 2,
+                        "roles": ["body"],
+                        "assignment_policy": "optional",
+                        "risk_class": "safe",
+                        "concurrency": "exclusive",
+                        "source": "derived",
+                        "present": True,
+                        "assignment": {
+                            "operation": "kernel.body-assignment",
+                            "assignment_id": f"assignment:{_DEVICE_LOCAL_1}:body",
+                            "body_endpoint_id": f"{_DEVICE_LOCAL_1}:body",
+                            "device_id": _DEVICE_LOCAL_1,
+                            "endpoint_id": "body",
+                            "owner_id": owner_id,
+                            "companion_id": "companion-device-1",
+                            "selection_provenance": "user_selected",
+                            "change_reason": None,
+                            "mode": "default",
+                            "policy_refs": [],
+                            "revision": 1,
+                            "generation": 1,
+                            "updated_at": "2026-08-09T08:10:00Z",
+                            "status": {
+                                "observed_generation": 1,
+                                "effective_companion_id": "companion-device-1",
+                                "conditions": ["Realized"],
+                            },
+                        },
                     },
                     {
-                        "operation": "kernel.device-mount",
+                        "operation": "kernel.body-endpoint",
+                        "body_endpoint_id": f"{_DEVICE_LOCAL_REMOVED}:body",
                         "device_id": _DEVICE_LOCAL_REMOVED,
                         "owner_id": owner_id,
+                        "endpoint_id": "body",
                         "device_ref": {
                             "device_instance_id": _DEVICE_LOCAL_REMOVED,
                             "owner_domain_id": owner_id,
@@ -275,13 +299,14 @@ class _DevicesClient:
                             "claim_generation": 1,
                             "trust_epoch": 1,
                         },
-                        "attached_companion_id": None,
-                        "revision": 4,
-                        "created_at": "2026-08-09T08:00:00Z",
-                        "updated_at": "2026-08-09T08:20:00Z",
-                        "request_id": "internal-removal-request",
-                        "fingerprint": "sha256:" + "1" * 64,
-                        "active": False,
+                        "mount_revision": 4,
+                        "roles": ["body"],
+                        "assignment_policy": "optional",
+                        "risk_class": "safe",
+                        "concurrency": "exclusive",
+                        "source": "derived",
+                        "present": False,
+                        "assignment": None,
                     },
                 ],
             }

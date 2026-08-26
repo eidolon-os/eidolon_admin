@@ -201,7 +201,7 @@ def _device_counts(inventory) -> "HomeCountsView":
         claim_state = getattr(device.claim.state, "value", str(device.claim.state))
         if claim_state != "active":
             states.append("access_revoked")
-        elif device.mount.attached_companion_id:
+        elif device.body.answering_companion_id:
             states.append("ready")
         else:
             states.append("awaiting_companion")
@@ -268,7 +268,7 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
     device_id = reference.device_instance_id
     manifest = claim.manifest_ref
     kind = str(getattr(manifest, "manifest_id", "") or "")
-    attached = device.mount.attached_companion_id
+    answering = device.body.answering_companion_id
     claim_state = getattr(claim.state, "value", str(claim.state))
     return DeviceView(
         device_id=device_id,
@@ -280,11 +280,12 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         state=(
             "access_revoked"
             if claim_state != "active"
-            else ("ready" if attached else "awaiting_companion")
+            else ("ready" if answering else "awaiting_companion")
         ),
-        answers_as_companion_id=attached,
-        answers_as_companion_name=names.get(attached or "", ""),
-        revision=device.mount.revision,
+        answers_as_companion_id=answering,
+        answers_as_companion_name=names.get(answering or "", ""),
+        quiet_because=_quiet_because(device),
+        revision=device.body.assignment_revision,
         updated_at=claim.updated_at.isoformat(),
         # Never inferred. An active Claim and a Kernel mount both say this device
         # is *known*, and neither says it is switched on; a screen that read one
@@ -298,6 +299,24 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         manifest_id=kind,
         manifest_revision=getattr(manifest, "revision", None),
     )
+
+
+#: Why a Body is answering as nobody, in the words a screen can use. The three
+#: ways it happens leave the same empty assignment behind, and they are not the
+#: same event: a person who cleared it knows why it is quiet, a person whose
+#: Eidolon was put away is owed the sentence, and a device nobody ever pointed
+#: anywhere was never quiet in the first place.
+_QUIET_BECAUSE = {
+    "user_cleared": "you_cleared_it",
+    "companion_deleted": "companion_put_away",
+    "policy_reconciled": "host_released_it",
+}
+
+
+def _quiet_because(device) -> str:
+    if device.body.answering_companion_id:
+        return ""
+    return _QUIET_BECAUSE.get(device.body.selection_provenance or "", "")
 
 
 def _identifier_tail(device_id: str) -> str:
@@ -1252,8 +1271,15 @@ class DeviceView(BaseModel):
     #: anywhere yet.
     answers_as_companion_id: str | None = Field(default=None, max_length=64)
     answers_as_companion_name: str = Field(default="", max_length=128)
-    #: The mount version a change must carry, so two phones cannot both win.
-    revision: int = Field(ge=1)
+    #: Why nobody answers through it, when nobody does. Empty when somebody
+    #: does, and empty when nobody ever decided — those are different from a
+    #: device that went quiet, and a speaker that fell silent with no sentence
+    #: attached is indistinguishable from a broken one.
+    quiet_because: str = Field(default="", max_length=32)
+    #: The *assignment* version a change must carry, so two phones cannot both
+    #: win. Zero for a device nobody has pointed anywhere: that is a real state
+    #: and the first change to it carries zero.
+    revision: int = Field(ge=0)
     #: When the Claim last moved. The nearest thing to "since when is this mine"
     #: that any authority actually knows.
     updated_at: str = Field(min_length=1, max_length=64)
@@ -1301,9 +1327,11 @@ class DeviceCompanionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    #: What this phone was looking at. Required: two Controllers pointing the
-    #: same device at different Eidolons must not take turns without noticing.
-    expected_revision: int = Field(ge=1)
+    #: What this phone was looking at — the assignment's version, not the
+    #: device's. Required: two Controllers pointing the same device at different
+    #: Eidolons must not take turns without noticing. Zero is the value for a
+    #: device nobody has pointed anywhere yet.
+    expected_revision: int = Field(ge=0)
     #: The caller's own id for this attempt, so asking twice is the same ask.
     request_id: str = Field(
         min_length=1, max_length=96, pattern=r"^[A-Za-z0-9._:-]+$"
@@ -1486,7 +1514,7 @@ class OwnerDevicePort(Protocol):
         session,
         device_id: str,
         companion_id: str | None,
-        expected_revision: int,
+        expected_assignment_revision: int,
         request_id: str,
     ): ...
 
@@ -1843,7 +1871,7 @@ def register_management_routes(
                 session=session,
                 device_id=device_id,
                 companion_id=payload.companion_id,
-                expected_revision=payload.expected_revision,
+                expected_assignment_revision=payload.expected_revision,
                 request_id=payload.request_id,
             )
         except ManagementBackendError as exc:

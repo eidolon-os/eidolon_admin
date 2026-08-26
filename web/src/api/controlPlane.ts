@@ -42,13 +42,39 @@ export interface KernelMount {
   operation: 'kernel.device-mount'
   device_id: string
   owner_id: string
-  attached_companion_id: string | null
   revision: number
   created_at: string
   updated_at: string
   request_id: string
   fingerprint: string
   active: boolean
+}
+
+/** Which Companion answers through one Body, as the operator page reads it. */
+export interface KernelBodyAssignment {
+  operation: 'kernel.body-assignment'
+  body_endpoint_id: string
+  device_id: string
+  companion_id: string | null
+  selection_provenance:
+    | 'user_selected'
+    | 'user_cleared'
+    | 'companion_deleted'
+    | 'policy_reconciled'
+  revision: number
+  generation: number
+}
+
+export interface KernelBodyEndpoint {
+  operation: 'kernel.body-endpoint'
+  body_endpoint_id: string
+  device_id: string
+  owner_id: string
+  endpoint_id: string
+  mount_revision: number
+  source: 'derived' | 'manifest'
+  present: boolean
+  assignment: KernelBodyAssignment | null
 }
 
 export interface SourceStatus {
@@ -65,6 +91,7 @@ export interface OwnerInventory {
   kernel: SourceStatus
   claims: ClaimRecord[]
   mounts: KernelMount[]
+  body_endpoints: KernelBodyEndpoint[]
 }
 
 export interface DeviceAdmissionInput {
@@ -77,7 +104,7 @@ export interface DeviceAdmissionInput {
 }
 
 export interface WorkflowStep {
-  name: 'hub_approval' | 'kernel_mount' | 'companion_attachment'
+  name: 'hub_approval' | 'kernel_mount' | 'body_assignment'
   state: 'committed' | 'replayed' | 'failed' | 'not_requested' | 'not_attempted'
   request_id: string | null
   revision: number | null
@@ -88,7 +115,7 @@ export interface DeviceAdmissionResult {
   operation: 'admin.operator-device-admission'
   request_id: string
   outcome: 'completed' | 'retry_required' | 'blocked'
-  completed_stage: 'received' | 'hub_approved' | 'kernel_mounted' | 'companion_attached'
+  completed_stage: 'received' | 'hub_approved' | 'kernel_mounted' | 'body_assigned'
   distributed_atomic: false
   compensation: 'none-safe-intermediate'
   recovery: 'none' | 'retry-forward-same-request-id' | 'operator-action-required'
