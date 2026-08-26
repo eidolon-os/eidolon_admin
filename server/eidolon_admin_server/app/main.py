@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import pwd
+from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 
 import logging
@@ -31,7 +32,12 @@ from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
-from ..audit import AuditIndexSettings, AuditIndexStore, run_audit_indexer
+from ..audit import (
+    AuditIndexSettings,
+    AuditIndexStore,
+    default_audit_index_path,
+    run_audit_indexer,
+)
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
 from .supervisor.client import SupervisorClient
 from .supervisor.config import ConfigStore
@@ -43,6 +49,58 @@ from .tools.mobile.service import DEFAULT_CLIENT_ROOT as MOBILE_CLIENT_ROOT
 from .workstation import esp32_capability, mobile_capability
 from ..lifecycle_workflow.capability import RemovalCapabilityBroker
 from ..systemd_notify import SystemdNotifier
+
+
+logger = logging.getLogger(__name__)
+
+
+def _report_indexer_exit(task: asyncio.Task) -> None:
+    """Say when the audit indexer stops, and why.
+
+    ``asyncio`` only surfaces an unretrieved task exception at garbage
+    collection, which in a long-lived process can be never. The indexer failing
+    is exactly the kind of thing an operator needs told: no index means the
+    Owner's events lane is dark and every authority's dispatcher is publishing
+    into a stream nobody created.
+    """
+
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        logger.error("audit indexer stopped: %s: %s", type(error).__name__, error)
+
+
+class LazyAuditIndex:
+    """A read handle on the audit index, opened the first time it is read.
+
+    Not at startup. The indexer that creates the file runs in this same
+    process, so "does the file exist" is only true *after* a moment that has
+    not happened yet when the lifespan runs — and a decision taken then is
+    never revisited. Callers get the same ``tail_for_owner`` either way; when
+    there is no index they get an error naming that, which is what the lane
+    reports.
+    """
+
+    def __init__(self, sqlite_path: str) -> None:
+        self._path = Path(sqlite_path)
+        self._store: AuditIndexStore | None = None
+
+    async def tail_for_owner(self, owner_id: str, **kwargs):
+        if self._store is None:
+            if not self._path.exists():
+                raise FileNotFoundError(
+                    f"这台 Host 还没有审计索引（{self._path}）：事件流没有在跑"
+                )
+            self._store = AuditIndexStore.open(
+                AuditIndexSettings(sqlite_path=str(self._path), read_only=True)
+            )
+        return await self._store.tail_for_owner(owner_id, **kwargs)
+
+    async def close(self) -> None:
+        if self._store is not None:
+            await self._store.close()
+            self._store = None
 
 
 def create_app(
@@ -57,20 +115,19 @@ def create_app(
     async def lifespan(app: FastAPI):
         broker = None
         indexer: asyncio.Task | None = None
-        audit_reader: AuditIndexStore | None = None
+        audit_reader = LazyAuditIndex(default_audit_index_path())
         try:
-            # A read handle on the audit index, opened once. The Owner's map
-            # reads its events lane from here — the index assigns their order,
-            # and that order is what makes the lane resumable.
+            # The Owner's map reads its events lane from here — the index
+            # assigns their order, and that order is what makes the lane
+            # resumable.
             #
-            # Absent is a real state: a Host with no indexer running has no
-            # index file, and the lane then says it could not be read rather
-            # than showing an Owner a house where nothing has ever happened.
-            audit_index_path = settings.state_dir.parent / "audit" / "audit-index.sqlite3"
-            if audit_index_path.exists():
-                audit_reader = AuditIndexStore.open(
-                    AuditIndexSettings(sqlite_path=str(audit_index_path), read_only=True)
-                )
+            # Opened on first use, not now. Whether the index exists is a
+            # runtime fact: the loop that creates it starts a few lines below,
+            # in this same lifespan, so a startup existence check loses that
+            # race and then never looks again. Absence stays a real state — a
+            # Host with no indexer has no file, and the lane says it could not
+            # be read rather than showing an Owner a house where nothing has
+            # ever happened.
             app.state.audit_index = audit_reader
             # The audit index is this process's own projection, so the loop that
             # fills it lives here rather than in a unit of its own. Unset URL
@@ -81,12 +138,15 @@ def create_app(
                 indexer = asyncio.create_task(
                     run_audit_indexer(
                         nats_url=settings.audit_nats_url,
-                        sqlite_path=str(
-                            settings.state_dir.parent / "audit" / "audit-index.sqlite3"
-                        ),
+                        sqlite_path=default_audit_index_path(),
                     ),
                     name="eidolon-admin-audit-indexer",
                 )
+                # A task nobody awaits is a failure with nowhere to be reported.
+                # This one died on its first mkdir for months — the index path
+                # used to sit outside the only directory this hardened unit may
+                # write — and the process said nothing at all.
+                indexer.add_done_callback(_report_indexer_exit)
             if settings.removal_capability_socket is not None:
                 try:
                     workflow_uid = pwd.getpwnam(
@@ -117,8 +177,7 @@ def create_app(
                     await indexer
             if broker is not None:
                 await broker.close()
-            if audit_reader is not None:
-                await audit_reader.close()
+            await audit_reader.close()
             await app.state.control_plane.close()
             await app.state.host_services.close()
             await app.state.http_client.aclose()

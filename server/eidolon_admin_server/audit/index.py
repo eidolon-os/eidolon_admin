@@ -14,9 +14,27 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-def _default_audit_index_path() -> str:
+def default_audit_index_path() -> str:
+    """Where this index lives, said once for everyone who needs it.
+
+    **Inside Admin's own state directory**, and that is not cosmetic. This index
+    is Admin's own projection — the loop that fills it runs in the Admin
+    process — and the Admin unit is hardened: ``ProtectSystem=strict`` with
+    ``StateDirectory=eidolon/admin``, so ``/var/lib/eidolon/admin`` is the only
+    path it may write. The path used to be a *sibling* of that
+    (``<root>/audit/``), which no unit is granted, so on a real Host the indexer
+    died on its first ``mkdir`` — silently, because nobody retrieves a
+    background task's exception. No stream was ever created, no index file ever
+    existed, and the Owner's events lane read "this Host has no audit index" for
+    a reason nobody could see.
+
+    Three copies of this expression existed (here, the CLI, and the app's
+    lifespan twice). One function now, because the next person to move it will
+    move it once.
+    """
+
     root = Path(os.environ.get("EIDOLON_STATE_ROOT", "~/eidolon/data")).expanduser()
-    return str(root / "audit/audit-index.sqlite3")
+    return str(root / "admin" / "audit" / "audit-index.sqlite3")
 
 
 class _AuditIndexBase(DeclarativeBase):
@@ -61,7 +79,7 @@ class _AuditIndexRow(_AuditIndexBase):
 
 @dataclass(frozen=True)
 class AuditIndexSettings:
-    sqlite_path: str = field(default_factory=_default_audit_index_path)
+    sqlite_path: str = field(default_factory=default_audit_index_path)
     busy_timeout_ms: int = 5_000
     wal_autocheckpoint_pages: int = 1_000
     read_only: bool = False
