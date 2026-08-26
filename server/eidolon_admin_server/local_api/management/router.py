@@ -2681,6 +2681,64 @@ def register_management_routes(
         return TaskView(**answer)
 
     @router.get(
+        "/companions/{companion_id}/persona",
+        response_model=PersonaAuthoring,
+    )
+    async def get_persona(
+        companion_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaAuthoring:
+        """Who this Eidolon is now, in the words somebody wrote.
+
+        The read an edit screen opens on: editing has to start from who it
+        currently is, or every edit becomes a rewrite of everything the person
+        did not retype.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.persona(
+                owner_id=owner_id, companion_id=companion_id
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return PersonaAuthoring.model_validate(answer)
+
+    @router.put(
+        "/companions/{companion_id}/persona",
+        response_model=PersonaAuthoring,
+    )
+    async def put_persona(
+        companion_id: str,
+        payload: PersonaAuthoring,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaAuthoring:
+        """Say who this Eidolon is now.
+
+        Somebody describing their Eidolon for the first time will mostly get it
+        wrong, and a Host that let them name it, dress it and put it away but
+        never change *who it is* would be withholding the one revision that
+        matters most.
+
+        It appends a chapter rather than editing one, exactly as going back
+        does — the same act pointing the other way. So there is one way a
+        persona ever changes, and what this Eidolon has been stays a record.
+        Saving without changing anything writes nothing.
+
+        PUT because the body states an end: send it twice and it lands in the
+        same place.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.author_persona(
+                owner_id=owner_id,
+                companion_id=companion_id,
+                persona=payload.model_dump(mode="json"),
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return PersonaAuthoring.model_validate(answer)
+
+    @router.get(
         "/companions/{companion_id}/persona-history",
         response_model=PersonaHistoryView,
     )

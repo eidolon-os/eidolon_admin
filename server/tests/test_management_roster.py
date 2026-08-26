@@ -162,6 +162,8 @@ class _Backend:
     def __init__(self) -> None:
         self.asked: list[tuple[str, str | None]] = []
         self.personas: list[dict | None] = []
+        self.authored: list[dict] = []
+        self.standing_persona = PersonaAuthoring(self_concept='我原本是这样')
         self.current = "g_2"
 
     async def context(self, *, owner_id: str) -> dict:
@@ -446,6 +448,16 @@ class _Backend:
             "updated_at": "2026-08-24T09:05:00+00:00",
             "completed_at": None,
         }
+
+    async def persona(self, *, owner_id: str, companion_id: str) -> dict:
+        return self.standing_persona.model_dump(mode="json")
+
+    async def author_persona(
+        self, *, owner_id: str, companion_id: str, persona: dict
+    ) -> dict:
+        self.authored.append(persona)
+        self.standing_persona = PersonaAuthoring.model_validate(persona)
+        return self.standing_persona.model_dump(mode="json")
 
     async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
         self.asked.append((owner_id, companion_id))
@@ -2009,3 +2021,94 @@ async def test_the_template_is_for_whoever_signed_in(tmp_path, monkeypatch) -> N
         anonymous = await client.get("/api/management/v1/persona-authoring-template")
 
     assert anonymous.status_code == 401
+
+
+_PERSONA = "/api/management/v1/companions/companion-a/persona"
+
+
+async def test_the_edit_screen_opens_on_who_it_currently_is(
+    tmp_path, monkeypatch
+) -> None:
+    """Not the template, not blanks.
+
+    An edit form that opened on anything else would make every save a rewrite:
+    whatever the person did not retype would be replaced by whatever the form
+    was showing.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.get(_PERSONA, headers=headers)
+
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["self_concept"] == "我原本是这样"
+
+
+async def test_what_somebody_rewrote_reaches_the_authority_verbatim(
+    tmp_path, monkeypatch
+) -> None:
+    """Relayed, not interpreted — the same rule as creating one.
+
+    The genome belongs to the persona authority. A boundary that normalised or
+    filled anything in on the way through would be a second place deciding what
+    an Eidolon is made of.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _PERSONA,
+            headers=headers,
+            json={"self_concept": "我现在是这样", "values": ["诚实"]},
+        )
+
+    assert answered.status_code == 200, answered.text
+    assert backend.authored[-1]["self_concept"] == "我现在是这样"
+    assert backend.authored[-1]["values"] == ["诚实"]
+    # It answers with the Eidolon, not with the edit: what a screen shows next
+    # is who it is now.
+    assert answered.json()["self_concept"] == "我现在是这样"
+
+
+async def test_an_invented_field_is_refused_rather_than_dropped(
+    tmp_path, monkeypatch
+) -> None:
+    """A misspelling that is quietly ignored is how a sentence goes missing."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.put(
+            _PERSONA, headers=headers, json={"favourite_colour": "青"}
+        )
+
+    assert answered.status_code == 422
+    assert backend.authored == []
+
+
+async def test_the_persona_is_the_authenticated_owners(tmp_path, monkeypatch) -> None:
+    """Neither reading nor writing takes an Owner from the caller."""
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        assert (await client.get(_PERSONA)).status_code == 401
+        assert (
+            await client.put(_PERSONA, json={"self_concept": "x"})
+        ).status_code == 401

@@ -521,6 +521,8 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions/{companion_id}/face': CompanionFaceView
   'GET /api/management/v1/companions/{companion_id}/face-state': CompanionFaceView
   'PUT /api/management/v1/companions/{companion_id}/lifecycle': CompanionLifecycleView
+  'GET /api/management/v1/companions/{companion_id}/persona': PersonaAuthoring
+  'PUT /api/management/v1/companions/{companion_id}/persona': PersonaAuthoring
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
   'GET /api/management/v1/companions/{companion_id}/tasks': TaskPageView

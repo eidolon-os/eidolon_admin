@@ -33,6 +33,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from eidolon_sdk.biz.persona import PersonaAuthoring
+
 from eidolon_admin_server.app.control_plane.contracts import (
     PersonaChapter,
     PersonaTimeline,
@@ -43,10 +45,18 @@ from eidolon_admin_server.app.management.roster import RosterReader
 #: because they did it; nothing here invents a reason on their behalf.
 OWNER_RESTORE_SUMMARY = "回到了那时候的样子"
 
+#: What the record says when a person rewrote who their Eidolon is.
+#:
+#: Composed here rather than taken from the client, unlike the sentence an
+#: evolution writes about itself. A person editing a form has not been asked to
+#: summarise their own change, and a box for it would turn changing your mind
+#: into filing a report.
+OWNER_AUTHORED_SUMMARY = "你改了它是谁"
+
 
 @runtime_checkable
 class PersonaHistorian(Protocol):
-    """The two authority calls this needs."""
+    """The authority calls this needs."""
 
     async def get_persona_timeline(self, companion_id: str) -> PersonaTimeline: ...
 
@@ -54,6 +64,15 @@ class PersonaHistorian(Protocol):
         self,
         companion_id: str,
         genome_id: str,
+        change_summary: str,
+    ) -> PersonaChapter: ...
+
+    async def get_persona(self, companion_id: str) -> PersonaAuthoring: ...
+
+    async def author_persona(
+        self,
+        companion_id: str,
+        persona: PersonaAuthoring,
         change_summary: str,
     ) -> PersonaChapter: ...
 
@@ -122,6 +141,50 @@ async def restore_chapter(
         return before
     await persona.restore_persona(companion_id, chapter_id, OWNER_RESTORE_SUMMARY)
     return _history(await persona.get_persona_timeline(companion_id))
+
+
+async def read_persona(
+    *,
+    owner_id: str,
+    companion_id: str,
+    persona: PersonaHistorian,
+    companions: RosterReader,
+) -> PersonaAuthoring:
+    """Who this Eidolon is now, in the words somebody wrote.
+
+    Ownership is proved by asking the owner-scoped Companion route first, the
+    same as the history calls: the persona routes are keyed on a Companion
+    alone, so nothing in them says whose it is, and 404 rather than 403 keeps an
+    identifier from being probed for existence.
+    """
+
+    await companions.get_owner_companion(owner_id, companion_id)
+    return await persona.get_persona(companion_id)
+
+
+async def write_persona(
+    *,
+    owner_id: str,
+    companion_id: str,
+    authored: PersonaAuthoring,
+    persona: PersonaHistorian,
+    companions: RosterReader,
+) -> PersonaAuthoring:
+    """Say who this Eidolon is now, and answer with what it now is.
+
+    Relayed, not composed. The genome is built by the persona authority — a
+    projection assembling one would be a second place deciding what an Eidolon
+    is made of, and the two would drift.
+
+    The answer is the persona as it now stands rather than the chapter that was
+    written, because what a screen shows next is the Eidolon, not the edit. The
+    authority also declines to append when nothing changed, so reading back is
+    the only way to be sure the answer describes the current state either way.
+    """
+
+    await companions.get_owner_companion(owner_id, companion_id)
+    await persona.author_persona(companion_id, authored, OWNER_AUTHORED_SUMMARY)
+    return await persona.get_persona(companion_id)
 
 
 def _history(timeline: PersonaTimeline) -> PersonaHistory:

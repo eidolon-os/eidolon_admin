@@ -3648,6 +3648,132 @@
         ]
       }
     },
+    "/api/management/v1/companions/{companion_id}/persona": {
+      "get": {
+        "description": "Who this Eidolon is now, in the words somebody wrote.\n\nThe read an edit screen opens on: editing has to start from who it\ncurrently is, or every edit becomes a rewrite of everything the person\ndid not retype.",
+        "operationId": "get_persona_api_management_v1_companions__companion_id__persona_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaAuthoring"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Persona",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "description": "Say who this Eidolon is now.\n\nSomebody describing their Eidolon for the first time will mostly get it\nwrong, and a Host that let them name it, dress it and put it away but\nnever change *who it is* would be withholding the one revision that\nmatters most.\n\nIt appends a chapter rather than editing one, exactly as going back\ndoes — the same act pointing the other way. So there is one way a\npersona ever changes, and what this Eidolon has been stays a record.\nSaving without changing anything writes nothing.\n\nPUT because the body states an end: send it twice and it lands in the\nsame place.",
+        "operationId": "put_persona_api_management_v1_companions__companion_id__persona_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaAuthoring"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaAuthoring"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Persona",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/companions/{companion_id}/persona-history": {
       "get": {
         "description": "What this Eidolon has been.\n\nA record, not a settings screen: every chapter is something it actually\nwas, and there is no proposal queue here — a Companion considering a\nchange has not changed.",

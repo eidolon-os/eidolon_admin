@@ -89,6 +89,7 @@ _CAPABILITIES: tuple[str, ...] = (
     "companion.restore",
     "persona.read",
     "persona.govern",
+    "persona.author",
     "memory.read",
     "memory.govern",
     "memory.export",
@@ -145,6 +146,12 @@ _ENABLED: frozenset[str] = frozenset(
         # generated, and Mobile has the screen.
         "persona.read",
         "persona.govern",
+        # Writing who an Eidolon is, as opposed to reading what it has been or
+        # putting it back to one of those. Its own capability because it is its
+        # own act: a Host could reasonably offer the record without offering the
+        # pen, and folding it into `persona.govern` would make "you may look at
+        # the history" and "you may change who it is" one answer.
+        "persona.author",
         # The copy a person keeps, as distinct from the Host backup.
         "memory.export",
         # Putting one away and bringing it back. True only since a Companion

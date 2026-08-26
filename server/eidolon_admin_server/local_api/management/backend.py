@@ -402,6 +402,23 @@ class AdminManagementClient:
             {"chapter_id": chapter_id},
         )
 
+    async def persona(self, *, owner_id: str, companion_id: str) -> dict:
+        return await self._get(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/persona",
+            {"owner_id": owner_id},
+        )
+
+    async def author_persona(
+        self, *, owner_id: str, companion_id: str, persona: dict
+    ) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/companions/"
+            f"{quote(companion_id, safe='')}/persona",
+            {"owner_id": owner_id},
+            persona,
+        )
+
     async def recollections(
         self, *, owner_id: str, query: str, limit: int, companion_id: str | None
     ) -> dict:

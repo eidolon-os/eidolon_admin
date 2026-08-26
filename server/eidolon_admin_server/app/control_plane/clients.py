@@ -371,6 +371,35 @@ class DataAuthorityClient:
             json={"genome_id": genome_id, "change_summary": change_summary},
         )
 
+    async def get_persona(self, companion_id: str) -> PersonaAuthoring:
+        """Who this Companion is now, in the part a person wrote."""
+
+        return await self._companion_call(
+            "GET",
+            f"{companion_id}/persona",
+            companion_id,
+            PersonaAuthoring,
+        )
+
+    async def author_persona(
+        self,
+        companion_id: str,
+        persona: PersonaAuthoring,
+        change_summary: str,
+    ) -> PersonaChapter:
+        """Say who this Companion is now. Appends a chapter; never edits one."""
+
+        return await self._companion_call(
+            "PUT",
+            f"{companion_id}/persona",
+            companion_id,
+            PersonaChapter,
+            json={
+                "persona": persona.model_dump(mode="json"),
+                "change_summary": change_summary,
+            },
+        )
+
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
         return await self._companion_call(
             "GET",

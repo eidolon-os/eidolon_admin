@@ -50,7 +50,12 @@ from eidolon_admin_server.app.management.activity import (
 )
 from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
 from eidolon_admin_server.app.management.naming import rename_companion, rename_owner
-from eidolon_admin_server.app.management.persona import read_history, restore_chapter
+from eidolon_admin_server.app.management.persona import (
+    read_history,
+    read_persona,
+    restore_chapter,
+    write_persona,
+)
 from eidolon_admin_server.app.management.recollecting import recall
 from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
 from eidolon_admin_server.app.management.roster import (
@@ -1071,6 +1076,38 @@ def _task_page_internal(companion_id: str, page) -> TaskPageInternal:
         companion_id=companion_id,
         tasks=[_task_internal(task) for task in page.tasks],
         next_cursor=page.next_cursor,
+    )
+
+
+@router.get("/companions/{companion_id}/persona", response_model=PersonaAuthoring)
+async def get_persona(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+) -> PersonaAuthoring:
+    """Who this Eidolon is now, in the part somebody wrote."""
+    return await read_persona(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        persona=request.app.state.control_plane.data,
+        companions=request.app.state.control_plane.data,
+    )
+
+
+@router.put("/companions/{companion_id}/persona", response_model=PersonaAuthoring)
+async def put_persona(
+    request: Request,
+    companion_id: str,
+    owner_id: str,
+    payload: PersonaAuthoring,
+) -> PersonaAuthoring:
+    """Say who this Eidolon is now. Appends a chapter; never edits one."""
+    return await write_persona(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        authored=payload,
+        persona=request.app.state.control_plane.data,
+        companions=request.app.state.control_plane.data,
     )
 
 
