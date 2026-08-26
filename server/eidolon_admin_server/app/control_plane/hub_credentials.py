@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 
-import jwt
-from eidolon_sdk.device_foundation.v1 import BusinessOwnerId, ControllerActorRef
+from eidolon_sdk.device_foundation.v1 import (
+    AdmissionCredential,
+    AdmissionCredentialError,
+    BusinessOwnerId,
+    ControllerActorRef,
+    issue_admission_credential,
+)
 
 from .contracts import DeviceRef
 from .errors import AuthorityFailure
+
+#: Who Hub is told is presenting the credential.
+#:
+#: One subject for every Admission mutation Admin makes on an Owner's behalf.
+#: Which Controller asked, and about what, travels in the actor and the command
+#: — not in the subject, which says only which process is holding the key.
+_SUBJECT = "eidolon-admin/admission-consumer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,11 +29,16 @@ class HubAdminCredentialIssuer:
 
     The shared HS256 key is an installation secret shared only by Admin and
     Hub. Local API and Mobile receive neither the key nor the resulting JWT.
+
+    What the credential carries is the SDK's definition, which Hub reads with
+    the same code. This file used to build the claim dictionary by hand, and a
+    second method in it built a different one for the same Hub — the removal
+    path minted Hub's device-management vocabulary and presented it to
+    Admission, which answered 401 for every device removal ever attempted.
     """
 
     secret: bytes
     ttl_seconds: int = 60
-    audience: str = "eidolon-admission"
 
     def issue_admission_context(
         self,
@@ -30,34 +46,31 @@ class HubAdminCredentialIssuer:
         actor: ControllerActorRef,
         business_owner_id: BusinessOwnerId,
         intent_id: str | None = None,
+        target_device_ref: DeviceRef | None = None,
     ) -> str:
         """Bind one short-lived Hub call to the authenticated Controller context."""
 
-        if len(self.secret) < 32:
+        try:
+            return issue_admission_credential(
+                AdmissionCredential(
+                    subject=_SUBJECT,
+                    actor=actor,
+                    owner_domain_id=actor.owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    scopes=tuple(actor.granted_scopes),
+                    intent_id=intent_id,
+                    target_device_ref=target_device_ref,
+                ),
+                secret=self.secret,
+                ttl_seconds=self.ttl_seconds,
+            )
+        except AdmissionCredentialError as exc:
             raise AuthorityFailure(
                 "hub",
                 "configuration",
                 "Hub Owner credential issuer is not configured",
                 503,
-            )
-        now = datetime.now(UTC)
-        token = jwt.encode(
-            {
-                "sub": "eidolon-admin/admission-consumer",
-                "presenter": "eidolon-admin/admission-consumer",
-                "aud": self.audience,
-                "actor": actor.model_dump(mode="json"),
-                "owner_domain_id": str(actor.owner_domain_id),
-                "business_owner_id": str(business_owner_id),
-                "scopes": list(actor.granted_scopes),
-                **({"intent_id": intent_id} if intent_id is not None else {}),
-                "iat": int(now.timestamp()),
-                "exp": int((now + timedelta(seconds=self.ttl_seconds)).timestamp()),
-            },
-            self.secret,
-            algorithm="HS256",
-        )
-        return f"Bearer {token}"
+            ) from exc
 
     def issue_removal_intent(
         self,
@@ -69,18 +82,15 @@ class HubAdminCredentialIssuer:
     ) -> str:
         """The credential a Claim revocation is presented with.
 
-        Revocation is an Admission route, so it is presented to Hub's Admission
-        authorizer and has to speak that vocabulary. This used to mint a
-        different one — ``actor_ref`` as a bare string, ``owner_id`` instead of
-        ``owner_domain_id``, no ``business_owner_id`` — which is the Management
-        surface's vocabulary, correct for reading and renaming devices and
-        wrong for this route. Hub read ``claims["actor"]``, raised KeyError, and
-        answered 401 for every removal anyone ever attempted.
+        Revocation is an Admission route, so this is an Admission credential —
+        the same one every other Admission mutation uses. It is not a variant.
 
-        The generation binding is not carried here: on the Admission surface it
-        travels in the DeviceRef of the command itself, where Hub compares it
-        against the stored Claim. Putting it in the credential too would be a
-        second copy of the fact that decides the same thing.
+        The same credential is presented to two Hub surfaces during one removal:
+        the Claim revocation, and the read of the device-local erase operation.
+        They enforce different things from it — revocation checks the command's
+        DeviceRef against the stored Claim, the erase read fences the request
+        against ``target_device_ref`` — but they read one credential. Two
+        vocabularies for one authorization is what produced the 401.
 
         The business Owner is passed rather than derived. ``owner_...`` and
         ``owner-...`` are two different identities — who the Owner is, and which
@@ -88,15 +98,15 @@ class HubAdminCredentialIssuer:
         two facts become one wrong one.
         """
 
-        actor = ControllerActorRef(
-            principal_id=controller_id,
-            principal_type="controller",
-            owner_domain_id=device_ref.owner_domain_id,
-            granted_scopes=("device.claim.revoke",),
-            authentication_strength="software",
-        )
         return self.issue_admission_context(
-            actor=actor,
+            actor=ControllerActorRef(
+                principal_id=controller_id,
+                principal_type="controller",
+                owner_domain_id=device_ref.owner_domain_id,
+                granted_scopes=("device.claim.revoke",),
+                authentication_strength="software",
+            ),
             business_owner_id=business_owner_id,
             intent_id=intent_id,
+            target_device_ref=device_ref,
         )

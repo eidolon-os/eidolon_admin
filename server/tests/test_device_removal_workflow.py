@@ -52,6 +52,10 @@ pytestmark = pytest.mark.asyncio
 
 NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
 DOMAIN = OwnerDomainId("owner-domain-a")
+# The business Owner, which is not the Owner Domain. The fixture used to pass
+# the domain here and nothing objected, because the claim set was hand-written
+# on both sides and neither looked.
+BUSINESS_OWNER = "owner_683f963f54885e868924"
 CONTROLLER = "ectrl-0123456789abcdef0123"
 DEVICE = "device-instance-cb2f012772ec"
 REQUEST = "device-removal-8b0d1f2e"
@@ -97,7 +101,7 @@ def _payload() -> ControllerDeviceRemovalRequest:
     return ControllerDeviceRemovalRequest(
         contract_version="1",
         request_id=REQUEST,
-        owner_id=str(DOMAIN),
+        owner_id=BUSINESS_OWNER,
         controller_id=CONTROLLER,
         device_id=DEVICE,
         reason="owner-removed",
