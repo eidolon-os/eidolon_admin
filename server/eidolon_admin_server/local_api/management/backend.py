@@ -94,6 +94,12 @@ class AdminManagementClient:
     async def context(self, *, owner_id: str) -> dict:
         return await self._get("/api/internal/v1/management/context", {"owner_id": owner_id})
 
+    async def mission_control_snapshot(self, *, owner_id: str) -> dict:
+        return await self._get(
+            "/api/internal/v1/management/mission-control/snapshot",
+            {"owner_id": owner_id},
+        )
+
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict:
         params = {"owner_id": owner_id}
         if cursor is not None:

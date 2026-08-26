@@ -21,6 +21,7 @@ from .control_plane.router import (
     operator_router as control_plane_operator_router,
     router as control_plane_router,
 )
+from .management.mission_control_router import router as management_mission_control_router
 from .management.router import router as management_router
 from .control_plane.service import ControlPlaneService
 from .mission_control.router import router as mission_control_router
@@ -30,7 +31,7 @@ from .gateway.registry import ServiceRegistry
 from .gateway.router import router as gateway_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
-from ..audit import run_audit_indexer
+from ..audit import AuditIndexSettings, AuditIndexStore, run_audit_indexer
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
 from .supervisor.client import SupervisorClient
 from .supervisor.config import ConfigStore
@@ -56,7 +57,21 @@ def create_app(
     async def lifespan(app: FastAPI):
         broker = None
         indexer: asyncio.Task | None = None
+        audit_reader: AuditIndexStore | None = None
         try:
+            # A read handle on the audit index, opened once. The Owner's map
+            # reads its events lane from here — the index assigns their order,
+            # and that order is what makes the lane resumable.
+            #
+            # Absent is a real state: a Host with no indexer running has no
+            # index file, and the lane then says it could not be read rather
+            # than showing an Owner a house where nothing has ever happened.
+            audit_index_path = settings.state_dir.parent / "audit" / "audit-index.sqlite3"
+            if audit_index_path.exists():
+                audit_reader = AuditIndexStore.open(
+                    AuditIndexSettings(sqlite_path=str(audit_index_path), read_only=True)
+                )
+            app.state.audit_index = audit_reader
             # The audit index is this process's own projection, so the loop that
             # fills it lives here rather than in a unit of its own. Unset URL
             # means no indexer — and since the consumer is what creates the
@@ -102,6 +117,8 @@ def create_app(
                     await indexer
             if broker is not None:
                 await broker.close()
+            if audit_reader is not None:
+                await audit_reader.close()
             await app.state.control_plane.close()
             await app.state.host_services.close()
             await app.state.http_client.aclose()
@@ -195,6 +212,7 @@ def create_app(
     # Its own prefix, not another branch of control-plane: that family already
     # answers to two audiences and a third meaning is how this got confusing.
     app.include_router(management_router, prefix="/api")
+    app.include_router(management_mission_control_router, prefix="/api")
     # Read-only and second-hand: it asks the same authorities every other
     # surface here asks. Registered rather than merely present, because a
     # module nothing routes to is one nobody can tell is broken.

@@ -1064,6 +1064,11 @@
             ],
             "title": "Manifest Revision"
           },
+          "mount_revision": {
+            "minimum": 1.0,
+            "title": "Mount Revision",
+            "type": "integer"
+          },
           "online": {
             "default": "unknown",
             "enum": [
@@ -1119,6 +1124,7 @@
           "label",
           "state",
           "revision",
+          "mount_revision",
           "updated_at",
           "claim_state",
           "claim_generation",
@@ -5363,6 +5369,54 @@
           }
         },
         "summary": "Get Memory Recollections",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/mission-control/snapshot": {
+      "get": {
+        "description": "What is happening on this Host, for the Owner asking.\n\nThe Owner comes from the session and from nowhere else. The operator\nconsole's Mission Control takes an ``owner_id`` query parameter, which is\nright for an operator and would be a way to read someone else's home\nhere.\n\nUntyped by design: the response is the contract at\n``eidolon_sdk/contracts/mission_control/v1/mission-control-snapshot.schema.json``,\nwhich clients parse directly and which the SDK's goldens pin on both\nsides. A pydantic mirror in this file would be a second authority for the\nsame shape.\n\nEvery lane carries its own health, so a Host that cannot reach one of its\nown services answers with that lane unreadable and the rest of the map\nintact — rather than an error that costs the reader everything, or an\nempty list that reads as a quiet house.",
+        "operationId": "get_mission_control_snapshot_api_management_v1_mission_control_snapshot_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Mission Control Snapshot",
         "tags": [
           "management"
         ]

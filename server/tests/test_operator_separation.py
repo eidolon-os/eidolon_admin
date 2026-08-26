@@ -141,19 +141,79 @@ def test_mission_control_cannot_change_anything(app) -> None:
     assert writes == []
 
 
-def test_no_management_path_consults_mission_control() -> None:
+def _imports_mission_control(path: pathlib.Path) -> bool:
+    """Whether this module depends on Mission Control at import time.
+
+    An import is the dependency that matters. A loopback HTTP call to the
+    internal plane is not one — that is how Local API reaches every capability,
+    Mission Control included, and the LAN-facing process holds no operator code
+    either way.
+    """
+
+    return any(
+        line.startswith(("import ", "from ")) and "mission_control" in line
+        for line in (
+            raw.strip() for raw in path.read_text(encoding="utf-8").splitlines()
+        )
+    )
+
+
+#: The only management modules allowed to depend on Mission Control: the Owner's
+#: projection and the one read that serves it. Both are read-only, which the
+#: test below holds.
+_OWNER_RUNTIME_READ = {
+    "app/management/mission_control.py",
+    "app/management/mission_control_router.py",
+}
+
+
+def test_no_management_mutation_depends_on_mission_control() -> None:
     """The other direction of the same sentence.
 
     Mission Control being read-only stops it corrupting a mutation; this stops it
     *blocking* one. A management handler that waited on the event stream — to
     publish, to confirm, to read a projection back — would make every mutation
     only as available as the weakest thing the operator dashboard watches.
+
+    This used to be asserted as "no management file mentions mission_control at
+    all", which was broader than the sentence it stood for and stopped being
+    true the moment the Owner's own runtime map was exposed on their plane
+    (2026-08-26). The Owner needs that read; no mutation may wait on it. So the
+    boundary is now where it can be checked: the modules that perform mutations
+    do not import Mission Control, and the two modules that do import it expose
+    nothing but reads.
     """
 
-    consulting = sorted(
+    depending = sorted(
         path.relative_to(_SERVER).as_posix()
         for directory in ("app/management", "local_api")
         for path in (_SERVER / directory).rglob("*.py")
-        if "mission_control" in path.read_text(encoding="utf-8")
+        if _imports_mission_control(path)
     )
-    assert consulting == []
+    assert depending == sorted(_OWNER_RUNTIME_READ)
+
+
+def test_the_owner_runtime_read_is_a_read() -> None:
+    """The allowance above is only as safe as this.
+
+    Two modules may depend on Mission Control. If either grew a mutation, the
+    guarantee would be gone and the test above would still pass — so the shape
+    of what they expose is asserted too, not just which files they are.
+    """
+
+    for relative in sorted(_OWNER_RUNTIME_READ):
+        source = (_SERVER / relative).read_text(encoding="utf-8")
+        for verb in ("@router.post", "@router.put", "@router.patch", "@router.delete"):
+            assert verb not in source, f"{relative} performs mutations: {verb}"
+
+
+def test_local_api_reaches_mission_control_the_way_it_reaches_everything() -> None:
+    """Over the loopback plane, not by importing the composition.
+
+    Keeps the LAN-facing process free of operator code: it knows a path and a
+    credential, and nothing about how the reading is composed.
+    """
+
+    backend = (_SERVER / "local_api/management/backend.py").read_text(encoding="utf-8")
+    assert "/api/internal/v1/management/mission-control/snapshot" in backend
+    assert not _imports_mission_control(_SERVER / "local_api/management/backend.py")

@@ -286,6 +286,7 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         answers_as_companion_name=names.get(answering or "", ""),
         quiet_because=_quiet_because(device),
         revision=device.body.assignment_revision,
+        mount_revision=device.body.mount_revision,
         updated_at=claim.updated_at.isoformat(),
         # Never inferred. An active Claim and a Kernel mount both say this device
         # is *known*, and neither says it is switched on; a screen that read one
@@ -1280,6 +1281,12 @@ class DeviceView(BaseModel):
     #: win. Zero for a device nobody has pointed anywhere: that is a real state
     #: and the first change to it carries zero.
     revision: int = Field(ge=0)
+    #: Whether this device is on this Host, at which version. A different fact
+    #: from the one above, which is why they are two fields: pointing a speaker
+    #: at a different Eidolon and re-claiming that speaker used to share one
+    #: number, and that is how one silently discarded the other. Kept because it
+    #: is what somebody is asked for when a device is not behaving.
+    mount_revision: int = Field(ge=1)
     #: When the Claim last moved. The nearest thing to "since when is this mine"
     #: that any authority actually knows.
     updated_at: str = Field(min_length=1, max_length=64)
@@ -1548,6 +1555,8 @@ class ManagementBackendPort(Protocol):
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
 
+    async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
+
     async def companion(self, *, owner_id: str, companion_id: str) -> dict: ...
 
     async def set_default_companion(
@@ -1759,6 +1768,34 @@ def register_management_routes(
             unavailable=answer.get("unavailable") or {},
             limits=answer["limits"],
         )
+
+    @router.get("/mission-control/snapshot", response_model=None)
+    async def get_mission_control_snapshot(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict:
+        """What is happening on this Host, for the Owner asking.
+
+        The Owner comes from the session and from nowhere else. The operator
+        console's Mission Control takes an ``owner_id`` query parameter, which is
+        right for an operator and would be a way to read someone else's home
+        here.
+
+        Untyped by design: the response is the contract at
+        ``eidolon_sdk/contracts/mission_control/v1/mission-control-snapshot.schema.json``,
+        which clients parse directly and which the SDK's goldens pin on both
+        sides. A pydantic mirror in this file would be a second authority for the
+        same shape.
+
+        Every lane carries its own health, so a Host that cannot reach one of its
+        own services answers with that lane unreadable and the rest of the map
+        intact — rather than an error that costs the reader everything, or an
+        empty list that reads as a quiet house.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            return await backend.mission_control_snapshot(owner_id=owner_id)
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
 
     @router.get("/home", response_model=HomeView)
     async def get_home(

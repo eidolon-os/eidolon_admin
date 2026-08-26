@@ -182,6 +182,43 @@ class AuditIndexStore:
             await session.commit()
             return int(result.rowcount or 0)
 
+    async def tail_for_owner(
+        self,
+        owner_id: str,
+        *,
+        after_seq: int | None = None,
+        limit: int = 200,
+    ) -> list[IndexedAuditEvent]:
+        """The Owner's audit tail, in this index's own order, cursor and all.
+
+        Exists because :meth:`list_for_owner` drops ``ingest_seq`` on the way
+        out. The index holds a total order and its readers could not see it, so
+        anything downstream had to page by timestamp and deduplicate rows that
+        share one — which :meth:`list_for_owner_since` says out loud, and which
+        is not a cursor: two events at the same instant cannot be told apart, so
+        a resumed reader either repeats work or skips it.
+
+        ``after_seq`` is that cursor. A reader submits the last sequence it
+        consumed and gets what happened after it, exactly once. Without one, the
+        newest ``limit`` rows come back oldest-first, so a consumer's first read
+        and its resumed reads are in the same order.
+        """
+
+        async with self._session_factory() as session:
+            query = select(_AuditIndexRow).where(_AuditIndexRow.owner_id == owner_id)
+            if after_seq is not None:
+                query = query.where(_AuditIndexRow.ingest_seq > after_seq)
+                query = query.order_by(_AuditIndexRow.ingest_seq).limit(limit)
+                rows = list(await session.scalars(query))
+            else:
+                # Newest `limit`, then handed back oldest-first.
+                query = query.order_by(_AuditIndexRow.ingest_seq.desc()).limit(limit)
+                rows = list(reversed(list(await session.scalars(query))))
+            return [
+                IndexedAuditEvent(ingest_seq=row.ingest_seq, envelope=_index_envelope(row))
+                for row in rows
+            ]
+
     async def list_for_owner(self, owner_id: str, *, limit: int = 200) -> list[AuditEnvelope]:
         async with self._session_factory() as session:
             rows = await session.scalars(
@@ -209,6 +246,21 @@ class AuditIndexStore:
                 .limit(limit)
             )
             return [_index_envelope(row) for row in rows]
+
+
+@dataclass(frozen=True)
+class IndexedAuditEvent:
+    """One audit event with the index's own sequence number attached.
+
+    The envelope is the producer's word and says nothing about where it landed
+    in this Host's order; ``ingest_seq`` is this index's, and it is what a
+    consumer resumes from. Kept as a pair rather than pushed into the envelope,
+    because the envelope crosses Hosts and this number does not mean anything
+    outside the index that assigned it.
+    """
+
+    ingest_seq: int
+    envelope: AuditEnvelope
 
 
 def _index_envelope(row: _AuditIndexRow) -> AuditEnvelope:

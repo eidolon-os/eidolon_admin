@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -34,6 +35,7 @@ from eidolon_sdk.biz.body import (
     owner_device_blackboard_key,
 )
 
+from .lanes import Lane, LaneLedger
 from .schemas import (
     EvidenceChain,
     EvidenceStep,
@@ -73,28 +75,49 @@ _TEXT_KEYS = {
 }
 
 
-async def build_snapshot(
+@dataclass(frozen=True)
+class RuntimeComposition:
+    """One reading, and what each lane of it may claim about itself.
+
+    The console renders :attr:`snapshot` and its flat source list; the Owner's
+    map is projected from the same reading plus :attr:`ledger`, so the two can
+    disagree about presentation and never about what was observed.
+    """
+
+    snapshot: RuntimeSnapshot
+    ledger: LaneLedger
+
+
+async def compose_runtime(
     request: Request, owner_id: str | None = None, demo_mode: str = "live"
-) -> RuntimeSnapshot:
+) -> RuntimeComposition:
     started = time.perf_counter()
     generated_at = datetime.now(UTC)
-    statuses: list[SourceStatus] = []
+    ledger = LaneLedger()
     control_plane = _control_plane(request)
     if control_plane is None:
-        return RuntimeSnapshot(
-            generated_at=generated_at,
-            source_status=[
-                SourceStatus(
-                    source="control-plane",
-                    ok=False,
-                    detail="Admin has no control-plane clients configured",
-                )
-            ],
+        ledger.record(
+            "control-plane",
+            ok=False,
+            detail="Admin has no control-plane clients configured",
+        )
+        return RuntimeComposition(
+            snapshot=RuntimeSnapshot(
+                generated_at=generated_at,
+                source_status=ledger.statuses(),
+            ),
+            ledger=ledger,
         )
 
-    owner = await _select_owner(control_plane, owner_id, statuses)
+    owner = await _select_owner(control_plane, owner_id, ledger)
     if owner is None:
-        return RuntimeSnapshot(generated_at=generated_at, source_status=statuses)
+        return RuntimeComposition(
+            snapshot=RuntimeSnapshot(
+                generated_at=generated_at,
+                source_status=ledger.statuses(),
+            ),
+            ledger=ledger,
+        )
     owner_id = owner.owner_id
 
     # Each lane comes from whichever authority owns it now, over HTTP. Four of
@@ -102,19 +125,19 @@ async def build_snapshot(
     # as unavailable with the reason, not as an Owner with nothing happening.
     companion_snapshot, device_page, data_events = await asyncio.gather(
         _safe(
-            statuses,
+            ledger,
             "data.companions",
             data_authority_of(control_plane).get_owner_default_runtime(owner_id),
             None,
         ),
         _safe(
-            statuses,
+            ledger,
             "hub.devices",
             hub_authority_of(control_plane).list_devices(owner_id=owner_id),
             [],
         ),
         _safe(
-            statuses,
+            ledger,
             "hub.events",
             hub_authority_of(control_plane).list_events(owner_id=owner_id, limit=240),
             [],
@@ -126,26 +149,24 @@ async def build_snapshot(
     devices = _device_rows(device_page)
     companions = _companions_from_snapshot(companion_snapshot)
     if companion_snapshot is not None and not companions:
-        statuses.append(
-            SourceStatus(
-                source="data.companions",
-                ok=False,
-                detail="only the primary Companion is published; the full roster is not",
-            )
+        ledger.record(
+            "data.companions",
+            ok=False,
+            detail="only the primary Companion is published; the full roster is not",
         )
     conversations = _unexposed(
-        statuses,
+        ledger,
         "data.conversations",
         "Data publishes no conversation history over HTTP",
     )
     memory_realms = _unexposed(
-        statuses,
+        ledger,
         "data.memory",
         "Memory publishes recollections, not the realm roster this panel needs",
     )
-    jobs = _unexposed(statuses, "data.jobs", "Data publishes no job list over HTTP")
+    jobs = _unexposed(ledger, "data.jobs", "Data publishes no job list over HTTP")
     guard_bindings = _unexposed(
-        statuses,
+        ledger,
         "data.guard_bindings",
         "the Guard runtime does not exist yet, so nothing binds a face to a device",
     )
@@ -153,8 +174,8 @@ async def build_snapshot(
     default_companion_id = getattr(owner, "default_companion_id", None)
     companion = _default_companion(companions, default_companion_id)
     guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
-    runtime_blackboard = await _runtime_blackboard(request, owner_id, statuses)
-    hub_devices = await _hub_devices(request, statuses)
+    runtime_blackboard = await _runtime_blackboard(request, owner_id, ledger)
+    hub_devices = await _hub_devices(request, ledger)
     runtime_devices = _merge_devices(
         devices,
         hub_devices,
@@ -163,12 +184,11 @@ async def build_snapshot(
         companions=companions,
         guard_device_ids=guard_device_ids,
     )
-    services, service_statuses = await _services(request)
-    statuses.extend(service_statuses)
+    services = await _services(request, ledger)
 
-    turns = await _agent_turns(request, owner_id, statuses)
-    long_tasks = await _agent_long_tasks(request, owner_id, statuses)
-    memory = await _memory_summary(request, memory_realms, turns, statuses)
+    turns = await _agent_turns(request, owner_id, ledger)
+    long_tasks = await _agent_long_tasks(request, owner_id, ledger)
+    memory = await _memory_summary(request, memory_realms, turns, ledger)
 
     runtime_jobs = [_job(row) for row in jobs]
     runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
@@ -189,7 +209,7 @@ async def build_snapshot(
     primary_voice_turn = _primary_active_voice_turn(runtime_turns)
     activities = _project_runtime_activities(runtime_turns, runtime_jobs, recent_events)
 
-    source_status = _coalesce_statuses(statuses)
+    source_status = ledger.statuses()
     experience = _experience(
         owner=owner,
         companion=companion,
@@ -216,7 +236,8 @@ async def build_snapshot(
         ledger=permission_ledger,
     )
 
-    return RuntimeSnapshot(
+    return RuntimeComposition(
+        snapshot=RuntimeSnapshot(
         generated_at=generated_at,
         owner=RuntimeOwner(
             owner_id=owner.owner_id,
@@ -245,7 +266,17 @@ async def build_snapshot(
         evidence_chains=evidence_chains,
         permission_ledger=permission_ledger,
         demo_mode=demo_mode,  # type: ignore[arg-type]
+        ),
+        ledger=ledger,
     )
+
+
+async def build_snapshot(
+    request: Request, owner_id: str | None = None, demo_mode: str = "live"
+) -> RuntimeSnapshot:
+    """The console's reading. Same composition, operator projection."""
+
+    return (await compose_runtime(request, owner_id=owner_id, demo_mode=demo_mode)).snapshot
 
 
 def hub_event_to_runtime(raw: dict[str, Any]) -> RuntimeEvent:
@@ -426,7 +457,7 @@ def _control_plane(request: Request) -> Any | None:
 
 
 async def _select_owner(
-    control_plane: Any, owner_id: str | None, statuses: list[SourceStatus]
+    control_plane: Any, owner_id: str | None, ledger: LaneLedger
 ) -> OwnerIdentity | None:
     """The Owner this snapshot is about.
 
@@ -438,7 +469,7 @@ async def _select_owner(
 
     if not owner_id:
         _unexposed(
-            statuses,
+            ledger,
             "data.owners",
             "no authority publishes an Owner list over HTTP; ask for one Owner by id",
         )
@@ -446,29 +477,29 @@ async def _select_owner(
     try:
         return await workspace_authority_of(control_plane).get_owner(owner_id)
     except Exception as exc:  # noqa: BLE001
-        statuses.append(SourceStatus(source="data.owners", ok=False, detail=str(exc)))
+        ledger.record("data.owners", ok=False, detail=str(exc))
         return None
 
 
-async def _hub_devices(request: Request, statuses: list[SourceStatus]) -> list[Any]:
+async def _hub_devices(request: Request, ledger: LaneLedger) -> list[Any]:
     client = getattr(request.app.state, "hub_device_client", None)
     if client is None:
-        statuses.append(SourceStatus(source="hub", ok=False, detail="Hub client unavailable"))
+        ledger.record("hub", ok=False, detail="Hub client unavailable")
         return []
     started = time.perf_counter()
     try:
         rows = await client.list_devices()
     except Exception as exc:  # noqa: BLE001 - degraded view is expected in dev
-        statuses.append(SourceStatus(source="hub", ok=False, detail=str(exc)))
+        ledger.record("hub", ok=False, detail=str(exc))
         return []
-    statuses.append(_status("hub", True, started, f"{len(rows)} devices"))
+    ledger.record("hub", ok=True, detail=f"{len(rows)} devices", started=started)
     return rows
 
 
 async def _runtime_blackboard(
     request: Request,
     owner_id: str,
-    statuses: list[SourceStatus],
+    ledger: LaneLedger,
 ) -> RuntimeDeviceBlackboard:
     """Read exactly one owner-scoped current snapshot directly from NATS KV."""
 
@@ -476,7 +507,7 @@ async def _runtime_blackboard(
     client = getattr(request.app.state, "nats_kv", None)
     if client is None:
         detail = "NATS KV client unavailable"
-        statuses.append(SourceStatus(source="runtime.blackboard", ok=False, detail=detail))
+        ledger.record("runtime.blackboard", ok=False, detail=detail)
         return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
 
     started = time.perf_counter()
@@ -484,12 +515,12 @@ async def _runtime_blackboard(
         raw = await client.get_existing(DEVICE_BLACKBOARD_BUCKET, key)
     except Exception as exc:  # noqa: BLE001 - observatory must fail closed
         detail = f"NATS KV read failed: {exc}"
-        statuses.append(SourceStatus(source="runtime.blackboard", ok=False, detail=detail))
+        ledger.record("runtime.blackboard", ok=False, detail=detail)
         return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
 
     if raw is None:
         detail = "No current snapshot for selected owner"
-        statuses.append(_status("runtime.blackboard", True, started, detail))
+        ledger.record("runtime.blackboard", ok=True, detail=detail, started=started)
         return RuntimeDeviceBlackboard(health="empty", detail=detail, key=key)
 
     try:
@@ -499,7 +530,7 @@ async def _runtime_blackboard(
         )
     except Exception as exc:  # noqa: BLE001 - malformed/foreign data fails closed
         detail = f"Invalid owner snapshot: {exc}"
-        statuses.append(SourceStatus(source="runtime.blackboard", ok=False, detail=detail))
+        ledger.record("runtime.blackboard", ok=False, detail=detail)
         return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
 
     now = datetime.now(UTC)
@@ -521,7 +552,7 @@ async def _runtime_blackboard(
         health = "healthy"
         available = True
 
-    statuses.append(_status("runtime.blackboard", available, started, detail))
+    ledger.record("runtime.blackboard", ok=available, detail=detail, started=started)
     return RuntimeDeviceBlackboard(
         health=health,
         available=available,
@@ -534,7 +565,7 @@ async def _runtime_blackboard(
 async def _agent_turns(
     request: Request,
     owner_id: str,
-    statuses: list[SourceStatus],
+    ledger: LaneLedger,
 ) -> list[dict[str, Any]]:
     started = time.perf_counter()
     try:
@@ -547,17 +578,17 @@ async def _agent_turns(
         )
         rows = body.get("turns") if isinstance(body, dict) else []
         turns = rows if isinstance(rows, list) else []
-        statuses.append(_status("agent.turns", True, started, f"{len(turns)} turns"))
+        ledger.record("agent.turns", ok=True, detail=f"{len(turns)} turns", started=started)
         return [row for row in turns if isinstance(row, dict)]
     except Exception as exc:  # noqa: BLE001
-        statuses.append(SourceStatus(source="agent.turns", ok=False, detail=str(exc)))
+        ledger.record("agent.turns", ok=False, detail=str(exc))
         return []
 
 
 async def _agent_long_tasks(
     request: Request,
     owner_id: str,
-    statuses: list[SourceStatus],
+    ledger: LaneLedger,
 ) -> list[dict[str, Any]]:
     started = time.perf_counter()
     try:
@@ -570,10 +601,10 @@ async def _agent_long_tasks(
         )
         rows = body.get("tasks") if isinstance(body, dict) else []
         tasks = rows if isinstance(rows, list) else []
-        statuses.append(_status("agent.long_tasks", True, started, f"{len(tasks)} tasks"))
+        ledger.record("agent.long_tasks", ok=True, detail=f"{len(tasks)} tasks", started=started)
         return [row for row in tasks if isinstance(row, dict)]
     except Exception as exc:  # noqa: BLE001
-        statuses.append(SourceStatus(source="agent.long_tasks", ok=False, detail=str(exc)))
+        ledger.record("agent.long_tasks", ok=False, detail=str(exc))
         return []
 
 
@@ -581,7 +612,7 @@ async def _memory_summary(
     request: Request,
     realms: list[Any],
     turns: list[dict[str, Any]],
-    statuses: list[SourceStatus],
+    ledger: LaneLedger,
 ) -> RuntimeMemory:
     runners_total = 0
     runners_online = 0
@@ -603,9 +634,14 @@ async def _memory_summary(
                     or row.get("runtime_state") == "running"
                 )
             )
-        statuses.append(_status("memory.runners", True, started, f"{runners_online}/{runners_total} online"))
+        ledger.record(
+            "memory.runners",
+            ok=True,
+            detail=f"{runners_online}/{runners_total} online",
+            started=started,
+        )
     except Exception as exc:  # noqa: BLE001
-        statuses.append(SourceStatus(source="memory.runners", ok=False, detail=str(exc)))
+        ledger.record("memory.runners", ok=False, detail=str(exc))
 
     latest = _turn(turns[0]) if turns else None
     observability_summary = _dict_or_empty(turns[0].get("observability_summary")) if turns else {}
@@ -637,11 +673,12 @@ async def _memory_summary(
     )
 
 
-async def _services(request: Request) -> tuple[list[RuntimeService], list[SourceStatus]]:
+async def _services(request: Request, ledger: LaneLedger) -> list[RuntimeService]:
     registry = getattr(request.app.state, "registry", None)
     http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
     if registry is None or http_client is None:
-        return [], [SourceStatus(source="services", ok=False, detail="registry unavailable")]
+        ledger.record("services", ok=False, detail="registry unavailable")
+        return []
 
     # Pull live supervisord process state once, so process-only services
     # (channel, mementos) without an HTTP health surface still report real
@@ -727,7 +764,8 @@ async def _services(request: Request) -> tuple[list[RuntimeService], list[Source
         )
 
     ok = sum(1 for row in rows if row.online)
-    return rows, [SourceStatus(source="services", ok=True, detail=f"{ok}/{len(rows)} online")]
+    ledger.record("services", ok=True, detail=f"{ok}/{len(rows)} online")
+    return rows
 
 
 async def _service_json(
@@ -756,7 +794,7 @@ async def _service_json(
 
 
 async def _safe(
-    statuses: list[SourceStatus],
+    ledger: LaneLedger,
     label: str,
     coro: Any,
     fallback: Any,
@@ -764,14 +802,14 @@ async def _safe(
     started = time.perf_counter()
     try:
         result = await coro
-        statuses.append(_status(label, True, started))
+        ledger.record(label, ok=True, started=started)
         return result
     except Exception as exc:  # noqa: BLE001
-        statuses.append(SourceStatus(source=label, ok=False, detail=str(exc)))
+        ledger.record(label, ok=False, detail=str(exc))
         return fallback
 
 
-def _unexposed(statuses: list[SourceStatus], label: str, reason: str) -> list[Any]:
+def _unexposed(ledger: LaneLedger, label: str, reason: str) -> list[Any]:
     """Record a lane this Host has no way to answer, and return nothing for it.
 
     Deliberately not the failure path above. A call that broke and a capability
@@ -785,7 +823,7 @@ def _unexposed(statuses: list[SourceStatus], label: str, reason: str) -> list[An
     panel says that, rather than showing a Host with nothing happening on it.
     """
 
-    statuses.append(SourceStatus(source=label, ok=False, detail=reason))
+    ledger.record(label, ok=False, detail=reason)
     return []
 
 
@@ -2442,22 +2480,6 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value.astimezone(UTC)
-
-
-def _status(source: str, ok: bool, started: float, detail: str = "") -> SourceStatus:
-    return SourceStatus(
-        source=source,
-        ok=ok,
-        detail=detail,
-        latency_ms=round((time.perf_counter() - started) * 1000, 1),
-    )
-
-
-def _coalesce_statuses(statuses: list[SourceStatus]) -> list[SourceStatus]:
-    out: dict[str, SourceStatus] = {}
-    for status in statuses:
-        out[status.source] = status
-    return list(out.values())
 
 
 def _int_or_none(value: Any) -> int | None:

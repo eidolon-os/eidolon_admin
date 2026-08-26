@@ -189,6 +189,7 @@ export interface DeviceView {
   label: string
   manifest_id?: string
   manifest_revision?: number | null
+  mount_revision: number
   online?: "unknown" | "online" | "offline"
   online_reason?: string
   owner_domain_generation: number
@@ -546,6 +547,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'GET /api/management/v1/memory/recollections': RecollectionsView
+  'GET /api/management/v1/mission-control/snapshot': unknown
   'PATCH /api/management/v1/owner': OwnerNameView
   'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
