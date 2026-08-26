@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import jwt
+from pydantic import ValidationError
+from eidolon_admin_server.app.control_plane.hub_credentials import HubAdminCredentialIssuer
+from eidolon_sdk.device_foundation.v1 import BusinessOwnerId
+
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -82,6 +87,7 @@ async def test_broker_dispatch_has_no_generic_hub_admin_operation() -> None:
             controller_id="ectrl-0123456789abcdefabcd",
             intent_id="removal-intent-" + "a" * 32,
             device_ref=_ref(),
+            business_owner_id="owner_683f0000000000000000",
             reason="owner-removed",
             command_id="revoke-claim-1",
         )
@@ -101,6 +107,7 @@ def test_workflow_marker_is_not_a_bearer_credential() -> None:
         controller_id="ectrl-0123456789abcdefabcd",
         intent_id="removal-intent-" + "a" * 32,
         device_ref=_ref(),
+        business_owner_id="owner_683f0000000000000000",
     )
 
     assert marker.startswith("broker:")
@@ -169,3 +176,67 @@ async def test_admin_notifies_ready_only_after_capability_broker_is_bound(
         "admin-stopping",
         "broker-closed",
     ]
+
+
+def test_a_revocation_credential_speaks_the_surface_it_is_presented_to() -> None:
+    """Revocation is an Admission route, so the credential must be Admission's.
+
+    It used to mint the Management surface's vocabulary — ``actor_ref`` as a
+    bare string, ``owner_id`` instead of ``owner_domain_id``, no
+    ``business_owner_id`` — which is correct for reading and renaming devices
+    and wrong for this route. Hub read ``claims["actor"]``, raised KeyError
+    inside its ``except (JWTError, KeyError, TypeError, ValueError)``, and
+    answered 401. Every removal anyone ever attempted was refused by this, and
+    the refusal said nothing about credentials.
+
+    The required claim names are asserted literally because they are one half
+    of a contract whose other half lives in Hub. Hub pins the same set from its
+    side; if either moves alone, one of the two goes red.
+    """
+
+    issuer = HubAdminCredentialIssuer(secret=b"s" * 32)
+    ref = _ref()
+
+    credential = issuer.issue_removal_intent(
+        controller_id="ectrl-0123456789abcdefabcd",
+        intent_id="removal-intent-" + "a" * 32,
+        device_ref=ref,
+        business_owner_id=BusinessOwnerId("owner_683f0000000000000000"),
+    )
+
+    scheme, _, token = credential.partition(" ")
+    assert scheme == "Bearer"
+    claims = jwt.decode(token, b"s" * 32, algorithms=["HS256"], audience="eidolon-admission")
+
+    # Exactly what Hub's Admission authorizer reads.
+    assert claims["presenter"] == claims["sub"]
+    assert claims["owner_domain_id"] == str(ref.owner_domain_id)
+    assert claims["business_owner_id"] == "owner_683f0000000000000000"
+    assert claims["actor"]["owner_domain_id"] == str(ref.owner_domain_id)
+    assert claims["actor"]["principal_type"] == "controller"
+    assert set(claims["scopes"]) == set(claims["actor"]["granted_scopes"]) == {
+        "device.claim.revoke"
+    }
+    # The Management vocabulary must not come back.
+    assert "actor_ref" not in claims
+    assert "owner_id" not in claims
+
+
+def test_the_two_owner_identities_are_not_derived_from_each_other() -> None:
+    """``owner_...`` and ``owner-...`` are different facts.
+
+    Who the Owner is, and which Owner Domain this Host serves. Deriving one
+    from the other produced a credential that could not be minted at all —
+    which at least failed loudly; the dangerous version is one that mints and
+    names the wrong Owner.
+    """
+
+    issuer = HubAdminCredentialIssuer(secret=b"s" * 32)
+
+    with pytest.raises(ValidationError):
+        issuer.issue_removal_intent(
+            controller_id="ectrl-0123456789abcdefabcd",
+            intent_id="removal-intent-" + "a" * 32,
+            device_ref=_ref(),
+            business_owner_id=BusinessOwnerId(str(_ref().owner_domain_id)),
+        )

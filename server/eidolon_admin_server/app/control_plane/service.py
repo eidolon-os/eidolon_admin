@@ -767,6 +767,7 @@ class ControlPlaneService:
             controller_id=payload.controller_id,
             intent_id=intent.intent_id,
             device_ref=intent.device_ref,
+            business_owner_id=payload.owner_id,
         )
         hub = intent.hub_result
         try:

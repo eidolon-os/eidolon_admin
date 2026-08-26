@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import tempfile
 from pathlib import Path
 from typing import get_args
@@ -359,7 +359,12 @@ async def _refused_removal_reaches_the_phone(socket_path: Path) -> None:
                     reason="owner-removed",
                 ),
                 controller_reset_epoch=1,
-                authorization_expires_at=datetime(2026, 8, 26, tzinfo=UTC),
+                # Relative, not a date. A fixed instant makes this pass or fail
+                # by the wall clock: written before midnight UTC it was in the
+                # future, and hours later the same code refused because the
+                # authorization had "expired" — a green test that rots on a
+                # timer says nothing about the code.
+                authorization_expires_at=datetime.now(UTC) + timedelta(minutes=5),
                 target_device_ref=DeviceRef(
                     device_instance_id="device-instance-" + "c" * 48,
                     owner_domain_id=DOMAIN,

@@ -18,7 +18,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from eidolon_sdk.device_foundation.v1 import DeviceLocalEraseOperationStatus
+from eidolon_sdk.device_foundation.v1 import BusinessOwnerId, DeviceLocalEraseOperationStatus
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..app.control_plane.contracts import (
@@ -44,6 +44,9 @@ class RevokeRemovalTarget(_StrictModel):
     controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
     intent_id: str = Field(pattern=r"^removal-intent-[0-9a-f]{32}$")
     device_ref: DeviceRef
+    # Who the Owner is, distinct from which Owner Domain this Host serves. The
+    # credential Hub's Admission authorizer expects carries both.
+    business_owner_id: str = Field(min_length=1, max_length=64)
     reason: str = Field(min_length=1, max_length=128)
     command_id: str = Field(min_length=1, max_length=128)
 
@@ -188,6 +191,7 @@ class RemovalCapabilityBroker:
             controller_id=call.controller_id,
             intent_id=call.intent_id,
             device_ref=call.device_ref,
+            business_owner_id=BusinessOwnerId(call.business_owner_id),
         )
         if isinstance(call, RevokeRemovalTarget):
             return RemovalCapabilityReply(
@@ -225,11 +229,13 @@ class BrokeredRemovalHubClient:
     async def revoke(
         self, *, device_ref, reason, command_id, correlation_id, authorization
     ) -> HubClaimRevocationResult:
+        controller_id, _intent, business_owner_id = _broker_marker(authorization)
         reply = await self._exchange(
             RevokeRemovalTarget(
-                controller_id=_controller_and_intent(authorization)[0],
+                controller_id=controller_id,
                 intent_id=correlation_id,
                 device_ref=device_ref,
+                business_owner_id=business_owner_id,
                 reason=reason,
                 command_id=command_id,
             )
@@ -240,7 +246,7 @@ class BrokeredRemovalHubClient:
     async def get_device_control_operation(
         self, *, device_ref, source_claim_event_id, authorization
     ) -> DeviceLocalEraseOperationStatus:
-        controller_id, intent_id = _controller_and_intent(authorization)
+        controller_id, intent_id, _owner = _broker_marker(authorization)
         reply = await self._exchange(
             ObserveRemovalDelivery(
                 controller_id=controller_id,
@@ -283,19 +289,25 @@ class BrokeredRemovalHubClient:
 class BrokerMarkerIssuer:
     """Non-credential correlation marker consumed only by the broker adapter."""
 
-    def issue_removal_intent(self, *, controller_id, intent_id, **_kwargs) -> str:
-        return f"broker:{controller_id}:{intent_id}"
+    def issue_removal_intent(
+        self, *, controller_id, intent_id, business_owner_id, **_kwargs
+    ) -> str:
+        return f"broker:{controller_id}:{intent_id}:{business_owner_id}"
 
 
-def _controller_and_intent(marker: str) -> tuple[str, str]:
+def _broker_marker(marker: str) -> tuple[str, str, str]:
     """The one parse of a broker marker.
 
     There were two, differing only in how strict they were about the shape, and
     only one marker shape is issued — which is how one spelling of a value
     becomes two rules about it.
+
+    It carries the business Owner as well as the Controller because the
+    credential the broker mints on the other side needs both, and the Workflow
+    is the only side that knows them.
     """
 
     parts = marker.split(":")
-    if len(parts) != 3 or parts[0] != "broker":
+    if len(parts) != 4 or parts[0] != "broker":
         raise AuthorityFailure("hub", "configuration", "Broker marker is invalid", 503)
-    return parts[1], parts[2]
+    return parts[1], parts[2], parts[3]
