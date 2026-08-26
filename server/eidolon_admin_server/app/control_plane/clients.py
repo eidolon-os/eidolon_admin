@@ -29,6 +29,7 @@ from .contracts import (
     MemoryEntries,
     MemoryExport,
     PersonaChapter,
+    OwnerRuntimeCompanions,
     RuntimeSessionRevocation,
     TaskRow,
     TaskRows,
@@ -1409,6 +1410,20 @@ class AgentActivityClient:
             params={"owner_id": owner_id},
         )
         return _parse("agent", response, TaskRow)
+
+    async def runtime_companions(self, *, owner_id: str) -> OwnerRuntimeCompanions:
+        """Which of this Owner's Companions the runtime is holding right now.
+
+        Read every time, never cached: the question is about this instant, and a
+        cached answer is a record of something that may have since stopped.
+        """
+
+        response = await self._call(
+            "GET",
+            f"/owners/{quote(owner_id, safe='')}/runtime-companions",
+            params=None,
+        )
+        return _parse("agent", response, OwnerRuntimeCompanions)
 
     async def revoke_runtime_sessions(self, *, owner_id: str) -> RuntimeSessionRevocation:
         """Stop every runtime token this Owner had until now.

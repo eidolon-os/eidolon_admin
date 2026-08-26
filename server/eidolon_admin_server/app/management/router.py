@@ -103,6 +103,13 @@ class CompanionSummaryInternal(BaseModel):
     revision: int = Field(ge=1)
     created_at: str = Field(min_length=1, max_length=64)
     updated_at: str = Field(min_length=1, max_length=64)
+    #: Whether the runtime is holding this Companion right now. Null is
+    #: **unknown** — the runtime could not be asked — and is a different answer
+    #: from false. Several rows being true at once is ordinary (§4.6).
+    running: bool | None = None
+    #: When anything last addressed it, when the runtime said. Empty when
+    #: unknown or when nothing has.
+    last_active_at: str = Field(default="", max_length=64)
 
 
 class CompanionRosterInternal(BaseModel):
@@ -116,6 +123,9 @@ class CompanionRosterInternal(BaseModel):
     #: Named once for the page. A per-row flag would let two rows claim it.
     default_companion_id: str | None = Field(default=None, max_length=64)
     companions: list[CompanionSummaryInternal]
+    #: Why the running column is unknown, when it is. Empty means the runtime
+    #: answered — so every row's ``running`` is a real answer.
+    runtime_unavailable: str = Field(default="", max_length=64)
     next_cursor: str | None = Field(default=None, max_length=256)
 
 
@@ -616,9 +626,14 @@ async def list_companions(
     ``cursor`` is forwarded to the authority untouched and never interpreted
     here; the page boundary belongs to whoever built the page.
     """
+    control_plane = request.app.state.control_plane
     roster = await read_roster(
         owner_id=owner_id,
-        companions=request.app.state.control_plane.data,
+        companions=control_plane.data,
+        # The runtime is the Agent's to report, and its absence costs the
+        # running column rather than the roster: somebody should still see what
+        # Eidolons they have while the process that runs them is restarting.
+        runtime=getattr(control_plane, "activity", None),
         cursor=cursor,
     )
     return CompanionRosterInternal(
@@ -633,10 +648,13 @@ async def list_companions(
                 revision=row.revision,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
+                running=row.running,
+                last_active_at=row.last_active_at,
             )
             for row in roster.companions
         ],
         next_cursor=roster.next_cursor,
+        runtime_unavailable=roster.runtime_unavailable,
     )
 
 

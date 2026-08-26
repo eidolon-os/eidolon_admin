@@ -12,9 +12,18 @@ What the tests hold is the honesty of a composed answer:
 - **one source failing does not fail the answer.** A Host that cannot reach its
   memory service still knows who its Owner is and who answers;
 - **identifiers are not the answer.** A genome id means nothing to a person;
-  「第 3 章 · 我发现你不喜欢被打断」 is the same fact in the form they can act on;
+  「第 3 章 · 我发现你不喜欢被打断」 is the same fact in the form they can act on
+  — and it lives on the Companion, not here;
 - **and the only part with no degraded form is the Owner**, because without it
   there is nothing for the rest to be about.
+
+What this read is *about* was wrong until 2026-08-26 and the tests below now
+hold the correction. It led with ``answering``: one Companion, promoted, holding
+every rich fact while the others were a count. That made ``default_companion_id``
+— a routing fallback, explicitly "not a rank" (§4.2) — the subject of the
+Owner's own screen, and it could not represent several Eidolons being live at
+once, which is ordinary (§4.6). The Owner's view is now the Owner and their
+Eidolons; who answers unaddressed is a marker on the set, not the shape of it.
 """
 
 from __future__ import annotations
@@ -83,18 +92,34 @@ class _Backend:
                     "revision": 4,
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "updated_at": "2026-08-01T00:00:00+00:00",
+                    "running": True,
+                    "last_active_at": "2026-08-26T09:30:00+00:00",
                 },
                 {
                     "companion_id": "c_02",
                     "display_name": "阿力",
                     "kind": "conversational",
+                    "lifecycle_state": "active",
+                    "revision": 2,
+                    "created_at": "2026-08-01T00:00:00+00:00",
+                    "updated_at": "2026-08-01T00:00:00+00:00",
+                    "running": True,
+                    "last_active_at": "2026-08-26T09:20:00+00:00",
+                },
+                {
+                    "companion_id": "c_03",
+                    "display_name": "小南",
+                    "kind": "conversational",
                     "lifecycle_state": "archived",
                     "revision": 2,
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "updated_at": "2026-08-01T00:00:00+00:00",
+                    "running": False,
+                    "last_active_at": "",
                 },
             ],
             "next_cursor": None,
+            "runtime_unavailable": "",
         }
 
     async def companion_face_state(self, *, owner_id: str, companion_id: str) -> dict:
@@ -293,20 +318,44 @@ async def test_one_read_says_who_i_am_who_answers_and_what_is_waiting(
 
     assert anonymous.status_code == 401
     assert home["owner_display_name"] == "Manson"
-    # Who answers, by name, with the chapter it is on said in words rather than
-    # as a genome id.
-    assert home["answering"]["display_name"] == "小忆"
-    assert home["answering"]["persona_chapter"] == "第 3 章 · 我发现你不喜欢被打断"
-    assert home["answering"]["memory"] == "记着 42 条，其中 2 条只给指定的伙伴"
-    assert home["answering"]["has_face"] is True
-    assert backend.memory_requests == [("owner-1", "c_01")]
-    # The identifier is carried, not shown first.
-    assert home["answering"]["persona_genome_id"] == "g_3"
-    # Counts split the way a person acts on them: one Eidolon answering, one put
-    # away; one device ready, one waiting to be pointed at somebody, one whose
-    # access is gone.
-    assert home["companions"] == {"total": 2, "ready": 1, "waiting": 0, "put_away": 1}
+
+    # The Owner's Eidolons, as a list. Not one of them promoted to be the
+    # subject of the screen: this answer used to lead with `answering`, which
+    # made a routing fallback the thing an Owner's own home was about.
+    assert [row["display_name"] for row in home["companions"]] == ["小忆", "阿力", "小南"]
+
+    # **Two are running at once**, which is the ordinary case a promoted single
+    # Companion could not represent. The third is not, and says so.
+    assert [row["running"] for row in home["companions"]] == [True, True, False]
+    assert home["runtime_unavailable"] == ""
+
+    # Who answers when nobody was named is a setting, named once, and carried
+    # without being the subject.
+    assert home["default_companion_id"] == "c_01"
+
+    # The memory is the *Owner's*: one Realm per Owner, every Companion reading
+    # it through an audience. Asked for as the Owner — no companion_id — where
+    # this used to be asked on behalf of whichever Eidolon answered and labelled
+    # 它的记忆.
+    assert home["memory"] == "记着 42 条，其中 2 条只给指定的伙伴"
+    assert backend.memory_requests == [("owner-1", None)]
+
+    # Counts split the way a person acts on them, alongside the list rather
+    # than instead of it.
+    assert home["companion_counts"] == {
+        "total": 3,
+        "ready": 2,
+        "waiting": 0,
+        "put_away": 1,
+    }
     assert home["devices"] == {"total": 3, "ready": 1, "waiting": 1, "put_away": 1}
+
+    # Nothing about one Eidolon's persona, face or memory is here. Those are
+    # facts about a Companion and belong on the Companion, or only the one that
+    # happened to answer would have a past.
+    for row in home["companions"]:
+        assert "persona_chapter" not in row
+        assert "has_face" not in row
     # The machine's own judgement, repeated verbatim, and only what it flagged.
     assert home["machine_attention"] == ["系统盘：1.8 GB 可用，共 52.1 GB"]
     assert home["unavailable"] == {}
@@ -331,16 +380,14 @@ async def test_a_source_that_could_not_be_read_names_itself(
         home = (await client.get(_HOME, headers=headers)).json()
 
     assert home["owner_display_name"] == "Manson"
-    assert home["answering"]["display_name"] == "小忆"
-    assert home["answering"]["memory"] == ""
-    assert home["answering"]["persona_chapter"] == ""
+    assert [row["display_name"] for row in home["companions"]] == ["小忆", "阿力", "小南"]
+    assert home["memory"] == ""
     assert home["devices"] == {"total": 0, "ready": 0, "waiting": 0, "put_away": 0}
     assert home["machine_attention"] == []
     # Every gap is named, so a client can say "the rest is true, and I could not
     # read those".
     assert set(home["unavailable"]) == {
-        "answering_memory",
-        "answering_persona",
+        "memory",
         "devices",
         "machine",
     }
@@ -360,10 +407,13 @@ async def test_an_owner_who_has_named_nobody_is_a_state_not_a_gap(
         headers = await _authenticate(client)
         home = (await client.get(_HOME, headers=headers)).json()
 
-    assert home["answering"] is None
-    assert home["unavailable"]["answering"] == "还没有指定由谁回答"
-    # The rest of the answer still stands.
-    assert home["companions"]["total"] == 2
+    # Nobody named is a real state, and now an unremarkable one: the screen is
+    # about the Owner's Eidolons, so it loses a marker rather than its subject.
+    assert home["default_companion_id"] is None
+    assert "answering" not in home["unavailable"], (
+        "not having a default is a setting nobody has made, not a source that failed"
+    )
+    assert len(home["companions"]) == 3, "the list is unaffected"
 
 
 async def test_without_an_owner_there_is_nothing_for_the_rest_to_be_about(

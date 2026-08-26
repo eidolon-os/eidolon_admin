@@ -27,6 +27,8 @@ from eidolon_sdk.biz.persona import PersonaAuthoring
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionRosterPage,
     CompanionSummary,
+    OwnerRuntimeCompanions,
+    RuntimeCompanionRow,
 )
 from eidolon_admin_server.app.management.roster import read_roster
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
@@ -71,6 +73,32 @@ class _Companions:
         return self.page
 
 
+class _Runtime:
+    """The Agent, saying which Companions it is holding."""
+
+    def __init__(self, *live: str, fails: Exception | None = None) -> None:
+        self.live = live
+        self.fails = fails
+        self.asked: list[str] = []
+
+    async def runtime_companions(self, *, owner_id: str) -> OwnerRuntimeCompanions:
+        self.asked.append(owner_id)
+        if self.fails is not None:
+            raise self.fails
+        return OwnerRuntimeCompanions(
+            owner_id=owner_id,
+            companions=tuple(
+                RuntimeCompanionRow(
+                    companion_id=companion_id,
+                    genome_id=f"g-{companion_id}",
+                    started_at="2026-08-26T09:00:00+00:00",
+                    last_active_at="2026-08-26T09:30:00+00:00",
+                )
+                for companion_id in self.live
+            ),
+        )
+
+
 def _page(**overrides) -> CompanionRosterPage:
     fields = {
         "contract_version": "1",
@@ -85,6 +113,121 @@ def _page(**overrides) -> CompanionRosterPage:
 
 
 # --- the application read -------------------------------------------------
+
+
+async def test_several_eidolons_can_be_running_at_once() -> None:
+    """The answer the old screens could not represent.
+
+    A Host keeps runtime context per Companion, so more than one being live is
+    ordinary. Screens showed 运行中 whenever the Owner had a default — a routing
+    fallback read as runtime state — which made exactly one row able to claim it.
+    """
+
+    roster = await read_roster(
+        owner_id="owner-1",
+        companions=_Companions(_page()),
+        runtime=_Runtime("companion-a", "companion-b"),
+    )
+
+    assert [row.running for row in roster.companions] == [True, True]
+    assert roster.runtime_unavailable == ""
+
+
+async def test_the_default_one_is_not_assumed_to_be_the_running_one() -> None:
+    """The specific guess this read replaces.
+
+    ``companion-a`` is the default and is *not* running; ``companion-b`` is
+    running and is not the default. Anything that conflated the two would get
+    both rows backwards, which is what a person was being shown.
+    """
+
+    roster = await read_roster(
+        owner_id="owner-1",
+        companions=_Companions(_page(default_companion_id="companion-a")),
+        runtime=_Runtime("companion-b"),
+    )
+
+    by_id = {row.companion_id: row for row in roster.companions}
+    assert by_id["companion-a"].running is False
+    assert by_id["companion-b"].running is True
+
+
+async def test_a_runtime_that_cannot_be_asked_is_unknown_not_stopped() -> None:
+    """Unknown and none are different answers, and only one of them is a lie.
+
+    A person opening this list while the Agent restarts must not be told their
+    Eidolons are all stopped. The roster still arrives — what exists comes from
+    an authority, and only the running column depends on the process.
+    """
+
+    roster = await read_roster(
+        owner_id="owner-1",
+        companions=_Companions(_page()),
+        runtime=_Runtime(fails=RuntimeError("connection refused")),
+    )
+
+    assert [row.running for row in roster.companions] == [None, None]
+    assert roster.runtime_unavailable == "runtime_unreachable"
+    assert len(roster.companions) == 2, "the roster itself survived"
+
+
+async def test_a_starting_runtime_says_so_rather_than_unreachable() -> None:
+    """Two reasons a person acts on differently.
+
+    "It is coming up" is worth waiting for; "there is no Agent on this Host" is
+    worth reporting. A single word for both would send them to the same place,
+    which is why the reason travels as a code rather than as prose.
+    """
+
+    class _Starting(RuntimeError):
+        status_code = 503
+
+    roster = await read_roster(
+        owner_id="owner-1",
+        companions=_Companions(_page()),
+        runtime=_Runtime(fails=_Starting("agent registry not configured")),
+    )
+
+    assert roster.runtime_unavailable == "runtime_starting"
+
+
+async def test_no_runtime_wired_at_all_is_also_unknown() -> None:
+    """A Host composed without an Agent client cannot claim nothing is running."""
+
+    roster = await read_roster(owner_id="owner-1", companions=_Companions(_page()))
+
+    assert [row.running for row in roster.companions] == [None, None]
+    assert roster.runtime_unavailable == "runtime_not_configured"
+
+
+async def test_the_runtime_is_asked_about_this_owner_only() -> None:
+    """The Owner is not a parameter a caller varies, here either."""
+
+    runtime = _Runtime("companion-a")
+    await read_roster(
+        owner_id="owner-1", companions=_Companions(_page()), runtime=runtime
+    )
+
+    assert runtime.asked == ["owner-1"]
+
+
+async def test_when_it_was_last_addressed_travels_with_the_row() -> None:
+    """A list has to be able to say something truthful about recency.
+
+    Running alone cannot tell a Companion in use from one resolved at boot and
+    left, and a screen that said 在跑 for both would be technically true and
+    practically a lie.
+    """
+
+    roster = await read_roster(
+        owner_id="owner-1",
+        companions=_Companions(_page()),
+        runtime=_Runtime("companion-a"),
+    )
+
+    by_id = {row.companion_id: row for row in roster.companions}
+    assert by_id["companion-a"].last_active_at == "2026-08-26T09:30:00+00:00"
+    assert by_id["companion-b"].last_active_at == "", "not running, nothing to say"
 
 
 async def test_the_default_is_named_once_for_the_page() -> None:
@@ -760,7 +903,7 @@ async def test_opening_one_asks_for_it_under_the_session_owner(
         )
 
     assert answered.status_code == 200
-    assert backend.asked == [("owner-1", "companion-a")]
+    assert ("owner-1", "companion-a") in backend.asked
     body = answered.json()
     assert body["is_default"] is True
     # Read now so a client about to rename or archive need not fetch again.

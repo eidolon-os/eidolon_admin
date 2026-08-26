@@ -24,7 +24,15 @@ from typing import Protocol, runtime_checkable
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
     CompanionRosterPage,
+    OwnerRuntimeCompanions,
 )
+
+
+@runtime_checkable
+class RuntimeReader(Protocol):
+    """Which Companions the runtime is holding, right now."""
+
+    async def runtime_companions(self, *, owner_id: str) -> OwnerRuntimeCompanions: ...
 
 
 @runtime_checkable
@@ -55,25 +63,69 @@ class CompanionRow:
     revision: int
     created_at: str
     updated_at: str
+    #: Whether the runtime is holding this Companion at this moment, and when it
+    #: was last addressed. ``None`` is **unknown** — the runtime could not be
+    #: asked — and is not the same as ``False``, which is a real answer meaning
+    #: nothing is running for it. A client that renders unknown as "not running"
+    #: repeats, in the other direction, the guess this field exists to end.
+    running: bool | None = None
+    last_active_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class Roster:
-    """One page. ``default_companion_id`` is named here and nowhere per row."""
+    """One page. ``default_companion_id`` is named here and nowhere per row.
+
+    ``runtime_unavailable`` carries why the runtime could not be read, when it
+    could not. Lifecycle comes from an authority and runtime from a live
+    process, and the second failing must not take the first down with it: a
+    person should still see what Eidolons they have when the Agent is restarting.
+    """
 
     owner_id: str
     default_companion_id: str | None
     companions: tuple[CompanionRow, ...]
     next_cursor: str | None
+    runtime_unavailable: str = ""
 
 
 async def read_roster(
     *,
     owner_id: str,
     companions: RosterReader,
+    runtime: RuntimeReader | None = None,
     cursor: str | None = None,
 ) -> Roster:
+    """What this Owner has, and which of them are running.
+
+    Two sources, and their failures are not the same size. The authority answers
+    what exists — without it there is no roster. The runtime answers what is
+    live — without it every row simply says "unknown", because a list of
+    somebody's Eidolons is worth showing even when the process that runs them is
+    momentarily unreachable.
+
+    Nothing is inferred across the two. In particular the default Companion is
+    not treated as the running one: that guess is what this read replaces.
+    """
+
     page = await companions.list_owner_companions(owner_id, cursor=cursor)
+
+    live: dict[str, str] | None = None
+    unavailable = ""
+    if runtime is None:
+        unavailable = "runtime_not_configured"
+    else:
+        try:
+            answer = await runtime.runtime_companions(owner_id=owner_id)
+        except Exception as exc:  # noqa: BLE001 - a degraded read, not a failure
+            # Deliberately broad, and deliberately not re-raised: this is the
+            # one source whose absence costs a column rather than the answer.
+            unavailable = _runtime_unavailable(exc)
+        else:
+            live = {
+                row.companion_id: row.last_active_at for row in answer.companions
+            }
+
     return Roster(
         owner_id=page.owner_id,
         default_companion_id=page.default_companion_id,
@@ -88,11 +140,30 @@ async def read_roster(
                 # is handed a formatted local time cannot recover the instant.
                 created_at=row.created_at.isoformat(),
                 updated_at=row.updated_at.isoformat(),
+                running=None if live is None else row.companion_id in live,
+                last_active_at=(live or {}).get(row.companion_id, ""),
             )
             for row in page.companions
         ),
         next_cursor=page.next_cursor,
+        runtime_unavailable=unavailable,
     )
+
+
+def _runtime_unavailable(error: Exception) -> str:
+    """Why the runtime could not say, in a word a client can act on.
+
+    A reason rather than a sentence, for the same reason refusals carry codes:
+    "the Agent is restarting" and "this Host has no Agent" lead a person to
+    different places, and matching on prose is how that distinction gets lost.
+    """
+
+    status = getattr(error, "upstream_status", None) or getattr(
+        error, "status_code", None
+    )
+    if status == 503:
+        return "runtime_starting"
+    return "runtime_unreachable"
 
 
 @dataclass(frozen=True, slots=True)

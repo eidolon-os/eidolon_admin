@@ -384,6 +384,32 @@ class RuntimeSessionRevocation(ConsumedModel):
     revoked_at: str = Field(min_length=1, max_length=64)
 
 
+class RuntimeCompanionRow(ConsumedModel):
+    """One Companion this Host currently has a live runtime for."""
+
+    companion_id: str = Field(min_length=1, max_length=64)
+    genome_id: str = Field(default="", max_length=64)
+    started_at: str = Field(default="", max_length=64)
+    #: When anything last addressed it. Carried because "started" alone cannot
+    #: tell a Companion used a minute ago from one resolved at boot and left.
+    last_active_at: str = Field(default="", max_length=64)
+
+
+class OwnerRuntimeCompanions(ConsumedModel):
+    """Which of this Owner's Companions are live, as the runtime says.
+
+    Several at once is the ordinary case (plan §4.6). Consumers used to infer
+    "which one is running" from whether the Owner had a default — a routing
+    fallback — which made the answer both wrong and singular.
+
+    Not presence. A Companion here is one this Host can run, not one anybody can
+    currently reach; nothing on this Host tracks whether a body is connected.
+    """
+
+    owner_id: str = Field(min_length=1, max_length=64)
+    companions: tuple[RuntimeCompanionRow, ...] = ()
+
+
 class ConversationRow(ConsumedModel):
     """One conversation, as the runtime holds it."""
 

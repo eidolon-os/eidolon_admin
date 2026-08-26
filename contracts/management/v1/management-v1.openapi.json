@@ -233,16 +233,39 @@
             "title": "Kind",
             "type": "string"
           },
+          "last_active_at": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Last Active At",
+            "type": "string"
+          },
           "lifecycle_state": {
             "maxLength": 32,
             "minLength": 1,
             "title": "Lifecycle State",
             "type": "string"
           },
+          "persona_chapter": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Persona Chapter",
+            "type": "string"
+          },
           "revision": {
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running"
           }
         },
         "required": [
@@ -481,6 +504,12 @@
               }
             ],
             "title": "Next Cursor"
+          },
+          "runtime_unavailable": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Runtime Unavailable",
+            "type": "string"
           }
         },
         "required": [
@@ -517,6 +546,12 @@
             "title": "Kind",
             "type": "string"
           },
+          "last_active_at": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Last Active At",
+            "type": "string"
+          },
           "lifecycle_state": {
             "maxLength": 32,
             "minLength": 1,
@@ -527,6 +562,17 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
+          },
+          "running": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running"
           },
           "updated_at": {
             "maxLength": 64,
@@ -1307,65 +1353,6 @@
         "title": "ForgetTargetRequest",
         "type": "object"
       },
-      "HomeCompanionView": {
-        "additionalProperties": false,
-        "description": "The Eidolon that answers when nobody was named.\n\nSaid in words, with the identifiers underneath. A person opening this app\nwants to know who answers, whether it is ready, and what it has been up to;\nthe genome and realm identifiers are what they will be asked for if it is\nnot, so they are carried rather than shown.",
-        "properties": {
-          "companion_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Companion Id",
-            "type": "string"
-          },
-          "display_name": {
-            "default": "",
-            "maxLength": 128,
-            "title": "Display Name",
-            "type": "string"
-          },
-          "has_face": {
-            "default": false,
-            "title": "Has Face",
-            "type": "boolean"
-          },
-          "lifecycle_state": {
-            "maxLength": 32,
-            "minLength": 1,
-            "title": "Lifecycle State",
-            "type": "string"
-          },
-          "memory": {
-            "default": "",
-            "maxLength": 256,
-            "title": "Memory",
-            "type": "string"
-          },
-          "persona_chapter": {
-            "default": "",
-            "maxLength": 256,
-            "title": "Persona Chapter",
-            "type": "string"
-          },
-          "persona_genome_id": {
-            "default": "",
-            "maxLength": 64,
-            "title": "Persona Genome Id",
-            "type": "string"
-          },
-          "revision": {
-            "minimum": 1.0,
-            "title": "Revision",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "companion_id",
-          "lifecycle_state",
-          "revision"
-        ],
-        "title": "HomeCompanionView",
-        "type": "object"
-      },
       "HomeCountsView": {
         "additionalProperties": false,
         "description": "How many of a thing there are, split the way a person acts on them.",
@@ -1404,24 +1391,33 @@
         "additionalProperties": false,
         "description": "What is mine, right now, in one read.\n\nThe one call a client makes when it opens. It exists because the alternative\nis four round trips and a screen that renders in pieces — and because the\ncomposition needs facts from five places, which is exactly the kind of thing\na Host should do once rather than a phone doing badly.\n\n**Nothing here is invented, and nothing missing is hidden.** Every part is\nbest-effort: a source this Host could not read leaves its field empty and\nnames itself in ``unavailable``, so a client can say \"the rest of this is\ntrue, and I could not read that one\" instead of drawing a confident blank.",
         "properties": {
-          "answering": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/HomeCompanionView"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "companion_counts": {
+            "$ref": "#/components/schemas/HomeCountsView"
           },
           "companions": {
-            "$ref": "#/components/schemas/HomeCountsView"
+            "items": {
+              "$ref": "#/components/schemas/CompanionSummaryView"
+            },
+            "title": "Companions",
+            "type": "array"
           },
           "contract_version": {
             "const": "1",
             "default": "1",
             "title": "Contract Version",
             "type": "string"
+          },
+          "default_companion_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Companion Id"
           },
           "devices": {
             "$ref": "#/components/schemas/HomeCountsView"
@@ -1432,6 +1428,12 @@
             },
             "title": "Machine Attention",
             "type": "array"
+          },
+          "memory": {
+            "default": "",
+            "maxLength": 256,
+            "title": "Memory",
+            "type": "string"
           },
           "owner_display_name": {
             "default": "",
@@ -1444,6 +1446,12 @@
             "title": "Owner Revision",
             "type": "integer"
           },
+          "runtime_unavailable": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Runtime Unavailable",
+            "type": "string"
+          },
           "unavailable": {
             "additionalProperties": {
               "type": "string"
@@ -1454,7 +1462,7 @@
         },
         "required": [
           "owner_revision",
-          "companions",
+          "companion_counts",
           "devices"
         ],
         "title": "HomeView",

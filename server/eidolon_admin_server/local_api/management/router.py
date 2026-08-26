@@ -136,57 +136,6 @@ async def _try(unavailable: dict[str, str], part: str, awaitable):
         return None
 
 
-async def _answering_view(
-    backend,
-    owner_id: str,
-    companion_id: str,
-    roster,
-    unavailable: dict[str, str],
-) -> "HomeCompanionView | None":
-    """The default Eidolon, filled in from as many sources as answered."""
-
-    row = None
-    for candidate in (roster or {}).get("companions", ()):
-        if candidate.get("companion_id") == companion_id:
-            row = candidate
-            break
-    if row is None:
-        detail = await _try(
-            unavailable,
-            "answering",
-            backend.companion(owner_id=owner_id, companion_id=companion_id),
-        )
-        if detail is None:
-            return None
-        row = detail
-
-    face = await _try(
-        unavailable,
-        "answering_face",
-        backend.companion_face_state(owner_id=owner_id, companion_id=companion_id),
-    )
-    persona = await _try(
-        unavailable,
-        "answering_persona",
-        backend.persona_history(owner_id=owner_id, companion_id=companion_id),
-    )
-    memory = await _try(
-        unavailable,
-        "answering_memory",
-        backend.memory_library(owner_id=owner_id, companion_id=companion_id),
-    )
-    return HomeCompanionView(
-        companion_id=companion_id,
-        display_name=str(row.get("display_name") or ""),
-        lifecycle_state=str(row.get("lifecycle_state") or "active"),
-        revision=int(row.get("revision") or 1),
-        has_face=bool((face or {}).get("has_face")),
-        persona_chapter=_persona_chapter(persona),
-        memory=_memory_sentence(memory),
-        persona_genome_id=_current_chapter_id(persona),
-    )
-
-
 def _persona_chapter(persona) -> str:
     """Which chapter it is on, and what changed — not a hash.
 
@@ -512,6 +461,25 @@ class CompanionSummaryView(BaseModel):
     revision: int = Field(ge=1)
     created_at: str = Field(min_length=1, max_length=64)
     updated_at: str = Field(min_length=1, max_length=64)
+    #: Whether this Host is running it at this moment.
+    #:
+    #: Three states, and the third is why this is not a boolean: **null is
+    #: "nobody could say"**. A client must show that as unknown rather than as
+    #: "not running" — which is the mistake this field was added to end, in the
+    #: other direction. Screens used to render 运行中 whenever the Owner had a
+    #: default Companion, so a routing fallback was being read as runtime state
+    #: and only one Eidolon could ever appear to be running.
+    #:
+    #: **Several rows being true at once is ordinary.** A Host runs one set of
+    #: services and keeps runtime context per Companion (§4.6).
+    #:
+    #: It is not presence: true means this Host is holding a runtime, not that
+    #: any body is reachable. Nothing on this Host tracks device presence, which
+    #: is why devices still report ``online`` as unknown.
+    running: bool | None = None
+    #: When anything last addressed it — being spoken to counts as much as
+    #: speaking. Empty when unknown, or when nothing has since this Host started.
+    last_active_at: str = Field(default="", max_length=64)
 
 
 class CompanionRosterView(BaseModel):
@@ -528,6 +496,11 @@ class CompanionRosterView(BaseModel):
     #: Opaque. A client stores it and sends it back to get the next page;
     #: parsing it would make the Host's page boundary part of the client.
     next_cursor: str | None = Field(default=None, max_length=256)
+    #: Why every row's ``running`` is unknown, when it is. Empty means the
+    #: runtime answered, so each row carries a real answer. Named rather than
+    #: implied by the nulls: "the Agent is restarting" and "this Host has no
+    #: Agent" send a person to different places.
+    runtime_unavailable: str = Field(default="", max_length=64)
 
 
 class CompanionDetailView(BaseModel):
@@ -550,6 +523,21 @@ class CompanionDetailView(BaseModel):
     #: about to rename or archive is not made to fetch again first.
     revision: int = Field(ge=1)
     is_default: bool
+    #: How many times this Eidolon has been something different, and what
+    #: changed most recently: 「第 2 章 · 你改了它是谁」. Composed here rather
+    #: than shown as a genome hash, which means nothing to a person.
+    #:
+    #: On the Companion rather than on the home screen, which is where it used
+    #: to be. It is a fact about *this* Eidolon, and putting it on the home
+    #: screen meant only the one that happened to answer had a past.
+    #:
+    #: Empty when this Host could not read the history, which is not the same as
+    #: an Eidolon that has never changed.
+    persona_chapter: str = Field(default="", max_length=256)
+    #: Whether the runtime is holding it right now. Null is unknown, as on a
+    #: roster row — and for the same reason.
+    running: bool | None = None
+    last_active_at: str = Field(default="", max_length=64)
 
 
 class DefaultCompanionRequest(BaseModel):
@@ -1160,35 +1148,6 @@ class ForgetResultView(BaseModel):
     status: str = Field(min_length=1, max_length=64)
 
 
-class HomeCompanionView(BaseModel):
-    """The Eidolon that answers when nobody was named.
-
-    Said in words, with the identifiers underneath. A person opening this app
-    wants to know who answers, whether it is ready, and what it has been up to;
-    the genome and realm identifiers are what they will be asked for if it is
-    not, so they are carried rather than shown.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    companion_id: str = Field(min_length=1, max_length=64)
-    display_name: str = Field(default="", max_length=128)
-    #: active / retiring / archived / deleting, as the authority says it.
-    lifecycle_state: str = Field(min_length=1, max_length=32)
-    revision: int = Field(ge=1)
-    #: Whether it has a face, so a screen knows to fetch one.
-    has_face: bool = False
-    #: What its persona has been through, in words: "第 3 章" and what changed.
-    #: Empty when this Host could not read the history, which is not the same as
-    #: an Eidolon that has never changed.
-    persona_chapter: str = Field(default="", max_length=256)
-    #: Whether what it remembers is reachable, in words. Empty when unread.
-    memory: str = Field(default="", max_length=256)
-    #: The identifiers, for the technical corner of a screen and for asking for
-    #: help. Never the thing a person is shown first.
-    persona_genome_id: str = Field(default="", max_length=64)
-
-
 class HomeCountsView(BaseModel):
     """How many of a thing there are, split the way a person acts on them."""
 
@@ -1223,10 +1182,33 @@ class HomeView(BaseModel):
     #: What this person is called, and the version a rename compares against.
     owner_display_name: str = Field(default="", max_length=128)
     owner_revision: int = Field(ge=1)
-    #: Who answers when nobody was named. Null is a real state — every Eidolon
-    #: put away, or none created yet — and no client may resolve it by picking.
-    answering: HomeCompanionView | None = None
-    companions: HomeCountsView
+    #: This Owner's Eidolons — the first page of them, each with its own state.
+    #:
+    #: A **list**, and that is the correction. This answer used to lead with
+    #: ``answering``: one Companion, promoted, carrying every rich fact (its
+    #: persona chapter, its face, what it remembered) while the rest were
+    #: reduced to a count. That made a routing fallback the subject of the
+    #: Owner's own screen, and it could not represent the ordinary case of
+    #: several Eidolons being live at once.
+    #:
+    #: The rows are the roster's rows, not a second shape. Two shapes for one
+    #: thing is how a list and a detail page come to disagree about what state
+    #: something is in.
+    companions: list[CompanionSummaryView] = Field(default_factory=list)
+    #: Who answers when nobody was named. A setting the Owner made, named once
+    #: here and never as a flag on a row — and never the subject of the screen.
+    #: Null is a real state (every Eidolon put away, or none created yet) and no
+    #: client may resolve it by picking one.
+    default_companion_id: str | None = Field(default=None, max_length=64)
+    #: Why every row's ``running`` is unknown, when it is.
+    runtime_unavailable: str = Field(default="", max_length=64)
+    #: What this Owner's memory holds, in words. **Theirs, not any one
+    #: Eidolon's**: an Owner has one Realm and every Companion reads and writes
+    #: it through an audience (§4.4). This used to hang off the promoted
+    #: Companion and be labelled 它的记忆, which attributed the person's own
+    #: memory to whichever Eidolon happened to answer.
+    memory: str = Field(default="", max_length=256)
+    companion_counts: HomeCountsView
     devices: HomeCountsView
     #: What the machine says needs attention, already phrased. Empty means
     #: nothing did — which is different from not having been able to look, and
@@ -1778,20 +1760,31 @@ def register_management_routes(
         roster = await _try(unavailable, "companions", backend.roster(owner_id=owner_id, cursor=None))
         inventory = await _try(unavailable, "devices", devices.list_devices(session=session))
         vitals = await _try(unavailable, "machine", host.read_vitals())
-        default_id = context.get("default_companion_id")
-        answering: HomeCompanionView | None = None
-        if default_id:
-            answering = await _answering_view(
-                backend, owner_id, str(default_id), roster, unavailable
-            )
-        elif roster is not None:
-            unavailable["answering"] = "还没有指定由谁回答"
+        # The Owner's memory, asked for as the Owner: no ``companion_id``, so
+        # every audience is in scope. Asking on behalf of one Companion would
+        # return that Eidolon's view of the person's own memory and label it
+        # theirs.
+        memory = await _try(
+            unavailable,
+            "memory",
+            backend.memory_library(owner_id=owner_id, companion_id=None),
+        )
 
         return HomeView(
             owner_display_name=str(context.get("owner_display_name") or ""),
             owner_revision=int(context.get("owner_revision") or 1),
-            answering=answering,
-            companions=_companion_counts(roster),
+            companions=[
+                CompanionSummaryView(**row)
+                for row in (roster or {}).get("companions", ())
+            ],
+            default_companion_id=(
+                str(context["default_companion_id"])
+                if context.get("default_companion_id")
+                else None
+            ),
+            runtime_unavailable=str((roster or {}).get("runtime_unavailable") or ""),
+            memory=_memory_sentence(memory),
+            companion_counts=_companion_counts(roster),
             devices=_device_counts(inventory),
             # Through the same projection ``/host/vitals`` uses, so the words a
             # person reads here are the words they read there — two phrasings of
@@ -2064,6 +2057,7 @@ def register_management_routes(
                 CompanionSummaryView(**row) for row in answer["companions"]
             ],
             next_cursor=answer["next_cursor"],
+            runtime_unavailable=answer.get("runtime_unavailable", ""),
         )
 
     @router.get("/companions/{companion_id}", response_model=CompanionDetailView)
@@ -2085,6 +2079,28 @@ def register_management_routes(
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
+
+        # Best-effort, and separately: the Companion itself is what this route
+        # promises, so a history or a runtime that could not be read leaves its
+        # own field empty rather than failing the page. Unlike ``/home`` this
+        # answer has no ``unavailable`` map — the two fields are self-describing
+        # (empty chapter, null running) and inventing one here would be a second
+        # vocabulary for the same idea.
+        aside: dict[str, str] = {}
+        persona = await _try(
+            aside,
+            "persona",
+            backend.persona_history(owner_id=owner_id, companion_id=companion_id),
+        )
+        runtime = await _try(aside, "runtime", backend.roster(owner_id=owner_id, cursor=None))
+        live = None
+        if runtime is not None and not runtime.get("runtime_unavailable"):
+            live = {
+                row["companion_id"]: row.get("last_active_at") or ""
+                for row in runtime.get("companions", ())
+                if row.get("running")
+            }
+
         return CompanionDetailView(
             companion_id=answer["companion_id"],
             display_name=answer["display_name"],
@@ -2092,6 +2108,9 @@ def register_management_routes(
             lifecycle_state=answer["lifecycle_state"],
             revision=answer["revision"],
             is_default=answer["is_default"],
+            persona_chapter=_persona_chapter(persona),
+            running=None if live is None else companion_id in live,
+            last_active_at=(live or {}).get(companion_id, ""),
         )
 
     @router.put("/owner/default-companion", response_model=DefaultCompanionView)

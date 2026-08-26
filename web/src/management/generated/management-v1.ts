@@ -47,8 +47,11 @@ export interface CompanionDetailView {
   display_name?: string
   is_default: boolean
   kind: string
+  last_active_at?: string
   lifecycle_state: string
+  persona_chapter?: string
   revision: number
+  running?: boolean | null
 }
 
 export interface CompanionFaceView {
@@ -86,6 +89,7 @@ export interface CompanionRosterView {
   contract_version?: "1"
   default_companion_id?: string | null
   next_cursor?: string | null
+  runtime_unavailable?: string
 }
 
 export interface CompanionSummaryView {
@@ -93,8 +97,10 @@ export interface CompanionSummaryView {
   created_at: string
   display_name?: string
   kind: string
+  last_active_at?: string
   lifecycle_state: string
   revision: number
+  running?: boolean | null
   updated_at: string
 }
 
@@ -233,17 +239,6 @@ export interface ForgetTargetRequest {
   target: string
 }
 
-export interface HomeCompanionView {
-  companion_id: string
-  display_name?: string
-  has_face?: boolean
-  lifecycle_state: string
-  memory?: string
-  persona_chapter?: string
-  persona_genome_id?: string
-  revision: number
-}
-
 export interface HomeCountsView {
   put_away: number
   ready: number
@@ -252,13 +247,16 @@ export interface HomeCountsView {
 }
 
 export interface HomeView {
-  answering?: HomeCompanionView | null
-  companions: HomeCountsView
+  companion_counts: HomeCountsView
+  companions?: Array<CompanionSummaryView>
   contract_version?: "1"
+  default_companion_id?: string | null
   devices: HomeCountsView
   machine_attention?: Array<string>
+  memory?: string
   owner_display_name?: string
   owner_revision: number
+  runtime_unavailable?: string
   unavailable?: Record<string, string>
 }
 
