@@ -176,7 +176,7 @@ async def compose_runtime(
     default_companion_id = getattr(owner, "default_companion_id", None)
     companion = _default_companion(companions, default_companion_id)
     guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
-    runtime_blackboard = await _runtime_blackboard(request, owner_id, ledger)
+    runtime_blackboard = _runtime_blackboard(owner_id, ledger)
     # No Hub list. `app.state.hub_device_client` is read nowhere else in this
     # process and set nowhere at all, so that source could only ever report
     # "Hub client unavailable" — a permanently failing read is the same dead
@@ -473,69 +473,35 @@ async def _select_owner(
         return None
 
 
-async def _runtime_blackboard(
-    request: Request,
-    owner_id: str,
-    ledger: LaneLedger,
-) -> RuntimeDeviceBlackboard:
-    """Read exactly one owner-scoped current snapshot directly from NATS KV."""
+def _runtime_blackboard(owner_id: str, ledger: LaneLedger) -> RuntimeDeviceBlackboard:
+    """No presence read. The fourth capability that refactor took with it.
 
-    key = owner_device_blackboard_key(owner_id)
-    client = getattr(request.app.state, "nats_kv", None)
-    if client is None:
-        detail = "NATS KV client unavailable"
-        ledger.record("runtime.blackboard", ok=False, detail=detail)
-        return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
+    This opened a NATS KV connection of its own and read the owner-isolated
+    device blackboard — the presence authority. ``9a5880f align admin with data
+    v2 and kernel boundary`` removed the client that made it possible, and the
+    read stayed: it has reported "NATS KV client unavailable" ever since, which
+    reads like a service being down rather than a capability that was withdrawn
+    on purpose.
 
-    started = time.perf_counter()
-    try:
-        raw = await client.get_existing(DEVICE_BLACKBOARD_BUCKET, key)
-    except Exception as exc:  # noqa: BLE001 - observatory must fail closed
-        detail = f"NATS KV read failed: {exc}"
-        ledger.record("runtime.blackboard", ok=False, detail=detail)
-        return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
+    Re-opening one here would push back against that refactor's direction —
+    Admin reads authorities over HTTP now, not infrastructure directly — and
+    whose job it is to re-establish per-device presence is a boundary decision,
+    not something to settle inside a panel. Until then this Host observes no
+    presence, the lane says so with the reason, and the Owner's plane joins in
+    the inventory it can read so their bodies are still drawn (unknown, never
+    offline).
+    """
 
-    if raw is None:
-        detail = "No current snapshot for selected owner"
-        ledger.record("runtime.blackboard", ok=True, detail=detail, started=started)
-        return RuntimeDeviceBlackboard(health="empty", detail=detail, key=key)
-
-    try:
-        snapshot = OwnerDeviceBlackboardSnapshot.from_bytes(
-            raw,
-            expected_owner_id=owner_id,
-        )
-    except Exception as exc:  # noqa: BLE001 - malformed/foreign data fails closed
-        detail = f"Invalid owner snapshot: {exc}"
-        ledger.record("runtime.blackboard", ok=False, detail=detail)
-        return RuntimeDeviceBlackboard(health="degraded", detail=detail, key=key)
-
-    now = datetime.now(UTC)
-    if not snapshot.ready:
-        detail = "Hub snapshot is not ready"
-        health = "degraded"
-        available = False
-    elif snapshot.hub_lease_expires_at <= now:
-        detail = "Hub snapshot lease expired"
-        health = "degraded"
-        available = False
-    elif not snapshot.devices:
-        detail = "Snapshot ready; no current runtime devices"
-        health = "empty"
-        available = True
-    else:
-        online = sum(1 for row in snapshot.devices.values() if row.is_online(now=now))
-        detail = f"Snapshot ready; {online}/{len(snapshot.devices)} devices online"
-        health = "healthy"
-        available = True
-
-    ledger.record("runtime.blackboard", ok=available, detail=detail, started=started)
+    _unexposed(
+        ledger,
+        "runtime.blackboard",
+        "这台 Host 没有在观测设备在场：Admin 的 NATS KV 客户端随 9a5880f 一起移除，"
+        "至今没有权威通过 HTTP 发布逐设备在场",
+    )
     return RuntimeDeviceBlackboard(
-        health=health,
-        available=available,
-        detail=detail,
-        key=key,
-        snapshot=snapshot,
+        health="unexposed",
+        detail="Admin 不再直接读运行黑板",
+        key=owner_device_blackboard_key(owner_id),
     )
 
 
@@ -591,34 +557,23 @@ async def _memory_summary(
     turns: list[dict[str, Any]],
     ledger: LaneLedger,
 ) -> RuntimeMemory:
+    # No runner count. This read `app.memory.runners`, which
+    # `06e7a2e align admin with data v2 and kernel boundary` deleted along with
+    # the rest of that package — the capability moved to the Memory service, and
+    # Admin holds no client for it. The import was inside a broad `except`, so
+    # for months this reported an ImportError as though the memory service had
+    # failed to answer: "no module named" is not a service being slow.
+    #
+    # Said as an absence instead, which is what it is. Nothing here can be
+    # counted until Memory publishes a runner roster over HTTP — the same gap
+    # `data.memory` above names for realms.
     runners_total = 0
     runners_online = 0
-    started = time.perf_counter()
-    try:
-        from eidolon_admin_server.app.memory.runners import list_runners
-
-        payload = await list_runners()
-        rows = payload.get("runners") if isinstance(payload, dict) else []
-        if isinstance(rows, list):
-            runners_total = len(rows)
-            runners_online = sum(
-                1
-                for row in rows
-                if isinstance(row, dict)
-                and (
-                    row.get("worker_running")
-                    or row.get("agent_reachable")
-                    or row.get("runtime_state") == "running"
-                )
-            )
-        ledger.record(
-            "memory.runners",
-            ok=True,
-            detail=f"{runners_online}/{runners_total} online",
-            started=started,
-        )
-    except Exception as exc:  # noqa: BLE001
-        ledger.record("memory.runners", ok=False, detail=str(exc))
+    _unexposed(
+        ledger,
+        "memory.runners",
+        "Memory 不发布 runner 名册；Admin 里那条路径已随 app.memory 一起删除",
+    )
 
     latest = _turn(turns[0]) if turns else None
     observability_summary = _dict_or_empty(turns[0].get("observability_summary")) if turns else {}

@@ -131,9 +131,17 @@ class RuntimeDevice(BaseModel):
 
 
 class RuntimeDeviceBlackboard(BaseModel):
-    """Read-only health envelope around one owner's exact KV snapshot."""
+    """Read-only health envelope around one owner's exact KV snapshot.
 
-    health: Literal["healthy", "degraded", "empty"] = "empty"
+    Four states, not three. The first three all assume the read happened —
+    healthy, degraded, or nothing there — and Admin no longer takes it: the KV
+    client this needed was removed by ``9a5880f align admin with data v2 and
+    kernel boundary``. ``unexposed`` is that fourth case, and it exists so the
+    absence has a name instead of borrowing ``degraded``, which would say a
+    reachable blackboard was answering badly.
+    """
+
+    health: Literal["healthy", "degraded", "empty", "unexposed"] = "empty"
     available: bool = False
     detail: str = "No current runtime device snapshot"
     bucket: str = "EIDOLON_RUNTIME_DEVICES"

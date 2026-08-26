@@ -15,6 +15,7 @@ apart.
 
 from __future__ import annotations
 
+import importlib
 import pathlib
 import re
 
@@ -210,6 +211,37 @@ async def test_a_removed_upstream_method_costs_one_lane_not_the_map() -> None:
     # The failure is attributed, so it can reach a screen rather than a log.
     assert ledger.outcome("devices").state == "unavailable"
     assert "read_snapshot" in ledger.outcome("devices").detail
+
+
+async def test_every_module_this_composition_imports_can_be_imported() -> None:
+    """The third instance of one failure mode, so now it has a guard.
+
+    Three capabilities this composition reached for had been removed upstream and
+    the calls stayed: Hub's ``list_devices``, Hub's event feed, and
+    ``app.memory.runners`` — the last deleted by
+    ``06e7a2e align admin with data v2 and kernel boundary``. All three were
+    invisible, two inside broad ``except`` blocks and one because ``_safe`` could
+    not see a construction-time failure. For months the memory lane reported
+    "No module named 'eidolon_admin_server.app.memory'" as though the memory
+    service had been slow to answer.
+
+    A function-level import is the one the type checker and the linter are least
+    likely to notice, so it is the one worth asking about here: every module the
+    composition names must exist.
+    """
+
+    source = pathlib.Path(service.__file__).read_text(encoding="utf-8")
+    package = service.__name__.rsplit(".", 1)[0]
+    modules = set(re.findall(r"^\s+from ([\w.]+) import ", source, re.MULTILINE))
+    missing = []
+    for module in sorted(modules):
+        try:
+            # Relative imports resolve against the composition's own package,
+            # which is where they were written.
+            importlib.import_module(module, package=package)
+        except ImportError as exc:
+            missing.append(f"{module} ({exc})")
+    assert not missing, f"the composition imports modules that do not exist: {missing}"
 
 
 async def test_the_retired_hub_capabilities_are_said_rather_than_asked_for() -> None:
