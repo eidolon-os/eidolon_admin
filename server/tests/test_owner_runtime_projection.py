@@ -235,10 +235,8 @@ def _audit(seq: int = 41, **overrides) -> IndexedAuditEvent:
 def _healthy_ledger() -> LaneLedger:
     ledger = LaneLedger()
     for source in (
-        "hub.devices",
         "hub",
         "runtime.blackboard",
-        "data.guard_bindings",
         "services",
         "agent.turns",
         "data.conversations",
@@ -246,7 +244,6 @@ def _healthy_ledger() -> LaneLedger:
         "data.jobs",
         "data.memory",
         "memory.runners",
-        "hub.events",
         "audit.index",
     ):
         ledger.record(source, ok=True)
@@ -271,8 +268,12 @@ def test_projection_satisfies_the_sdk_contract() -> None:
 
 
 def test_a_lane_nobody_could_read_carries_no_rows() -> None:
-    ledger = _healthy_ledger()
-    ledger.record("hub.devices", ok=False, detail="Hub 连接超时")
+    # Every source this lane has, gone. Not one of two — none.
+    ledger = LaneLedger()
+    for source in ("services", "agent.turns", "agent.long_tasks", "audit.index"):
+        ledger.record(source, ok=True)
+    ledger.record("hub", ok=False, detail="Hub 连接超时")
+    ledger.record("runtime.blackboard", ok=False, detail="NATS KV 不可用")
 
     payload = owner_runtime_projection(
         RuntimeComposition(snapshot=_snapshot(), ledger=ledger),
@@ -283,6 +284,7 @@ def test_a_lane_nobody_could_read_carries_no_rows() -> None:
     devices = payload["devices"]
     assert devices["state"] == "unavailable"
     assert "Hub 连接超时" in devices["detail"]
+    assert "NATS KV" in devices["detail"]
     # Composed rows existed. They were not observed on this reading, so they do
     # not ship: an unreadable lane with rows in it is a failure nobody can see.
     assert devices["items"] == []
@@ -292,23 +294,60 @@ def test_a_lane_nobody_could_read_carries_no_rows() -> None:
     assert payload["services"]["items"]
 
 
-def test_hub_event_feed_darkens_the_activity_chain_not_the_event_lane() -> None:
-    # Hub's live feed is what the chain is ordered by; the Owner's events come
-    # from the index. Losing the feed costs the chain, not the moments.
+def test_one_source_of_two_leaves_a_lane_partly_known() -> None:
+    """Degraded, not unavailable — and not ok either.
+
+    A Host that can see who is present but not who exists knows something worth
+    drawing, and knows it is not the whole picture. Calling that unavailable
+    throws away what was read; calling it ok hides what was not.
+    """
+
     ledger = _healthy_ledger()
-    ledger.record("hub.events", ok=False, detail="Hub 事件流断了")
+    ledger.record("hub", ok=False, detail="Hub client unavailable")
 
     payload = owner_runtime_projection(
         RuntimeComposition(snapshot=_snapshot(), ledger=ledger),
         audit_events=[_audit()],
     )
-    assert payload["activities"]["state"] == "unavailable"
+    _validator().validate(payload)
+    assert payload["devices"]["state"] == "degraded"
+    assert "Hub client unavailable" in payload["devices"]["detail"]
+    # And it still carries what the blackboard answered.
+    assert payload["devices"]["items"]
+
+
+def test_a_retired_capability_decides_no_lane() -> None:
+    """Said out loud, and costing nothing.
+
+    Hub's management client no longer publishes an owner device page or an event
+    feed. The composition records that rather than asking — and because those
+    sources decide no lane, a lane does not go dark over a capability that moved.
+    """
+
+    ledger = _healthy_ledger()
+    ledger.record("hub.device_page", ok=False, detail="不再发布")
+    ledger.record("hub.event_feed", ok=False, detail="不再发布")
+    ledger.record("data.guard_bindings", ok=False, detail="Guard 运行时还不存在")
+
+    payload = owner_runtime_projection(
+        RuntimeComposition(snapshot=_snapshot(), ledger=ledger),
+        audit_events=[_audit()],
+    )
+    assert payload["devices"]["state"] == "ok"
     assert payload["events"]["state"] == "ok"
 
 
-def test_one_source_can_darken_two_lanes() -> None:
-    # The Agent's turn feed is where both turns and the activity chain come
-    # from. Losing it makes both unknown rather than making one look quiet.
+def test_one_source_reaches_every_lane_it_decides() -> None:
+    """The Agent's turn feed is where both the turns and the activity chain come
+    from. Losing it must reach both — otherwise one of them looks quiet.
+
+    Both land on ``degraded`` rather than ``unavailable`` here because each lane
+    has another source that answered. That is the honest reading: partly known,
+    with the reason for the rest attached. On the Host as it is today the other
+    sources are unexposed, so the same loss makes both lanes unavailable — which
+    is what ``test_a_lane_nobody_could_read_carries_no_rows`` holds.
+    """
+
     ledger = _healthy_ledger()
     ledger.record("agent.turns", ok=False, detail="Agent 没有回应")
 
@@ -316,8 +355,10 @@ def test_one_source_can_darken_two_lanes() -> None:
         RuntimeComposition(snapshot=_snapshot(), ledger=ledger),
         audit_events=[_audit()],
     )
-    assert payload["turns"]["state"] == "unavailable"
-    assert payload["activities"]["state"] == "unavailable"
+    for lane in ("turns", "activities"):
+        assert payload[lane]["state"] == "degraded", lane
+        assert "Agent 没有回应" in payload[lane]["detail"], lane
+    # And a lane it does not decide is untouched.
     assert payload["devices"]["state"] == "ok"
 
 

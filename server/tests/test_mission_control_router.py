@@ -15,12 +15,17 @@ apart.
 
 from __future__ import annotations
 
+import pathlib
+import re
+
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
+from eidolon_admin_server.app.control_plane import clients
 from eidolon_admin_server.app.mission_control import service
+from eidolon_admin_server.app.mission_control.lanes import LaneLedger
 from eidolon_admin_server.app.mission_control.schemas import SourceStatus
 
 pytestmark = pytest.mark.asyncio
@@ -169,13 +174,95 @@ async def test_a_snapshot_without_an_owner_refuses_rather_than_picking_one() -> 
     assert snapshot.owner is None
 
 
-async def test_devices_come_from_hub_which_is_the_device_authority() -> None:
-    control_plane = _ControlPlane(devices=[_Device("dev-a"), _Device("dev-b")])
+async def test_a_removed_upstream_method_costs_one_lane_not_the_map() -> None:
+    """The defect this file now guards, in its own words.
 
-    snapshot = await service.build_snapshot(_Request(control_plane), owner_id=_OWNER_ID)
+    ``_safe`` used to take an already-created awaitable, so
+    ``client.gone_method(args)`` raised *before* ``_safe`` was entered. An
+    upstream rename — the commonest drift there is — therefore bypassed the
+    safety net entirely and took every lane with it. On 2026-08-26 the Hub
+    client had lost ``list_devices`` and the whole composition answered 500,
+    on a Host where six lanes were fine.
 
-    assert _status(snapshot, "hub.devices").ok is True
-    assert {device.device_id for device in snapshot.devices} >= {"dev-a", "dev-b"}
+    Taking a callable is what fixes it, and this is the shape of the proof: a
+    source whose method does not exist reports as a failed source, and the rest
+    of the reading survives.
+    """
+
+    class _Gone:
+        def __getattr__(self, name: str):
+            raise AttributeError(f"'Gone' object has no attribute '{name}'")
+
+    ledger = LaneLedger()
+    result = await service._safe(
+        ledger,
+        "hub",
+        lambda: _Gone().list_devices(owner_id="owner-1"),
+        ["fallback"],
+    )
+
+    assert result == ["fallback"]
+    status = next(row for row in ledger.statuses() if row.source == "hub")
+    assert status.ok is False
+    assert "AttributeError" in status.detail
+    # The failure is attributed, so it can reach a screen rather than a log.
+    assert ledger.outcome("devices").state == "unavailable"
+    assert "list_devices" in ledger.outcome("devices").detail
+
+
+async def test_the_retired_hub_capabilities_are_said_rather_than_asked_for() -> None:
+    """Hub's management client no longer publishes an owner device page or an
+    event feed, and this composition used to call both.
+
+    It called them through ``_safe``, which did not help: the arguments were
+    evaluated before ``_safe`` was entered, so a removed method raised there and
+    took every lane with it — see ``test_a_removed_upstream_method_costs_one
+    _lane`` below, and the operator console's map answering 500 for as long as
+    nobody looked. What replaced them is a stated absence: nothing is asked for,
+    and the reason is on the record where a reader can see it.
+    """
+
+    snapshot = await service.build_snapshot(
+        _Request(_ControlPlane()), owner_id=_OWNER_ID
+    )
+
+    for source in ("hub.device_page", "hub.event_feed"):
+        status = _status(snapshot, source)
+        assert status is not None and status.ok is False, source
+        assert status.detail, source
+
+
+async def test_every_authority_method_this_composition_calls_really_exists() -> None:
+    """The guard that was missing.
+
+    ``test_devices_come_from_hub_which_is_the_device_authority`` used to stand
+    here and passed against a stub that still had ``list_devices``. The real
+    client had dropped it months earlier, and no test compared the two — so the
+    composition was wrong in production and green in CI, which is the worst of
+    the four combinations.
+
+    So this reads the calls out of the composition and asks the real classes.
+    """
+
+    source = (
+        pathlib.Path(service.__file__).read_text(encoding="utf-8")
+    )
+    authorities = {
+        "data_authority_of": clients.DataAuthorityClient,
+        "workspace_authority_of": clients.DataWorkspaceAuthorityClient,
+        "hub_authority_of": clients.HubManagementClient,
+    }
+    missing: list[str] = []
+    for helper, client in authorities.items():
+        for method in set(
+            re.findall(rf"{helper}\(control_plane\)\.([a-z_]+)\(", source)
+        ):
+            if not hasattr(client, method):
+                missing.append(f"{client.__name__}.{method}")
+    assert not missing, (
+        "the composition calls authority methods that do not exist: "
+        f"{sorted(missing)}"
+    )
 
 
 async def test_an_admin_with_no_control_plane_says_that_and_stops() -> None:
@@ -186,17 +273,24 @@ async def test_an_admin_with_no_control_plane_says_that_and_stops() -> None:
     assert "no control-plane clients" in status.detail
 
 
-async def test_an_event_is_enriched_from_hub_only_when_it_says_whose_it_is() -> None:
-    """Hub answers per Owner, so an event with no Owner cannot be resolved.
+async def test_a_live_event_is_returned_as_it_arrived() -> None:
+    """The enrichment this used to assert has been dead for a while.
 
-    Returning it unchanged is the honest outcome; guessing an Owner would
-    attribute one person's device activity to another.
+    It resolved a device's Companion through Hub's owner device page — a method
+    the Hub management client no longer has — inside a bare ``except``. So it
+    silently did nothing, while a test built on a stub that still had the method
+    said it worked. The call is gone now, and this holds what actually happens:
+    an event crosses unchanged.
+
+    The owner-isolated runtime blackboard carries the device→Companion binding
+    and is where this belongs if it is wanted again. Nothing on the Owner's map
+    needs it: their events come from the audit index, which records the subject
+    at the time it happened.
     """
 
     from eidolon_admin_server.app.mission_control.schemas import RuntimeEvent
 
-    control_plane = _ControlPlane(devices=[_Device("dev-a", companion_id="cmp-1")])
-    request = _Request(control_plane)
+    request = _Request(_ControlPlane(devices=[_Device("dev-a", companion_id="cmp-1")]))
 
     def event(**fields: Any) -> RuntimeEvent:
         return RuntimeEvent(
@@ -207,11 +301,13 @@ async def test_an_event_is_enriched_from_hub_only_when_it_says_whose_it_is() -> 
             **fields,
         )
 
-    anonymous = event(event_id="e1", device_id="dev-a")
-    assert (await service.enrich_runtime_event(request, anonymous)).companion_id is None
-
-    owned = event(event_id="e2", device_id="dev-a", owner_id=_OWNER_ID)
-    assert (await service.enrich_runtime_event(request, owned)).companion_id == "cmp-1"
+    for row in (
+        event(event_id="e1", device_id="dev-a"),
+        event(event_id="e2", device_id="dev-a", owner_id=_OWNER_ID),
+    ):
+        crossed = await service.enrich_runtime_event(request, row)
+        assert crossed.companion_id is None
+        assert crossed.event_id == row.event_id
 
 
 async def test_the_default_companion_is_the_one_the_owner_points_at() -> None:

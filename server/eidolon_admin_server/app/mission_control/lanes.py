@@ -73,14 +73,22 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # lane that came back empty, and `build_snapshot` returns early for it.
     "data.owners": (),
     "data.companions": (),
-    # Bodies. Hub owns the inventory, the runtime blackboard owns presence, and
-    # the Guard binding decides whether a body is standing watch — all three
-    # answer the same lane, and any of them failing makes it unknown rather than
-    # making a body look offline.
-    "hub.devices": ("devices",),
+    # Bodies. Hub owns the inventory and the runtime blackboard owns presence;
+    # either failing leaves the lane partly known, which is `degraded` below —
+    # a Host that can see who is present but not who exists knows something
+    # worth drawing, and knows it is not the whole picture.
     "hub": ("devices",),
     "runtime.blackboard": ("devices",),
-    "data.guard_bindings": ("devices",),
+    # Retired capabilities, kept registered because the composition still says
+    # out loud that it is not asking for them. They decide nothing: the lane
+    # stands on the two sources above.
+    "hub.device_page": (),
+    "hub.event_feed": (),
+    # Decides nothing on the Owner's map today, and that is a statement. A Guard
+    # binding is what marks a body as standing watch; the Guard runtime does not
+    # exist, so no body is one, and darkening the whole lane over a decoration
+    # that cannot yet be true would hide the bodies that are really there.
+    "data.guard_bindings": (),
     # The floor of the whole thing.
     "services": ("services",),
     # Turns, and the activity chain projected from them.
@@ -92,11 +100,6 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # What was remembered.
     "data.memory": ("memory",),
     "memory.runners": ("memory",),
-    # Hub's live event feed is what the activity chain is ordered by. It is not
-    # the Owner's event lane: it carries whatever arrived, in arrival order,
-    # with no place in this Host's total order — so a reader could not resume
-    # from it, and two events sharing an instant could not be told apart.
-    "hub.events": ("activities",),
     # The Owner's moments, from the audit index that assigns them their order.
     # ``ingest_seq`` is what makes this lane resumable, and it is the reason the
     # events contract requires one.
@@ -139,8 +142,11 @@ class LaneLedger:
     """One composition's reads, attributed to the lanes they decide."""
 
     _rows: list[SourceStatus] = field(default_factory=list)
-    _failures: dict[Lane, list[SourceStatus]] = field(default_factory=dict)
-    _answers: dict[Lane, list[SourceStatus]] = field(default_factory=dict)
+    #: Latest outcome per source, per lane. Keyed by source rather than appended:
+    #: a source read twice — a retry, or a fallback that succeeded after a first
+    #: attempt failed — must not leave the lane looking failed forever, and the
+    #: flat status list has always kept only the latest per source.
+    _outcomes: dict[Lane, dict[str, SourceStatus]] = field(default_factory=dict)
     _truncated: set[Lane] = field(default_factory=set)
 
     def record(
@@ -165,8 +171,7 @@ class LaneLedger:
         status = SourceStatus(source=source, ok=ok, detail=detail, latency_ms=latency_ms)
         self._rows.append(status)
         for lane in SOURCE_LANES[source]:
-            bucket = self._answers if ok else self._failures
-            bucket.setdefault(lane, []).append(status)
+            self._outcomes.setdefault(lane, {})[source] = status
         return status
 
     def truncate(self, lane: Lane, detail: str) -> None:
@@ -175,7 +180,7 @@ class LaneLedger:
         if lane not in LANES:
             raise UnregisteredSource(f"{lane!r} is not a lane")
         self._truncated.add(lane)
-        self._answers.setdefault(lane, [])
+        self._outcomes.setdefault(lane, {})
         if detail:
             self._rows.append(
                 SourceStatus(source=f"{lane}.truncated", ok=True, detail=detail)
@@ -199,15 +204,20 @@ class LaneLedger:
         if lane not in LANES:
             raise UnregisteredSource(f"{lane!r} is not a lane")
         when = observed_at or datetime.now(UTC)
-        failures = self._failures.get(lane, [])
+        rows = list(self._outcomes.get(lane, {}).values())
+        failures = [row for row in rows if not row.ok]
+        answers = [row for row in rows if row.ok]
         if failures:
+            # Some answered and some did not: partly known, and the reason for
+            # the rest is attached. Calling that unavailable throws away what
+            # was read; calling it ok hides that something is missing.
             return LaneOutcome(
-                state="unavailable",
+                state="degraded" if answers else "unavailable",
                 detail="；".join(_reason(row) for row in failures),
                 observed_at=when,
-                latency_ms=_slowest(failures),
+                latency_ms=_slowest(failures + answers),
+                truncated=lane in self._truncated,
             )
-        answers = self._answers.get(lane, [])
         if not answers:
             # Nobody read anything that bears on this lane. Not an empty lane —
             # an unasked one, and the difference is exactly what this file is for.

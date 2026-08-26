@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -123,30 +124,31 @@ async def compose_runtime(
     # Each lane comes from whichever authority owns it now, over HTTP. Four of
     # them have no authority answering yet — see _unexposed: they are reported
     # as unavailable with the reason, not as an Owner with nothing happening.
-    companion_snapshot, device_page, data_events = await asyncio.gather(
-        _safe(
-            ledger,
-            "data.companions",
-            data_authority_of(control_plane).get_owner_default_runtime(owner_id),
-            None,
-        ),
-        _safe(
-            ledger,
-            "hub.devices",
-            hub_authority_of(control_plane).list_devices(owner_id=owner_id),
-            [],
-        ),
-        _safe(
-            ledger,
-            "hub.events",
-            hub_authority_of(control_plane).list_events(owner_id=owner_id, limit=240),
-            [],
-        ),
+    companion_snapshot = await _safe(
+        ledger,
+        "data.companions",
+        lambda: data_authority_of(control_plane).get_owner_default_runtime(owner_id),
+        None,
     )
-    # Hub answers with a page; the merge below wants rows. This is the Owner's
-    # own inventory — _hub_devices supplies Hub's global list with presence,
-    # and the merge keeps rows that this Owner is not proven to own out of it.
-    devices = _device_rows(device_page)
+    # Two sources this composition used to read are gone from the Hub client it
+    # reads them through: an owner device page and an event feed. Neither is a
+    # failure to report — nothing broke, the capability moved — so they are said
+    # out loud once and not asked for.
+    #
+    # The devices lane stands on what does answer: the owner-isolated runtime
+    # blackboard, and Hub's admin list when a client for it is configured. The
+    # Owner's events come from the audit index, which is the only source with a
+    # position to resume from (see app/management/mission_control.py).
+    devices: list[Any] = _unexposed(
+        ledger,
+        "hub.device_page",
+        "Hub 的管理客户端不再发布 owner 设备清单；这条 lane 由运行黑板与 Hub 列表支撑",
+    )
+    data_events: list[Any] = _unexposed(
+        ledger,
+        "hub.event_feed",
+        "Hub 的管理客户端不再发布事件流；Owner 的事件来自审计索引",
+    )
     companions = _companions_from_snapshot(companion_snapshot)
     if companion_snapshot is not None and not companions:
         ledger.record(
@@ -370,38 +372,17 @@ async def enrich_runtime_event(
 ) -> RuntimeEvent:
     """Resolve a live event's scope without changing the originating system."""
 
-    update: dict[str, Any] = {}
-    if event.device_id and not event.companion_id and event.owner_id:
-        control_plane = _control_plane(request)
-        if control_plane is not None:
-            # Hub is the device authority, and it answers per Owner rather than
-            # per device — so an event that does not say whose it is cannot be
-            # enriched, and is returned as it arrived rather than guessed at.
-            try:
-                page = await hub_authority_of(control_plane).list_devices(
-                    owner_id=event.owner_id
-                )
-            except Exception:  # noqa: BLE001 - enrichment is best effort
-                page = None
-            row = _device_named(page, event.device_id)
-            if row is not None:
-                update["owner_id"] = event.owner_id
-                update["companion_id"] = getattr(row, "bound_companion_id", None)
-    return event.model_copy(update=update) if update else event
-
-
-def _device_named(page: Any, device_id: str) -> Any | None:
-    for row in _device_rows(page):
-        if getattr(row, "device_id", None) == device_id:
-            return row
-    return None
-
-
-def _device_rows(page: Any) -> list[Any]:
-    if page is None:
-        return []
-    rows = getattr(page, "devices", None)
-    return list(rows) if rows is not None else list(page) if isinstance(page, list) else []
+    # Nothing to resolve it against. This read Hub's owner device page, which
+    # the Hub management client no longer publishes — inside a bare `except`,
+    # so the enrichment has been silently doing nothing rather than failing.
+    # Dead code that looks alive is worse than an absence: it answers the
+    # question "why is companion_id empty here" with a lie.
+    #
+    # The owner-isolated runtime blackboard carries `provider_companion_id` per
+    # device and is the obvious source when this is wanted again. It is not
+    # wired here because nothing on the Owner's map needs it: their events come
+    # from the audit index, which records the subject at the time it happened.
+    return event
 
 
 def _companions_from_snapshot(snapshot: Any) -> list[Any]:
@@ -796,16 +777,29 @@ async def _service_json(
 async def _safe(
     ledger: LaneLedger,
     label: str,
-    coro: Any,
+    call: Callable[[], Awaitable[Any]],
     fallback: Any,
 ) -> Any:
+    """Read one source, and let its failure cost only its own lanes.
+
+    Takes a callable rather than an awaitable, and that is the whole point. It
+    used to take ``client.method(args)`` — already evaluated by the time this
+    function was entered — so the most ordinary drift there is, an upstream
+    renaming or removing a method, raised *while building the argument* and
+    never reached this try. On 2026-08-26 that was not hypothetical: the Hub
+    client had lost ``list_devices``, and the AttributeError took down the whole
+    composition. Every lane went with it, on a Host where six of them were fine,
+    and the operator console's map had been answering 500 for as long as nobody
+    looked. A safety net that the commonest failure steps around is not one.
+    """
+
     started = time.perf_counter()
     try:
-        result = await coro
+        result = await call()
         ledger.record(label, ok=True, started=started)
         return result
     except Exception as exc:  # noqa: BLE001
-        ledger.record(label, ok=False, detail=str(exc))
+        ledger.record(label, ok=False, detail=f"{type(exc).__name__}: {exc}")
         return fallback
 
 
