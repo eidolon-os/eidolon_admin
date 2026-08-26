@@ -36,13 +36,15 @@ from eidolon_admin_server.local_api.config import (
 )
 from eidolon_admin_server.local_api.devices import DeviceInventoryError
 
+from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
 pytestmark = pytest.mark.asyncio
 
 _AUTH_CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 _OWNER_DOMAIN = "owner-b0a862b0aab941d64554"
 _BUSINESS_OWNER = "owner_683f0000000000000000"
-_DEVICE = "device-instance-" + "c" * 64
+_DEVICE = named_device_instance_id("device-companion")
 _NOW = datetime(2026, 8, 25, tzinfo=UTC)
 
 
