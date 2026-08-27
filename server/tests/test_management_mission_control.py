@@ -40,6 +40,7 @@ pytestmark = pytest.mark.asyncio
 _AUTH_CHALLENGE = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 _SNAPSHOT = "/api/management/v1/mission-control/snapshot"
+_ACTIVITIES = "/api/management/v1/mission-control/activities"
 
 
 def _refused(message: str, status: int = 503) -> ManagementBackendError:
@@ -80,12 +81,28 @@ class _Backend:
     def __init__(self, *, fails: bool = False) -> None:
         self.fails = fails
         self.asked: list[str] = []
+        self.paged: list[tuple[str, str | None]] = []
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
         if self.fails:
             raise _refused("Admin control plane is away")
         self.asked.append(owner_id)
         return _payload(owner_id)
+
+    async def mission_control_activities(
+        self, *, owner_id: str, before: str | None
+    ) -> dict:
+        if self.fails:
+            raise _refused("Admin control plane is away")
+        self.paged.append((owner_id, before))
+        return {
+            "contract_version": "1",
+            "coverage": "owner-interactions",
+            "state": "ok",
+            "detail": "",
+            "items": [],
+            "next_cursor": "opaque-2",
+        }
 
 
 class _Devices:
@@ -228,3 +245,60 @@ async def test_a_host_that_cannot_compose_refuses_in_the_usual_shape(
     # Same refusal envelope as every other management route: a client that can
     # read one refusal can read them all.
     assert "detail" in body or "refusal" in body
+
+
+async def test_the_history_is_scoped_by_the_session_and_pages_opaquely(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The map is a bounded now; this is the record behind it.
+
+    Two boundaries, and they are the same two the snapshot has: the Owner comes
+    from the session, and the page boundary belongs to the Host. The cursor is
+    called a cursor rather than a timestamp on purpose — it is one today and the
+    Host must stay free to change that, which the contract gate enforces by
+    refusing a `before` parameter here at all.
+    """
+
+    _stub_controller(monkeypatch)
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="http://host") as client:
+        headers = await _authenticate(client)
+        first = await client.get(_ACTIVITIES, headers=headers)
+        second = await client.get(
+            _ACTIVITIES,
+            params={"cursor": "opaque-1", "owner_id": "owner-somebody-else"},
+            headers=headers,
+        )
+
+    assert first.status_code == 200
+    assert first.json()["coverage"] == "owner-interactions"
+    assert second.status_code == 200
+    # The session's Owner both times, whatever the caller asked for; and the
+    # cursor passed through untouched.
+    assert backend.paged == [("owner-1", None), ("owner-1", "opaque-1")]
+
+
+async def test_a_history_nobody_can_read_refuses_in_the_usual_shape(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _stub_controller(monkeypatch)
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend(fails=True)))
+    async with httpx.AsyncClient(transport=transport, base_url="http://host") as client:
+        headers = await _authenticate(client)
+        answer = await client.get(_ACTIVITIES, headers=headers)
+
+    assert answer.status_code == 503
+    body = answer.json()
+    assert "detail" in body or "refusal" in body
+
+
+async def test_without_a_session_there_is_no_history(tmp_path: Path, monkeypatch) -> None:
+    _stub_controller(monkeypatch)
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="http://host") as client:
+        answer = await client.get(_ACTIVITIES)
+
+    assert answer.status_code == 401
+    assert backend.paged == []
