@@ -1224,10 +1224,33 @@ def _turn(row: dict[str, Any]) -> RuntimeTurn:
 
 
 def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any]]:
+    """The journey of one turn, in the order it is travelled.
+
+    Read for a turn that is **still running** as much as for one that has ended,
+    which is the whole reason this Host can draw a conversation while it is
+    happening. Two rules make that honest:
+
+    * **a stage cannot be finished while the turn containing it is not.** This
+      used to say ``done`` for the tool stage of every turn, running ones
+      included — so a turn that had not called a tool yet, and might never,
+      reported that it had already been through that step;
+    * **not yet is ``pending``, not ``done``.** ``pending`` is the word the app
+      reads as "the Host has not started this and may never", and a turn can end
+      with a stage still pending. It is the only truthful thing to say about a
+      step whose evidence has not arrived.
+
+    ``response`` is the one stage that is not a summary of the row: it is the
+    moment the answer starts, which the Agent observes from the inside and
+    reports as ``first_delta_ms``. Without it a plain turn — no tools — has one
+    running stage from beginning to end, and a map drawn from that never moves.
+    """
+
     memory = obs.get("memory") or {}
     write = obs.get("memory_write") or {}
     tools = obs.get("tools") or {}
     latency = obs.get("latency") or {}
+    running = _stage_status(row.get("status")) == "running"
+    first_delta = _int_or_none(latency.get("first_delta_ms") or row.get("latency_first_delta_ms"))
     return [
         {
             "key": "input",
@@ -1243,15 +1266,21 @@ def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any
         },
         {
             "key": "agent_turn",
-            "label": f"智能体思考并回应：{_friendly_status(row.get('status'))}",
+            "label": f"智能体处理这一轮：{_friendly_status(row.get('status'))}",
             "status": _stage_status(row.get("status")),
             "latency_ms": latency.get("total_ms") or row.get("total_latency_ms"),
         },
         {
             "key": "tools",
             "label": f"调用工具或外部能力：{tools.get('count') or 0} 次",
-            "status": "failed" if (tools.get("error_count") or 0) else "done",
+            "status": _tool_stage_status(tools, running=running),
             "latency_ms": tools.get("total_latency_ms"),
+        },
+        {
+            "key": "response",
+            "label": f"开口回应：{_friendly_first_delta(first_delta, running=running)}",
+            "status": _response_stage_status(row, first_delta=first_delta, running=running),
+            "latency_ms": first_delta,
         },
         {
             "key": "memory_write",
@@ -1260,6 +1289,41 @@ def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any
             "latency_ms": None,
         },
     ]
+
+
+def _tool_stage_status(tools: dict[str, Any], *, running: bool) -> str:
+    """Whether this turn is done with its tools.
+
+    ``completed`` only exists on a turn that is still running — a finished one
+    has no open calls left, so only a live row can distinguish "asked" from
+    "answered", and only that distinction can say a tool is running *now*.
+    """
+
+    if tools.get("error_count") or 0:
+        return "failed"
+    count = int(tools.get("count") or 0)
+    completed = tools.get("completed")
+    if completed is not None and count > int(completed):
+        return "running"
+    if count:
+        return "done"
+    # No tool has been asked for. On a finished turn that settles it; on one
+    # still running it means "not so far", and it may still happen.
+    return "pending" if running else "done"
+
+
+def _response_stage_status(row: dict[str, Any], *, first_delta: int | None, running: bool) -> str:
+    if first_delta is None:
+        # The answer has not started. On a turn that ended without one, that is
+        # what the turn's own status says happened.
+        return "pending" if running else _stage_status(row.get("status"))
+    return "running" if running else _stage_status(row.get("status"))
+
+
+def _friendly_first_delta(first_delta: int | None, *, running: bool) -> str:
+    if first_delta is None:
+        return "进行中" if running else "没有出声"
+    return f"{first_delta} 毫秒后开口"
 
 
 def _stage_status(status: Any) -> str:
