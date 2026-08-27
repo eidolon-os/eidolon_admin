@@ -220,6 +220,24 @@ services:
         reload: restart_group
         reload_target: memory
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/.env.example
+  # The Channel Provider: a separate process from the worker, and the only
+  # thing on this Host that can say whether a body is on its channel. Presence
+  # had no producer at all before this entry — Hub publishes existence and
+  # lifecycle and refuses liveness by contract test, Kernel speaks about an
+  # assignment rather than a body, and the runtime blackboard's reader was
+  # withdrawn — so every body on the Owner's map read 「未探测」 while its
+  # speaker was plainly in a call.
+  - id: channel-provider
+    name: Eidolon Channel Provider
+    integration: proxy
+    base_url: http://127.0.0.1:$EIDOLON_CHANNEL_PROVIDER_PORT
+    upstream_prefix: ""
+    # Same shape as the Agent entry above, and the same reason the variable is
+    # unprefixed: this registry names the exact one Ops writes.
+    auth: { type: bearer, token_env: EIDOLON_CHANNEL_PROVIDER_TOKEN }
+    health: http://127.0.0.1:$EIDOLON_CHANNEL_PROVIDER_PORT/health
+    features: []
+
   - id: channel
     name: Eidolon Channel
     integration: process

@@ -79,6 +79,12 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # process does not hold — so the Owner's plane joins that in on the way out
     # and says so if it could not.
     "runtime.blackboard": ("devices",),
+    # Which bodies are on their channel — the presence authority that actually
+    # answers. Hub refuses liveness by contract and the blackboard's reader was
+    # withdrawn, so before this the devices lane could only ever say 「未探测」
+    # about a speaker that was plainly in a call. It decides the same lane as
+    # the blackboard: they answer the same question, from different standing.
+    "channel.presence": ("devices",),
     # Retired capabilities, kept registered because the composition still says
     # out loud that it is not asking for them. They decide nothing: the lane
     # stands on the two sources above.

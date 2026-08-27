@@ -189,6 +189,7 @@ async def compose_runtime(
     # presence, from the owner-isolated blackboard — and the Owner's plane joins
     # it with the inventory it already reads on the Owner's behalf
     # (local_api/management/mission_control.py).
+    channel_presence = await _channel_presence(request, owner_id, ledger)
     runtime_devices = _merge_devices(
         devices,
         [],
@@ -196,6 +197,7 @@ async def compose_runtime(
         owner_id=owner_id,
         companions=companions,
         guard_device_ids=guard_device_ids,
+        channel_presence=channel_presence,
     )
     services = await _services(request, ledger)
 
@@ -509,6 +511,79 @@ def _runtime_blackboard(owner_id: str, ledger: LaneLedger) -> RuntimeDeviceBlack
     )
 
 
+async def _channel_presence(
+    request: Request,
+    owner_id: str,
+    ledger: LaneLedger,
+) -> dict[str, bool | None]:
+    """Which of this Owner's bodies are on their channel right now.
+
+    The only presence authority this Host has. Hub publishes existence and
+    lifecycle and a contract test forbids liveness on its device directory;
+    Kernel commits an assignment and speaks about the assignment; the runtime
+    blackboard's reader went with ``9a5880f``. So before this read every body
+    on the map said 「未探测」 while its speaker was in a call — true, and
+    useless.
+
+    Narrower than "online", deliberately: a body is on its channel when its own
+    participant is in its room. A body that is powered on and idle has no
+    channel occupied and is *not* claimed to be off — it stays ``unknown``,
+    which is what the third state in this mapping is for.
+
+    The provider answers for every channel it granted, because nothing here has
+    a device list to ask about — that absence is the reason presence had nothing
+    to join onto. Rows for other Owners are dropped; a read that came back full
+    and matched nobody is reported as ``degraded`` rather than silently read as
+    "this Owner has no bodies", which is how an id-space mismatch would
+    otherwise hide for months.
+    """
+
+    started = time.perf_counter()
+    try:
+        body = await _service_json(
+            request, "channel-provider", "/v1/device-channels/presence", timeout=2.0
+        )
+    except Exception as exc:  # noqa: BLE001
+        ledger.record("channel.presence", ok=False, detail=str(exc))
+        return {}
+    rows = body.get("bodies") if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        ledger.record(
+            "channel.presence",
+            ok=False,
+            detail="channel provider answered without a bodies list",
+            started=started,
+        )
+        return {}
+    presence: dict[str, bool | None] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        device_id = str(row.get("device_id") or "")
+        if not device_id or str(row.get("owner_id") or "") != owner_id:
+            continue
+        on_channel = row.get("on_channel")
+        presence[device_id] = on_channel if isinstance(on_channel, bool) else None
+    if rows and not presence:
+        ledger.record(
+            "channel.presence",
+            ok=False,
+            detail=(
+                f"the channel granted {len(rows)} channel(s) and none of them are this "
+                "Owner's — presence and the Owner's bodies may not be named the same way"
+            ),
+            started=started,
+        )
+        return {}
+    ledger.record(
+        "channel.presence",
+        ok=True,
+        detail=f"{len(presence)} bodies on channels",
+        started=started,
+    )
+    return presence
+
+
 async def _agent_turns(
     request: Request,
     owner_id: str,
@@ -755,7 +830,16 @@ def _merge_devices(
     owner_id: str,
     companions: list[Any] = (),
     guard_device_ids: frozenset[str] = frozenset(),
+    channel_presence: dict[str, bool | None] | None = None,
 ) -> list[RuntimeDevice]:
+    """One row per body this Host can see, from whichever authority saw it.
+
+    ``channel_presence`` maps a body to whether it is on its channel, and it
+    seeds rows of its own: a body the channel is carrying exists whether or not
+    any other source here mentioned it, and on this Host no other source does —
+    the inventory wants a credential this process does not hold, which is why
+    the Owner's plane joins it in afterwards.
+    """
     companion_by_id = {
         getattr(c, "companion_id", ""): c
         for c in companions
@@ -764,6 +848,9 @@ def _merge_devices(
     by_id: dict[str, dict[str, Any]] = {}
     for row in data_devices:
         by_id[row.device_id] = {"data": row, "hub": None, "runtime": None}
+    presence_by_id = dict(channel_presence or {})
+    for device_id in presence_by_id:
+        by_id.setdefault(device_id, {"data": None, "hub": None, "runtime": None})
     runtime_rows: dict[str, RuntimeDeviceEntry] = {}
     if runtime_blackboard.available and runtime_blackboard.snapshot is not None:
         runtime_rows = dict(runtime_blackboard.snapshot.devices)
@@ -794,7 +881,9 @@ def _merge_devices(
             or device_id
         )
         kind = getattr(data, "kind", "") or getattr(hub, "kind", "") or "unknown"
-        status, online, presence_source = _device_presence(runtime, hub)
+        status, online, presence_source = _device_presence(
+            runtime, hub, on_channel=presence_by_id.get(device_id, _NOT_ASKED)
+        )
         last_seen = _as_utc(
             getattr(runtime, "last_seen_at", None)
             or getattr(hub, "last_seen", None)
@@ -862,14 +951,28 @@ def _merge_devices(
     return sorted(devices, key=lambda item: (not item.online, item.role_kind, item.device_id))
 
 
-def _device_presence(runtime: Any, hub: Any) -> tuple[str, bool, str]:
+#: Sentinel for "the channel was not asked about this body", which is a third
+#: thing from "the channel could not see" (``None``). Without it a missing key
+#: and an unreadable transport collapse into one answer, and one of them is a
+#: body nobody looked at while the other is a body the looker could not see.
+_NOT_ASKED = object()
+
+
+def _device_presence(
+    runtime: Any, hub: Any, *, on_channel: Any = _NOT_ASKED
+) -> tuple[str, bool, str]:
     """Project one device's presence without conflating source health.
 
-    A usable owner-scoped blackboard entry is the richest runtime signal. If
-    that entry is absent (including when the blackboard itself is degraded),
-    Hub remains the per-device presence authority. The Data authority only
-    proves inventory/ownership and must never turn its lifecycle status (for
-    example ``active``) into an online state.
+    Precedence, and each rung is a different standing rather than a different
+    guess. A usable owner-scoped blackboard entry is the richest runtime signal.
+    The channel comes next: it carries the body, so it knows whether the body is
+    on it. If neither answered, Hub remains the per-device authority. The Data
+    authority only proves inventory/ownership and must never turn its lifecycle
+    status (for example ``active``) into an online state.
+
+    A body the channel could not see is ``unknown``, never ``offline``. The two
+    read the same on a screen only if you believe nobody looking is the same as
+    nothing being there.
     """
 
     if runtime is not None:
@@ -878,6 +981,16 @@ def _device_presence(runtime: Any, hub: Any) -> tuple[str, bool, str]:
         # device lease expires. Keep the public status consistent with the
         # lease-aware `online` verdict.
         return ("online" if online else "offline"), online, "runtime_blackboard"
+
+    if on_channel is not _NOT_ASKED:
+        if on_channel is True:
+            return "online", True, "channel"
+        if on_channel is False:
+            # Its channel exists and it is not on it. That is an observation,
+            # and it is what offline means here.
+            return "offline", False, "channel"
+        # The channel holds this body but could not say. Not a verdict.
+        return "unknown", False, "channel"
 
     if hub is not None:
         status = str(getattr(hub, "status", "") or "").strip().lower()

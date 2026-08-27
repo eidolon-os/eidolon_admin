@@ -292,6 +292,13 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
                 )
             ),
         },
+        # The Channel Provider's own HTTP surface, kept from the assignment
+        # rather than from Channel's settings: unlike the worker port, Channel
+        # does not choose it — Ops assigns it, and Admin reads one route on it
+        # (which bodies are on their channel).
+        "provider": {
+            "port": _deep_get(ports, "channel", "provider", "port", default=8767),
+        },
     }
 
     # LiveKit's livekit.yaml is rendered by Ops *from* the port assignment, so
@@ -418,6 +425,7 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
 
     channel = section("channel")
     put("EIDOLON_CHANNEL_WORKER_PORT", channel["worker"]["port"])
+    put("EIDOLON_CHANNEL_PROVIDER_PORT", channel["provider"]["port"])
 
     put("EIDOLON_CLIENT_WEB_PORT", section("client_web")["port"])
 

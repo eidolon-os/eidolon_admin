@@ -64,6 +64,8 @@ memory:
 channel:
   worker:
     port: 8766
+  provider:
+    port: 8767
 client_web:
   port: 3001
 nats:
