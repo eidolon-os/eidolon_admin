@@ -11,9 +11,8 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import httpx
-from pydantic import ValidationError
-
 from eidolon_sdk.biz.contracts.refusal import Refusal
+from pydantic import ValidationError
 
 from eidolon_admin_server.local_api.management.router import (
     ManagementBackendError,
@@ -290,6 +289,14 @@ class AdminManagementClient:
         if companion_id:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/library", params)
+
+    async def memory_graph(
+        self, *, owner_id: str, companion_id: str | None
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if companion_id:
+            params["companion_id"] = companion_id
+        return await self._get("/api/internal/v1/management/memory/graph", params)
 
     async def memory_entries(
         self,

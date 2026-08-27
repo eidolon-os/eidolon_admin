@@ -18,7 +18,6 @@ import json
 
 import httpx
 import pytest
-
 from eidolon_admin_server.app.control_plane.clients import MemoryRecollectionsClient
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 
@@ -56,6 +55,27 @@ BROWSE = {
     "truncated": False,
 }
 
+GRAPH = {
+    "contract_version": "1",
+    "operation": "memory.graph",
+    "memory_space_id": "r_a",
+    "nodes": [
+        {"node_id": "self", "label": "我", "degree": 1},
+        {"node_id": "tea", "label": "乌龙茶", "degree": 1},
+    ],
+    "edges": [
+        {
+            "edge_id": "stmt_1",
+            "subject": "我",
+            "predicate": "likes",
+            "object": "乌龙茶",
+            "confidence": 0.94,
+            "recorded_at": "2026-08-28T08:00:00Z",
+        }
+    ],
+    "truncated": False,
+}
+
 
 def _realm(realm_id: str = "r_a", *, url: str | None = None) -> dict:
     return {
@@ -64,7 +84,7 @@ def _realm(realm_id: str = "r_a", *, url: str | None = None) -> dict:
         "recollections_url": (
             url
             if url is not None
-            else f"http://127.0.0.1:10031/api/memory/v1/recollections"
+            else "http://127.0.0.1:10031/api/memory/v1/recollections"
         ),
         "enabled": True,
         "agent_reachable": True,
@@ -136,6 +156,18 @@ async def test_no_companion_sends_no_parameter() -> None:
 
     asked = next(r for r in seen if r.url.path == "/api/memory/v1/browse")
     assert "companion_id" not in asked.url.params
+
+
+async def test_graph_uses_the_same_realm_and_companion_audience() -> None:
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=GRAPH, seen=seen)
+
+    graph = await client.graph(owner_id=OWNER, companion_id="c_mochi")
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/graph")
+    assert asked.url.params["companion_id"] == "c_mochi"
+    assert graph.edges[0].predicate == "likes"
+    assert graph.nodes[1].label == "乌龙茶"
 
 
 async def test_a_published_url_outside_the_family_is_a_contract_violation() -> None:

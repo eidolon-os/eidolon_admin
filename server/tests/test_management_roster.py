@@ -17,13 +17,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
-
 import httpx
 import pytest
-
-from eidolon_sdk.biz.persona import PersonaAuthoring
-
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionRosterPage,
     CompanionSummary,
@@ -39,6 +34,7 @@ from eidolon_admin_server.local_api.management.router import (
     ManagementBackendError,
     refusal_for_status,
 )
+from eidolon_sdk.biz.persona import PersonaAuthoring
 
 pytestmark = pytest.mark.asyncio
 
@@ -58,6 +54,8 @@ def _row(companion_id: str, *, name: str = "小忆", state: str = "active", kind
         revision=2,
         created_at=_MADE,
         updated_at=_MADE,
+        current_genome_id=f"genome-{companion_id}",
+        memory_realm_id="realm-owner-1",
     )
 
 
@@ -131,6 +129,23 @@ async def test_several_eidolons_can_be_running_at_once() -> None:
 
     assert [row.running for row in roster.companions] == [True, True]
     assert roster.runtime_unavailable == ""
+
+
+async def test_roster_carries_the_authoritys_genome_and_owner_realm() -> None:
+    roster = await read_roster(
+        owner_id="owner-1",
+        companions=_Companions(_page()),
+        runtime=_Runtime(),
+    )
+
+    assert [row.genome_id for row in roster.companions] == [
+        "genome-companion-a",
+        "genome-companion-b",
+    ]
+    assert [row.memory_realm_id for row in roster.companions] == [
+        "realm-owner-1",
+        "realm-owner-1",
+    ]
 
 
 async def test_the_default_one_is_not_assumed_to_be_the_running_one() -> None:
@@ -422,6 +437,28 @@ class _Backend:
             ],
             "entry_count": 2,
             "withheld_count": 1,
+            "truncated": False,
+        }
+
+    async def memory_graph(self, *, owner_id: str, companion_id: str | None) -> dict:
+        self.asked.append((owner_id, companion_id))
+        return {
+            "contract_version": "1",
+            "operation": "memory.graph",
+            "nodes": [
+                {"node_id": "self", "label": "我", "degree": 1},
+                {"node_id": "tea", "label": "乌龙茶", "degree": 1},
+            ],
+            "edges": [
+                {
+                    "edge_id": "stmt_1",
+                    "subject": "我",
+                    "predicate": "likes",
+                    "object": "乌龙茶",
+                    "confidence": 0.94,
+                    "recorded_at": "2026-08-28T08:00:00Z",
+                }
+            ],
             "truncated": False,
         }
 
@@ -1166,6 +1203,7 @@ async def test_the_ordinary_case_needs_no_kind(tmp_path, monkeypatch) -> None:
 # --- what my Eidolon remembers --------------------------------------------
 
 _LIBRARY = "/api/management/v1/memory/library"
+_GRAPH = "/api/management/v1/memory/graph"
 
 
 async def test_the_library_is_the_authenticated_owners(tmp_path, monkeypatch) -> None:
@@ -1199,6 +1237,23 @@ async def test_the_withheld_count_reaches_the_client(tmp_path, monkeypatch) -> N
 
     assert body["withheld_count"] == 1
     assert body["truncated"] is False
+
+
+async def test_graph_is_private_to_the_selected_companion(tmp_path, monkeypatch) -> None:
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        answered = await client.get(
+            _GRAPH,
+            params={"companion_id": "companion-a"},
+            headers=headers,
+        )
+
+    assert answered.status_code == 200
+    assert backend.asked == [("owner-1", "companion-a")]
+    assert answered.json()["edges"][0]["predicate"] == "likes"
 
 
 async def test_naming_a_companion_selects_an_audience(tmp_path, monkeypatch) -> None:

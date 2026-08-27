@@ -67,8 +67,9 @@ async def recall(
 ) -> Recollections:
     """``companion_id`` selects an audience exactly as the browse does.
 
-    Not a scope: the space is the Owner's either way, and naming an Eidolon adds
-    what that one was told in particular. It cannot widen what the space can see.
+    It is a logical scope inside the Owner's physical Realm: naming an Eidolon
+    reads that one's private memories plus derived Owner facts. It cannot reach
+    another Companion's audience.
     """
 
     found = await memory.recollections(

@@ -63,6 +63,8 @@ class CompanionRow:
     revision: int
     created_at: str
     updated_at: str
+    genome_id: str | None = None
+    memory_realm_id: str | None = None
     #: Whether the runtime is holding this Companion at this moment, and when it
     #: was last addressed. ``None`` is **unknown** — the runtime could not be
     #: asked — and is not the same as ``False``, which is a real answer meaning
@@ -140,6 +142,8 @@ async def read_roster(
                 # is handed a formatted local time cannot recover the instant.
                 created_at=row.created_at.isoformat(),
                 updated_at=row.updated_at.isoformat(),
+                genome_id=row.current_genome_id,
+                memory_realm_id=row.memory_realm_id,
                 running=None if live is None else row.companion_id in live,
                 last_active_at=(live or {}).get(row.companion_id, ""),
             )

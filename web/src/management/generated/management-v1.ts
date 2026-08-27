@@ -96,9 +96,11 @@ export interface CompanionSummaryView {
   companion_id: string
   created_at: string
   display_name?: string
+  genome_id?: string | null
   kind: string
   last_active_at?: string
   lifecycle_state: string
+  memory_realm_id?: string | null
   revision: number
   running?: boolean | null
   updated_at: string
@@ -352,6 +354,28 @@ export interface MemoryExportRecordView {
   wing_id?: string
 }
 
+export interface MemoryGraphEdgeView {
+  confidence: number
+  edge_id: string
+  object: string
+  predicate: string
+  recorded_at?: string
+  subject: string
+}
+
+export interface MemoryGraphNodeView {
+  degree: number
+  label: string
+  node_id: string
+}
+
+export interface MemoryGraphView {
+  contract_version?: "1"
+  edges: Array<MemoryGraphEdgeView>
+  nodes: Array<MemoryGraphNodeView>
+  truncated: boolean
+}
+
 export interface MemoryLibraryView {
   contract_version?: "1"
   entry_count: number
@@ -545,6 +569,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/memory/export': MemoryCopyView
   'POST /api/management/v1/memory/forget/confirm': ForgetResultView
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
+  'GET /api/management/v1/memory/graph': MemoryGraphView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'GET /api/management/v1/memory/recollections': RecollectionsView
   'GET /api/management/v1/mission-control/activities': unknown

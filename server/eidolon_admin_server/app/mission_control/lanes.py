@@ -108,8 +108,7 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     "agent.long_tasks": ("jobs", "activities"),
     "data.jobs": ("jobs",),
     # What was remembered.
-    "data.memory": ("memory",),
-    "memory.runners": ("memory",),
+    "memory.runtime": ("memory",),
     # The Owner's moments, from the audit index that assigns them their order.
     # ``ingest_seq`` is what makes this lane resumable, and it is the reason the
     # events contract requires one.

@@ -21,13 +21,22 @@ re-adds an ``except`` here is re-adding that silence.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
+from eidolon_sdk.biz.persona import PersonaAuthoring
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from eidolon_sdk.biz.persona import PersonaAuthoring
-
+from eidolon_admin_server.app.management.activity import (
+    cancel_task,
+    read_conversations,
+    read_task,
+    read_tasks,
+    read_transcript,
+    retry_task,
+)
+from eidolon_admin_server.app.management.activity_feed import read_activity
+from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.faces import (
@@ -37,18 +46,13 @@ from eidolon_admin_server.app.management.faces import (
     set_face,
 )
 from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
-from eidolon_admin_server.app.management.activity_feed import read_activity
-from eidolon_admin_server.app.management.audience import assign_memory_audience
-from eidolon_admin_server.app.management.memory import read_copy, read_day, read_library
-from eidolon_admin_server.app.management.activity import (
-    cancel_task,
-    read_conversations,
-    read_transcript,
-    read_task,
-    read_tasks,
-    retry_task,
-)
 from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
+from eidolon_admin_server.app.management.memory import (
+    read_copy,
+    read_day,
+    read_graph,
+    read_library,
+)
 from eidolon_admin_server.app.management.naming import rename_companion, rename_owner
 from eidolon_admin_server.app.management.persona import (
     read_history,
@@ -57,12 +61,12 @@ from eidolon_admin_server.app.management.persona import (
     write_persona,
 )
 from eidolon_admin_server.app.management.recollecting import recall
-from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
 from eidolon_admin_server.app.management.roster import (
     read_companion,
     read_roster,
     set_default_companion,
 )
+from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
 #: Required by the router, so a second route here cannot be added without it.
@@ -103,6 +107,8 @@ class CompanionSummaryInternal(BaseModel):
     revision: int = Field(ge=1)
     created_at: str = Field(min_length=1, max_length=64)
     updated_at: str = Field(min_length=1, max_length=64)
+    genome_id: str | None = Field(default=None, max_length=64)
+    memory_realm_id: str | None = Field(default=None, max_length=64)
     #: Whether the runtime is holding this Companion right now. Null is
     #: **unknown** — the runtime could not be asked — and is a different answer
     #: from false. Several rows being true at once is ordinary (§4.6).
@@ -315,6 +321,29 @@ class MemoryLibraryInternal(BaseModel):
     wings: list[MemoryWingInternal]
     entry_count: int = Field(ge=0)
     withheld_count: int = Field(ge=0)
+    truncated: bool
+
+
+class MemoryGraphNodeInternal(BaseModel):
+    node_id: str
+    label: str
+    degree: int
+
+
+class MemoryGraphEdgeInternal(BaseModel):
+    edge_id: str
+    subject: str
+    predicate: str
+    object: str
+    confidence: float
+    recorded_at: str = ""
+
+
+class MemoryGraphInternal(BaseModel):
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.graph"] = "memory.graph"
+    nodes: list[MemoryGraphNodeInternal]
+    edges: list[MemoryGraphEdgeInternal]
     truncated: bool
 
 
@@ -648,6 +677,8 @@ async def list_companions(
                 revision=row.revision,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
+                genome_id=row.genome_id,
+                memory_realm_id=row.memory_realm_id,
                 running=row.running,
                 last_active_at=row.last_active_at,
             )
@@ -767,10 +798,10 @@ async def get_memory_library(
 ) -> MemoryLibraryInternal:
     """What this Owner's memory holds, by wing and room.
 
-    ``companion_id`` is an audience, not a scope: memory belongs to the Owner
-    and every one of their Companions reads it. Naming one adds that Companion's
-    own layer; naming none answers with the Owner layer, which is the safe
-    direction for a caller that did not say.
+    The physical Realm belongs to the Owner. ``companion_id`` selects a logical
+    audience inside it: that Companion's private memories plus automatically
+    derived Owner facts. Naming none returns only the derived Owner layer and
+    never guesses a Companion.
     """
     library = await read_library(
         owner_id=owner_id,
@@ -799,6 +830,24 @@ async def get_memory_library(
         entry_count=library.entry_count,
         withheld_count=library.withheld_count,
         truncated=library.truncated,
+    )
+
+
+@router.get("/memory/graph", response_model=MemoryGraphInternal)
+async def get_memory_graph(
+    request: Request,
+    owner_id: str,
+    companion_id: str | None = None,
+) -> MemoryGraphInternal:
+    graph = await read_graph(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        memory=request.app.state.control_plane.memory,
+    )
+    return MemoryGraphInternal(
+        nodes=[MemoryGraphNodeInternal(**node.model_dump()) for node in graph.nodes],
+        edges=[MemoryGraphEdgeInternal(**edge.model_dump()) for edge in graph.edges],
+        truncated=graph.truncated,
     )
 
 

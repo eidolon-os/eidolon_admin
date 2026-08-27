@@ -15,7 +15,6 @@ rendering as an Owner with nothing happening. A cockpit that cannot tell
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import time
 from collections.abc import Awaitable, Callable
@@ -25,24 +24,17 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from eidolon_sdk.biz.body import RuntimeDeviceEntry, owner_device_blackboard_key
 from fastapi import Request
 
 from ..control_plane.contracts import OwnerIdentity
 from ..gateway.proxy import upstream_auth_headers
-from eidolon_sdk.biz.body import (
-    DEVICE_BLACKBOARD_BUCKET,
-    OwnerDeviceBlackboardSnapshot,
-    RuntimeDeviceEntry,
-    owner_device_blackboard_key,
-)
-
-from .lanes import Lane, LaneLedger
+from .lanes import LaneLedger
 from .schemas import (
     EvidenceChain,
     EvidenceStep,
     PermissionLedgerItem,
     RuntimeActivity,
-    RuntimeTraceSpan,
     RuntimeCapabilityCard,
     RuntimeCompanion,
     RuntimeDevice,
@@ -58,6 +50,7 @@ from .schemas import (
     RuntimeService,
     RuntimeSnapshot,
     RuntimeStoryStep,
+    RuntimeTraceSpan,
     RuntimeTurn,
     SourceStatus,
 )
@@ -92,7 +85,6 @@ class RuntimeComposition:
 async def compose_runtime(
     request: Request, owner_id: str | None = None, demo_mode: str = "live"
 ) -> RuntimeComposition:
-    started = time.perf_counter()
     generated_at = datetime.now(UTC)
     ledger = LaneLedger()
     control_plane = _control_plane(request)
@@ -156,15 +148,16 @@ async def compose_runtime(
             ok=False,
             detail="only the primary Companion is published; the full roster is not",
         )
-    conversations = _unexposed(
+    _unexposed(
         ledger,
         "data.conversations",
         "Data publishes no conversation history over HTTP",
     )
-    memory_realms = _unexposed(
+    memory_realms = await _safe(
         ledger,
-        "data.memory",
-        "Memory publishes recollections, not the realm roster this panel needs",
+        "memory.runtime",
+        lambda: _memory_runtime_page(request),
+        None,
     )
     jobs = _unexposed(ledger, "data.jobs", "Data publishes no job list over HTTP")
     guard_bindings = _unexposed(
@@ -203,7 +196,7 @@ async def compose_runtime(
 
     turns = await _agent_turns(request, owner_id, ledger)
     long_tasks = await _agent_long_tasks(request, owner_id, ledger)
-    memory = await _memory_summary(request, memory_realms, turns, ledger)
+    memory = await _memory_summary(owner_id, memory_realms, turns)
 
     runtime_jobs = [_job(row) for row in jobs]
     runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
@@ -688,27 +681,20 @@ async def _agent_long_tasks(
 
 
 async def _memory_summary(
-    request: Request,
-    realms: list[Any],
+    owner_id: str,
+    page: Any,
     turns: list[dict[str, Any]],
-    ledger: LaneLedger,
 ) -> RuntimeMemory:
-    # No runner count. This read `app.memory.runners`, which
-    # `06e7a2e align admin with data v2 and kernel boundary` deleted along with
-    # the rest of that package — the capability moved to the Memory service, and
-    # Admin holds no client for it. The import was inside a broad `except`, so
-    # for months this reported an ImportError as though the memory service had
-    # failed to answer: "no module named" is not a service being slow.
-    #
-    # Said as an absence instead, which is what it is. Nothing here can be
-    # counted until Memory publishes a runner roster over HTTP — the same gap
-    # `data.memory` above names for realms.
-    runners_total = 0
-    runners_online = 0
-    _unexposed(
-        ledger,
-        "memory.runners",
-        "Memory 不发布 runner 名册；Admin 里那条路径已随 app.memory 一起删除",
+    realms = [
+        realm
+        for realm in (getattr(page, "realms", ()) if page is not None else ())
+        if str(getattr(realm, "spec", {}).get("owner_id") or "") == owner_id
+    ]
+    runners_total = len(realms)
+    runners_online = sum(
+        1
+        for realm in realms
+        if bool(getattr(realm, "health", {}).get("worker_running"))
     )
 
     latest = _turn(turns[0]) if turns else None
@@ -717,11 +703,12 @@ async def _memory_summary(
     write_summary = _dict_or_empty(observability_summary.get("memory_write")) if turns else {}
     active_realm = ""
     for realm in realms:
-        if getattr(realm, "status", "") == "active":
-            active_realm = getattr(realm, "realm_id", "") or ""
+        spec = getattr(realm, "spec", {})
+        if bool(spec.get("enabled")):
+            active_realm = str(spec.get("memory_realm_id") or "")
             break
     if not active_realm and realms:
-        active_realm = getattr(realms[0], "realm_id", "") or ""
+        active_realm = str(getattr(realms[0], "spec", {}).get("memory_realm_id") or "")
     hit_count = int(memory_summary.get("hit_count") or (latest.memory_hits if latest else 0))
     disposition = _str_or_none(write_summary.get("disposition"))
     return RuntimeMemory(
@@ -739,6 +726,14 @@ async def _memory_summary(
             else "Waiting for turn trace"
         ),
     )
+
+
+async def _memory_runtime_page(request: Request) -> Any:
+    control_plane = _control_plane(request)
+    client = getattr(control_plane, "memory_supervisor", None)
+    if client is None:
+        raise RuntimeError("Memory Supervisor client is not configured")
+    return await client.list_realms()
 
 
 async def _services(request: Request, ledger: LaneLedger) -> list[RuntimeService]:

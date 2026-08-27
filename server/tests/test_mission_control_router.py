@@ -18,12 +18,10 @@ from __future__ import annotations
 import importlib
 import pathlib
 import re
-
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-
 from eidolon_admin_server.app.control_plane import clients
 from eidolon_admin_server.app.mission_control import service
 from eidolon_admin_server.app.mission_control.lanes import LaneLedger
@@ -140,14 +138,14 @@ def _status(snapshot: Any, source: str) -> SourceStatus | None:
 async def test_a_lane_no_authority_answers_says_so_rather_than_reading_empty() -> None:
     snapshot = await service.build_snapshot(_Request(_ControlPlane()), owner_id=_OWNER_ID)
 
-    # Four lanes the database version could fill and no HTTP authority can.
-    # Each is reported unavailable with the reason, so an operator looking at an
-    # empty panel knows whether to worry.
+    # Three Data lanes still have no HTTP authority; Memory now has its own
+    # runtime authority and explicitly reports when that client is not wired.
+    # Each is unavailable with a reason, so an empty panel is never ambiguous.
     for source, expected in {
         "data.conversations": "no conversation history",
         "data.jobs": "no job list",
         "data.guard_bindings": "Guard runtime does not exist",
-        "data.memory": "not the realm roster",
+        "memory.runtime": "Memory Supervisor client is not configured",
     }.items():
         status = _status(snapshot, source)
         assert status is not None, f"{source} vanished instead of reporting itself"
@@ -157,6 +155,30 @@ async def test_a_lane_no_authority_answers_says_so_rather_than_reading_empty() -
     # And the payload really is empty — the point is the status beside it, not
     # a fabricated filler row.
     assert snapshot.jobs == []
+
+
+async def test_memory_lane_uses_supervisor_realm_and_worker_health() -> None:
+    class _Realm:
+        def __init__(self, owner_id: str, realm_id: str, running: bool) -> None:
+            self.spec = {
+                "owner_id": owner_id,
+                "memory_realm_id": realm_id,
+                "enabled": True,
+            }
+            self.health = {"worker_running": running}
+
+    class _Page:
+        realms = (
+            _Realm(_OWNER_ID, "realm-owner-1", True),
+            _Realm("owner-elsewhere", "realm-hidden", True),
+        )
+
+    memory = await service._memory_summary(_OWNER_ID, _Page(), [])
+
+    assert memory.realms_total == 1
+    assert memory.active_realm_id == "realm-owner-1"
+    assert memory.runners_total == 1
+    assert memory.runners_online == 1
 
 
 async def test_a_snapshot_without_an_owner_refuses_rather_than_picking_one() -> None:

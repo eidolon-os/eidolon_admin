@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
 from eidolon_sdk.biz.contracts.refusal import Refusal, RefusalKind
 from eidolon_sdk.device_foundation.v1 import (
@@ -19,8 +18,11 @@ from eidolon_sdk.device_foundation.v1 import (
     EnrollmentProposalQuery,
     EnrollmentRecoveryProjection,
     OwnerDomainId,
+)
+from eidolon_sdk.device_foundation.v1 import (
     RevokeClaimResult as HubClaimRevocationResult,
 )
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -86,6 +88,19 @@ class CompanionSummary(StrictModel):
     revision: int = Field(ge=1)
     created_at: datetime
     updated_at: datetime
+    current_genome_id: str | None = Field(default=None, max_length=64)
+    memory_realm_id: str | None = Field(default=None, max_length=64)
+
+
+class MemoryRealmRuntime(StrictModel):
+    spec: dict
+    health: dict
+    mcp_http_url: str
+
+
+class MemoryRealmRuntimePage(StrictModel):
+    realms: tuple[MemoryRealmRuntime, ...] = ()
+    memory_available: bool
 
 
 class CompanionRosterPage(StrictModel):
@@ -198,6 +213,30 @@ class MemoryBrowse(StrictModel):
     #: Carried through rather than dropped: a count that disagrees with what is
     #: listed is worse than a count that explains itself.
     withheld_count: int = Field(ge=0)
+    truncated: bool
+
+
+class MemoryGraphNode(StrictModel):
+    node_id: str = Field(min_length=1, max_length=256)
+    label: str = Field(min_length=1, max_length=256)
+    degree: int = Field(ge=0)
+
+
+class MemoryGraphEdge(StrictModel):
+    edge_id: str = Field(min_length=1, max_length=128)
+    subject: str = Field(min_length=1, max_length=256)
+    predicate: str = Field(min_length=1, max_length=128)
+    object: str = Field(min_length=1, max_length=256)
+    confidence: float = Field(ge=0.0, le=1.0)
+    recorded_at: str = Field(default="", max_length=64)
+
+
+class MemoryGraph(StrictModel):
+    contract_version: Literal["1"]
+    operation: Literal["memory.graph"]
+    memory_space_id: str = Field(min_length=1, max_length=64)
+    nodes: tuple[MemoryGraphNode, ...] = ()
+    edges: tuple[MemoryGraphEdge, ...] = ()
     truncated: bool
 
 

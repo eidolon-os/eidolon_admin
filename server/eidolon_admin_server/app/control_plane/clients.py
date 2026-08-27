@@ -21,33 +21,35 @@ from eidolon_sdk.device_foundation.v1 import (
 from pydantic import BaseModel, ValidationError
 
 from .contracts import (
-    ForgetOutcome,
-    ForgetPreview,
-    ConversationRows,
-    MemoryAudience,
-    MemoryBrowse,
-    MemoryEntries,
-    MemoryExport,
-    PersonaChapter,
-    OwnerRuntimeCompanions,
-    RuntimeSessionRevocation,
-    TaskRow,
-    TaskRows,
-    TranscriptRows,
-    PersonaTimeline,
+    CompanionFace,
     CompanionIdentity,
     CompanionLifecycleResult,
     CompanionProvision,
     CompanionRosterPage,
-    OwnerGovernanceEvents,
+    ConversationRows,
     DeviceRef,
+    ForgetOutcome,
+    ForgetPreview,
     HubClaimRevocationResult,
     KernelBodyEndpoint,
     KernelBodyEndpointPage,
     KernelMountPage,
-    CompanionFace,
     KernelMutationResult,
+    MemoryAudience,
+    MemoryBrowse,
+    MemoryEntries,
+    MemoryExport,
+    MemoryGraph,
+    MemoryRealmRuntimePage,
+    OwnerGovernanceEvents,
     OwnerIdentity,
+    OwnerRuntimeCompanions,
+    PersonaChapter,
+    PersonaTimeline,
+    RuntimeSessionRevocation,
+    TaskRow,
+    TaskRows,
+    TranscriptRows,
     WorkspaceInitializeRequest,
     WorkspaceOperation,
 )
@@ -954,6 +956,27 @@ class MemorySupervisorClient:
             return False
         return response.status_code == 200
 
+    async def list_realms(self) -> MemoryRealmRuntimePage:
+        """Read Memory's own realm and worker health projection."""
+
+        response = await self._client.get(
+            f"{self._base_url}/api/admin/realms",
+            timeout=self._timeout,
+        )
+        if response.status_code >= 400:
+            raise AuthorityFailure(
+                "memory",
+                "runtime_unavailable",
+                f"Memory Supervisor returned HTTP {response.status_code}",
+                response.status_code,
+            )
+        try:
+            return MemoryRealmRuntimePage.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise _contract_violation(
+                "memory", f"invalid realm runtime page: {exc}"
+            ) from exc
+
 
 class MemoryRecollectionsClient:
     """What an Owner's Eidolon remembers, read through the memory service.
@@ -1004,10 +1027,10 @@ class MemoryRecollectionsClient:
     ) -> list[dict[str, Any]]:
         """What this Owner's memory holds about a query.
 
-        ``companion_id`` selects an audience, not a scope: the space is the
-        Owner's either way, and naming a Companion adds that Companion's own
-        statements to the Owner-layer ones. Omitting it answers with the Owner
-        layer, which is what an Owner-level question wants.
+        The physical space remains the Owner's. ``companion_id`` selects a
+        logical audience within it: that Companion's private statements plus
+        automatically derived Owner facts. Omitting it returns only the derived
+        Owner layer.
         """
         params = {"q": query, "limit": str(limit)}
         if companion_id:
@@ -1053,6 +1076,18 @@ class MemoryRecollectionsClient:
             owner_id, "browse", params=params, method="GET"
         )
         return _parse("memory", response, MemoryBrowse)
+
+    async def graph(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryGraph:
+        params = {"companion_id": companion_id} if companion_id else None
+        response = await self._realm_call(
+            owner_id, "graph", params=params, method="GET"
+        )
+        return _parse("memory", response, MemoryGraph)
 
     async def entries(
         self,

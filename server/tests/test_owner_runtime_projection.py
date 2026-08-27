@@ -24,8 +24,6 @@ from pathlib import Path
 
 import jsonschema
 import pytest
-from referencing import Registry, Resource
-
 from eidolon_admin_server.app.management.mission_control import (
     LANE_LIMITS,
     owner_runtime_projection,
@@ -50,6 +48,7 @@ from eidolon_admin_server.app.mission_control.schemas import (
 from eidolon_admin_server.app.mission_control.service import RuntimeComposition
 from eidolon_admin_server.audit import IndexedAuditEvent
 from eidolon_sdk.biz.audit import AuditEnvelope
+from referencing import Registry, Resource
 
 _NOW = datetime(2026, 8, 26, 12, 30, tzinfo=UTC)
 
@@ -241,8 +240,7 @@ def _healthy_ledger() -> LaneLedger:
         "data.conversations",
         "agent.long_tasks",
         "data.jobs",
-        "data.memory",
-        "memory.runners",
+        "memory.runtime",
         "audit.index",
     ):
         ledger.record(source, ok=True)

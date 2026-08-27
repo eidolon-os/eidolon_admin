@@ -20,6 +20,9 @@ from eidolon_admin_server.app.control_plane.contracts import (
     MemoryBrowse,
     MemoryEntries,
     MemoryExport,
+    MemoryGraph,
+    MemoryGraphEdge,
+    MemoryGraphNode,
 )
 
 
@@ -42,6 +45,13 @@ class MemoryBrowser(Protocol):
         limit: int | None = None,
         companion_id: str | None = None,
     ) -> MemoryEntries: ...
+
+    async def graph(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryGraph: ...
 
     async def export(
         self,
@@ -74,6 +84,27 @@ class MemoryLibrary:
     entry_count: int
     withheld_count: int
     truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryGraphView:
+    nodes: tuple[MemoryGraphNode, ...]
+    edges: tuple[MemoryGraphEdge, ...]
+    truncated: bool
+
+
+async def read_graph(
+    *,
+    owner_id: str,
+    companion_id: str | None,
+    memory: MemoryBrowser,
+) -> MemoryGraphView:
+    graph = await memory.graph(owner_id=owner_id, companion_id=companion_id)
+    return MemoryGraphView(
+        nodes=graph.nodes,
+        edges=graph.edges,
+        truncated=graph.truncated,
+    )
 
 
 async def read_library(

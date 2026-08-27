@@ -540,6 +540,18 @@
             "title": "Display Name",
             "type": "string"
           },
+          "genome_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genome Id"
+          },
           "kind": {
             "maxLength": 32,
             "minLength": 1,
@@ -557,6 +569,18 @@
             "minLength": 1,
             "title": "Lifecycle State",
             "type": "string"
+          },
+          "memory_realm_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Realm Id"
           },
           "revision": {
             "minimum": 1.0,
@@ -1957,6 +1981,121 @@
           "value"
         ],
         "title": "MemoryExportRecordView",
+        "type": "object"
+      },
+      "MemoryGraphEdgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "confidence": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "edge_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "object": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Object",
+            "type": "string"
+          },
+          "predicate": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Predicate",
+            "type": "string"
+          },
+          "recorded_at": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Recorded At",
+            "type": "string"
+          },
+          "subject": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_id",
+          "subject",
+          "predicate",
+          "object",
+          "confidence"
+        ],
+        "title": "MemoryGraphEdgeView",
+        "type": "object"
+      },
+      "MemoryGraphNodeView": {
+        "additionalProperties": false,
+        "properties": {
+          "degree": {
+            "minimum": 0.0,
+            "title": "Degree",
+            "type": "integer"
+          },
+          "label": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "node_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Node Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_id",
+          "label",
+          "degree"
+        ],
+        "title": "MemoryGraphNodeView",
+        "type": "object"
+      },
+      "MemoryGraphView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryGraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryGraphNodeView"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges",
+          "truncated"
+        ],
+        "title": "MemoryGraphView",
         "type": "object"
       },
       "MemoryLibraryView": {
@@ -5219,9 +5358,74 @@
         ]
       }
     },
+    "/api/management/v1/memory/graph": {
+      "get": {
+        "operationId": "get_memory_graph_api_management_v1_memory_graph_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "companion_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Companion Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryGraphView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Memory Graph",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/memory/library": {
       "get": {
-        "description": "What my Eidolon remembers.\n\n``companion_id`` names an audience, not a scope: the memory is the\nOwner's and every one of their Eidolons reads it. Naming one adds what\nthe Owner told that one in particular; naming none answers with the\nshared layer.",
+        "description": "What my Eidolon remembers.\n\nThe Owner owns one physical Realm. ``companion_id`` selects one\nEidolon's private audience within it plus automatically derived Owner\nfacts; naming none returns only that derived shared layer.",
         "operationId": "get_memory_library_api_management_v1_memory_library_get",
         "parameters": [
           {

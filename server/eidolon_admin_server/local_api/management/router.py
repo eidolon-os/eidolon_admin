@@ -15,23 +15,23 @@ from __future__ import annotations
 
 from typing import Literal, Protocol, runtime_checkable
 
+from eidolon_sdk.biz.contracts.refusal import Refusal
+from eidolon_sdk.biz.persona import PersonaAuthoring
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from eidolon_sdk.biz.contracts.refusal import Refusal
-from eidolon_sdk.biz.persona import PersonaAuthoring
-
 from eidolon_admin_server.local_api.host_services import (  # noqa: E402
+    HostMachinePort,
     HostServiceControlError,
     HostServiceInventoryView,
     HostServiceMutationView,
-    HostMachinePort,
     HostVitalsView,
     MutationOperation,
     host_service_inventory,
     host_service_mutation,
     host_vitals,
 )
+
 from .mission_control import join_owner_devices
 
 MANAGEMENT_PREFIX = "/api/management/v1"
@@ -482,6 +482,8 @@ class CompanionSummaryView(BaseModel):
     revision: int = Field(ge=1)
     created_at: str = Field(min_length=1, max_length=64)
     updated_at: str = Field(min_length=1, max_length=64)
+    genome_id: str | None = Field(default=None, max_length=64)
+    memory_realm_id: str | None = Field(default=None, max_length=64)
     #: Whether this Host is running it at this moment.
     #:
     #: Three states, and the third is why this is not a boolean: **null is
@@ -803,6 +805,34 @@ class MemoryLibraryView(BaseModel):
     withheld_count: int = Field(ge=0)
     #: The Host read as much as it is willing to in one go. A client must not
     #: present a truncated library as the whole of someone's memory.
+    truncated: bool
+
+
+class MemoryGraphNodeView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(min_length=1, max_length=256)
+    label: str = Field(min_length=1, max_length=256)
+    degree: int = Field(ge=0)
+
+
+class MemoryGraphEdgeView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    edge_id: str = Field(min_length=1, max_length=128)
+    subject: str = Field(min_length=1, max_length=256)
+    predicate: str = Field(min_length=1, max_length=128)
+    object: str = Field(min_length=1, max_length=256)
+    confidence: float = Field(ge=0.0, le=1.0)
+    recorded_at: str = Field(default="", max_length=64)
+
+
+class MemoryGraphView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    nodes: list[MemoryGraphNodeView]
+    edges: list[MemoryGraphEdgeView]
     truncated: bool
 
 
@@ -2547,10 +2577,9 @@ def register_management_routes(
     ) -> MemoryLibraryView:
         """What my Eidolon remembers.
 
-        ``companion_id`` names an audience, not a scope: the memory is the
-        Owner's and every one of their Eidolons reads it. Naming one adds what
-        the Owner told that one in particular; naming none answers with the
-        shared layer.
+        The Owner owns one physical Realm. ``companion_id`` selects one
+        Eidolon's private audience within it plus automatically derived Owner
+        facts; naming none returns only that derived shared layer.
         """
         owner_id = await authenticated_owner(authorization)
         try:
@@ -2563,6 +2592,25 @@ def register_management_routes(
             wings=[MemoryWingView(**wing) for wing in answer["wings"]],
             entry_count=answer["entry_count"],
             withheld_count=answer["withheld_count"],
+            truncated=answer["truncated"],
+        )
+
+    @router.get("/memory/graph", response_model=MemoryGraphView)
+    async def get_memory_graph(
+        companion_id: str | None = None,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> MemoryGraphView:
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.memory_graph(
+                owner_id=owner_id,
+                companion_id=companion_id,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return MemoryGraphView(
+            nodes=[MemoryGraphNodeView(**node) for node in answer["nodes"]],
+            edges=[MemoryGraphEdgeView(**edge) for edge in answer["edges"]],
             truncated=answer["truncated"],
         )
 
