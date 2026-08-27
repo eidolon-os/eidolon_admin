@@ -100,6 +100,19 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
+    async def mission_control_activities(
+        self, *, owner_id: str, before: str | None
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if before is not None:
+            # Passed through untouched, like the roster's cursor below: the page
+            # boundary belongs to the authority that built it, and this side has
+            # no business knowing it is a timestamp.
+            params["before"] = before
+        return await self._get(
+            "/api/internal/v1/management/mission-control/activities", params
+        )
+
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict:
         params = {"owner_id": owner_id}
         if cursor is not None:

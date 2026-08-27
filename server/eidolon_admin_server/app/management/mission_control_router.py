@@ -19,9 +19,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 
-from eidolon_admin_server.app.management.mission_control import owner_runtime_projection
+from eidolon_admin_server.app.management.mission_control import (
+    owner_activity_history,
+    owner_runtime_projection,
+)
 from eidolon_admin_server.app.mission_control.lanes import LaneLedger
-from eidolon_admin_server.app.mission_control.service import compose_runtime
+from eidolon_admin_server.app.mission_control.service import (
+    compose_runtime,
+    owner_activity_page,
+)
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 from eidolon_admin_server.audit import IndexedAuditEvent
 
@@ -99,3 +105,37 @@ async def get_mission_control_snapshot(
     composition = await compose_runtime(request, owner_id=owner_id)
     audit_events = await _owner_audit_tail(request, owner_id, composition.ledger)
     return owner_runtime_projection(composition, audit_events=audit_events)
+
+
+#: One page of history. Small enough that a phone's first screen arrives at
+#: once, large enough that scrolling does not fetch on every flick.
+ACTIVITY_PAGE = 30
+
+
+@router.get("/mission-control/activities")
+async def get_mission_control_activities(
+    request: Request,
+    owner_id: str,
+    before: str | None = None,
+    limit: int = ACTIVITY_PAGE,
+) -> dict[str, Any]:
+    """This Owner's interaction history, a page at a time.
+
+    The map carries a bounded now; this carries the record. They come from the
+    same projection so a turn reads the same in both, but not from the same
+    read: the composition is eight upstream calls trimmed for display, and
+    paging *that* for page four would be the wrong shape and eight times the
+    cost. This walks the Agent's turn log, which is the durable record of every
+    interaction and already has a cursor.
+
+    ``before`` is that cursor, handed back as ``next_before``, so a caller never
+    has to know it is a timestamp.
+    """
+
+    activities, cursor, failure = await owner_activity_page(
+        request,
+        owner_id=owner_id,
+        before=before,
+        limit=max(1, min(int(limit), 100)),
+    )
+    return owner_activity_history(activities, next_before=cursor, failure=failure)

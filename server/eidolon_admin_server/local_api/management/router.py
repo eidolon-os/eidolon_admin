@@ -1558,6 +1558,10 @@ class ManagementBackendPort(Protocol):
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
 
+    async def mission_control_activities(
+        self, *, owner_id: str, before: str | None
+    ) -> dict: ...
+
     async def companion(self, *, owner_id: str, companion_id: str) -> dict: ...
 
     async def set_default_companion(
@@ -1830,6 +1834,36 @@ def register_management_routes(
             devices=rows if not inventory_failure else None,
             failure=inventory_failure,
         )
+
+    @router.get("/mission-control/activities", response_model=None)
+    async def get_mission_control_activities(
+        cursor: str | None = Query(default=None),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict:
+        """What has happened here, a page at a time.
+
+        The map carries a bounded now — trimmed per Companion so one talkative
+        body cannot evict the rest of the household — and that bound is a
+        display decision, not a history. This is the history, and it pages: the
+        Owner scrolls, the phone asks again with the ``next_cursor`` it was
+        handed. It is called a cursor rather than a timestamp on purpose — the
+        page boundary is the Host's, and a client that reads it has taken on a
+        detail the Host is then unable to change.
+
+        The Owner comes from the session, as everywhere on this plane.
+
+        Untyped for the same reason the snapshot is: the rows are the contract's
+        activity shape, projected by the one function that also builds the map's,
+        so an interaction opened from the history and the same interaction on the
+        map cannot describe themselves differently.
+        """
+        session = await authenticated_controller_session(authorization)
+        try:
+            return await backend.mission_control_activities(
+                owner_id=session.owner_id, before=cursor
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
 
     @router.get("/home", response_model=HomeView)
     async def get_home(

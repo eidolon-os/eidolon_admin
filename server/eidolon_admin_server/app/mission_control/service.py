@@ -588,14 +588,29 @@ async def _agent_turns(
     request: Request,
     owner_id: str,
     ledger: LaneLedger,
+    *,
+    limit: int = 20,
+    before: str | None = None,
 ) -> list[dict[str, Any]]:
+    """A page of this Owner's turns, newest first.
+
+    ``before`` is the Agent's own cursor and it is passed through rather than
+    reinvented: the turn log is the durable record of every interaction, it
+    already pages, and the history read walks it with the same call the map
+    makes. One reader, so a paged history and the map cannot disagree about what
+    a turn was.
+    """
+
     started = time.perf_counter()
+    params: dict[str, Any] = {"owner_id": owner_id, "limit": limit}
+    if before:
+        params["before"] = before
     try:
         body = await _service_json(
             request,
             "agent",
             "/conversations/turns",
-            params={"owner_id": owner_id, "limit": 20},
+            params=params,
             timeout=2.0,
         )
         rows = body.get("turns") if isinstance(body, dict) else []
@@ -605,6 +620,48 @@ async def _agent_turns(
     except Exception as exc:  # noqa: BLE001
         ledger.record("agent.turns", ok=False, detail=str(exc))
         return []
+
+
+async def owner_activity_page(
+    request: Request,
+    *,
+    owner_id: str,
+    before: str | None,
+    limit: int,
+) -> tuple[list[RuntimeActivity], str | None, str]:
+    """One page of this Owner's interaction history, oldest cursor returned.
+
+    Deliberately **not** the composition. The map's reading is a bounded now —
+    eight upstream reads, trimmed per Companion so one talkative body cannot
+    evict everyone else — and asking it for page four of a history would be the
+    wrong shape and eight times the cost. This walks the one durable record of
+    interactions instead, through the same projection the map uses, so a turn
+    reads identically in both places.
+
+    What it covers is interactions, and it says so: a body arriving or leaving
+    belongs to ``device_event`` and nothing publishes those yet, so a history
+    that silently omitted them would be read as a household where nothing else
+    ever happened.
+    """
+
+    ledger = LaneLedger()
+    rows = await _agent_turns(request, owner_id, ledger, limit=limit, before=before)
+    failure = next(
+        (status.detail for status in ledger.statuses() if not status.ok), ""
+    )
+    activities = [_voice_activity(_turn(row)) for row in rows]
+    # The oldest row this page returned, so the next page starts strictly before
+    # it. Absent when the page was short, which is the tail.
+    cursor = None
+    if len(rows) == limit and activities:
+        oldest = activities[-1].started_at
+        cursor = _stamp_iso(oldest) if oldest is not None else None
+    return activities, cursor, failure
+
+
+def _stamp_iso(value: datetime) -> str:
+    when = value if value.tzinfo else value.replace(tzinfo=UTC)
+    return when.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 async def _agent_long_tasks(

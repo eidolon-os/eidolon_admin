@@ -351,4 +351,45 @@ def _stamp(value: datetime | None) -> str | None:
     return when.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-__all__ = ["LANES", "LANE_LIMITS", "owner_runtime_projection"]
+#: What the history read covers, said out loud in the payload. Interactions are
+#: what the turn log durably records; a body arriving or leaving belongs to
+#: ``device_event`` and nothing publishes those yet. A history that quietly
+#: omitted them would be read as a household where nothing else ever happened.
+HISTORY_COVERAGE = "owner-interactions"
+
+
+def owner_activity_history(
+    activities: list[Any],
+    *,
+    next_before: str | None,
+    failure: str = "",
+) -> dict[str, Any]:
+    """One page of interactions, in the same row shape the map's lane carries.
+
+    Same ``_activity`` projection as the snapshot, so a turn opened from the
+    history and the same turn on the map cannot describe themselves differently.
+
+    ``failure`` is why the page is empty when it is empty for a reason. Absent
+    and unreadable are the same shape and must not be the same answer: an Owner
+    whose Agent is away has not stopped having a history.
+    """
+
+    return {
+        "contract_version": contract.CONTRACT_VERSION,
+        "coverage": HISTORY_COVERAGE,
+        "state": "unavailable" if failure else "ok",
+        "detail": failure,
+        "items": [] if failure else [_activity(row) for row in activities],
+        # ``next_cursor``, not ``next_before``: opaque to whoever holds it, so
+        # the Host can change what a page boundary is made of.
+        **({"next_cursor": next_before} if next_before else {}),
+    }
+
+
+__all__ = [
+    "HISTORY_COVERAGE",
+    "LANES",
+    "LANE_LIMITS",
+    "owner_activity_history",
+    "owner_runtime_projection",
+]

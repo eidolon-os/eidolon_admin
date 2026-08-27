@@ -5374,6 +5374,70 @@
         ]
       }
     },
+    "/api/management/v1/mission-control/activities": {
+      "get": {
+        "description": "What has happened here, a page at a time.\n\nThe map carries a bounded now — trimmed per Companion so one talkative\nbody cannot evict the rest of the household — and that bound is a\ndisplay decision, not a history. This is the history, and it pages: the\nOwner scrolls, the phone asks again with the ``next_cursor`` it was\nhanded. It is called a cursor rather than a timestamp on purpose — the\npage boundary is the Host's, and a client that reads it has taken on a\ndetail the Host is then unable to change.\n\nThe Owner comes from the session, as everywhere on this plane.\n\nUntyped for the same reason the snapshot is: the rows are the contract's\nactivity shape, projected by the one function that also builds the map's,\nso an interaction opened from the history and the same interaction on the\nmap cannot describe themselves differently.",
+        "operationId": "get_mission_control_activities_api_management_v1_mission_control_activities_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Mission Control Activities",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/mission-control/snapshot": {
       "get": {
         "description": "What is happening on this Host, for the Owner asking.\n\nThe Owner comes from the session and from nowhere else. The operator\nconsole's Mission Control takes an ``owner_id`` query parameter, which is\nright for an operator and would be a way to read someone else's home\nhere.\n\nUntyped by design: the response is the contract at\n``eidolon_sdk/contracts/mission_control/v1/mission-control-snapshot.schema.json``,\nwhich clients parse directly and which the SDK's goldens pin on both\nsides. A pydantic mirror in this file would be a second authority for the\nsame shape.\n\nEvery lane carries its own health, so a Host that cannot reach one of its\nown services answers with that lane unreadable and the rest of the map\nintact — rather than an error that costs the reader everything, or an\nempty list that reads as a quiet house.",

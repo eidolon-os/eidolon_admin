@@ -547,6 +547,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'GET /api/management/v1/memory/recollections': RecollectionsView
+  'GET /api/management/v1/mission-control/activities': unknown
   'GET /api/management/v1/mission-control/snapshot': unknown
   'PATCH /api/management/v1/owner': OwnerNameView
   'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
