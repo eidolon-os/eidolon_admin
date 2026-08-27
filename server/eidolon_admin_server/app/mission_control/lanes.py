@@ -89,8 +89,12 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # exist, so no body is one, and darkening the whole lane over a decoration
     # that cannot yet be true would hide the bodies that are really there.
     "data.guard_bindings": (),
-    # The floor of the whole thing.
-    "services": ("services",),
+    # The floor of the whole thing, as the Host itself reports it — eidolond,
+    # which drives supervisord on macOS and systemd on the Pi. The old label was
+    # `services`, and it belonged to a probe in this process that fell back to
+    # supervisord: on a Pi that made three running services read red. Renamed so
+    # nothing can report under the old one.
+    "host.services": ("services",),
     # Turns, and the activity chain projected from them.
     "agent.turns": ("turns", "activities"),
     "data.conversations": ("turns",),

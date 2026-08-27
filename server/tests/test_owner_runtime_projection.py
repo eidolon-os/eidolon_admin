@@ -236,7 +236,7 @@ def _healthy_ledger() -> LaneLedger:
     ledger = LaneLedger()
     for source in (
         "runtime.blackboard",
-        "services",
+        "host.services",
         "agent.turns",
         "data.conversations",
         "agent.long_tasks",
@@ -269,7 +269,7 @@ def test_projection_satisfies_the_sdk_contract() -> None:
 def test_a_lane_nobody_could_read_carries_no_rows() -> None:
     # The devices lane's only source in this process, gone.
     ledger = LaneLedger()
-    for source in ("services", "agent.turns", "agent.long_tasks", "audit.index"):
+    for source in ("host.services", "agent.turns", "agent.long_tasks", "audit.index"):
         ledger.record(source, ok=True)
     ledger.record("runtime.blackboard", ok=False, detail="NATS KV 不可用")
 

@@ -606,98 +606,69 @@ async def _memory_summary(
 
 
 async def _services(request: Request, ledger: LaneLedger) -> list[RuntimeService]:
-    registry = getattr(request.app.state, "registry", None)
-    http_client: httpx.AsyncClient | None = getattr(request.app.state, "http_client", None)
-    if registry is None or http_client is None:
-        ledger.record("services", ok=False, detail="registry unavailable")
+    """The floor, as the Host itself reports it.
+
+    This used to probe every service twice: an HTTP health call, then a fallback
+    to **supervisord** for anything without one. That fallback is why three
+    running services read red on a Pi — `eidolond`, `channel` and `livekit` were
+    `active` under systemd while this panel said `supervisord: UNKNOWN`, because
+    the Pi has no supervisord at all. It was also a second opinion: the Host
+    already publishes per-service runtime state through `eidolond`, which
+    "drives supervisord on macOS or systemd on the Pi"
+    (`app/host_services/client.py`), and `app/host_services/router.py` says in as
+    many words that the older supervisor route "only speaks supervisord".
+
+    So this reads that authority instead of re-deriving it. One consequence is
+    the point: 底座 on the Owner's map and 底座 on 主机运行状态 are now the same
+    read, so they cannot disagree about how many services are up — they did,
+    8/13 against 11/11, on the same Host at the same moment.
+    """
+
+    client = getattr(request.app.state, "host_services", None)
+    if client is None:
+        ledger.record(
+            "host.services",
+            ok=False,
+            detail="这台 Admin 没有配置 Host 服务控制面",
+        )
         return []
-
-    # Pull live supervisord process state once, so process-only services
-    # (channel, mementos) without an HTTP health surface still report real
-    # liveness — consistent with the Overview page's composite verdict.
-    sv_client = getattr(request.app.state, "supervisor_client", None)
-    sv_by_full: dict[str, Any] = {}
-    if sv_client is not None:
-        try:
-            infos = await sv_client.get_all_process_info()
-            sv_by_full = {info.full_name: info for info in infos}
-        except Exception:  # noqa: BLE001
-            sv_by_full = {}
-
-    def _supervisor_state(svc: Any) -> tuple[bool, bool, str]:
-        """Returns (supervised, all_programs_running, statename_summary)."""
-        sup = getattr(svc, "supervisor", None)
-        if sup is None:
-            return False, False, ""
-        group = getattr(sup, "group", "") or ""
-        programs = getattr(sup, "programs", []) or []
-        states = []
-        for prog in programs:
-            full = f"{group}:{prog}" if group else prog
-            info = sv_by_full.get(full)
-            states.append(getattr(info, "statename", "UNKNOWN") if info else "UNKNOWN")
-        return True, (bool(states) and all(s == "RUNNING" for s in states)), ", ".join(states)
-
-    async def _probe(svc: Any) -> RuntimeService:
-        started = time.perf_counter()
-        url = _health_url(svc)
-        http_ok: bool | None = None
-        latency: float | None = None
-        http_detail = ""
-        if url:
-            try:
-                resp = await http_client.get(url, timeout=1.2, headers={"Connection": "close"})
-                http_ok = resp.status_code < 500
-                http_detail = f"HTTP {resp.status_code}"
-            except Exception as exc:  # noqa: BLE001
-                http_ok = False
-                http_detail = str(exc)
-            latency = round((time.perf_counter() - started) * 1000, 1)
-
-        supervised, all_running, sv_summary = _supervisor_state(svc)
-
-        # Composite: online if HTTP healthy OR supervisord reports all RUNNING.
-        online = bool(http_ok) or (supervised and all_running)
-        checked = bool(url) or supervised
-        if url:
-            detail = http_detail
-        elif supervised:
-            detail = f"supervisord: {sv_summary or 'unknown'}"
-        else:
-            detail = "no health probe"
-
-        return RuntimeService(
-            service_id=svc.id,
-            name=svc.name,
-            online=online,
-            checked=checked,
-            latency_ms=latency,
-            detail=detail,
-        )
-
-    rows = list(await asyncio.gather(*(_probe(svc) for svc in registry.services)))
-
-    # Shared infrastructure (NATS / LiveKit): supervised-only, not in the
-    # service registry, so surface them from supervisord process state.
-    for sid, name, full in (("nats", "NATS", "nats:nats-server"), ("livekit", "LiveKit", "livekit:livekit-server")):
-        if any(r.service_id == sid for r in rows):
-            continue
-        info = sv_by_full.get(full)
-        state = getattr(info, "statename", "UNKNOWN") if info else "UNKNOWN"
-        rows.append(
-            RuntimeService(
-                service_id=sid,
-                name=name,
-                online=state == "RUNNING",
-                checked=info is not None,
-                latency_ms=None,
-                detail=f"supervisord: {state}",
-            )
-        )
-
-    ok = sum(1 for row in rows if row.online)
-    ledger.record("services", ok=True, detail=f"{ok}/{len(rows)} online")
+    started = time.perf_counter()
+    try:
+        page = await client.list_services()
+    except Exception as exc:  # noqa: BLE001 - one lane, not the whole map
+        ledger.record("host.services", ok=False, detail=f"{type(exc).__name__}: {exc}")
+        return []
+    rows = [_runtime_service(service) for service in page.services]
+    up = sum(1 for row in rows if row.online)
+    ledger.record(
+        "host.services",
+        ok=True,
+        detail=f"{up}/{len(rows)} online（{page.driver}）",
+        started=started,
+    )
     return rows
+
+
+def _runtime_service(service: Any) -> RuntimeService:
+    """One service, as the Host described it.
+
+    ``ready`` is the only state that means running. Everything else keeps the
+    Host's own word for it rather than being flattened into "offline": a service
+    that is ``starting`` is not a service that failed, and a state this version
+    has never heard of is not a service that is fine.
+    """
+
+    state = service.runtime_state
+    detail = service.detail or ""
+    return RuntimeService(
+        service_id=service.service_id,
+        name=service.service_id,
+        online=state == "ready",
+        # The Host answered about it either way; there is nothing unprobed here.
+        checked=True,
+        latency_ms=None,
+        detail=detail or state,
+    )
 
 
 async def _service_json(
@@ -2368,16 +2339,6 @@ def _compact_result(result: dict[str, Any]) -> str:
         if result.get(key):
             return _redact_text(str(result[key]), keep=80)
     return f"{len(result)} result field(s)"
-
-
-def _health_url(service: Any) -> str:
-    health = str(getattr(service, "health", "") or "")
-    if not health:
-        return ""
-    if health.startswith(("http://", "https://")):
-        return health
-    base = str(getattr(service, "base_url", "") or "").rstrip("/")
-    return f"{base}{health}" if base else ""
 
 
 def _safe_payload(value: Any) -> Any:

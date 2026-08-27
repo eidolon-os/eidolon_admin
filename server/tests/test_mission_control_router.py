@@ -244,6 +244,78 @@ async def test_every_module_this_composition_imports_can_be_imported() -> None:
     assert not missing, f"the composition imports modules that do not exist: {missing}"
 
 
+async def test_the_floor_is_read_from_the_host_not_probed_here() -> None:
+    """底座 comes from eidolond, which knows which platform it is on.
+
+    The old probe called each service's health URL and, for anything without
+    one, fell back to **supervisord**. On a Pi that is not a fallback, it is a
+    guess: there is no supervisord there. Three services that were `active`
+    under systemd — eidolond, channel, livekit — read `supervisord: UNKNOWN`,
+    which this panel drew as red. Meanwhile 主机运行状态, which reads the Host's
+    own authority, said 11/11 on the same Host at the same moment.
+
+    Two screens, one fact, two answers. So there is one read now, and this holds
+    the two properties that were broken: a service with no HTTP surface is not
+    condemned for it, and `ready` is the only state that means running.
+    """
+
+    class _Service:
+        def __init__(self, service_id: str, state: str, detail: str | None = None) -> None:
+            self.service_id = service_id
+            self.runtime_state = state
+            self.detail = detail
+
+    class _Page:
+        driver = "systemd"
+        services = (
+            # No HTTP health surface at all. Under the old probe this was
+            # `supervisord: UNKNOWN` → red, on a Host where it was running.
+            _Service("eidolond", "ready"),
+            _Service("channel", "ready"),
+            _Service("livekit", "ready"),
+            _Service("mementos", "inactive", "unit not loaded"),
+            _Service("kernel", "starting"),
+            _Service("agent", "unknown"),
+        )
+
+    class _Client:
+        async def list_services(self):
+            return _Page()
+
+    request = _Request(_ControlPlane())
+    request.app.state.host_services = _Client()
+    ledger = LaneLedger()
+
+    rows = await service._services(request, ledger)
+
+    by_id = {row.service_id: row for row in rows}
+    # Running is running, whether or not it answers HTTP.
+    assert by_id["eidolond"].online is True
+    assert by_id["channel"].online is True
+    assert by_id["livekit"].online is True
+    # And ready is the only state that means it.
+    assert by_id["mementos"].online is False
+    assert by_id["kernel"].online is False
+    assert by_id["agent"].online is False
+    # Nothing is left unprobed: the Host answered about every one of them.
+    assert all(row.checked for row in rows)
+    # The Host's own word survives, rather than being flattened to "offline".
+    assert by_id["mementos"].detail == "unit not loaded"
+    assert by_id["kernel"].detail == "starting"
+    status = next(row for row in ledger.statuses() if row.source == "host.services")
+    assert status.ok is True and "systemd" in status.detail
+
+
+async def test_no_host_service_control_is_said_rather_than_guessed() -> None:
+    request = _Request(_ControlPlane())
+    ledger = LaneLedger()
+
+    assert await service._services(request, ledger) == []
+
+    assert ledger.outcome("services").state == "unavailable"
+    assert "服务控制面" in ledger.outcome("services").detail
+
+
 async def test_the_retired_hub_capabilities_are_said_rather_than_asked_for() -> None:
     """Hub's management client no longer publishes an owner device page or an
     event feed, and this composition used to call both.
