@@ -26,11 +26,13 @@ from .controller_auth import (
     verify_controller_signature,
 )
 from .domain import (
+    SETUP_CODE_DIGITS,
     CommissioningSessionSeed,
     ControllerGrant,
     ControllerRole,
     NetworkState,
     generate_setup_code,
+    is_usable_setup_code,
 )
 from .endpoint_encoding import GATT_MAX_ATTRIBUTE_BYTES, endpoint_size
 from .host_addresses import local_api_base_urls
@@ -562,7 +564,11 @@ class BootstrapService:
             "expires_at": session.expires_at,
         }
 
-    def issue_setup_code(self, ttl_seconds: int | None = None) -> dict[str, Any]:
+    def issue_setup_code(
+        self,
+        ttl_seconds: int | None = None,
+        setup_code: str | None = None,
+    ) -> dict[str, Any]:
         """Mint the one-time code a phone types to claim this Host.
 
         Reaching this operation already means holding the Host's own control
@@ -571,15 +577,34 @@ class BootstrapService:
         of the two — so gating it on the build being a development one only
         ever meant a shipped Host could not be claimed at all.
 
-        Every Host draws a fresh code every time. A fixed one used to be
-        allowed in development; nothing ever configured it, and a code that
-        does not change is a code that stops being a one-time secret.
+        The caller may name the code instead of letting the Host draw one.
+        That grants no authority the caller did not already hold: whoever
+        reaches this socket can mint a random code and read it back in the same
+        breath. What it buys is that an operator who already knows the value
+        never has to look it up — a development loop types the same digits
+        every time, and manufacturing can eventually put the code it printed on
+        the box onto the Host it printed it for.
+
+        There is deliberately no mode here. A check that refused a named code
+        on a shipped Host would forbid exactly that manufacturing step, and
+        this Host cannot see the thing such a check would pretend to prevent —
+        it only ever sees one code, never whether a fleet shares it. What it
+        can enforce is the one rule that does not depend on who is asking:
+        however a code arrives, drawn or named, it must be one this Host would
+        have been willing to draw.
         """
 
         ttl = ttl_seconds or self._settings.setup_code_ttl_seconds
         if not 60 <= ttl <= 86400:
             raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
-        return self._issue_setup_code(generate_setup_code(), ttl)
+        if setup_code is None:
+            return self._issue_setup_code(generate_setup_code(), ttl)
+        if not is_usable_setup_code(setup_code):
+            raise BootstrapOperationRejected(
+                f"setup_code must be a usable {SETUP_CODE_DIGITS}-digit Setup code: "
+                "digits only, not all the same, and not the plain run up or down"
+            )
+        return self._issue_setup_code(setup_code, ttl)
 
     def _issue_setup_code(
         self,
@@ -604,10 +629,16 @@ class BootstrapService:
         return result
 
     def setup_session_status(self) -> dict[str, Any]:
-        if self._settings.mode is not BootstrapMode.DEVELOPMENT:
-            raise BootstrapOperationRejected(
-                "development Setup status is disabled in production"
-            )
+        """Whether a claim window is open, and nothing secret about it.
+
+        Reported on every Host. It used to be refused unless the build was a
+        development one, which made the single most operational question about
+        a shipped Host — is there a way in right now — unanswerable from the
+        Host's own console. The row carries no code, only when it was made,
+        when it lapses, whether it was used and how many wrong tries it has
+        taken; refusing that by build protected nothing.
+        """
+
         session = self._store.latest_commissioning_session()
         return {"current": None if session is None else session.to_dict()}
 

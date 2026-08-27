@@ -35,9 +35,21 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     code.add_argument("--ttl", type=int, default=None)
+    code.add_argument(
+        "--code",
+        default=None,
+        help=(
+            "name the code instead of letting the Host draw one; it must still "
+            "be one the Host would have drawn (eight digits, not all the same, "
+            "not the plain run up or down)"
+        ),
+    )
+    subparsers.add_parser(
+        "commissioning-status",
+        help="whether a claim window is open on this Host, and never the code",
+    )
     dev = subparsers.add_parser("dev")
     dev_subparsers = dev.add_subparsers(dest="dev_command", required=True)
-    dev_subparsers.add_parser("show")
     reset = dev_subparsers.add_parser("reset")
     reset.add_argument(
         "--forget-wifi",
@@ -58,10 +70,14 @@ async def _execute(args: argparse.Namespace) -> dict[str, Any]:
         parameters = {} if args.ttl is None else {"ttl_seconds": args.ttl}
         return await client.request("controller.reset", **parameters)
     if args.command == "commissioning-code":
-        parameters = {} if args.ttl is None else {"ttl_seconds": args.ttl}
+        parameters: dict[str, Any] = {}
+        if args.ttl is not None:
+            parameters["ttl_seconds"] = args.ttl
+        if args.code is not None:
+            parameters["setup_code"] = args.code
         return await client.request("commissioning.code", **parameters)
-    if args.command == "dev" and args.dev_command == "show":
-        return await client.request("dev.show")
+    if args.command == "commissioning-status":
+        return await client.request("commissioning.status")
     if args.command == "dev" and args.dev_command == "reset":
         return await client.request(
             "dev.reset",

@@ -85,8 +85,21 @@ so the window was permanently open and the one-time code was neither. Mint a
 code when you need one:
 
 ```text
-eidolon-bootstrapctl commissioning-code [--ttl SECONDS]
+eidolon-bootstrapctl commissioning-code [--ttl SECONDS] [--code DIGITS]
+eidolon-bootstrapctl commissioning-status
 ```
+
+`--code` names the value instead of letting the Host draw one, which is how a
+development loop gets its convenience back without the mechanism changing: the
+code opens one ordinary session that expires, is spent once, dies after five
+wrong tries and supersedes any window before it. Operators normally set it once
+per Host in the ops profile (`app.setup_code`) rather than typing it. There is
+deliberately no mode check on this — whoever reaches this socket can already
+mint a random code and read it back, and a shipped Host will one day need to be
+told the code printed on its own box. What is enforced, however the code
+arrives, is that it is one this Host would have drawn itself.
+
+`commissioning-status` says whether a claim window is open, and never the code.
 
 A window exists if and only if an operator minted one — on every Host, in
 every mode.

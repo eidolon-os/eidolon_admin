@@ -170,9 +170,16 @@ class BootstrapControlServer:
         if operation == "commissioning.code":
             raw_ttl = request.get("ttl_seconds")
             ttl = None if raw_ttl is None else int(raw_ttl)
-            return self._service.issue_setup_code(ttl)
-        if operation == "dev.show":
-            return self._service.development_setup_status()
+            setup_code = request.get("setup_code")
+            if setup_code is not None and not isinstance(setup_code, str):
+                raise BootstrapControlError("setup_code must be a string")
+            return self._service.issue_setup_code(ttl, setup_code)
+        # Not "dev.show" any more: it reports on every Host, and the method it
+        # called was renamed out from under it two weeks ago — nothing caught
+        # that, because nothing tested it, so the operation raised
+        # AttributeError for every caller.
+        if operation == "commissioning.status":
+            return self._service.setup_session_status()
         if operation == "dev.reset":
             forget_wifi_profiles = request.get("forget_wifi_profiles", False)
             if not isinstance(forget_wifi_profiles, bool):

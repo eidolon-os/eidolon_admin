@@ -483,6 +483,126 @@ def test_development_setup_code_is_short_lived_and_not_persisted(
         service.shutdown()
 
 
+def test_an_operator_may_name_the_code_on_any_host(tmp_path: Path) -> None:
+    """Naming the code grants nothing; it only saves looking one up.
+
+    Whoever reaches this socket can already mint a random code and read it back
+    in the same breath, so there is deliberately no mode here — a check that
+    refused a named code on a shipped Host would forbid the manufacturing step
+    that eventually puts the code printed on the box onto the Host it was
+    printed for.
+    """
+
+    development = _settings(tmp_path)
+    HostIdentityManager(development.identity_key_path, development.mode).load()
+
+    for settings in (
+        _settings(tmp_path),
+        _settings(tmp_path, BootstrapMode.PRODUCTION),
+    ):
+        service = _service(settings)
+        service.initialize()
+        try:
+            issued = service.issue_setup_code(600, "99999990")
+            assert issued["setup_code"] == "99999990"
+            # It is one ordinary session and nothing else: the window it opens
+            # is the same row a drawn code opens.
+            assert (
+                service.commissioning_endpoint()["setup_session"][
+                    "commissioning_id"
+                ]
+                == issued["commissioning_id"]
+            )
+            # Still only the hash is kept.
+            database_dump = "\n".join(
+                service._store.connection.iterdump()  # noqa: SLF001
+            )
+            assert "99999990" not in database_dump
+        finally:
+            service.shutdown()
+
+
+@pytest.mark.parametrize("code", ["1234567", "abcdefgh", "11111111", "01234567"])
+def test_a_named_code_must_be_one_the_host_would_have_drawn(
+    tmp_path: Path,
+    code: str,
+) -> None:
+    """The one rule that does not depend on who is asking.
+
+    This Host can never see the thing a mode check would pretend to prevent —
+    it only ever sees one code, never whether a fleet shares it. What it can
+    enforce is that a named code is no weaker than a drawn one.
+    """
+
+    service = _service(_settings(tmp_path))
+    service.initialize()
+    try:
+        with pytest.raises(BootstrapOperationRejected, match="usable 8-digit"):
+            service.issue_setup_code(600, code)
+        assert service.commissioning_endpoint()["setup_session"] is None
+    finally:
+        service.shutdown()
+
+
+def test_naming_the_same_code_twice_still_leaves_one_window(tmp_path: Path) -> None:
+    """A fixed code does not accumulate windows.
+
+    This is what makes re-minting a blind command in a development loop: the
+    operator fires it without reading the output, and the Host is left with
+    exactly one live session, the same way a drawn code leaves one.
+    """
+
+    service = _service(_settings(tmp_path))
+    service.initialize()
+    try:
+        first = service.issue_setup_code(600, "99999990")
+        second = service.issue_setup_code(600, "99999990")
+        assert first["commissioning_id"] != second["commissioning_id"]
+
+        current = service.setup_session_status()["current"]
+        assert current["session_id"] == second["commissioning_id"]
+        # And the superseded one cannot be spent.
+        commissioning = CommissioningService(
+            store=service._store,  # noqa: SLF001 - test application boundary
+            network=InMemoryNetworkProvisioning(),
+        )
+        with pytest.raises(CommissioningRequestRejected):
+            commissioning.authorize(
+                session_id=first["commissioning_id"],
+                secret="99999990",
+            )
+    finally:
+        service.shutdown()
+
+
+def test_whether_a_window_is_open_is_answerable_on_every_host(
+    tmp_path: Path,
+) -> None:
+    """And the operation answering it exists at all.
+
+    ``dev.show`` called ``development_setup_status``, a method renamed out from
+    under it; nothing tested the operation, so it raised AttributeError for
+    every caller from 2026-08-12 until this test. It is now
+    ``commissioning.status``, it reports on every Host, and it never carries
+    the code.
+    """
+
+    development = _settings(tmp_path)
+    HostIdentityManager(development.identity_key_path, development.mode).load()
+    settings = _settings(tmp_path, BootstrapMode.PRODUCTION)
+    service = _service(settings)
+    service.initialize()
+    try:
+        assert service.setup_session_status() == {"current": None}
+        issued = service.issue_setup_code(600, "99999990")
+        current = service.setup_session_status()["current"]
+        assert current["session_id"] == issued["commissioning_id"]
+        assert "setup_code" not in current
+        assert "secret_hash" not in current
+    finally:
+        service.shutdown()
+
+
 def test_reading_the_endpoint_never_opens_a_claim_window(tmp_path: Path) -> None:
     """A read has a read's consequences, on every Host and in every mode.
 
@@ -697,6 +817,23 @@ async def test_control_socket_exposes_read_state_and_dev_issuance(
 
         credential = await client.request("commissioning.code", ttl_seconds=300)
         assert len(credential["setup_code"]) == SETUP_CODE_DIGITS
+
+        # The operation that says whether a window is open has to survive the
+        # socket, not just the service: this is the layer where the old
+        # "dev.show" called a method that no longer existed.
+        opened = await client.request("commissioning.status")
+        assert opened["current"]["session_id"] == credential["commissioning_id"]
+
+        named = await client.request(
+            "commissioning.code",
+            ttl_seconds=300,
+            setup_code="99999990",
+        )
+        assert named["setup_code"] == "99999990"
+        with pytest.raises(BootstrapControlError, match="usable 8-digit"):
+            await client.request("commissioning.code", setup_code="11111111")
+        with pytest.raises(BootstrapControlError, match="must be a string"):
+            await client.request("commissioning.code", setup_code=99999990)
 
         challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
         proof = await client.request("host.prove", challenge=challenge)
