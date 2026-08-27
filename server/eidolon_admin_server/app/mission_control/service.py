@@ -1333,7 +1333,57 @@ def _turn(row: dict[str, Any]) -> RuntimeTurn:
         phase="agent_turn",
         outcome="failure" if str(row.get("status") or "").lower() in {"failed", "errored", "error"} else "success",
         stages=stages,
+        breakdown=_turn_breakdown(latency, tools),
     )
+
+
+#: The brain's own phases, in the order a turn goes through them, with the words
+#: an Owner reads them in. Keys are the trace's; the labels are this Host's.
+#:
+#: ``total_ms`` is deliberately absent. It is the turn's ``latency_ms`` already,
+#: and the same number in two places is two numbers that can disagree.
+_BREAKDOWN: tuple[tuple[str, str], ...] = (
+    ("guard", "检查这句话能不能处理"),
+    ("triage", "判断这轮怎么走"),
+    ("compile", "组装上下文"),
+    ("first_delta", "等到第一个字"),
+    ("output", "把话说完"),
+)
+
+
+def _turn_breakdown(
+    latency: dict[str, Any], tools: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Where the turn's time went — from the trace this Host already wrote.
+
+    Every one of these numbers was measured by the Agent and persisted in the
+    turn trace, and until now nothing read them: the map showed one total and a
+    first-delta, so "which part was slow" could not be answered from any screen
+    on this Host even though the answer was on disk.
+
+    A phase that was not reached carries ``None`` rather than being dropped: the
+    list is the shape of a turn, and a turn that stopped early is best read as
+    the steps it did not get to rather than as a shorter turn.
+    """
+
+    rows = [
+        {"key": key, "label": label, "latency_ms": _int_or_none(latency.get(f"{key}_ms"))}
+        for key, label in _BREAKDOWN
+    ]
+    # Tools last: they happen inside the generation rather than after it, so the
+    # position is a lie either way, and the honest reading is a total. Omitted
+    # entirely when nothing was called, because a zero here reads as a tool that
+    # took no time.
+    tool_ms = _int_or_none(latency.get("tool_ms"))
+    if int(tools.get("count") or 0):
+        rows.append(
+            {
+                "key": "tools",
+                "label": f"调用工具（{int(tools.get('count') or 0)} 次）",
+                "latency_ms": tool_ms,
+            }
+        )
+    return rows
 
 
 def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any]]:

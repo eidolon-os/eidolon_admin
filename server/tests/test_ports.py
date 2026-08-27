@@ -11,6 +11,7 @@ from eidolon_admin_server.app.ports import (
     PortsRegistryError,
     _set_nested,
     _sync_yaml,
+    CHANNEL_PROVIDER_PORT,
     apply_ports_to_environ,
     collect_ports_from_subprojects,
     collect_ports_registry,
@@ -334,3 +335,35 @@ def test_collect_still_runs_before_any_registry_exists(
 
     assert ports["admin"]["api"]["port"] == 9000
     assert ports["livekit"]["rtc_port_end"] == 60000
+
+
+def test_a_registry_written_before_a_new_section_still_boots(monkeypatch) -> None:
+    """Admin refused to start on exactly this Host, and it was the ordinary one.
+
+    The Channel Provider's port joined the assignment after Hosts were already
+    running, so a registry without that section is not a broken registry — it is
+    every Host installed before the change. Indexing it turned "one port I can
+    default" into `KeyError: 'provider'` at startup, and the release rolled back
+    with the operator console down.
+
+    The default is Ops' own number, repeated in one place so the two cannot
+    drift.
+    """
+
+    monkeypatch.delenv("EIDOLON_CHANNEL_PROVIDER_PORT", raising=False)
+    registry = load_ports(ports_file())
+    registry["channel"].pop("provider", None)
+
+    exported = apply_ports_to_environ(registry)
+
+    assert exported["EIDOLON_CHANNEL_PROVIDER_PORT"] == str(CHANNEL_PROVIDER_PORT)
+
+
+def test_a_registry_that_names_the_provider_port_is_believed(monkeypatch) -> None:
+    monkeypatch.delenv("EIDOLON_CHANNEL_PROVIDER_PORT", raising=False)
+    registry = load_ports(ports_file())
+    registry["channel"]["provider"] = {"port": 9767}
+
+    exported = apply_ports_to_environ(registry)
+
+    assert exported["EIDOLON_CHANNEL_PROVIDER_PORT"] == "9767"

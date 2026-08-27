@@ -60,6 +60,13 @@ class PortsRegistryError(RuntimeError):
     """
 
 
+#: Where the Channel Provider answers when the port assignment does not say.
+#: Ops owns this number (`source_assets.PORTS["channel_provider"]`); it is
+#: repeated here only so a Host whose registry predates that section still
+#: reaches the provider instead of refusing to boot.
+CHANNEL_PROVIDER_PORT = 8767
+
+
 def ports_file() -> Path:
     explicit = os.environ.get("EIDOLON_PORTS_FILE", "").strip()
     if explicit:
@@ -297,7 +304,9 @@ def collect_ports_from_subprojects(root: Path | None = None) -> dict[str, Any]:
         # does not choose it — Ops assigns it, and Admin reads one route on it
         # (which bodies are on their channel).
         "provider": {
-            "port": _deep_get(ports, "channel", "provider", "port", default=8767),
+            "port": _deep_get(
+                ports, "channel", "provider", "port", default=CHANNEL_PROVIDER_PORT
+            ),
         },
     }
 
@@ -425,7 +434,14 @@ def apply_ports_to_environ(ports: dict[str, Any] | None = None) -> dict[str, str
 
     channel = section("channel")
     put("EIDOLON_CHANNEL_WORKER_PORT", channel["worker"]["port"])
-    put("EIDOLON_CHANNEL_PROVIDER_PORT", channel["provider"]["port"])
+    # Defaulted rather than indexed. This section was added to the assignment
+    # after Hosts were already running, so a registry written before it is the
+    # ordinary case, not a broken one — and indexing it is how Admin refused to
+    # start on exactly such a Host.
+    put(
+        "EIDOLON_CHANNEL_PROVIDER_PORT",
+        (channel.get("provider") or {}).get("port", CHANNEL_PROVIDER_PORT),
+    )
 
     put("EIDOLON_CLIENT_WEB_PORT", section("client_web")["port"])
 

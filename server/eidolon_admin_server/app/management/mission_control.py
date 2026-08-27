@@ -243,6 +243,10 @@ def _turn(row: Any) -> dict[str, Any]:
         "memory_hits": row.memory_hits,
         "tool_names": list(row.tool_names),
         "stages": [_stage(stage) for stage in row.stages],
+        # Where the time went, which the Agent measured and nothing read. Not a
+        # second copy of the stages: a stage is a place on the map, a breakdown
+        # is a measurement.
+        "breakdown": [_breakdown(row) for row in row.breakdown],
     }
 
 
@@ -252,6 +256,17 @@ def _stage(stage: Any) -> dict[str, Any]:
         "key": str(raw.get("key", "")),
         "label": str(raw.get("label", "")),
         "status": str(raw.get("status", "")),
+        "latency_ms": raw.get("latency_ms"),
+    }
+
+
+def _breakdown(entry: Any) -> dict[str, Any]:
+    raw = entry if isinstance(entry, dict) else {}
+    return {
+        "key": str(raw.get("key", "")),
+        "label": str(raw.get("label", "")),
+        # Null survives. A phase the turn never reached is not a phase that took
+        # no time, and a zero here would read as the second one.
         "latency_ms": raw.get("latency_ms"),
     }
 

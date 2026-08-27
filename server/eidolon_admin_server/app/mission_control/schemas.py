@@ -172,6 +172,12 @@ class RuntimeTurn(BaseModel):
     event_ids: list[str] = Field(default_factory=list)
     missing_milestones: list[str] = Field(default_factory=list)
     stages: list[JsonDict] = Field(default_factory=list)
+    #: Where this turn's time went, as the brain measured it. Named for the
+    #: Agent's own ``LatencyBreakdown``, and distinct from ``stages``: a stage is
+    #: a place on the map that something points at, a breakdown is a list of
+    #: measurements nothing aims at. It was already on this Host, inside the
+    #: turn trace, and read by nothing.
+    breakdown: list[JsonDict] = Field(default_factory=list)
 
 
 class RuntimeRouteHop(BaseModel):
