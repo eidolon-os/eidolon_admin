@@ -205,7 +205,10 @@ async def compose_runtime(
 
     runtime_jobs = [_job(row) for row in jobs]
     runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
-    runtime_jobs = _dedupe_jobs(runtime_jobs)[:12]
+    # Bounded by the projection, which says when it trimmed. (`trace_spans`
+    # below keeps its cap: that panel is the operator console's, it carries no
+    # lane envelope, and nothing about it reaches the Owner's map.)
+    runtime_jobs = _dedupe_jobs(runtime_jobs)
 
     data_runtime_events = _enrich_event_scope(_events_from_data(data_events), runtime_devices)
     recent_events = list(data_runtime_events)
@@ -268,7 +271,8 @@ async def compose_runtime(
         devices=runtime_devices,
         services=services,
         activities=activities,
-        recent_turns=runtime_turns[:12],
+        # Same reason as the activities above: whoever bounds this says so.
+        recent_turns=runtime_turns,
         memory=memory,
         jobs=runtime_jobs,
         recent_events=recent_events,
@@ -1306,8 +1310,13 @@ def _project_runtime_activities(
 ) -> list[RuntimeActivity]:
     """Project independent runtime facts into concurrent observer lanes."""
 
-    activities = [_voice_activity(turn) for turn in turns[:12]]
-    activities.extend(_job_activity(job) for job in jobs[:12])
+    # No cap here. Bounding a lane is the projection's job — it has the
+    # contract's limits and it *says* when it trimmed (`truncated`). A silent
+    # [:12] in this file did neither: on a Host with thirty turns the Owner's
+    # map showed twelve activities with `truncated: false`, so a new
+    # conversation changed nothing on screen and the number looked stuck.
+    activities = [_voice_activity(turn) for turn in turns]
+    activities.extend(_job_activity(job) for job in jobs)
     activities.extend(
         activity
         for event in events

@@ -1804,14 +1804,30 @@ def register_management_routes(
         # plane's to read, from the Controller session. Joined here so the
         # Owner's map and their device list cannot disagree about how many
         # bodies they have — see local_api/management/mission_control.py.
+        #
+        # Projected through `_device_view` first, which is the one place that
+        # turns the port's composed inventory into the Owner's device shape.
+        # The join used to read the port's rows directly, with the public
+        # field names — and they are not the port's: a `LocalDeviceView` keeps
+        # the Companion at `body.answering_companion_id`. Every joined body
+        # therefore came out nameless and unbound while Kernel was reporting
+        # the assignment as Realized. One projection, used twice, cannot drift
+        # like that.
         inventory_failure = ""
+        rows: list[DeviceView] = []
         try:
             inventory = await devices.list_devices(session=session)
+            # No names read. `_device_view` fills `answers_as_companion_name`
+            # from a roster, and the map does not read that field: it identifies
+            # an Eidolon by id and takes the name from the roster it already
+            # reads on its own. Fetching one here would buy a field nobody uses
+            # and a second way for this route to fail.
+            rows = [_device_view(device, {}) for device in inventory.devices]
         except ManagementBackendError as exc:
-            inventory, inventory_failure = None, str(exc)
+            inventory_failure = str(exc)
         return join_owner_devices(
             snapshot,
-            inventory=inventory,
+            devices=rows if not inventory_failure else None,
             failure=inventory_failure,
         )
 

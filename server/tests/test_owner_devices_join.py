@@ -19,9 +19,13 @@ the join happens here, and what these tests hold is that it stays a join:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from eidolon_admin_server.local_api.management.mission_control import join_owner_devices
+from eidolon_admin_server.local_api.management.router import _device_view
 
 
 def _snapshot(*, state: str = "ok", detail: str = "", items=None) -> dict:
@@ -62,7 +66,7 @@ def _inventory(*devices) -> SimpleNamespace:
     return SimpleNamespace(devices=list(devices))
 
 
-def _owned(device_id: str, *, label: str = "客厅音箱", kind: str = "esp32-s3", companion=None):
+def _owned(device_id: str, *, label: str = "esp-box-3", kind: str = "esp32-s3", companion=None):
     return SimpleNamespace(
         device_id=device_id,
         label=label,
@@ -78,14 +82,14 @@ def _owned(device_id: str, *, label: str = "客厅音箱", kind: str = "esp32-s3
 def test_a_body_the_blackboard_never_saw_is_drawn_as_unknown() -> None:
     joined = join_owner_devices(
         _snapshot(),
-        inventory=_inventory(_owned("dev-quiet", companion="companion-a")),
+        devices=[_owned("dev-quiet", companion="companion-a")],
     )
 
     lane = joined["devices"]
     assert lane["state"] == "ok"
     assert [row["device_id"] for row in lane["items"]] == ["dev-quiet"]
     row = lane["items"][0]
-    assert row["display_name"] == "客厅音箱"
+    assert row["display_name"] == "esp-box-3"
     assert row["companion_id"] == "companion-a"
     assert row["role_kind"] == "persona"
     # An active Claim and a Kernel mount say this body is known. Neither says it
@@ -103,7 +107,7 @@ def test_a_body_the_blackboard_never_saw_is_drawn_as_unknown() -> None:
 def test_presence_is_never_overwritten_by_existence() -> None:
     joined = join_owner_devices(
         _snapshot(items=[_present("dev-living")]),
-        inventory=_inventory(_owned("dev-living", companion="companion-a")),
+        devices=[_owned("dev-living", companion="companion-a")],
     )
 
     row = joined["devices"]["items"][0]
@@ -112,7 +116,7 @@ def test_presence_is_never_overwritten_by_existence() -> None:
     assert row["presence"]["source"] == "runtime_blackboard"
     assert row["capabilities"] == ["voice.duplex"]
     # What it lacked, the inventory lent it.
-    assert row["display_name"] == "客厅音箱"
+    assert row["display_name"] == "esp-box-3"
     assert row["device_kind"] == "esp32-s3"
     assert row["companion_id"] == "companion-a"
     assert row["role_kind"] == "persona"
@@ -120,8 +124,8 @@ def test_presence_is_never_overwritten_by_existence() -> None:
 
 def test_one_body_each_side_makes_one_lane() -> None:
     joined = join_owner_devices(
-        _snapshot(items=[_present("dev-living", display_name="客厅音箱")]),
-        inventory=_inventory(_owned("dev-study", label="书房音箱")),
+        _snapshot(items=[_present("dev-living", display_name="esp-box-3")]),
+        devices=[_owned("dev-study")],
     )
 
     lane = joined["devices"]
@@ -133,7 +137,7 @@ def test_one_body_each_side_makes_one_lane() -> None:
 def test_no_inventory_leaves_the_lane_partly_known() -> None:
     joined = join_owner_devices(
         _snapshot(items=[_present("dev-living")]),
-        inventory=None,
+        devices=None,
         failure="设备清单读不到：Hub 没有回应",
     )
 
@@ -148,7 +152,7 @@ def test_no_inventory_leaves_the_lane_partly_known() -> None:
 def test_no_presence_still_draws_the_bodies_that_exist() -> None:
     joined = join_owner_devices(
         _snapshot(state="unavailable", detail="运行黑板没有回应"),
-        inventory=_inventory(_owned("dev-living")),
+        devices=[_owned("dev-living")],
     )
 
     lane = joined["devices"]
@@ -161,7 +165,7 @@ def test_no_presence_still_draws_the_bodies_that_exist() -> None:
 def test_neither_side_answering_is_unavailable_and_empty() -> None:
     joined = join_owner_devices(
         _snapshot(state="unavailable", detail="运行黑板没有回应"),
-        inventory=None,
+        devices=None,
         failure="设备清单读不到",
     )
 
@@ -171,3 +175,51 @@ def test_neither_side_answering_is_unavailable_and_empty() -> None:
     assert "设备清单读不到" in lane["detail"]
     # An unreadable lane carries no rows.
     assert lane["items"] == []
+
+
+def test_a_bound_body_reaches_the_map_bound() -> None:
+    """The bug this file failed to catch, named.
+
+    Kernel reported the assignment as ``Realized`` with
+    ``effective_companion_id`` set; the Owner's device list showed the body; and
+    every Eidolon on the star map read 身体未绑定. The join was reading
+    ``answers_as_companion_id`` off the port's rows, which keep it at
+    ``body.answering_companion_id`` — with ``getattr(..., None)``, so the
+    mismatch became a plausible answer instead of an error.
+
+    So this asserts the whole hop: a Companion bound in Kernel arrives on the
+    map bound, through the same projection the device list is served in.
+    """
+
+    joined = join_owner_devices(
+        _snapshot(),
+        devices=[_owned("dev-box3", companion="cp_f943c383")],
+    )
+
+    row = joined["devices"]["items"][0]
+    assert row["companion_id"] == "cp_f943c383"
+    assert row["role_kind"] == "persona"
+    assert row["role"] == "对话身体"
+    # And a body nobody has pointed anywhere is still honestly unbound.
+    unbound = join_owner_devices(
+        _snapshot(),
+        devices=[_owned("dev-spare")],
+    )["devices"]["items"][0]
+    assert unbound["companion_id"] is None
+    assert unbound["role_kind"] == "unbound"
+
+
+def test_the_join_refuses_a_shape_it_does_not_know() -> None:
+    """Loudly, rather than defaulting into a wrong answer.
+
+    The port's row and the Owner's projection are different shapes, and the join
+    takes exactly one of them. Handed the other, it must fail here — where a
+    person is looking — instead of drawing a nameless unbound body on a map.
+    """
+
+    port_shaped = SimpleNamespace(
+        body=SimpleNamespace(answering_companion_id="cp_f943c383"),
+    )
+
+    with pytest.raises(AttributeError):
+        join_owner_devices(_snapshot(), devices=[port_shaped])

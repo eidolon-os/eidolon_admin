@@ -40,15 +40,25 @@ _ROLE_UNBOUND = ("未绑定", "unbound")
 def join_owner_devices(
     snapshot: dict[str, Any],
     *,
-    inventory: Any | None,
+    devices: list[Any] | None,
     failure: str = "",
 ) -> dict[str, Any]:
-    """Return ``snapshot`` with its devices lane joined to the Owner's inventory.
+    """Return ``snapshot`` with its devices lane joined to the Owner's bodies.
 
-    ``inventory`` is the Owner's device list (a ``DevicesView``); ``failure`` is
-    why there is none, when there is none. Both absent and broken are the same
-    shape here and a different lane state: a lane that could not read existence
-    but could read presence is partly known, which is what ``degraded`` is for.
+    ``devices`` are **already-projected** ``DeviceView`` rows — the same shape
+    the Owner's device list is served in, produced by the one function that
+    knows how (`_device_view`). Not the port's rows: those keep the Companion at
+    ``body.answering_companion_id``, and this function reading it as
+    ``answers_as_companion_id`` is exactly how every body on the map came out
+    nameless and unbound while Kernel was reporting the assignment as
+    ``Realized``. Fields are read directly for the same reason — a shape that
+    does not match should fail here, loudly, rather than default its way into a
+    plausible wrong answer.
+
+    ``failure`` is why there are none, when there are none. Absent and broken
+    are the same shape here and a different lane state: a lane that could read
+    presence but not existence is partly known, which is what ``degraded`` is
+    for.
     """
 
     lane = snapshot.get("devices")
@@ -63,9 +73,8 @@ def join_owner_devices(
     ]
     by_id = {row.get("device_id"): row for row in rows}
 
-    devices = list(getattr(inventory, "devices", []) or []) if inventory is not None else []
-    for device in devices:
-        device_id = getattr(device, "device_id", "") or ""
+    for device in devices or []:
+        device_id = device.device_id
         if not device_id:
             continue
         existing = by_id.get(device_id)
@@ -77,7 +86,7 @@ def join_owner_devices(
     state, detail = _health(
         presence_readable=presence_readable,
         presence_detail=str(lane.get("detail") or ""),
-        existence_readable=inventory is not None,
+        existence_readable=devices is not None,
         existence_detail=failure,
         degraded=lane.get("state") == "degraded",
     )
@@ -93,12 +102,12 @@ def join_owner_devices(
 def _row(device: Any) -> dict[str, Any]:
     """A body the blackboard has never seen, from the inventory alone."""
 
-    companion_id = getattr(device, "answers_as_companion_id", None)
+    companion_id = device.answers_as_companion_id
     role, role_kind = _ROLE_ANSWERING if companion_id else _ROLE_UNBOUND
     return {
-        "device_id": getattr(device, "device_id", ""),
-        "display_name": getattr(device, "label", "") or getattr(device, "device_id", ""),
-        "device_kind": getattr(device, "kind", "") or "",
+        "device_id": device.device_id,
+        "display_name": device.label or device.device_id,
+        "device_kind": device.kind or "",
         "role": role,
         "role_kind": role_kind,
         "companion_id": companion_id,
@@ -121,13 +130,13 @@ def _fill(row: dict[str, Any], device: Any) -> None:
     authority and it already answered for this row.
     """
 
-    label = getattr(device, "label", "") or ""
+    label = device.label or ""
     if label and not row.get("display_name"):
         row["display_name"] = label
-    kind = getattr(device, "kind", "") or ""
+    kind = device.kind or ""
     if kind and not row.get("device_kind"):
         row["device_kind"] = kind
-    companion_id = getattr(device, "answers_as_companion_id", None)
+    companion_id = device.answers_as_companion_id
     if companion_id and not row.get("companion_id"):
         row["companion_id"] = companion_id
         if row.get("role_kind") in (None, "", "unbound"):
