@@ -329,17 +329,17 @@ Pi 以显式开发模式启动：
 EIDOLON_BOOTSTRAP_MODE=development
 ```
 
-第一次启动时生成独立 Host key。日常联调可在 root-owned、`0600` 的
-`/etc/eidolon/bootstrap.env` 设置固定开发码：
+第一次启动时生成独立 Host key。**固定开发码（`EIDOLON_BOOTSTRAP_DEV_SETUP_CODE`）已删除**：
+它从来没有被任何 Host、ops profile 或 CI 设置过，代价却是未认领 Host 在**被读**一次
+commissioning endpoint 时就自动续建 session——窗口永远开着，一次性码也就不再是一次性的。
+
+现在要码就签一个，签出来的都是新的、会过期、只能用一次：
 
 ```text
-EIDOLON_BOOTSTRAP_DEV_SETUP_CODE=<eight-digit-development-code>
+eidolon-bootstrapctl commissioning-code [--ttl SECONDS]
 ```
 
-码值本身要过和随机码同一道校验：八位数字，不能全同，也不能是顺子或倒顺子。
-
-固定的是码值，不是授权 session：Bootstrap 会为未认领 Host 自动续建短期 session，
-DB 仍只保存 hash。已认领的 Host 不再自动续建，要先 `dev reset` 回到未认领。
+「有没有开着的认领窗口」在所有 Host、所有 mode 下都是同一个答案：操作员签过才有。
 也可以不配置固定码，继续按需签发随机、短期的 8 位 Setup 码：
 
 ```text

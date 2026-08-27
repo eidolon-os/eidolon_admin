@@ -1,6 +1,6 @@
 # ADR-0005：已联网开发 Host 复用签名端点与 Pinned HTTPS 完成认领
 
-- 状态：Accepted
+- 状态：Superseded by [ADR-0006](adr-0006-lan-commissioning-on-every-host.md)（2026-08-27）
 - 日期：2026-08-10
 
 ## Context

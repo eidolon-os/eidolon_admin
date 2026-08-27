@@ -26,8 +26,15 @@ from eidolon_admin_server.bootstrap.adapters.persistence import (
 from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
-from eidolon_admin_server.bootstrap.commissioning_service import CommissioningService
-from eidolon_admin_server.bootstrap.domain import SETUP_CODE_DIGITS
+from eidolon_admin_server.bootstrap.commissioning_service import (
+    CommissioningRequestRejected,
+    CommissioningService,
+)
+from eidolon_admin_server.bootstrap.domain import (
+    SETUP_CODE_DIGITS,
+    generate_setup_code,
+    is_usable_setup_code,
+)
 from eidolon_admin_server.bootstrap.config import (
     BootstrapConfigurationError,
     BootstrapMode,
@@ -94,7 +101,7 @@ def _settings(
         runtime_dir=resolved_runtime_dir,
         control_socket=resolved_runtime_dir / "control.sock",
         ble_service_uuid="179e2e95-b1ee-5aa5-8dcf-7519b6c7ac52",
-        dev_setup_code_ttl_seconds=600,
+        setup_code_ttl_seconds=600,
     )
 
 
@@ -329,47 +336,45 @@ def test_development_defaults_to_hardware_free_adapters() -> None:
 
     assert settings.commissioning_adapter is CommissioningAdapter.DISABLED
     assert settings.network_adapter is NetworkAdapter.MEMORY
-    assert settings.dev_setup_code is None
 
 
-def test_fixed_setup_code_is_accepted_only_in_development() -> None:
+def test_no_host_can_be_configured_with_a_setup_code_that_never_changes() -> None:
+    """A fixed Setup code is not a configuration this Host accepts any more.
+
+    It existed so a workstation loop would not have to reprint the code, and
+    nothing ever set it — not ops, not the Mac loop, not CI, not a Host. What
+    it did cost was real: an unclaimed development Host minted a session out of
+    that code every time somebody merely *read* its endpoint, so the window was
+    always open and the code stopped being one-time. Setting it is now inert.
+    """
+
     settings = load_bootstrap_settings(
         {
             "EIDOLON_BOOTSTRAP_MODE": "development",
             "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "24681012",
         }
     )
-    assert settings.dev_setup_code == "24681012"
 
-    with pytest.raises(BootstrapConfigurationError, match="development-only"):
-        load_bootstrap_settings(
-            {
-                "EIDOLON_BOOTSTRAP_MODE": "production",
-                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": "24681012",
-            }
-        )
+    assert not hasattr(settings, "dev_setup_code")
 
 
 @pytest.mark.parametrize(
     "code",
     [
-        "1234567",  # too short
-        "123456789",  # too long
-        "abcdefgh",
-        "12 45678",
         "11111111",  # every digit the same
         "01234567",  # the plain run up
         "76543210",  # and down
     ],
 )
-def test_a_fixed_setup_code_must_be_one_nobody_would_guess(code: str) -> None:
-    with pytest.raises(BootstrapConfigurationError, match="usable 8-digit Setup code"):
-        load_bootstrap_settings(
-            {
-                "EIDOLON_BOOTSTRAP_MODE": "development",
-                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE": code,
-            }
-        )
+def test_a_drawn_setup_code_is_never_one_nobody_should_get(code: str) -> None:
+    """The weak-code rule outlives the fixed code it used to guard.
+
+    It moved rather than went away: every code is drawn now, and the draw is
+    what rejects these shapes.
+    """
+
+    assert not is_usable_setup_code(code)
+    assert all(is_usable_setup_code(generate_setup_code()) for _ in range(200))
 
 
 def test_production_rejects_test_adapters() -> None:
@@ -478,35 +483,33 @@ def test_development_setup_code_is_short_lived_and_not_persisted(
         service.shutdown()
 
 
-def test_fixed_development_setup_code_is_automatically_available(
-    tmp_path: Path,
-) -> None:
-    settings = replace(_settings(tmp_path), dev_setup_code="24681012")
-    service = _service(settings)
+def test_reading_the_endpoint_never_opens_a_claim_window(tmp_path: Path) -> None:
+    """A read has a read's consequences, on every Host and in every mode.
+
+    An unclaimed development Host with a fixed code used to mint a session as
+    a side effect of somebody merely reading its endpoint — so the window was
+    permanently open, and the "one-time" code was neither. Now the only thing
+    that opens a window is an operator minting one.
+    """
+
+    service = _service(_settings(tmp_path))
     service.initialize()
     try:
-        endpoint = service.commissioning_endpoint()
-        setup_session = endpoint["setup_session"]
-        assert setup_session is not None
+        assert service.commissioning_endpoint()["setup_session"] is None
+        # Reading it repeatedly is still a read.
+        assert service.commissioning_endpoint()["setup_session"] is None
 
-        commissioning = CommissioningService(
-            store=service._store,  # noqa: SLF001 - test application boundary
-            network=InMemoryNetworkProvisioning(),
-        )
-        authorization = commissioning.authorize(
-            session_id=setup_session["commissioning_id"],
-            secret="24681012",
-        )
-        assert authorization.session_id == setup_session["commissioning_id"]
-
-        replacement = service.issue_setup_code(300)
-        assert replacement["setup_code"] == "24681012"
-        assert replacement["commissioning_id"] != setup_session["commissioning_id"]
+        minted = service.issue_setup_code(300)
+        opened = service.commissioning_endpoint()["setup_session"]
+        assert opened is not None
+        assert opened["commissioning_id"] == minted["commissioning_id"]
+        # The half that is a secret is never in the half a phone may read.
+        assert "setup_code" not in opened
 
         database_dump = "\n".join(
             service._store.connection.iterdump()  # noqa: SLF001
         )
-        assert "24681012" not in database_dump
+        assert minted["setup_code"] not in database_dump
     finally:
         service.shutdown()
 
@@ -537,14 +540,109 @@ def test_a_production_host_can_be_claimed_at_all(tmp_path: Path) -> None:
         assert credential["host_id"].startswith("ehost-")
         assert credential["commissioning_id"]
 
-        # A production Host draws a fresh code each time; only a development
-        # one may pin a fixed one.
+        # Every Host draws a fresh code each time. No Host can be configured
+        # with one that does not change.
         assert service.issue_setup_code(300)["setup_code"] != credential["setup_code"]
+    finally:
+        service.shutdown()
 
-        # The development-only LAN shortcut stays development-only: it skips
-        # the pinned TLS the phone would otherwise verify.
-        with pytest.raises(BootstrapOperationRejected, match="LAN commissioning"):
-            service.development_lan_commissioning_endpoint()
+
+def test_both_transports_carry_the_same_document_on_every_host(
+    tmp_path: Path,
+) -> None:
+    """The LAN route is not a shortcut, and not development-only.
+
+    It used to be refused unless the Host looked like a macOS workstation —
+    development mode, no BLE adapter, no real network adapter. That described
+    a machine rather than a trust boundary: BLE and the LAN hand over the very
+    same signed document, and the claim behind both runs through the same
+    CommissioningService. All the gate ever varied was how close a caller had
+    to stand, and on a development Pi (which the repo's own drop-in configures
+    as development + bluez + networkmanager) it made the route 404 forever
+    while the App told the person nothing on the network had answered.
+    """
+
+    development = _settings(tmp_path)
+    HostIdentityManager(development.identity_key_path, development.mode).load()
+
+    for settings in (
+        # The Pi the drop-in configures: development, but with real hardware.
+        replace(
+            _settings(tmp_path),
+            commissioning_adapter=CommissioningAdapter.BLUEZ,
+            network_adapter=NetworkAdapter.NETWORK_MANAGER,
+        ),
+        # And a shipped Host.
+        _settings(tmp_path, BootstrapMode.PRODUCTION),
+    ):
+        service = _service(settings, network=InMemoryNetworkProvisioning())
+        service.initialize()
+        try:
+            assert service.lan_commissioning_endpoint() == (
+                service.commissioning_endpoint()
+            )
+        finally:
+            service.shutdown()
+
+
+def test_a_claim_never_overwrites_a_real_adapter_s_network_state(
+    tmp_path: Path,
+) -> None:
+    """Only the memory adapter lets a request publish a network fact.
+
+    The LAN claim path published CONNECTED unconditionally, because the only
+    Host that could reach it had a memory adapter with no OS state to discover.
+    On a Host with a real adapter that would let a caller's claim overwrite a
+    fact it holds no authority over — so the store's own refusal stands, and it
+    is the correct answer.
+    """
+
+    development = _settings(tmp_path)
+    HostIdentityManager(development.identity_key_path, development.mode).load()
+    settings = replace(
+        _settings(tmp_path),
+        commissioning_adapter=CommissioningAdapter.BLUEZ,
+        network_adapter=NetworkAdapter.NETWORK_MANAGER,
+    )
+    service = _service(settings, network=InMemoryNetworkProvisioning())
+    service.initialize()
+    try:
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        public_der = private_key.public_key().public_bytes(
+            Encoding.DER,
+            PublicFormat.SubjectPublicKeyInfo,
+        )
+        controller = {
+            "controller_id": f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}",
+            "public_key": base64.urlsafe_b64encode(public_der)
+            .rstrip(b"=")
+            .decode(),
+            "display_name": "Pad",
+            "platform": "android",
+        }
+        issued = service.issue_setup_code(300)
+        assert service.health()["state"]["network_state"] == "unconfigured"
+
+        with pytest.raises(CommissioningRequestRejected) as rejected:
+            service.claim_lan_controller(
+                commissioning_id=issued["commissioning_id"],
+                setup_code=issued["setup_code"],
+                controller=controller,
+            )
+        assert "network must be connected" in str(rejected.value)
+        # The request did not get to invent an answer on the way through.
+        assert service.health()["state"]["network_state"] == "unconfigured"
+
+        # With the real adapter reconciled, the very same claim goes through.
+        service.reconcile_network_state(NetworkState.CONNECTED)
+        reissued = service.issue_setup_code(300)
+        claimed = service.claim_lan_controller(
+            commissioning_id=reissued["commissioning_id"],
+            setup_code=reissued["setup_code"],
+            controller=controller,
+        )
+        assert claimed["state"]["claim_state"] == "claimed"
+        assert claimed["operation"] == "local.lan-commissioning-claim"
     finally:
         service.shutdown()
 
@@ -622,10 +720,7 @@ async def test_control_socket_development_reset_can_forget_wifi(
     tmp_path: Path,
     short_runtime_dir: Path,
 ) -> None:
-    settings = replace(
-        _settings(tmp_path, runtime_dir=short_runtime_dir),
-        dev_setup_code="24681012",
-    )
+    settings = _settings(tmp_path, runtime_dir=short_runtime_dir)
     network = InMemoryNetworkProvisioning(current_ssid="Development Wi-Fi")
     service = _service(settings, network=network)
     service.initialize()
@@ -639,7 +734,12 @@ async def test_control_socket_development_reset_can_forget_wifi(
         assert reset["after"]["claim_state"] == "unclaimed"
         assert reset["after"]["network_state"] == "unconfigured"
         assert reset["after"]["reset_epoch"] == 1
-        assert reset["setup_session"] is not None
+        # A reset does not leave a window behind. It used to look as if it did,
+        # but only on a Host configured with a fixed code — which no Host was.
+        # The way back in is the operator's next command, and it works.
+        assert reset["setup_session"] is None
+        service.issue_setup_code(300)
+        assert service.commissioning_endpoint()["setup_session"] is not None
     finally:
         await server.close()
         service.shutdown()
@@ -736,10 +836,10 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
             )
             mutation = await client.post("/api/local/v1/setup/initialize")
             commissioning_endpoint = await client.get(
-                "/api/local/v1/development/commissioning/endpoint"
+                "/api/local/v1/commissioning/endpoint"
             )
             rejected_claim = await client.put(
-                "/api/local/v1/development/commissioning/claim",
+                "/api/local/v1/commissioning/claim",
                 json={
                     "contract_version": "1",
                     "commissioning_id": setup["commissioning_id"],
@@ -750,7 +850,7 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
                 },
             )
             accepted_claim = await client.put(
-                "/api/local/v1/development/commissioning/claim",
+                "/api/local/v1/commissioning/claim",
                 json={
                     "contract_version": "1",
                     "commissioning_id": setup["commissioning_id"],
@@ -1263,7 +1363,7 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
 
     development = _settings(tmp_path)
     HostIdentityManager(development.identity_key_path, development.mode).load()
-    settings = replace(_settings(tmp_path), dev_setup_code="13579024")
+    settings = _settings(tmp_path)
     store = SQLiteBootstrapStateStore(settings.database_path)
     service = BootstrapService(
         settings=settings,

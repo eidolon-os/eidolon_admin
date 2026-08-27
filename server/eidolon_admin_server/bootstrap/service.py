@@ -17,7 +17,6 @@ from .commissioning_service import CommissioningService
 from .config import (
     BootstrapMode,
     BootstrapSettings,
-    CommissioningAdapter,
     NetworkAdapter,
 )
 from .identity import HostIdentityManager
@@ -471,74 +470,82 @@ class BootstrapService:
             admitted = candidate
         return admitted
 
-    def development_lan_commissioning_endpoint(self) -> dict[str, Any]:
-        """Expose the signed endpoint for an already-networked development Host.
+    def lan_commissioning_endpoint(self) -> dict[str, Any]:
+        """Expose the signed endpoint over the LAN transport.
 
-        This is the LAN transport equivalent of BlueZ's public Info
-        characteristic. It remains development-only and does not authorize a
-        mutation by itself.
+        This is the LAN equivalent of BlueZ's public Info characteristic: the
+        same signed document, read before the pinned TLS handshake, creating
+        no authority by itself.
+
+        It used to be refused unless the Host looked like a macOS workstation
+        (development mode, no BLE adapter, no real network adapter). That
+        combination described a machine, not a trust boundary — the two
+        transports carry the identical document and the identical claim, and
+        the only thing the gate ever varied was how far away a caller had to
+        stand. A Host with BLE therefore answers here too; what a caller can
+        actually do with the answer is decided by whether an operator minted a
+        Setup session, which is the same question on both transports.
         """
 
-        self._require_development_lan_commissioning()
         return self.commissioning_endpoint()
 
-    def claim_development_lan_controller(
+    def claim_lan_controller(
         self,
         *,
         commissioning_id: str,
         setup_code: str,
         controller: dict[str, Any],
     ) -> dict[str, Any]:
-        """Claim an already-networked development Host through the Local API.
+        """Claim an already-networked Host through the Local API.
 
         Authorization and the atomic Grant/session consumption are delegated
         to the same CommissioningService used by the BLE protocol.
         """
 
-        self._require_development_lan_commissioning()
         if self._network is None:
             raise BootstrapOperationRejected(
-                "development LAN commissioning requires a network adapter"
+                "LAN commissioning requires a network adapter"
             )
         commissioning = CommissioningService(store=self._store, network=self._network)
         authorization = commissioning.authorize(
             session_id=commissioning_id,
             secret=setup_code,
         )
-        # Reaching this pinned Local API proves that the development Host is
-        # already on the caller's LAN. The memory adapter has no OS network
-        # state to discover, so publish that fact before the normal atomic
-        # claim transition.
-        self.reconcile_network_state(NetworkState.CONNECTED)
+        # The store refuses a claim unless the Host is on a network, and the
+        # memory adapter has no OS state to discover — so on that adapter the
+        # fact that this pinned Local API was reached at all is the only
+        # evidence there is, and it is published here.
+        #
+        # A Host with a real adapter has a real answer, already reconciled by
+        # the daemon at startup and on every change. Publishing CONNECTED here
+        # would let a caller's request overwrite a network fact it holds no
+        # authority over — a Pi reachable over its link-local cable while
+        # NetworkManager reports the Wi-Fi down would be recorded as connected
+        # because somebody asked to claim it. If the real state says otherwise
+        # the store refuses, and that refusal is correct.
+        if self._settings.network_adapter is NetworkAdapter.MEMORY:
+            self.reconcile_network_state(NetworkState.CONNECTED)
         result = commissioning.claim_controller(authorization, controller)
         return {
             "contract_version": "1",
-            "operation": "local.development-lan-commissioning-claim",
+            "operation": "local.lan-commissioning-claim",
             "host_id": self._identity_manager.identity.host_id,
             **result,
         }
-
-    def _require_development_lan_commissioning(self) -> None:
-        if (
-            self._settings.mode is not BootstrapMode.DEVELOPMENT
-            or self._settings.commissioning_adapter is not CommissioningAdapter.DISABLED
-            or self._settings.network_adapter is not NetworkAdapter.MEMORY
-        ):
-            raise BootstrapOperationRejected(
-                "development LAN commissioning is unavailable on this Host"
-            )
 
     def _active_setup_session(self) -> dict[str, str] | None:
         """Which setup session, if any, a phone may present a code against.
 
         The code and the session that accepts it are two halves of one act, and
-        a phone is told only the half that is not a secret. Reporting this in
-        development only meant an operator could mint a code for a shipped Host
-        and the phone would still have nowhere to spend it.
+        a phone is told only the half that is not a secret.
 
-        Reporting is unconditional; creating one is not. A development Host may
-        conjure a session from its fixed code so a workstation loop keeps
-        working, and every other Host waits to be given one.
+        Reading this used to be able to *create* a window: a development Host
+        with a fixed code conjured a session out of the endpoint being read, so
+        an unclaimed Host was permanently claimable and a read had a write's
+        consequences. Nothing ever set that code — not ops, not the Mac loop,
+        not CI, not a single Host — and its only lasting effect was to make
+        "is a window open" depend on which build this is. A window now exists
+        if and only if an operator minted one, on every Host and in every mode.
         """
 
         session = self._store.latest_commissioning_session()
@@ -549,18 +556,7 @@ class BootstrapService:
             or session.revoked_at is not None
             or session.expires_at <= now
         ):
-            if self._settings.mode is not BootstrapMode.DEVELOPMENT:
-                return None
-            fixed_code = self._settings.dev_setup_code
-            state = self._store.get_state()
-            if fixed_code is None or state.claim_state.value != "unclaimed":
-                return None
-            self._issue_setup_code(
-                fixed_code,
-                self._settings.dev_setup_code_ttl_seconds,
-            )
-            session = self._store.latest_commissioning_session()
-            assert session is not None
+            return None
         return {
             "commissioning_id": session.session_id,
             "expires_at": session.expires_at,
@@ -575,15 +571,15 @@ class BootstrapService:
         of the two — so gating it on the build being a development one only
         ever meant a shipped Host could not be claimed at all.
 
-        A production Host draws a fresh code every time. A development one may
-        pin a fixed code so a workstation loop does not reprint it.
+        Every Host draws a fresh code every time. A fixed one used to be
+        allowed in development; nothing ever configured it, and a code that
+        does not change is a code that stops being a one-time secret.
         """
 
-        ttl = ttl_seconds or self._settings.dev_setup_code_ttl_seconds
+        ttl = ttl_seconds or self._settings.setup_code_ttl_seconds
         if not 60 <= ttl <= 86400:
             raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
-        setup_code = self._settings.dev_setup_code or generate_setup_code()
-        return self._issue_setup_code(setup_code, ttl)
+        return self._issue_setup_code(generate_setup_code(), ttl)
 
     def _issue_setup_code(
         self,
@@ -654,7 +650,7 @@ class BootstrapService:
             if grant.revoked_at is None and grant.reset_epoch == before.reset_epoch
         ]
         now = _now()
-        setup_code = self._settings.dev_setup_code or generate_setup_code()
+        setup_code = generate_setup_code()
         session = {
             "host_id": self._identity_manager.identity.host_id,
             "commissioning_id": str(uuid.uuid4()),

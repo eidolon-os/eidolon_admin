@@ -136,7 +136,7 @@ class ControllerProofRequest(BaseModel):
     signature: str = Field(pattern=r"^[A-Za-z0-9_-]{8,256}$")
 
 
-class DevelopmentControllerClaim(BaseModel):
+class LanControllerClaim(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     controller_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
@@ -145,7 +145,7 @@ class DevelopmentControllerClaim(BaseModel):
     platform: Literal["android", "ios"]
 
 
-class DevelopmentLanCommissioningClaimRequest(BaseModel):
+class LanCommissioningClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"]
@@ -156,7 +156,7 @@ class DevelopmentLanCommissioningClaimRequest(BaseModel):
         )
     )
     setup_code: str = Field(pattern=rf"^[0-9]{{{SETUP_CODE_DIGITS}}}$")
-    controller: DevelopmentControllerClaim
+    controller: LanControllerClaim
 
 
 def create_app(
@@ -257,7 +257,7 @@ def create_app(
         operation: str,
         *,
         authentication: bool = False,
-        development_commissioning: bool = False,
+        lan_commissioning: bool = False,
         **parameters: Any,
     ) -> dict:
         try:
@@ -268,7 +268,7 @@ def create_app(
                     status.HTTP_401_UNAUTHORIZED,
                     "Controller authentication failed",
                 ) from exc
-            if development_commissioning:
+            if lan_commissioning:
                 code = {
                     "commissioning_denied": status.HTTP_401_UNAUTHORIZED,
                     "operation_conflict": status.HTTP_409_CONFLICT,
@@ -311,20 +311,25 @@ def create_app(
     async def host_proof(request: HostProofRequest) -> dict:
         return await request_bootstrap("host.prove", challenge=request.challenge)
 
-    @app.get("/api/local/v1/development/commissioning/endpoint")
-    async def development_commissioning_endpoint() -> dict:
+    # Not under /development any more. The route was named after the only Host
+    # that used to answer it, and the name outlived the restriction: a person
+    # reading a 404 here had no way to tell "this build does not carry it" from
+    # "this Host does not carry it". Both transports now expose the same
+    # document on every Host.
+    @app.get("/api/local/v1/commissioning/endpoint")
+    async def lan_commissioning_endpoint() -> dict:
         return await request_bootstrap(
-            "dev.lan.endpoint",
-            development_commissioning=True,
+            "commissioning.lan.endpoint",
+            lan_commissioning=True,
         )
 
-    @app.put("/api/local/v1/development/commissioning/claim")
-    async def development_commissioning_claim(
-        request: DevelopmentLanCommissioningClaimRequest,
+    @app.put("/api/local/v1/commissioning/claim")
+    async def lan_commissioning_claim(
+        request: LanCommissioningClaimRequest,
     ) -> dict:
         return await request_bootstrap(
-            "dev.lan.claim",
-            development_commissioning=True,
+            "commissioning.lan.claim",
+            lan_commissioning=True,
             commissioning_id=request.commissioning_id,
             setup_code=request.setup_code,
             controller=request.controller.model_dump(),

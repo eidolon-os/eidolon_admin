@@ -9,7 +9,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Mapping
 
-from .domain import SETUP_CODE_DIGITS, is_usable_setup_code
 
 
 class BootstrapMode(StrEnum):
@@ -43,8 +42,8 @@ class BootstrapSettings:
     runtime_dir: Path
     control_socket: Path
     ble_service_uuid: str
-    dev_setup_code_ttl_seconds: int = 600
-    dev_setup_code: str | None = None
+    #: How long a Setup code minted without an explicit TTL stays usable.
+    setup_code_ttl_seconds: int = 600
     commissioning_adapter: CommissioningAdapter = CommissioningAdapter.DISABLED
     network_adapter: NetworkAdapter = NetworkAdapter.MEMORY
     #: Where this Host answers a Controller, so it can say so over a channel
@@ -137,34 +136,17 @@ def load_bootstrap_settings(
         env.get("EIDOLON_BOOTSTRAP_CONTROL_SOCKET", str(runtime_dir / "control.sock"))
     ).expanduser()
 
-    raw_ttl = env.get("EIDOLON_BOOTSTRAP_DEV_SETUP_CODE_TTL_SECONDS", "600")
+    raw_ttl = env.get("EIDOLON_BOOTSTRAP_SETUP_CODE_TTL_SECONDS", "600")
     try:
         ttl = int(raw_ttl)
     except ValueError as exc:
         raise BootstrapConfigurationError(
-            "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE_TTL_SECONDS must be an integer"
+            "EIDOLON_BOOTSTRAP_SETUP_CODE_TTL_SECONDS must be an integer"
         ) from exc
     if not 60 <= ttl <= 86400:
         raise BootstrapConfigurationError(
-            "development Setup code TTL must be between 60 and 86400 seconds"
+            "Setup code TTL must be between 60 and 86400 seconds"
         )
-
-    raw_dev_setup_code = env.get("EIDOLON_BOOTSTRAP_DEV_SETUP_CODE")
-    dev_setup_code = (
-        None if raw_dev_setup_code is None else raw_dev_setup_code.strip()
-    )
-    if dev_setup_code == "":
-        dev_setup_code = None
-    if dev_setup_code is not None:
-        if mode is not BootstrapMode.DEVELOPMENT:
-            raise BootstrapConfigurationError(
-                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE is development-only"
-            )
-        if not is_usable_setup_code(dev_setup_code):
-            raise BootstrapConfigurationError(
-                "EIDOLON_BOOTSTRAP_DEV_SETUP_CODE must be a usable "
-                f"{SETUP_CODE_DIGITS}-digit Setup code"
-            )
 
     ble_service_uuid = env.get(
         "EIDOLON_BOOTSTRAP_BLE_SERVICE_UUID", _DEFAULT_BLE_SERVICE_UUID
@@ -205,8 +187,7 @@ def load_bootstrap_settings(
         runtime_dir=runtime_dir,
         control_socket=control_socket,
         ble_service_uuid=ble_service_uuid,
-        dev_setup_code_ttl_seconds=ttl,
-        dev_setup_code=dev_setup_code,
+        setup_code_ttl_seconds=ttl,
         commissioning_adapter=commissioning_adapter,
         network_adapter=network_adapter,
         local_api_port=local_api_port,
