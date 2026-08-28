@@ -931,14 +931,11 @@ class RevokedSessionsView(BaseModel):
 
 
 class ConversationView(BaseModel):
-    """One time we talked, and what it was called."""
+    """One time we talked."""
 
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
-    #: Empty when nothing named it, and it stays empty: a title made up here
-    #: would be a screen summarising my conversation for me.
-    title: str = Field(default="", max_length=512)
     started_at: str = Field(default="", max_length=64)
     updated_at: str = Field(default="", max_length=64)
     #: Absent while it is still open, which is not the same as ended at a time

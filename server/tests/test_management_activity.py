@@ -192,8 +192,8 @@ async def test_a_conversation_row_is_when_it_happened_not_what_was_said() -> Non
 
     row = page.conversations[0]
     assert row.conversation_id == "c-1"
-    assert row.title == "周末计划"
     assert row.started_at == "2026-08-24T08:00:00+00:00"
+    assert not hasattr(row, "title")
     # Still open: absent rather than an invented end.
     assert row.ended_at is None
 

@@ -142,7 +142,6 @@ export interface ConversationView {
   conversation_id: string
   ended_at?: string | null
   started_at?: string
-  title?: string
   updated_at?: string
 }
 

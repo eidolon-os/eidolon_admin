@@ -534,7 +534,6 @@ class _Backend:
             "conversations": [
                 {
                     "conversation_id": "c-1",
-                    "title": "周末计划",
                     "started_at": "2026-08-24T08:00:00+00:00",
                     "updated_at": "2026-08-24T09:00:00+00:00",
                     "ended_at": None,
@@ -1895,7 +1894,8 @@ async def test_when_we_talked_is_visible_and_says_nothing_about_what_was_said(
     assert anonymous.status_code == 401
     assert backend.asked == [("owner-1", "companion-a", None, None)]
     body = answered.json()
-    assert body["conversations"][0]["title"] == "周末计划"
+    assert body["conversations"][0]["started_at"] == "2026-08-24T08:00:00+00:00"
+    assert "title" not in body["conversations"][0]
     assert "turns" not in answered.text
     # The runtime's cursor, forwarded as received.
     assert body["next_cursor"] == "2026-08-24T08:00:00+00:00"

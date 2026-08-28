@@ -99,9 +99,8 @@ class CompanionActivityReader(Protocol):
 @dataclass(frozen=True, slots=True)
 class ConversationView:
     conversation_id: str
-    #: What it was called, when anything named it. Empty stays empty: a title
-    #: composed here would be this layer summarising someone's conversation.
-    title: str
+    #: A conversation row is an occasion, not a summary. The runtime currently
+    #: has no title producer, so this projection carries only facts it owns.
     started_at: str
     updated_at: str
     #: Present only when it has ended. Absent means it has not — which is a
@@ -202,7 +201,6 @@ async def read_conversations(
         conversations=tuple(
             ConversationView(
                 conversation_id=row.conversation_id,
-                title=(row.title or "").strip(),
                 started_at=row.started_at or "",
                 updated_at=row.updated_at or "",
                 ended_at=row.ended_at,

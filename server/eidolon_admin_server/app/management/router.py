@@ -389,9 +389,6 @@ class ConversationInternal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
-    #: Empty when nothing named it. A title composed here would be this layer
-    #: summarising someone's conversation.
-    title: str = Field(default="", max_length=512)
     started_at: str = Field(default="", max_length=64)
     updated_at: str = Field(default="", max_length=64)
     #: Absent while it has not ended — which is not the same as ended at an
@@ -965,7 +962,7 @@ async def get_companion_conversations(
     limit: int | None = None,
     cursor: str | None = None,
 ) -> ConversationPageInternal:
-    """When this Companion and its Owner talked, and what it was called.
+    """When this Companion and its Owner talked.
 
     No message bodies: the runtime keeps those per turn and its turn rows carry
     none, so a list here would be timestamps with nothing said.
@@ -982,7 +979,6 @@ async def get_companion_conversations(
         conversations=[
             ConversationInternal(
                 conversation_id=row.conversation_id,
-                title=row.title,
                 started_at=row.started_at,
                 updated_at=row.updated_at,
                 ended_at=row.ended_at,
