@@ -28,6 +28,7 @@ from eidolon_admin_server.app.control_plane.clients import (
     KERNEL_CONTRACT,
     DataAuthorityClient,
     DataWorkspaceAuthorityClient,
+    AgentActivityClient,
     HubManagementClient,
     KernelMountClient,
 )
@@ -607,7 +608,10 @@ async def test_hub_revocation_uses_exact_canonical_claim_command() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert request.url.raw_path == f"/api/admission/v1/claims/{_DEVICE_1}:revoke".encode()
+        assert (
+            request.url.raw_path
+            == f"/api/admission/v1/claims/{_DEVICE_1}:revoke".encode()
+        )
         assert request.headers["authorization"] == "Bearer owner-jwt"
         body = json.loads(request.content)
         assert body == {
@@ -979,7 +983,9 @@ async def test_uds_directory_constructs_and_closes_owned_transport(
     assert subject._client.is_closed is True
 
 
-async def test_replacing_an_assignment_sends_the_canonical_command_and_no_policy_refs() -> None:
+async def test_replacing_an_assignment_sends_the_canonical_command_and_no_policy_refs() -> (
+    None
+):
     """What actually goes on the wire, checked rather than assumed.
 
     Two halves of one decision recorded here. The request must carry the
@@ -1064,3 +1070,83 @@ async def test_an_assignment_answer_about_another_device_is_refused() -> None:
     finally:
         await http_client.aclose()
     assert caught.value.kind == "contract_violation"
+
+
+async def test_agent_conversations_accept_a_transport_opaque_identity() -> None:
+    """The Agent owns an opaque key, not a 64-character Admin UUID."""
+
+    conversation_id = "livekit:" + "participant-identity-" * 5
+    assert len(conversation_id) > 64
+
+    http_client = client(
+        lambda _request: httpx.Response(
+            200,
+            json={
+                "conversations": [
+                    {
+                        "conversation_id": conversation_id,
+                        "owner_id": "owner-1",
+                        "companion_id": "companion-1",
+                        "status": "active",
+                        "started_at": "2026-08-28T08:00:00Z",
+                        "updated_at": "2026-08-28T08:01:00Z",
+                    }
+                ],
+                "next_before": None,
+            },
+        )
+    )
+    try:
+        subject = AgentActivityClient(
+            base_url="http://agent.test/api/admin",
+            client=http_client,
+            timeout_seconds=1,
+            service_token="agent-token",
+        )
+        page = await subject.list_conversations(
+            owner_id="owner-1",
+            companion_id="companion-1",
+            limit=20,
+        )
+    finally:
+        await http_client.aclose()
+
+    assert page.conversations[0].conversation_id == conversation_id
+
+
+async def test_agent_transcript_sends_and_consumes_both_scopes() -> None:
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["owner_id"] = request.url.params.get("owner_id")
+        seen["companion_id"] = request.url.params.get("companion_id")
+        return httpx.Response(
+            200,
+            json={
+                "owner_id": "owner-1",
+                "companion_id": "companion-1",
+                "conversation_id": "conversation-1",
+                "turns": [],
+                "next_before": None,
+            },
+        )
+
+    http_client = client(handler)
+    try:
+        subject = AgentActivityClient(
+            base_url="http://agent.test/api/admin",
+            client=http_client,
+            timeout_seconds=1,
+            service_token="agent-token",
+        )
+        transcript = await subject.list_transcript(
+            owner_id="owner-1",
+            companion_id="companion-1",
+            conversation_id="conversation-1",
+            limit=20,
+        )
+    finally:
+        await http_client.aclose()
+
+    assert seen == {"owner_id": "owner-1", "companion_id": "companion-1"}
+    assert transcript.companion_id == "companion-1"

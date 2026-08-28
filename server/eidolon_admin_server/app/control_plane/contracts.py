@@ -24,6 +24,8 @@ from eidolon_sdk.device_foundation.v1 import (
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -458,7 +460,7 @@ class OwnerRuntimeCompanions(ConsumedModel):
 class ConversationRow(ConsumedModel):
     """One conversation, as the runtime holds it."""
 
-    conversation_id: str = Field(min_length=1, max_length=64)
+    conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
     owner_id: str = Field(min_length=1, max_length=64)
     companion_id: str = Field(default="", max_length=64)
     title: str | None = Field(default=None, max_length=512)
@@ -497,7 +499,9 @@ class TranscriptTurnRow(ConsumedModel):
 
 
 class TranscriptRows(ConsumedModel):
-    conversation_id: str = Field(min_length=1, max_length=64)
+    owner_id: str = Field(min_length=1, max_length=64)
+    companion_id: str = Field(min_length=1, max_length=64)
+    conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
     turns: tuple[TranscriptTurnRow, ...] = ()
     next_before: str | None = Field(default=None, max_length=64)
 
@@ -572,6 +576,8 @@ class CompanionFace(StrictModel):
     sha256: str | None = None
     size_bytes: int | None = None
     updated_at: str | None = None
+
+
 class OwnerIdentity(StrictModel):
     operation: Literal["owner.identity"]
     owner_id: str = Field(min_length=1, max_length=64)
@@ -750,9 +756,7 @@ class OperatorDeviceAdmissionRequest(StrictModel):
     input needed by Admin to orchestrate those current public contracts.
     """
 
-    request_id: str = Field(
-        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$"
-    )
+    request_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$")
     owner_id: BusinessOwnerId
     device_id: str = Field(
         min_length=3, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"

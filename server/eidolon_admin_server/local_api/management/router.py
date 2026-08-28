@@ -20,6 +20,7 @@ from eidolon_sdk.biz.persona import PersonaAuthoring
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
 from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     HostMachinePort,
     HostServiceControlError,
@@ -934,7 +935,7 @@ class ConversationView(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    conversation_id: str = Field(min_length=1, max_length=64)
+    conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
     #: Empty when nothing named it, and it stays empty: a title made up here
     #: would be a screen summarising my conversation for me.
     title: str = Field(default="", max_length=512)
@@ -991,7 +992,7 @@ class TranscriptView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"] = "1"
-    conversation_id: str = Field(min_length=1, max_length=64)
+    conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
     #: Newest turn first, as the Host answers. Reading order is this app's
     #: decision.
     turns: list[TranscriptTurnView]
@@ -1371,9 +1372,7 @@ class DeviceCompanionRequest(BaseModel):
     #: device nobody has pointed anywhere yet.
     expected_revision: int = Field(ge=0)
     #: The caller's own id for this attempt, so asking twice is the same ask.
-    request_id: str = Field(
-        min_length=1, max_length=96, pattern=r"^[A-Za-z0-9._:-]+$"
-    )
+    request_id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9._:-]+$")
 
 
 class DeviceRemovalRequest(BaseModel):
@@ -1386,9 +1385,7 @@ class DeviceRemovalRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    request_id: str = Field(
-        min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$"
-    )
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
 
 
 class DeviceRemovalConditionView(BaseModel):
@@ -1691,17 +1688,13 @@ class ManagementBackendPort(Protocol):
         cursor: str | None,
     ) -> dict: ...
 
-    async def task(
-        self, *, owner_id: str, companion_id: str, task_id: str
-    ) -> dict: ...
+    async def task(self, *, owner_id: str, companion_id: str, task_id: str) -> dict: ...
 
     async def task_action(
         self, *, owner_id: str, companion_id: str, task_id: str, action: str
     ) -> dict: ...
 
-    async def persona_history(
-        self, *, owner_id: str, companion_id: str
-    ) -> dict: ...
+    async def persona_history(self, *, owner_id: str, companion_id: str) -> dict: ...
 
     async def restore_persona(
         self, *, owner_id: str, companion_id: str, chapter_id: str
@@ -1735,9 +1728,7 @@ def _task_page_view(answer: dict) -> TaskPageView:
 def _persona_history_view(answer: dict) -> PersonaHistoryView:
     return PersonaHistoryView(
         companion_id=answer["companion_id"],
-        chapters=[
-            PersonaChapterView(**chapter) for chapter in answer["chapters"]
-        ],
+        chapters=[PersonaChapterView(**chapter) for chapter in answer["chapters"]],
     )
 
 
@@ -1920,8 +1911,12 @@ def register_management_routes(
             raise _refused(exc) from exc
 
         unavailable: dict[str, str] = {}
-        roster = await _try(unavailable, "companions", backend.roster(owner_id=owner_id, cursor=None))
-        inventory = await _try(unavailable, "devices", devices.list_devices(session=session))
+        roster = await _try(
+            unavailable, "companions", backend.roster(owner_id=owner_id, cursor=None)
+        )
+        inventory = await _try(
+            unavailable, "devices", devices.list_devices(session=session)
+        )
         vitals = await _try(unavailable, "machine", host.read_vitals())
         # The Owner's memory, asked for as the Owner: no ``companion_id``, so
         # every audience is in scope. Asking on behalf of one Companion would
@@ -1986,9 +1981,7 @@ def register_management_routes(
             coverage=_DEVICE_COVERAGE,
         )
 
-    @router.put(
-        "/devices/{device_id}/companion", response_model=DeviceView
-    )
+    @router.put("/devices/{device_id}/companion", response_model=DeviceView)
     async def put_device_companion(
         device_id: str,
         payload: DeviceCompanionRequest,
@@ -2011,13 +2004,9 @@ def register_management_routes(
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        return _device_view(
-            device, await _companion_names(backend, session.owner_id)
-        )
+        return _device_view(device, await _companion_names(backend, session.owner_id))
 
-    @router.post(
-        "/devices/{device_id}/removal", response_model=DeviceRemovalView
-    )
+    @router.post("/devices/{device_id}/removal", response_model=DeviceRemovalView)
     async def remove_device(
         device_id: str,
         payload: DeviceRemovalRequest,
@@ -2083,9 +2072,7 @@ def register_management_routes(
             raise _refused(exc) from exc
         position = answer["next_cursor"]
         return ActivityView(
-            moments=[
-                ActivityMomentView(**moment) for moment in answer["moments"]
-            ],
+            moments=[ActivityMomentView(**moment) for moment in answer["moments"]],
             next_cursor=None if position is None else str(position),
         )
 
@@ -2216,9 +2203,7 @@ def register_management_routes(
             raise _refused(exc) from exc
         return CompanionRosterView(
             default_companion_id=answer["default_companion_id"],
-            companions=[
-                CompanionSummaryView(**row) for row in answer["companions"]
-            ],
+            companions=[CompanionSummaryView(**row) for row in answer["companions"]],
             next_cursor=answer["next_cursor"],
             runtime_unavailable=answer.get("runtime_unavailable", ""),
         )
@@ -2255,7 +2240,9 @@ def register_management_routes(
             "persona",
             backend.persona_history(owner_id=owner_id, companion_id=companion_id),
         )
-        runtime = await _try(aside, "runtime", backend.roster(owner_id=owner_id, cursor=None))
+        runtime = await _try(
+            aside, "runtime", backend.roster(owner_id=owner_id, cursor=None)
+        )
         live = None
         if runtime is not None and not runtime.get("runtime_unavailable"):
             live = {
@@ -2297,9 +2284,7 @@ def register_management_routes(
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        return DefaultCompanionView(
-            default_companion_id=answer["default_companion_id"]
-        )
+        return DefaultCompanionView(default_companion_id=answer["default_companion_id"])
 
     @router.get("/persona-authoring-template", response_model=PersonaAuthoring)
     async def get_persona_authoring_template(
@@ -2351,7 +2336,8 @@ def register_management_routes(
                 display_name=payload.display_name,
                 kind=payload.kind,
                 persona=(
-                    None if payload.persona is None
+                    None
+                    if payload.persona is None
                     else payload.persona.model_dump(mode="json")
                 ),
             )
@@ -2426,9 +2412,7 @@ def register_management_routes(
             return Response(status_code=204)
         return Response(content=content, media_type="image/jpeg", headers=headers)
 
-    @router.put(
-        "/companions/{companion_id}/face", response_model=CompanionFaceView
-    )
+    @router.put("/companions/{companion_id}/face", response_model=CompanionFaceView)
     async def put_companion_face(
         companion_id: str,
         request: Request,
@@ -2456,9 +2440,7 @@ def register_management_routes(
             updated_at=answer["updated_at"],
         )
 
-    @router.delete(
-        "/companions/{companion_id}/face", response_model=CompanionFaceView
-    )
+    @router.delete("/companions/{companion_id}/face", response_model=CompanionFaceView)
     async def delete_companion_face(
         companion_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
@@ -2478,9 +2460,7 @@ def register_management_routes(
             updated_at=answer["updated_at"],
         )
 
-    @router.patch(
-        "/companions/{companion_id}", response_model=CompanionNameView
-    )
+    @router.patch("/companions/{companion_id}", response_model=CompanionNameView)
     async def patch_companion(
         companion_id: str,
         payload: RenameRequest,
@@ -2746,9 +2726,7 @@ def register_management_routes(
             raise _refused(exc) from exc
         return ConversationPageView(
             companion_id=answer["companion_id"],
-            conversations=[
-                ConversationView(**row) for row in answer["conversations"]
-            ],
+            conversations=[ConversationView(**row) for row in answer["conversations"]],
             next_cursor=answer.get("next_cursor"),
         )
 
@@ -2817,9 +2795,7 @@ def register_management_routes(
             raise _refused(exc) from exc
         return _task_page_view(answer)
 
-    @router.get(
-        "/companions/{companion_id}/tasks/{task_id}", response_model=TaskView
-    )
+    @router.get("/companions/{companion_id}/tasks/{task_id}", response_model=TaskView)
     async def get_companion_task(
         companion_id: str,
         task_id: str,
@@ -2896,9 +2872,7 @@ def register_management_routes(
         """
         owner_id = await authenticated_owner(authorization)
         try:
-            answer = await backend.persona(
-                owner_id=owner_id, companion_id=companion_id
-            )
+            answer = await backend.persona(owner_id=owner_id, companion_id=companion_id)
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return PersonaAuthoring.model_validate(answer)
@@ -2999,7 +2973,7 @@ def register_management_routes(
         companion_id: str | None = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> RecollectionsView:
-        """"你还记得…吗" — the question a person actually arrives with.
+        """ "你还记得…吗" — the question a person actually arrives with.
 
         Owner-scoped by the session, like every other read here: there is one
         memory a session can ask about, so none is named.
@@ -3042,9 +3016,7 @@ def register_management_routes(
             raise _refused(exc) from exc
         return MemoryCopyView(
             taken_at=answer["taken_at"],
-            records=[
-                MemoryExportRecordView(**record) for record in answer["records"]
-            ],
+            records=[MemoryExportRecordView(**record) for record in answer["records"]],
             record_count=answer["record_count"],
             undated_count=answer["undated_count"],
             truncated=answer["truncated"],

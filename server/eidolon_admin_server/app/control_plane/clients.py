@@ -93,7 +93,10 @@ def _response_detail(response: httpx.Response) -> tuple[str, str | None]:
         detail = value.get("detail")
         if isinstance(detail, dict):
             code = detail.get("code")
-            message = detail.get("message") or f"upstream returned HTTP {response.status_code}"
+            message = (
+                detail.get("message")
+                or f"upstream returned HTTP {response.status_code}"
+            )
             return str(message)[:500], str(code)[:64] if code else None
         if detail:
             return str(detail)[:500], None
@@ -104,7 +107,9 @@ def _raise_status(authority: str, response: httpx.Response) -> None:
     status = response.status_code
     detail, code = _response_detail(response)
     if status == 401:
-        raise AuthorityFailure(authority, "unauthorized", detail, 401, status, False, code)
+        raise AuthorityFailure(
+            authority, "unauthorized", detail, 401, status, False, code
+        )
     if status == 403:
         raise AuthorityFailure(authority, "forbidden", detail, 403, status, False, code)
     if status == 404:
@@ -112,12 +117,20 @@ def _raise_status(authority: str, response: httpx.Response) -> None:
     if status in {409, 412}:
         raise AuthorityFailure(authority, "conflict", detail, 409, status, False, code)
     if status == 400:
-        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False, code)
+        raise AuthorityFailure(
+            authority, "invalid_request", detail, 422, status, False, code
+        )
     if status == 422:
-        raise AuthorityFailure(authority, "invalid_request", detail, 422, status, False, code)
+        raise AuthorityFailure(
+            authority, "invalid_request", detail, 422, status, False, code
+        )
     if status >= 500:
-        raise AuthorityFailure(authority, "upstream_failure", detail, 502, status, True, code)
-    raise AuthorityFailure(authority, "upstream_failure", detail, 502, status, False, code)
+        raise AuthorityFailure(
+            authority, "upstream_failure", detail, 502, status, True, code
+        )
+    raise AuthorityFailure(
+        authority, "upstream_failure", detail, 502, status, False, code
+    )
 
 
 def _parse(authority: str, response: httpx.Response, model: type[ModelT]) -> ModelT:
@@ -1384,18 +1397,23 @@ class AgentActivityClient:
         self,
         *,
         owner_id: str,
+        companion_id: str,
         conversation_id: str,
         limit: int,
         before: str | None = None,
     ) -> TranscriptRows:
         """One conversation's turns with their messages.
 
-        The Owner travels as a parameter because this route requires it: it is the
-        only list on that surface carrying message bodies, and it refuses to
-        answer without a scope.
+        Owner and Companion travel as parameters because this route carries
+        message bodies. The Agent refuses to answer without both scopes, so a
+        conversation id copied from one Companion cannot open another's words.
         """
 
-        params: dict[str, str] = {"owner_id": owner_id, "limit": str(limit)}
+        params: dict[str, str] = {
+            "owner_id": owner_id,
+            "companion_id": companion_id,
+            "limit": str(limit),
+        }
         if before:
             params["before"] = before
         response = await self._call(
@@ -1479,7 +1497,9 @@ class AgentActivityClient:
         )
         return _parse("agent", response, OwnerRuntimeCompanions)
 
-    async def revoke_runtime_sessions(self, *, owner_id: str) -> RuntimeSessionRevocation:
+    async def revoke_runtime_sessions(
+        self, *, owner_id: str
+    ) -> RuntimeSessionRevocation:
         """Stop every runtime token this Owner had until now.
 
         A watermark, not a switch: the runtime records the instant and refuses
@@ -1897,7 +1917,9 @@ class KernelMountClient:
             json=payload,
         )
         endpoint = _parse("kernel", response, KernelBodyEndpoint)
-        assigned = None if endpoint.assignment is None else endpoint.assignment.companion_id
+        assigned = (
+            None if endpoint.assignment is None else endpoint.assignment.companion_id
+        )
         if (
             endpoint.device_id != device_id
             or endpoint.owner_id != owner_id

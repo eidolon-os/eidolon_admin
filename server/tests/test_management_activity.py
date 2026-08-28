@@ -63,12 +63,16 @@ def _task_row(**overrides) -> dict:
 
 
 class _Agent:
-    def __init__(self, *, tasks: list[dict] | None = None, cursor: str | None = None) -> None:
+    def __init__(
+        self, *, tasks: list[dict] | None = None, cursor: str | None = None
+    ) -> None:
         self.tasks = tasks if tasks is not None else [_task_row()]
         self.cursor = cursor
         self.asked: list[tuple] = []
         self.actions: list[tuple[str, str, str]] = []
         self.refuse: AuthorityFailure | None = None
+        self.return_owner: str | None = None
+        self.return_companion: str | None = None
 
     async def list_conversations(self, *, owner_id, companion_id, limit, before=None):
         self.asked.append(("conversations", owner_id, companion_id, limit, before))
@@ -77,8 +81,8 @@ class _Agent:
                 "conversations": [
                     {
                         "conversation_id": "c-1",
-                        "owner_id": owner_id,
-                        "companion_id": companion_id,
+                        "owner_id": self.return_owner or owner_id,
+                        "companion_id": self.return_companion or companion_id,
                         "title": "  周末计划  ",
                         "status": "open",
                         "started_at": "2026-08-24T08:00:00+00:00",
@@ -99,10 +103,16 @@ class _Agent:
             {"tasks": self.tasks, "next_before": self.cursor}
         )
 
-    async def list_transcript(self, *, owner_id, conversation_id, limit, before=None):
-        self.asked.append(("transcript", owner_id, conversation_id, limit, before))
+    async def list_transcript(
+        self, *, owner_id, companion_id, conversation_id, limit, before=None
+    ):
+        self.asked.append(
+            ("transcript", owner_id, companion_id, conversation_id, limit, before)
+        )
         return TranscriptRows.model_validate(
             {
+                "owner_id": self.return_owner or owner_id,
+                "companion_id": self.return_companion or companion_id,
                 "conversation_id": conversation_id,
                 "turns": [
                     {
@@ -112,7 +122,11 @@ class _Agent:
                         "finished_at": None,
                         "status": "running",
                         "messages": [
-                            {"role": "user", "content": "周末去哪", "content_type": "text"},
+                            {
+                                "role": "user",
+                                "content": "周末去哪",
+                                "content_type": "text",
+                            },
                             {
                                 "role": "assistant",
                                 "content": "我看看天气",
@@ -162,7 +176,9 @@ class _Agent:
         if self.refuse is not None:
             raise self.refuse
         self.actions.append(("retry", owner_id, task_id))
-        return TaskRow.model_validate(_task_row(status="accepted", progress_summary=None))
+        return TaskRow.model_validate(
+            _task_row(status="accepted", progress_summary=None)
+        )
 
 
 async def test_a_conversation_row_is_when_it_happened_not_what_was_said() -> None:
@@ -202,6 +218,23 @@ async def test_the_owner_is_always_sent_because_it_is_only_a_filter() -> None:
 
     assert agent.asked[0][1:3] == (OWNER, COMPANION)
     assert agent.asked[1][1:3] == (OWNER, COMPANION)
+
+
+async def test_a_conversation_row_cannot_escape_the_requested_scope() -> None:
+    agent = _Agent()
+    agent.return_companion = "companion-other"
+
+    with pytest.raises(AuthorityFailure) as caught:
+        await read_conversations(
+            owner_id=OWNER,
+            companion_id=COMPANION,
+            limit=None,
+            cursor=None,
+            activity=agent,
+        )
+
+    assert caught.value.kind == "contract_violation"
+    assert caught.value.status_code == 502
 
 
 async def test_a_page_is_bounded_here_as_well() -> None:
@@ -358,6 +391,7 @@ async def test_a_transcript_carries_only_what_was_said() -> None:
 
     transcript = await read_transcript(
         owner_id=OWNER,
+        companion_id=COMPANION,
         conversation_id="c-1",
         limit=None,
         cursor=None,
@@ -380,6 +414,24 @@ async def test_a_transcript_carries_only_what_was_said() -> None:
     assert all(text != "调天气工具" for _role, text in said)
 
 
+async def test_a_transcript_cannot_escape_the_requested_companion() -> None:
+    agent = _Agent()
+    agent.return_companion = "companion-other"
+
+    with pytest.raises(AuthorityFailure) as caught:
+        await read_transcript(
+            owner_id=OWNER,
+            companion_id=COMPANION,
+            conversation_id="c-1",
+            limit=None,
+            cursor=None,
+            activity=agent,
+        )
+
+    assert caught.value.kind == "contract_violation"
+    assert caught.value.status_code == 502
+
+
 async def test_a_turn_still_going_says_so_rather_than_inventing_an_end() -> None:
     """An unfinished turn is what a dropped connection looks like afterwards."""
 
@@ -387,6 +439,7 @@ async def test_a_turn_still_going_says_so_rather_than_inventing_an_end() -> None
 
     transcript = await read_transcript(
         owner_id=OWNER,
+        companion_id=COMPANION,
         conversation_id="c-1",
         limit=None,
         cursor=None,
@@ -402,6 +455,7 @@ async def test_a_transcript_is_bounded_and_walks_backwards() -> None:
 
     transcript = await read_transcript(
         owner_id=OWNER,
+        companion_id=COMPANION,
         conversation_id="c-1",
         limit=10_000,
         cursor="2026-08-24T09:30:00+00:00",
@@ -411,6 +465,7 @@ async def test_a_transcript_is_bounded_and_walks_backwards() -> None:
     assert agent.asked[0] == (
         "transcript",
         OWNER,
+        COMPANION,
         "c-1",
         MAXIMUM_PAGE,
         "2026-08-24T09:30:00+00:00",

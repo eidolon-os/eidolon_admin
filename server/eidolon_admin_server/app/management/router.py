@@ -68,6 +68,7 @@ from eidolon_admin_server.app.management.roster import (
 )
 from eidolon_admin_server.app.management.sessions import revoke_runtime_sessions
 from eidolon_admin_server.app.service_auth import require_local_api_credential
+from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
 
 #: Required by the router, so a second route here cannot be added without it.
 router = APIRouter(
@@ -375,7 +376,9 @@ class RevokedSessionsInternal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"] = "1"
-    operation: Literal["owner.runtime-sessions-revoked"] = "owner.runtime-sessions-revoked"
+    operation: Literal["owner.runtime-sessions-revoked"] = (
+        "owner.runtime-sessions-revoked"
+    )
     #: The instant the runtime compares tokens against. Relayed, not re-stamped:
     #: a second clock's "now" would be a different answer to the only question
     #: that matters here.
@@ -385,7 +388,7 @@ class RevokedSessionsInternal(BaseModel):
 class ConversationInternal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    conversation_id: str = Field(min_length=1, max_length=64)
+    conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
     #: Empty when nothing named it. A title composed here would be this layer
     #: summarising someone's conversation.
     title: str = Field(default="", max_length=512)
@@ -430,7 +433,7 @@ class TranscriptInternal(BaseModel):
 
     contract_version: Literal["1"] = "1"
     operation: Literal["companion.transcript"] = "companion.transcript"
-    conversation_id: str = Field(min_length=1, max_length=64)
+    conversation_id: str = Field(min_length=1, max_length=CONVERSATION_ID_MAX_LENGTH)
     turns: list[TranscriptTurnInternal]
     next_cursor: str | None = Field(default=None, max_length=256)
 
@@ -732,9 +735,7 @@ async def put_default_companion(
         expected_revision=payload.expected_revision,
         owners=request.app.state.control_plane.workspace,
     )
-    return DefaultCompanionResponseInternal(
-        default_companion_id=default_companion_id
-    )
+    return DefaultCompanionResponseInternal(default_companion_id=default_companion_id)
 
 
 @router.get("/persona-authoring-template", response_model=PersonaAuthoring)
@@ -901,7 +902,9 @@ async def post_forget_confirm(
     )
 
 
-@router.put("/memory/entries/{entry_id}/audience", response_model=MemoryAudienceInternal)
+@router.put(
+    "/memory/entries/{entry_id}/audience", response_model=MemoryAudienceInternal
+)
 async def put_memory_entry_audience(
     request: Request,
     entry_id: str,
@@ -1014,6 +1017,7 @@ async def get_conversation_transcript(
     """
     transcript = await read_transcript(
         owner_id=owner_id,
+        companion_id=companion_id,
         conversation_id=conversation_id,
         limit=limit,
         cursor=cursor,
@@ -1269,7 +1273,9 @@ async def get_activity(
     )
 
 
-@router.get("/companions/{companion_id}/face-state", response_model=CompanionFaceInternal)
+@router.get(
+    "/companions/{companion_id}/face-state", response_model=CompanionFaceInternal
+)
 async def get_companion_face_state(
     request: Request,
     companion_id: str,
@@ -1519,9 +1525,7 @@ async def get_memory_recollections(
     return RecollectionsInternal(
         query=found.query,
         recollections=[
-            RecollectionInternal(
-                text=entry.text, remembered_at=entry.remembered_at
-            )
+            RecollectionInternal(text=entry.text, remembered_at=entry.remembered_at)
             for entry in found.recollections
         ],
     )

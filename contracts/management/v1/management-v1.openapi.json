@@ -791,7 +791,7 @@
         "description": "One time we talked, and what it was called.",
         "properties": {
           "conversation_id": {
-            "maxLength": 64,
+            "maxLength": 512,
             "minLength": 1,
             "title": "Conversation Id",
             "type": "string"
@@ -2874,7 +2874,7 @@
             "type": "string"
           },
           "conversation_id": {
-            "maxLength": 64,
+            "maxLength": 512,
             "minLength": 1,
             "title": "Conversation Id",
             "type": "string"

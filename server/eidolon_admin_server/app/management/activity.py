@@ -23,12 +23,12 @@ came back — is how an answer was reached rather than the conversation, and it 
 contain anything the tools touched. Dropping it here rather than at a screen means
 no client has to decide again, and none of it reaches a phone in the first place.
 
-**Only this Owner's, and proved by the id the row carries.** The Agent's list
-routes take ``owner_id`` as a *filter*; a caller that omits it gets every Owner's
-rows. So this layer always sends one, and the client refuses a task row whose
-Owner is not the one asking. It is a narrow trust: the Agent's routes cannot
-prove ownership the way Data's owner-scoped routes do, and pretending otherwise
-would hide where the check actually lives.
+**Only this Owner's and Companion's, and proved by the ids the row carries.**
+The Agent's list routes take both values as filters. This layer always sends
+them and refuses conversation or transcript rows whose echoed scope differs.
+Tasks remain Owner-authorized and Companion-filtered by the Agent's task
+contract. Keeping that distinction explicit avoids pretending all three reads
+have stronger authority semantics than their upstream actually provides.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from eidolon_admin_server.app.control_plane.contracts import (
     TaskRows,
     TranscriptRows,
 )
+from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 
 #: Which roles are the conversation. Anything else on a turn — tool calls, tool
 #: results, whatever a future runtime adds — is how the answer was reached, not
@@ -82,6 +83,7 @@ class CompanionActivityReader(Protocol):
         self,
         *,
         owner_id: str,
+        companion_id: str,
         conversation_id: str,
         limit: int,
         before: str | None = None,
@@ -188,6 +190,14 @@ async def read_conversations(
         limit=_page(limit),
         before=cursor,
     )
+    for row in page.conversations:
+        if row.owner_id != owner_id or row.companion_id != companion_id:
+            raise AuthorityFailure(
+                "agent",
+                "contract_violation",
+                "agent returned a conversation outside the requested scope",
+                502,
+            )
     return ConversationPage(
         conversations=tuple(
             ConversationView(
@@ -206,6 +216,7 @@ async def read_conversations(
 async def read_transcript(
     *,
     owner_id: str,
+    companion_id: str,
     conversation_id: str,
     limit: int | None,
     cursor: str | None,
@@ -220,10 +231,22 @@ async def read_transcript(
 
     page = await activity.list_transcript(
         owner_id=owner_id,
+        companion_id=companion_id,
         conversation_id=conversation_id,
         limit=_page(limit),
         before=cursor,
     )
+    if (
+        page.owner_id != owner_id
+        or page.companion_id != companion_id
+        or page.conversation_id != conversation_id
+    ):
+        raise AuthorityFailure(
+            "agent",
+            "contract_violation",
+            "agent returned a transcript outside the requested scope",
+            502,
+        )
     return Transcript(
         conversation_id=page.conversation_id,
         turns=tuple(
