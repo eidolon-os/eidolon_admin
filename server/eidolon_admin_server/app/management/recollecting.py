@@ -92,9 +92,14 @@ def _view(record: dict[str, Any]) -> RecollectionView:
     """
 
     text = record.get("text")
+    raw_remembered_at = record.get("remembered_at")
     metadata = record.get("metadata")
-    remembered_at = None
-    if isinstance(metadata, dict):
+    remembered_at = (
+        raw_remembered_at
+        if isinstance(raw_remembered_at, str) and raw_remembered_at
+        else None
+    )
+    if remembered_at is None and isinstance(metadata, dict):
         raw = metadata.get("created_at") or metadata.get("occurred_at")
         remembered_at = raw if isinstance(raw, str) and raw else None
     return RecollectionView(
