@@ -388,6 +388,7 @@ COPY = {
             "wing_id": "Wing_Life",
             "room_id": "饮食",
             "memory_type": "preference",
+            "audience": "companion:c-a",
             "value": "他喜欢喝乌龙茶，" * 30,
         },
         {
@@ -422,6 +423,7 @@ async def test_the_copy_reaches_the_sibling_route_and_arrives_whole() -> None:
     assert asked.method == "GET"
     assert asked.headers["authorization"] == f"Bearer {TOKEN}"
     assert copy.records[0].value == COPY["records"][0]["value"]
+    assert copy.records[0].audience == "companion:c-a"
     # Both honesty counts survive the parse: one says why part of the file has
     # no dates, the other says the file is part of a memory.
     assert copy.undated_count == 1

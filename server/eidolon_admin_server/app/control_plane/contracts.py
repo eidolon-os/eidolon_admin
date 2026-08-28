@@ -287,6 +287,12 @@ class MemoryExportRecord(StrictModel):
     wing_id: str = Field(default="", max_length=128)
     room_id: str = Field(default="", max_length=256)
     memory_type: str = Field(default="", max_length=64)
+    #: Who was told. Memory added this when the physical Owner Realm replaced
+    #: per-Companion realms: an Owner export may now contain several logical
+    #: audiences, and accepting the field is required to keep that copy honest.
+    #: Defaulted for an older Memory realm whose export predates the audience
+    #: axis; those records live in the Owner layer by definition.
+    audience: str = Field(default="owner", min_length=1, max_length=192)
     #: Required rather than defaulted, unlike every other field here: this is
     #: what the copy is *of*. A record whose text may be absent would let a file
     #: validate while carrying nothing a person could read.
