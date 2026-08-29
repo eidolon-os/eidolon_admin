@@ -1725,56 +1725,6 @@
         "title": "ManagementContextView",
         "type": "object"
       },
-      "MemoryAudienceRequest": {
-        "additionalProperties": false,
-        "description": "Which of my Eidolons this memory is for.",
-        "properties": {
-          "companion_id": {
-            "default": "",
-            "maxLength": 128,
-            "title": "Companion Id",
-            "type": "string"
-          }
-        },
-        "title": "MemoryAudienceRequest",
-        "type": "object"
-      },
-      "MemoryAudienceView": {
-        "additionalProperties": false,
-        "description": "Where that memory now belongs, and whether it has taken effect yet.",
-        "properties": {
-          "companion_id": {
-            "default": "",
-            "maxLength": 128,
-            "title": "Companion Id",
-            "type": "string"
-          },
-          "contract_version": {
-            "const": "1",
-            "default": "1",
-            "title": "Contract Version",
-            "type": "string"
-          },
-          "entry_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Entry Id",
-            "type": "string"
-          },
-          "status": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "entry_id",
-          "status"
-        ],
-        "title": "MemoryAudienceView",
-        "type": "object"
-      },
       "MemoryCopyView": {
         "additionalProperties": false,
         "description": "Everything my Eidolon remembers about me, in a form I can keep.\n\nNot the Host's backup. That one is the palace — vectors and ledgers and the\nencoder they were built with — and exists so a lost disk is survivable; only\nthe operator tool ever holds it. This one exists so I am not locked in.",
@@ -2096,6 +2046,12 @@
         "additionalProperties": false,
         "description": "What my Eidolon remembers, arranged the way it files it.",
         "properties": {
+          "audience_scope": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Audience Scope",
+            "type": "string"
+          },
           "contract_version": {
             "const": "1",
             "default": "1",
@@ -2106,6 +2062,15 @@
             "minimum": 0.0,
             "title": "Entry Count",
             "type": "integer"
+          },
+          "materialization": {
+            "$ref": "#/components/schemas/MemoryMaterialization"
+          },
+          "memory_realm_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Memory Realm Id",
+            "type": "string"
           },
           "truncated": {
             "title": "Truncated",
@@ -2125,12 +2090,69 @@
           }
         },
         "required": [
+          "memory_realm_id",
+          "audience_scope",
+          "materialization",
           "wings",
           "entry_count",
           "withheld_count",
           "truncated"
         ],
         "title": "MemoryLibraryView",
+        "type": "object"
+      },
+      "MemoryMaterialization": {
+        "additionalProperties": false,
+        "properties": {
+          "data_readable": {
+            "title": "Data Readable",
+            "type": "boolean"
+          },
+          "degraded_reason": {
+            "default": "",
+            "maxLength": 1024,
+            "title": "Degraded Reason",
+            "type": "string"
+          },
+          "last_materialized_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Materialized At"
+          },
+          "materialization_state": {
+            "enum": [
+              "ready",
+              "materializing",
+              "degraded",
+              "unavailable"
+            ],
+            "title": "Materialization State",
+            "type": "string"
+          },
+          "projection_pending": {
+            "minimum": 0.0,
+            "title": "Projection Pending",
+            "type": "integer"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ready",
+          "data_readable",
+          "materialization_state",
+          "projection_pending"
+        ],
+        "title": "MemoryMaterialization",
         "type": "object"
       },
       "MemoryRoomView": {
@@ -5092,75 +5114,6 @@
           }
         },
         "summary": "Get Memory Entries",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/memory/entries/{entry_id}/audience": {
-      "put": {
-        "description": "只让它记得 — keep this memory between me and one of my Eidolons.\n\nOne step, unlike forgetting. A forget turns words into a set and needs a\npreview to bind exactly what will go; here I am looking at one memory and\nnaming it, and nothing becomes unrecallable — the Eidolon I gave it to\nstill remembers it, and sending this again with nobody named gives it\nback to all of them.",
-        "operationId": "put_memory_entry_audience_api_management_v1_memory_entries__entry_id__audience_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "entry_id",
-            "required": true,
-            "schema": {
-              "title": "Entry Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MemoryAudienceRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryAudienceView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Put Memory Entry Audience",
         "tags": [
           "management"
         ]

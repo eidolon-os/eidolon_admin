@@ -14,8 +14,6 @@ answer to "what may this person see", and the two would drift.
 
 from __future__ import annotations
 
-import json
-
 import httpx
 import pytest
 from eidolon_admin_server.app.control_plane.clients import MemoryRecollectionsClient
@@ -31,6 +29,15 @@ BROWSE = {
     "contract_version": "1",
     "operation": "memory.browse",
     "memory_space_id": "r_a",
+    "audience_scope": "owner",
+    "materialization": {
+        "ready": True,
+        "data_readable": True,
+        "materialization_state": "ready",
+        "projection_pending": 0,
+        "last_materialized_at": "2026-08-29T12:00:00Z",
+        "degraded_reason": "",
+    },
     "wings": [
         {
             "wing_id": "Wing_Life",
@@ -451,78 +458,29 @@ async def test_a_copy_shares_the_credential_check_with_every_other_realm_read() 
     assert caught.value.kind == "configuration"
 
 
-AUDIENCE = {
+STATUS = {
     "contract_version": "1",
-    "operation": "memory.audience",
-    "entry_id": "drawer_1",
-    "audience": "companion:c_mochi",
-    "companion_id": "c_mochi",
-    "status": "accepted",
+    "operation": "memory.status",
+    "memory_realm_id": "r_a",
+    "memory_space_id": "r_a",
+    "audience_scope": "companion:c_mochi",
+    "ready": True,
+    "data_readable": True,
+    "materialization_state": "ready",
+    "projection_pending": 0,
+    "last_materialized_at": "2026-08-29T12:00:00Z",
+    "degraded_reason": "",
 }
 
 
-async def test_marking_a_memory_puts_the_entry_in_the_path_and_the_eidolon_in_the_body() -> None:
-    """A PUT on the entry: the body is the desired end state of one exact record,
-    so a client that never saw the answer can send it again."""
-
+async def test_status_uses_the_realm_authority_and_forwards_scope() -> None:
     seen: list[httpx.Request] = []
-    client = _client([_realm()], body=AUDIENCE, seen=seen)
+    client = _client([_realm()], body=STATUS, seen=seen)
 
-    result = await client.assign_audience(
-        owner_id=OWNER, entry_id="drawer_1", companion_id="c_mochi"
-    )
+    result = await client.status(owner_id=OWNER, companion_id="c_mochi")
 
-    asked = next(r for r in seen if "/audience" in r.url.path)
-    assert asked.method == "PUT"
-    assert asked.url.path == "/api/memory/v1/entries/drawer_1/audience"
-    assert json.loads(asked.content) == {"companion_id": "c_mochi"}
-    assert result.companion_id == "c_mochi"
-    # The ledger's word, relayed rather than turned into success.
-    assert result.status == "accepted"
-
-
-async def test_giving_a_memory_back_names_no_companion() -> None:
-    """An empty string rather than the word "owner": the realm decides what an
-    audience is, and absence is how this layer says "all of them"."""
-
-    seen: list[httpx.Request] = []
-    client = _client(
-        [_realm()],
-        body={**AUDIENCE, "audience": "owner", "companion_id": ""},
-        seen=seen,
-    )
-
-    await client.assign_audience(owner_id=OWNER, entry_id="drawer_1")
-
-    asked = next(r for r in seen if "/audience" in r.url.path)
-    assert json.loads(asked.content) == {"companion_id": ""}
-
-
-async def test_an_entry_id_is_quoted_into_the_path() -> None:
-    """It comes from a page, not from this process, so it is escaped rather than
-    trusted to be path-safe."""
-
-    seen: list[httpx.Request] = []
-    client = _client([_realm()], body=AUDIENCE, seen=seen)
-
-    await client.assign_audience(
-        owner_id=OWNER, entry_id="drawer_1/../other", companion_id="c_mochi"
-    )
-
-    asked = next(r for r in seen if "/audience" in r.url.path)
-    # ``raw_path``, because ``path`` hands back the decoded form — and the escape
-    # is exactly what is being asserted.
-    assert asked.url.raw_path.endswith(
-        b"/api/memory/v1/entries/drawer_1%2F..%2Fother/audience"
-    )
-
-
-async def test_a_marking_shares_the_credential_check_with_every_other_realm_call() -> None:
-    client = _client([_realm()], body=AUDIENCE, service_token="")
-
-    with pytest.raises(AuthorityFailure) as caught:
-        await client.assign_audience(
-            owner_id=OWNER, entry_id="drawer_1", companion_id="c_mochi"
-        )
-
-    assert caught.value.kind == "configuration"
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/status")
+    assert asked.method == "GET"
+    assert asked.url.params["companion_id"] == "c_mochi"
+    assert result.data_readable is True
+    assert result.materialization_state == "ready"

@@ -243,6 +243,12 @@ class RuntimeMemory(BaseModel):
     active_realm_id: str = ""
     runners_total: int = 0
     runners_online: int = 0
+    audience_scope: str = ""
+    data_readable: bool = False
+    materialization_state: str = "unavailable"
+    projection_pending: int = 0
+    last_materialized_at: str | None = None
+    degraded_reason: str = ""
     last_recall_hits: int = 0
     last_write_disposition: str | None = None
     fanout_allowed: bool = False

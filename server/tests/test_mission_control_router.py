@@ -145,7 +145,8 @@ async def test_a_lane_no_authority_answers_says_so_rather_than_reading_empty() -
         "data.conversations": "no conversation history",
         "data.jobs": "no job list",
         "data.guard_bindings": "Guard runtime does not exist",
-        "memory.runtime": "Memory Supervisor client is not configured",
+        "memory.roster": "Memory Supervisor client is not configured",
+        "memory.runtime": "has no attribute 'memory'",
     }.items():
         status = _status(snapshot, source)
         assert status is not None, f"{source} vanished instead of reporting itself"
@@ -157,7 +158,7 @@ async def test_a_lane_no_authority_answers_says_so_rather_than_reading_empty() -
     assert snapshot.jobs == []
 
 
-async def test_memory_lane_uses_supervisor_realm_and_worker_health() -> None:
+async def test_memory_lane_uses_realm_identity_and_storage_materialization() -> None:
     class _Realm:
         def __init__(self, owner_id: str, realm_id: str, running: bool) -> None:
             self.spec = {
@@ -173,12 +174,23 @@ async def test_memory_lane_uses_supervisor_realm_and_worker_health() -> None:
             _Realm("owner-elsewhere", "realm-hidden", True),
         )
 
-    memory = await service._memory_summary(_OWNER_ID, _Page(), [])
+    class _Status:
+        audience_scope = "companion:c-one"
+        data_readable = True
+        materialization_state = "ready"
+        projection_pending = 0
+        last_materialized_at = "2026-08-29T12:00:00Z"
+        degraded_reason = ""
+
+    memory = await service._memory_summary(_OWNER_ID, _Page(), _Status(), [])
 
     assert memory.realms_total == 1
     assert memory.active_realm_id == "realm-owner-1"
     assert memory.runners_total == 1
     assert memory.runners_online == 1
+    assert memory.audience_scope == "companion:c-one"
+    assert memory.data_readable is True
+    assert memory.materialization_state == "ready"
 
 
 async def test_a_snapshot_without_an_owner_refuses_rather_than_picking_one() -> None:

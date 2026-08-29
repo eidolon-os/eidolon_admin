@@ -203,12 +203,47 @@ class MemoryWing(StrictModel):
     rooms: tuple[MemoryRoom, ...] = ()
 
 
+class MemoryMaterialization(StrictModel):
+    ready: bool
+    data_readable: bool
+    materialization_state: Literal["ready", "materializing", "degraded", "unavailable"]
+    projection_pending: int = Field(ge=0)
+    last_materialized_at: str | None = Field(default=None, max_length=64)
+    degraded_reason: str = Field(default="", max_length=1024)
+
+
+class MemoryStatus(StrictModel):
+    contract_version: Literal["1"]
+    operation: Literal["memory.status"]
+    memory_realm_id: str = Field(min_length=1, max_length=64)
+    memory_space_id: str = Field(min_length=1, max_length=64)
+    audience_scope: str = Field(min_length=1, max_length=128)
+    ready: bool
+    data_readable: bool
+    materialization_state: Literal["ready", "materializing", "degraded", "unavailable"]
+    projection_pending: int = Field(ge=0)
+    last_materialized_at: str | None = Field(default=None, max_length=64)
+    degraded_reason: str = Field(default="", max_length=1024)
+
+    def materialization(self) -> MemoryMaterialization:
+        return MemoryMaterialization(
+            ready=self.ready,
+            data_readable=self.data_readable,
+            materialization_state=self.materialization_state,
+            projection_pending=self.projection_pending,
+            last_materialized_at=self.last_materialized_at,
+            degraded_reason=self.degraded_reason,
+        )
+
+
 class MemoryBrowse(StrictModel):
     """What an Owner's memory holds, by wing and room."""
 
     contract_version: Literal["1"]
     operation: Literal["memory.browse"]
     memory_space_id: str = Field(min_length=1, max_length=64)
+    audience_scope: str = Field(min_length=1, max_length=128)
+    materialization: MemoryMaterialization
     wings: tuple[MemoryWing, ...] = ()
     entry_count: int = Field(ge=0)
     #: Present and not listed — the Owner's own privacy wing is the common case.
@@ -377,27 +412,6 @@ class ForgetOutcome(StrictModel):
     status: str = Field(min_length=1, max_length=64)
 
 
-class MemoryAudience(StrictModel):
-    """Which of this Owner's Companions a memory now belongs to.
-
-    ``extra="allow"`` for the same reason :class:`ForgetOutcome` has it: the realm
-    merges the command ledger's own status dictionary into the answer, and that
-    vocabulary belongs to the ledger.
-    """
-
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-
-    contract_version: Literal["1"]
-    operation: Literal["memory.audience"]
-    entry_id: str = Field(min_length=1, max_length=128)
-    #: The audience token the realm applied — ``owner`` or ``companion:<id>``.
-    audience: str = Field(min_length=1, max_length=160)
-    #: The Companion it names, echoed so nothing above has to parse the token.
-    #: Empty means the Owner layer: every Companion may recall it again.
-    companion_id: str = Field(default="", max_length=128)
-    #: The ledger's word. Publishing is durable, applying is a projection still
-    #: running, and which of the two happened is not this layer's to decide.
-    status: str = Field(min_length=1, max_length=64)
 
 
 class ConsumedModel(BaseModel):

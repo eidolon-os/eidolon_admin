@@ -107,7 +107,8 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # Background work, and its share of the activity chain.
     "agent.long_tasks": ("jobs", "activities"),
     "data.jobs": ("jobs",),
-    # What was remembered.
+    # The realm roster routes the read; the Realm status proves the data.
+    "memory.roster": ("memory",),
     "memory.runtime": ("memory",),
     # The Owner's moments, from the audit index that assigns them their order.
     # ``ingest_seq`` is what makes this lane resumable, and it is the reason the

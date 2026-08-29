@@ -304,17 +304,6 @@ export interface ManagementContextView {
   unavailable?: Record<string, string>
 }
 
-export interface MemoryAudienceRequest {
-  companion_id?: string
-}
-
-export interface MemoryAudienceView {
-  companion_id?: string
-  contract_version?: "1"
-  entry_id: string
-  status: string
-}
-
 export interface MemoryCopyView {
   contract_version?: "1"
   record_count: number
@@ -376,11 +365,23 @@ export interface MemoryGraphView {
 }
 
 export interface MemoryLibraryView {
+  audience_scope: string
   contract_version?: "1"
   entry_count: number
+  materialization: MemoryMaterialization
+  memory_realm_id: string
   truncated: boolean
   wings: Array<MemoryWingView>
   withheld_count: number
+}
+
+export interface MemoryMaterialization {
+  data_readable: boolean
+  degraded_reason?: string
+  last_materialized_at?: string | null
+  materialization_state: "ready" | "materializing" | "degraded" | "unavailable"
+  projection_pending: number
+  ready: boolean
 }
 
 export interface MemoryRoomView {
@@ -564,7 +565,6 @@ export interface ManagementResponses {
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView
   'GET /api/management/v1/memory/entries': MemoryDayView
-  'PUT /api/management/v1/memory/entries/{entry_id}/audience': MemoryAudienceView
   'GET /api/management/v1/memory/export': MemoryCopyView
   'POST /api/management/v1/memory/forget/confirm': ForgetResultView
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView

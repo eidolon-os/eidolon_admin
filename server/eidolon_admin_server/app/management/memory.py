@@ -23,6 +23,8 @@ from eidolon_admin_server.app.control_plane.contracts import (
     MemoryGraph,
     MemoryGraphEdge,
     MemoryGraphNode,
+    MemoryMaterialization,
+    MemoryStatus,
 )
 
 
@@ -36,6 +38,13 @@ class MemoryBrowser(Protocol):
         owner_id: str,
         companion_id: str | None = None,
     ) -> MemoryBrowse: ...
+
+    async def status(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryStatus: ...
 
     async def entries(
         self,
@@ -80,6 +89,9 @@ class MemoryWingView:
 
 @dataclass(frozen=True, slots=True)
 class MemoryLibrary:
+    memory_realm_id: str
+    audience_scope: str
+    materialization: MemoryMaterialization
     wings: tuple[MemoryWingView, ...]
     entry_count: int
     withheld_count: int
@@ -115,6 +127,9 @@ async def read_library(
 ) -> MemoryLibrary:
     page = await memory.browse(owner_id=owner_id, companion_id=companion_id)
     return MemoryLibrary(
+        memory_realm_id=page.memory_space_id,
+        audience_scope=page.audience_scope,
+        materialization=page.materialization,
         wings=tuple(
             MemoryWingView(
                 wing_id=wing.wing_id,

@@ -20,6 +20,7 @@ from eidolon_sdk.biz.persona import PersonaAuthoring
 from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
 from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
 from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     HostMachinePort,
@@ -797,6 +798,9 @@ class MemoryLibraryView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"] = "1"
+    memory_realm_id: str = Field(min_length=1, max_length=64)
+    audience_scope: str = Field(min_length=1, max_length=128)
+    materialization: MemoryMaterialization
     wings: list[MemoryWingView]
     entry_count: int = Field(ge=0)
     #: Here and not listed — things marked "do not bring this up", and (once
@@ -1096,31 +1100,6 @@ class RecollectionsView(BaseModel):
     #: apart from an answer to a different one.
     query: str = Field(min_length=1, max_length=256)
     recollections: list[RecollectionView]
-
-
-class MemoryAudienceRequest(BaseModel):
-    """Which of my Eidolons this memory is for."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    #: Absent or empty means all of them again. Said as an absence rather than a
-    #: word, so naming an Eidolon and naming none can never be confused.
-    companion_id: str = Field(default="", max_length=128)
-
-
-class MemoryAudienceView(BaseModel):
-    """Where that memory now belongs, and whether it has taken effect yet."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    entry_id: str = Field(min_length=1, max_length=128)
-    #: Empty means every Eidolon may recall it again.
-    companion_id: str = Field(default="", max_length=128)
-    #: ``applied`` when the Host has already done it; anything else means the
-    #: request is durable and still on its way. The client must not say 已经
-    #: unless it reads the first.
-    status: str = Field(min_length=1, max_length=64)
 
 
 class ForgetTargetRequest(BaseModel):
@@ -1699,10 +1678,6 @@ class ManagementBackendPort(Protocol):
 
     async def recollections(
         self, *, owner_id: str, query: str, limit: int, companion_id: str | None
-    ) -> dict: ...
-
-    async def assign_memory_audience(
-        self, *, owner_id: str, entry_id: str, companion_id: str
     ) -> dict: ...
 
     async def forget_preview(
@@ -2566,6 +2541,9 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return MemoryLibraryView(
+            memory_realm_id=answer["memory_realm_id"],
+            audience_scope=answer["audience_scope"],
+            materialization=answer["materialization"],
             wings=[MemoryWingView(**wing) for wing in answer["wings"]],
             entry_count=answer["entry_count"],
             withheld_count=answer["withheld_count"],
@@ -2642,37 +2620,6 @@ def register_management_routes(
             action=answer["action"],
             target=answer["target"],
             entry_count=answer["entry_count"],
-            status=answer["status"],
-        )
-
-    @router.put(
-        "/memory/entries/{entry_id}/audience", response_model=MemoryAudienceView
-    )
-    async def put_memory_entry_audience(
-        entry_id: str,
-        payload: MemoryAudienceRequest,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> MemoryAudienceView:
-        """只让它记得 — keep this memory between me and one of my Eidolons.
-
-        One step, unlike forgetting. A forget turns words into a set and needs a
-        preview to bind exactly what will go; here I am looking at one memory and
-        naming it, and nothing becomes unrecallable — the Eidolon I gave it to
-        still remembers it, and sending this again with nobody named gives it
-        back to all of them.
-        """
-        owner_id = await authenticated_owner(authorization)
-        try:
-            answer = await backend.assign_memory_audience(
-                owner_id=owner_id,
-                entry_id=entry_id,
-                companion_id=payload.companion_id,
-            )
-        except ManagementBackendError as exc:
-            raise _refused(exc) from exc
-        return MemoryAudienceView(
-            entry_id=answer["entry_id"],
-            companion_id=answer.get("companion_id", ""),
             status=answer["status"],
         )
 

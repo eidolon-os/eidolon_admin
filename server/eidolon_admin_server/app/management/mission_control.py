@@ -134,11 +134,12 @@ def _memory_lane(outcome: LaneOutcome, memory: Any) -> dict[str, Any]:
         "value": {
             "realms_total": memory.realms_total,
             "active_realm_id": memory.active_realm_id,
-            "runners_total": memory.runners_total,
-            "runners_online": memory.runners_online,
-            # No last_recall_hits. This lane is per Owner; a Companion's own
-            # recall comes off its turn, and the same number in two places is
-            # two numbers that can disagree.
+            "audience_scope": memory.audience_scope,
+            "data_readable": memory.data_readable,
+            "materialization_state": memory.materialization_state,
+            "projection_pending": memory.projection_pending,
+            "last_materialized_at": memory.last_materialized_at,
+            "degraded_reason": memory.degraded_reason,
             "last_write_disposition": memory.last_write_disposition or "",
         },
     }

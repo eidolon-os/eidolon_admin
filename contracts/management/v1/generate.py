@@ -29,7 +29,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ARTIFACT = HERE / "management-v1.openapi.json"
-SERVER_ROOT = HERE.parents[3] / "server"
+# ``HERE`` is ``<checkout>/contracts/management/v1``. Resolve the server from
+# that checkout, never from an editable install or the caller's working directory.
+SERVER_ROOT = HERE.parents[2] / "server"
 
 #: What belongs in the document a client is generated from. Everything the app
 #: mounts outside this prefix is deliberately excluded, not accidentally.

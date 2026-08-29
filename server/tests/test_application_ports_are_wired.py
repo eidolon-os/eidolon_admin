@@ -44,7 +44,6 @@ from eidolon_admin_server.app.management.creation import (
     CompanionProvisioner,
     MemoryReconciler,
 )
-from eidolon_admin_server.app.management.audience import MemoryAudienceKeeper
 from eidolon_admin_server.app.management.lifecycle import CompanionLifecycleWriter
 from eidolon_admin_server.app.management.activity_feed import GovernanceHistorian
 from eidolon_admin_server.app.management.faces import CompanionFaceKeeper
@@ -102,7 +101,6 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # interchangeable.
     "MemoryBrowser": (MemoryBrowser, "memory"),
     "MemoryForgetter": (MemoryForgetter, "memory"),
-    "MemoryAudienceKeeper": (MemoryAudienceKeeper, "memory"),
     "MemoryRecollector": (MemoryRecollector, "memory"),
     # Persona history is Data's, like the roster: same authority, and the gate
     # below asserts the two clients are not interchangeable.
