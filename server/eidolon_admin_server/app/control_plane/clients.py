@@ -35,11 +35,11 @@ from .contracts import (
     KernelBodyEndpointPage,
     KernelMountPage,
     KernelMutationResult,
-    MemoryAudience,
     MemoryBrowse,
     MemoryEntries,
     MemoryExport,
     MemoryGraph,
+    MemoryStatus,
     MemoryRealmRuntimePage,
     OwnerGovernanceEvents,
     OwnerIdentity,
@@ -1090,6 +1090,20 @@ class MemoryRecollectionsClient:
         )
         return _parse("memory", response, MemoryBrowse)
 
+    async def status(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None = None,
+    ) -> MemoryStatus:
+        """Read the Realm's storage-backed status, never infer it from a PID."""
+
+        params = {"companion_id": companion_id} if companion_id else None
+        response = await self._realm_call(
+            owner_id, "status", params=params, method="GET"
+        )
+        return _parse("memory", response, MemoryStatus)
+
     async def graph(
         self,
         *,
@@ -1183,33 +1197,6 @@ class MemoryRecollectionsClient:
             method="POST",
         )
         return _parse("memory", response, ForgetOutcome)
-
-    async def assign_audience(
-        self,
-        *,
-        owner_id: str,
-        entry_id: str,
-        companion_id: str | None = None,
-    ) -> MemoryAudience:
-        """Say which of this Owner's Companions a memory belongs to.
-
-        A ``PUT`` on the entry, because the body is the desired end state of one
-        exact record rather than an event — so a client that never saw the answer
-        can send it again. ``companion_id`` absent means the Owner layer, which is
-        how a memory is given back to every Companion.
-
-        The entry id is quoted into the path rather than handed to the realm as a
-        parameter: it names a memory, and the realm refuses anything that is not
-        one of its drawer ids.
-        """
-
-        response = await self._realm_call(
-            owner_id,
-            f"entries/{quote(entry_id, safe='')}/audience",
-            json={"companion_id": companion_id or ""},
-            method="PUT",
-        )
-        return _parse("memory", response, MemoryAudience)
 
     async def _realm_call(
         self,

@@ -27,6 +27,7 @@ from eidolon_sdk.biz.persona import PersonaAuthoring
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
 from eidolon_admin_server.app.management.activity import (
     cancel_task,
     read_conversations,
@@ -36,7 +37,6 @@ from eidolon_admin_server.app.management.activity import (
     retry_task,
 )
 from eidolon_admin_server.app.management.activity_feed import read_activity
-from eidolon_admin_server.app.management.audience import assign_memory_audience
 from eidolon_admin_server.app.management.context import read_context
 from eidolon_admin_server.app.management.creation import create_companion
 from eidolon_admin_server.app.management.faces import (
@@ -319,6 +319,9 @@ class MemoryLibraryInternal(BaseModel):
 
     contract_version: Literal["1"] = "1"
     operation: Literal["memory.library"] = "memory.library"
+    memory_realm_id: str = Field(min_length=1, max_length=64)
+    audience_scope: str = Field(min_length=1, max_length=128)
+    materialization: MemoryMaterialization
     wings: list[MemoryWingInternal]
     entry_count: int = Field(ge=0)
     withheld_count: int = Field(ge=0)
@@ -512,27 +515,6 @@ class RecollectionsInternal(BaseModel):
     #: from an answer to a different one.
     query: str = Field(min_length=1, max_length=256)
     recollections: list[RecollectionInternal]
-
-
-class MemoryAudienceInternal(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    operation: Literal["memory.audience"] = "memory.audience"
-    entry_id: str = Field(min_length=1, max_length=128)
-    #: Empty means the Owner layer. The audience token itself does not travel:
-    #: nothing above needs to know it spells ``companion:<id>``.
-    companion_id: str = Field(default="", max_length=128)
-    status: str = Field(min_length=1, max_length=64)
-
-
-class MemoryAudienceRequestInternal(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    #: Absent or empty gives the memory back to every Companion. Said as an
-    #: absence rather than a magic string so no client can name a Companion
-    #: called "owner" and mean the Owner layer.
-    companion_id: str = Field(default="", max_length=128)
 
 
 class MemoryExportRecordInternal(BaseModel):
@@ -807,6 +789,9 @@ async def get_memory_library(
         memory=request.app.state.control_plane.memory,
     )
     return MemoryLibraryInternal(
+        memory_realm_id=library.memory_realm_id,
+        audience_scope=library.audience_scope,
+        materialization=library.materialization,
         wings=[
             MemoryWingInternal(
                 wing_id=wing.wing_id,
@@ -895,35 +880,6 @@ async def post_forget_confirm(
         action=result.action,
         target=result.target,
         entry_count=result.entry_count,
-        status=result.status,
-    )
-
-
-@router.put(
-    "/memory/entries/{entry_id}/audience", response_model=MemoryAudienceInternal
-)
-async def put_memory_entry_audience(
-    request: Request,
-    entry_id: str,
-    owner_id: str,
-    payload: MemoryAudienceRequestInternal,
-) -> MemoryAudienceInternal:
-    """Say which of this Owner's Eidolons one memory belongs to.
-
-    ``PUT``: the body is the desired end state of an exact record, so a client
-    that never saw the answer can send it again and nothing happens twice. The
-    entry id names a drawer in the realm's store and is not interpreted here —
-    the realm refuses anything that is not one of its own.
-    """
-    result = await assign_memory_audience(
-        owner_id=owner_id,
-        entry_id=entry_id,
-        companion_id=payload.companion_id or None,
-        memory=request.app.state.control_plane.memory,
-    )
-    return MemoryAudienceInternal(
-        entry_id=result.entry_id,
-        companion_id=result.companion_id,
         status=result.status,
     )
 

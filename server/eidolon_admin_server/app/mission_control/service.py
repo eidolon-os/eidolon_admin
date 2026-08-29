@@ -155,7 +155,7 @@ async def compose_runtime(
     )
     memory_realms = await _safe(
         ledger,
-        "memory.runtime",
+        "memory.roster",
         lambda: _memory_runtime_page(request),
         None,
     )
@@ -168,6 +168,22 @@ async def compose_runtime(
 
     default_companion_id = getattr(owner, "default_companion_id", None)
     companion = _default_companion(companions, default_companion_id)
+    memory_status = await _safe(
+        ledger,
+        "memory.runtime",
+        lambda: control_plane.memory.status(
+            owner_id=owner_id,
+            companion_id=default_companion_id,
+        ),
+        None,
+    )
+    if memory_status is not None and not memory_status.ready:
+        ledger.record(
+            "memory.runtime",
+            ok=False,
+            detail=memory_status.degraded_reason
+            or memory_status.materialization_state,
+        )
     guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
     runtime_blackboard = _runtime_blackboard(owner_id, ledger)
     # No Hub list. `app.state.hub_device_client` is read nowhere else in this
@@ -196,7 +212,7 @@ async def compose_runtime(
 
     turns = await _agent_turns(request, owner_id, ledger)
     long_tasks = await _agent_long_tasks(request, owner_id, ledger)
-    memory = await _memory_summary(owner_id, memory_realms, turns)
+    memory = await _memory_summary(owner_id, memory_realms, memory_status, turns)
 
     runtime_jobs = [_job(row) for row in jobs]
     runtime_jobs.extend(_long_task_job(row) for row in long_tasks)
@@ -683,6 +699,7 @@ async def _agent_long_tasks(
 async def _memory_summary(
     owner_id: str,
     page: Any,
+    status: Any,
     turns: list[dict[str, Any]],
 ) -> RuntimeMemory:
     realms = [
@@ -716,14 +733,21 @@ async def _memory_summary(
         active_realm_id=active_realm,
         runners_total=runners_total,
         runners_online=runners_online,
+        audience_scope=str(getattr(status, "audience_scope", "") or ""),
+        data_readable=bool(getattr(status, "data_readable", False)),
+        materialization_state=str(
+            getattr(status, "materialization_state", "unavailable") or "unavailable"
+        ),
+        projection_pending=int(getattr(status, "projection_pending", 0) or 0),
+        last_materialized_at=getattr(status, "last_materialized_at", None),
+        degraded_reason=str(getattr(status, "degraded_reason", "") or ""),
         last_recall_hits=hit_count,
         last_write_disposition=disposition,
         fanout_allowed=bool(write_summary.get("fanout_allowed")),
         privacy_mode=_str_or_none(observability_summary.get("privacy_mode")) if turns else None,
         summary=(
-            f"{hit_count} recall hit(s), write {disposition or 'pending'}"
-            if turns
-            else "Waiting for turn trace"
+            f"{getattr(status, 'materialization_state', 'unavailable')}; "
+            f"{int(getattr(status, 'projection_pending', 0) or 0)} pending"
         ),
     )
 

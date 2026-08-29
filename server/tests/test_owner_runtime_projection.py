@@ -184,6 +184,11 @@ def _snapshot(**overrides) -> RuntimeSnapshot:
             active_realm_id="realm-a",
             runners_total=3,
             runners_online=3,
+            audience_scope="companion:companion-a",
+            data_readable=True,
+            materialization_state="ready",
+            projection_pending=0,
+            last_materialized_at="2026-08-24T05:16:17Z",
             last_recall_hits=4,
         ),
         recent_events=[
@@ -240,6 +245,7 @@ def _healthy_ledger() -> LaneLedger:
         "data.conversations",
         "agent.long_tasks",
         "data.jobs",
+        "memory.roster",
         "memory.runtime",
         "audit.index",
     ):

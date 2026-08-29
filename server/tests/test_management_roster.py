@@ -419,6 +419,18 @@ class _Backend:
         return {
             "contract_version": "1",
             "operation": "memory.library",
+            "memory_realm_id": "realm-owner-1",
+            "audience_scope": (
+                f"companion:{companion_id}" if companion_id else "owner"
+            ),
+            "materialization": {
+                "ready": True,
+                "data_readable": True,
+                "materialization_state": "ready",
+                "projection_pending": 0,
+                "last_materialized_at": "2026-08-29T12:00:00Z",
+                "degraded_reason": "",
+            },
             "wings": [
                 {
                     "wing_id": "Wing_Life",
@@ -489,24 +501,6 @@ class _Backend:
             "more_in_window": True,
             "undated_count": 2,
             "truncated": False,
-        }
-
-    async def assign_memory_audience(
-        self, *, owner_id: str, entry_id: str, companion_id: str
-    ) -> dict:
-        self.asked.append((owner_id, entry_id, companion_id))
-        if entry_id == "drawer_gone":
-            raise ManagementBackendError(
-                "no such memory",
-                status_code=404,
-                refusal=refusal_for_status(404, "no such memory"),
-            )
-        return {
-            "contract_version": "1",
-            "operation": "memory.audience",
-            "entry_id": entry_id,
-            "companion_id": companion_id,
-            "status": "applied" if companion_id else "accepted",
         }
 
     async def revoke_runtime_sessions(self, *, owner_id: str) -> dict:
@@ -1560,106 +1554,6 @@ async def test_a_copy_may_be_asked_for_one_companions_audience(
         await client.get(_EXPORT, params={"companion_id": "c-a"}, headers=headers)
 
     assert backend.asked == [("owner-1", "c-a")]
-
-
-# --- 只让它记得 -------------------------------------------------------------
-
-
-def _audience(entry_id: str) -> str:
-    return f"/api/management/v1/memory/entries/{entry_id}/audience"
-
-
-async def test_a_memory_can_be_kept_between_me_and_one_eidolon(
-    tmp_path, monkeypatch
-) -> None:
-    """The write side of the axis every read here already honours.
-
-    One step, not two: I am looking at the memory when I name it, so there is no
-    wording to resolve and nothing to bind into a token.
-    """
-    _stub_controller(monkeypatch, owner_id="owner-1")
-    backend = _Backend()
-    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
-        anonymous = await client.put(_audience("drawer_1"), json={"companion_id": "c-a"})
-        headers = await _authenticate(client)
-        answered = await client.put(
-            _audience("drawer_1"), headers=headers, json={"companion_id": "c-a"}
-        )
-
-    assert anonymous.status_code == 401
-    assert backend.asked == [("owner-1", "drawer_1", "c-a")]
-    body = answered.json()
-    assert body["entry_id"] == "drawer_1"
-    assert body["companion_id"] == "c-a"
-    assert body["status"] == "applied"
-
-
-async def test_naming_no_eidolon_gives_the_memory_back_to_all_of_them(
-    tmp_path, monkeypatch
-) -> None:
-    """The way back is the same call. A marking that could not be undone would be
-    a delete wearing a friendlier word."""
-
-    _stub_controller(monkeypatch, owner_id="owner-1")
-    backend = _Backend()
-    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
-        headers = await _authenticate(client)
-        body = (
-            await client.put(_audience("drawer_1"), headers=headers, json={})
-        ).json()
-
-    assert backend.asked == [("owner-1", "drawer_1", "")]
-    assert body["companion_id"] == ""
-
-
-async def test_an_accepted_marking_is_not_reported_as_done(tmp_path, monkeypatch) -> None:
-    """Publishing is durable; applying is a projection still catching up. The
-    client may only say 已经 when it reads ``applied``."""
-
-    _stub_controller(monkeypatch, owner_id="owner-1")
-    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
-        headers = await _authenticate(client)
-        body = (
-            await client.put(_audience("drawer_1"), headers=headers, json={})
-        ).json()
-
-    assert body["status"] == "accepted"
-
-
-async def test_the_marking_names_no_owner(tmp_path, monkeypatch) -> None:
-    """The subject comes from the session. Here it is refused rather than
-    ignored: this is a body, and the body forbids what it does not name."""
-
-    _stub_controller(monkeypatch, owner_id="owner-1")
-    backend = _Backend()
-    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
-        headers = await _authenticate(client)
-        answered = await client.put(
-            _audience("drawer_1"),
-            headers=headers,
-            json={"companion_id": "c-a", "owner_id": "owner-2"},
-        )
-
-    assert answered.status_code == 422
-    assert backend.asked == []
-
-
-async def test_a_memory_that_is_not_there_is_relayed_as_not_found(
-    tmp_path, monkeypatch
-) -> None:
-    _stub_controller(monkeypatch, owner_id="owner-1")
-    transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
-        headers = await _authenticate(client)
-        answered = await client.put(
-            _audience("drawer_gone"), headers=headers, json={"companion_id": "c-a"}
-        )
-
-    assert answered.status_code == 404
 
 
 # --- 你还记得…吗 ------------------------------------------------------------
