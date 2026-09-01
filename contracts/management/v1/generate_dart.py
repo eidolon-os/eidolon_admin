@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -322,13 +325,43 @@ def build_output() -> bytes:
     return "\n".join(body).encode("utf-8")
 
 
+def format_output(source: bytes) -> bytes:
+    """Format generated Dart with the language-owned formatter.
+
+    The generated artifact lives in a Dart repository, where ordinary tooling
+    formats it before commit.  Comparing that formatted file with the raw
+    emitter output made ``--check`` fail after every legitimate ``dart format``
+    run.  Use Dart's formatter as part of generation so the emitter and its
+    consumer have one canonical representation.
+    """
+
+    dart = shutil.which("dart")
+    if dart is None:
+        raise UnsupportedSchema(
+            "Dart formatter is required while the Mobile checkout is present"
+        )
+    with tempfile.TemporaryDirectory(prefix="eidolon-management-dart-") as root:
+        candidate = Path(root) / OUTPUT.name
+        candidate.write_bytes(source)
+        result = subprocess.run(
+            [dart, "format", str(candidate)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise UnsupportedSchema(f"Dart formatter failed: {detail}")
+        return candidate.read_bytes()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
 
     try:
-        expected = build_output()
+        expected = format_output(build_output())
     except UnsupportedSchema as exc:
         print(f"management Dart generation refused: {exc}", file=sys.stderr)
         return 1
