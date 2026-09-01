@@ -459,6 +459,7 @@ def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> N
         and value is not contracts.ControllerCommand
     ]
     assert {command.__name__ for command in commands} == {
+        "ControllerCommissioningVoucherRequest",
         "ControllerEnrollmentQuery",
         "ControllerEnrollmentRecoveryQuery",
         "ControllerClaimQuery",

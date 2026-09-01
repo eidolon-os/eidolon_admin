@@ -34,6 +34,8 @@ from .contracts import (
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
     ControllerBodyAssignment,
+    CommissioningVoucherIssued,
+    ControllerCommissioningVoucherRequest,
     ControllerEnrollmentRecoveryQuery,
     BoundaryCapabilities,
     ControllerDeviceRemovalRequest,
@@ -55,6 +57,7 @@ from .admission_intents import (
 )
 from .directory import SystemDirectoryClient
 from .errors import AuthorityFailure
+from .commissioning_vouchers import CommissioningVoucherIssuer
 from .hub_credentials import HubAdminCredentialIssuer
 from ...lifecycle_workflow.protocol import RemovalOwnerAuthorizationContext
 
@@ -88,6 +91,7 @@ class ControlPlaneService:
         activity: AgentActivityClient,
         memory_supervisor: MemorySupervisorClient | None = None,
         hub_credentials: HubAdminCredentialIssuer | None = None,
+        commissioning_vouchers: CommissioningVoucherIssuer | None = None,
         admission_intents=None,
         removal_intents=None,
         removal_observation_timeout_seconds: float = 0.0,
@@ -101,6 +105,7 @@ class ControlPlaneService:
         self.activity = activity
         self.memory_supervisor = memory_supervisor
         self.hub_credentials = hub_credentials
+        self.commissioning_vouchers = commissioning_vouchers
         self.admission_intents = (
             admission_intents
             if admission_intents is not None
@@ -194,6 +199,9 @@ class ControlPlaneService:
             hub_credentials=HubAdminCredentialIssuer(
                 secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
                 ttl_seconds=settings.hub_management_jwt_ttl_seconds,
+            ),
+            commissioning_vouchers=CommissioningVoucherIssuer(
+                secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
             ),
             admission_intents=SqliteAdmissionDecisionIntentStore(
                 settings.state_dir / "admission-decision-intents.sqlite3"
@@ -520,6 +528,43 @@ class ControlPlaneService:
             ),
         )
 
+    async def issue_commissioning_voucher(
+        self, *, payload: ControllerCommissioningVoucherRequest
+    ) -> CommissioningVoucherIssued:
+        """Sign one voucher, for one key, naming an identity Hub agrees to.
+
+        Minting happens here and asking happens there, on purpose: this process
+        holds the signing key but has no record of what it has issued, and Hub
+        keeps that record but signs nothing. Neither half can turn a device's
+        own claim about itself into a permanent identity alone.
+        """
+
+        issuer = self._admission_issuer()
+        key_id = payload.operational_spki_sha256
+        device_base_id: str | None = None
+        if payload.presented_device_base_id:
+            described = await self.hub.describe_base_identity(
+                authorization=issuer.issue_admission_context(
+                    actor=payload.actor,
+                    business_owner_id=payload.business_owner_id,
+                ),
+                device_base_id=payload.presented_device_base_id,
+                operational_key_id=key_id,
+            )
+            if described.get("known") and described.get("bound_to_this_key"):
+                device_base_id = payload.presented_device_base_id
+        voucher = self._commissioning_vouchers().issue(
+            owner_domain_id=str(payload.owner_domain_id),
+            operational_spki_sha256=key_id,
+            device_base_id=device_base_id,
+        )
+        return CommissioningVoucherIssued(
+            voucher=voucher.voucher,
+            jti=voucher.jti,
+            device_base_id=voucher.device_base_id,
+            expires_at=voucher.expires_at,
+        )
+
     async def get_enrollment_recovery(
         self, *, payload: ControllerEnrollmentRecoveryQuery
     ) -> EnrollmentRecoveryProjection:
@@ -614,6 +659,16 @@ class ControlPlaneService:
             decision_result=intent.result,
             recovery=recovery,
         )
+
+    def _commissioning_vouchers(self) -> CommissioningVoucherIssuer:
+        if self.commissioning_vouchers is None:
+            raise AuthorityFailure(
+                "hub",
+                "configuration",
+                "commissioning voucher signing key is unavailable",
+                503,
+            )
+        return self.commissioning_vouchers
 
     def _admission_issuer(self) -> HubAdminCredentialIssuer:
         if self.hub_credentials is None:

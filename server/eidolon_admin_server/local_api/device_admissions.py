@@ -30,7 +30,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..app.control_plane.contracts import (
     AdmissionDecisionWorkflowResult,
+    CommissioningVoucherIssued,
     ControllerClaimQuery,
+    ControllerCommissioningVoucherRequest,
     ControllerDeviceRemovalRequest,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
@@ -267,6 +269,26 @@ def enrollment_query(
     )
 
 
+def commissioning_voucher_request(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    operational_spki_sha256: str,
+    presented_device_base_id: str | None,
+) -> ControllerCommissioningVoucherRequest:
+    return ControllerCommissioningVoucherRequest(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        owner_domain_id=owner_domain_id,
+        operational_spki_sha256=operational_spki_sha256,
+        presented_device_base_id=presented_device_base_id,
+    )
+
+
 def enrollment_recovery_query(
     *,
     controller_id: str,
@@ -416,6 +438,13 @@ class AdminDeviceAdmissionClient:
                 "Admin enrollment query returned another Owner Domain", status_code=502
             )
         return page
+
+    async def issue_commissioning_voucher(
+        self, *, payload: ControllerCommissioningVoucherRequest
+    ) -> CommissioningVoucherIssued:
+        return await self._post(
+            "admission/commissioning-vouchers", payload, CommissioningVoucherIssued
+        )
 
     async def recover_enrollment(
         self, *, payload: ControllerEnrollmentRecoveryQuery

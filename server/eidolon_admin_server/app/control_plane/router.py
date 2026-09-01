@@ -14,6 +14,8 @@ from eidolon_sdk.device_foundation.v1 import (
 )
 
 from .contracts import (
+    CommissioningVoucherIssued,
+    ControllerCommissioningVoucherRequest,
     BoundaryCapabilities,
     AdmissionDecisionWorkflowResult,
     ControllerClaimQuery,
@@ -287,6 +289,15 @@ async def read_enrollment_recovery(
     payload: ControllerEnrollmentRecoveryQuery, request: Request
 ) -> EnrollmentRecoveryProjection:
     return await _service(request).get_enrollment_recovery(payload=payload)
+
+
+@router.post(
+    "/admission/commissioning-vouchers", response_model=CommissioningVoucherIssued
+)
+async def issue_commissioning_voucher(
+    payload: ControllerCommissioningVoucherRequest, request: Request
+) -> CommissioningVoucherIssued:
+    return await _service(request).issue_commissioning_voucher(payload=payload)
 
 
 @router.post("/admission/claim-queries", response_model=ClaimPage)

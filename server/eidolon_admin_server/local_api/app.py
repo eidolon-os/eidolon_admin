@@ -78,7 +78,9 @@ from .devices import (
     owner_device_inventory_view,
 )
 from ..app.control_plane.contracts import ControllerDeviceRemovalRequest
+from ..app.control_plane.contracts import CommissioningVoucherIssued
 from .device_admissions import (
+    commissioning_voucher_request,
     AdminDeviceAdmissionClient,
     AdminDeviceAdmissionPort,
     DeviceAdmissionError,
@@ -116,6 +118,26 @@ class HostProofRequest(BaseModel):
 
     contract_version: Literal["1"]
     challenge: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+
+
+class CommissioningVoucherRequest(BaseModel):
+    """What the Controller knows about the Body it is commissioning.
+
+    `presented_device_base_id` is whatever the device says it already has. It is
+    forwarded, not believed: the Host re-signs it only when Hub confirms it
+    issued that identity to this very key, and mints a new one otherwise.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"]
+    #: As the device's setup descriptor states it: `p256:<64 hex>` is the same
+    #: digest under the name the firmware uses, and both spellings are accepted
+    #: so the phone forwards what it read instead of translating it.
+    operational_spki_sha256: str = Field(pattern=r"^(sha256|p256):[0-9a-f]{64}$")
+    presented_device_base_id: str | None = Field(
+        default=None, pattern=r"^(device-base-[0-9a-f]{64}|software-body-[0-9a-f]{40})$"
+    )
 
 
 class ControllerChallengeRequest(BaseModel):
@@ -571,6 +593,42 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "Page cursor is invalid"
+            ) from exc
+
+    @app.post(
+        "/api/local/v1/commissioning-vouchers",
+        response_model=CommissioningVoucherIssued,
+    )
+    async def issue_commissioning_voucher(
+        payload: CommissioningVoucherRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> CommissioningVoucherIssued:
+        """Sign the standing a Body needs, for the Controller holding this session.
+
+        This is the whole of what replaced a per-device secret that had to be
+        compiled into a firmware image and installed on the Host as a file. The
+        device is not asked to carry anything: what it gets is a one-shot
+        voucher, bound to the key it generated for itself, valid only in this
+        Owner Domain, and only while this Controller's authorization stands.
+        """
+
+        principal, _session = await authenticated_controller(authorization)
+        owner_id, controller_id = _owner_principal(principal)
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        try:
+            return await device_admission.issue_commissioning_voucher(
+                payload=commissioning_voucher_request(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    operational_spki_sha256="sha256:"
+                    + payload.operational_spki_sha256.split(":", 1)[1],
+                    presented_device_base_id=payload.presented_device_base_id,
+                )
+            )
+        except DeviceAdmissionError as exc:
+            raise HTTPException(
+                exc.status_code, device_admission_detail(exc)
             ) from exc
 
     @app.get(

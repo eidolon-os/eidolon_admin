@@ -827,6 +827,38 @@ class ControllerEnrollmentQuery(ControllerCommand):
         return self.query.owner_domain_id
 
 
+class ControllerCommissioningVoucherRequest(ControllerCommand):
+    """Ask this Host to sign the standing a Body needs to be admitted.
+
+    The device presents whatever base identity it has stored, if any; it does
+    not get to keep it by saying so. The Host asks Hub whether it issued that
+    identity to exactly this operational key and mints a new one otherwise, so
+    a value a device chose for itself can never be signed into permanent
+    history.
+    """
+
+    required_scope: ClassVar[str] = "device.claim.approve"
+
+    business_owner_id: BusinessOwnerId
+    owner_domain_id: OwnerDomainId
+    #: The key the voucher binds to, as the device's own setup descriptor states
+    #: it. Not the key itself: the Controller never holds the device's key, and
+    #: the only thing the binding needs is which key it is.
+    operational_spki_sha256: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    presented_device_base_id: str | None = None
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.owner_domain_id
+
+
+class CommissioningVoucherIssued(StrictModel):
+    contract_version: Literal["1"] = "1"
+    voucher: str
+    jti: str
+    device_base_id: str
+    expires_at: datetime
+
+
 class ControllerEnrollmentRecoveryQuery(ControllerCommand):
     """One Enrollment's projection, read in the Controller's own Owner Domain.
 
