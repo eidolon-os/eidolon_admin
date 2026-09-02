@@ -830,11 +830,9 @@ class ControllerEnrollmentQuery(ControllerCommand):
 class ControllerCommissioningVoucherRequest(ControllerCommand):
     """Ask this Host to sign the standing a Body needs to be admitted.
 
-    The device presents whatever base identity it has stored, if any; it does
-    not get to keep it by saying so. The Host asks Hub whether it issued that
-    identity to exactly this operational key and mints a new one otherwise, so
-    a value a device chose for itself can never be signed into permanent
-    history.
+    Only the key travels. The Host asks Hub which identity it issued to that
+    key and mints one when the answer is none, so a device is never in a
+    position to name itself — there is no field here for it to name itself in.
     """
 
     required_scope: ClassVar[str] = "device.claim.approve"
@@ -845,7 +843,6 @@ class ControllerCommissioningVoucherRequest(ControllerCommand):
     #: it. Not the key itself: the Controller never holds the device's key, and
     #: the only thing the binding needs is which key it is.
     operational_spki_sha256: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    presented_device_base_id: str | None = None
 
     def target_owner_domain_id(self) -> OwnerDomainId:
         return self.owner_domain_id

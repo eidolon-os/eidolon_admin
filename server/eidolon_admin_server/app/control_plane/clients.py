@@ -1654,26 +1654,25 @@ class HubManagementClient:
             )
         return page
 
-    async def describe_base_identity(
+    async def base_identity_for_key(
         self,
         *,
         authorization: str,
-        device_base_id: str,
         operational_key_id: str,
     ) -> dict:
-        """Ask Hub whether it issued this base identity to this key.
+        """Ask Hub which base identity it issued to this operational key.
 
         Admin signs vouchers but does not know what it has issued; Hub keeps
-        that record. Asking is what keeps a device from naming itself: the value
-        a device presents is only re-signed when Hub confirms it is the one it
-        issued to exactly this key.
+        that record. Asking by key is what leaves the device with no say: the
+        key is the one thing it can prove, so there is nothing it could send
+        here that would have to be disbelieved.
         """
 
         response = await _request(
             "hub",
             self._client,
             "GET",
-            f"{await self._base_url()}/api/admission/v1/base-identities/{device_base_id}",
+            f"{await self._base_url()}/api/admission/v1/base-identities",
             timeout=self._timeout,
             headers=self._headers(authorization),
             params={"operational_key_id": operational_key_id},

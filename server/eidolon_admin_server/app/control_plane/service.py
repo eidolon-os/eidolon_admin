@@ -531,29 +531,30 @@ class ControlPlaneService:
     async def issue_commissioning_voucher(
         self, *, payload: ControllerCommissioningVoucherRequest
     ) -> CommissioningVoucherIssued:
-        """Sign one voucher, for one key, naming an identity Hub agrees to.
+        """Sign one voucher, for one key, naming the identity Hub issued to it.
 
         Minting happens here and asking happens there, on purpose: this process
         holds the signing key but has no record of what it has issued, and Hub
-        keeps that record but signs nothing. Neither half can turn a device's
-        own claim about itself into a permanent identity alone.
+        keeps that record but signs nothing. The device is asked for nothing at
+        all — its key is the whole of what it can prove, and the identity is
+        resolved from that.
         """
 
         issuer = self._admission_issuer()
+        # Refuse before asking. A Host that cannot sign has nothing to do with
+        # the answer, and asking anyway spends a Hub round trip to arrive at
+        # the same refusal one step later.
+        vouchers = self._commissioning_vouchers()
         key_id = payload.operational_spki_sha256
-        device_base_id: str | None = None
-        if payload.presented_device_base_id:
-            described = await self.hub.describe_base_identity(
-                authorization=issuer.issue_admission_context(
-                    actor=payload.actor,
-                    business_owner_id=payload.business_owner_id,
-                ),
-                device_base_id=payload.presented_device_base_id,
-                operational_key_id=key_id,
-            )
-            if described.get("known") and described.get("bound_to_this_key"):
-                device_base_id = payload.presented_device_base_id
-        voucher = self._commissioning_vouchers().issue(
+        answered = await self.hub.base_identity_for_key(
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+            ),
+            operational_key_id=key_id,
+        )
+        device_base_id = answered.get("device_base_id")
+        voucher = vouchers.issue(
             owner_domain_id=str(payload.owner_domain_id),
             operational_spki_sha256=key_id,
             device_base_id=device_base_id,

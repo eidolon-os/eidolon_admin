@@ -61,14 +61,12 @@ def _operational_public_key() -> tuple[str, str]:
 class Hub:
     def __init__(self, answer: dict) -> None:
         self.answer = answer
-        self.asked: list[dict] = []
+        self.asked: list[str] = []
 
-    async def describe_base_identity(
-        self, *, authorization: str, device_base_id: str, operational_key_id: str
+    async def base_identity_for_key(
+        self, *, authorization: str, operational_key_id: str
     ) -> dict:
-        self.asked.append(
-            {"device_base_id": device_base_id, "operational_key_id": operational_key_id}
-        )
+        self.asked.append(operational_key_id)
         return self.answer
 
 
@@ -88,7 +86,7 @@ def _service(hub: Hub | None, *, vouchers: CommissioningVoucherIssuer | None = N
     )
 
 
-def _request(presented: str | None = None) -> ControllerCommissioningVoucherRequest:
+def _request() -> ControllerCommissioningVoucherRequest:
     _public_key, key_id = _operational_public_key()
     return ControllerCommissioningVoucherRequest(
         contract_version="1",
@@ -96,7 +94,6 @@ def _request(presented: str | None = None) -> ControllerCommissioningVoucherRequ
         business_owner_id=BUSINESS_OWNER,
         owner_domain_id=DOMAIN,
         operational_spki_sha256=key_id,
-        presented_device_base_id=presented,
     )
 
 
@@ -110,7 +107,8 @@ def _claims(voucher: str) -> dict:
 @pytest.mark.asyncio
 async def test_a_voucher_is_bound_to_the_key_and_verifiable_with_the_derived_secret() -> None:
     public_key, key_id = _operational_public_key()
-    issued = await _service(None).issue_commissioning_voucher(payload=_request())
+    hub = Hub({"device_base_id": None, "requires_fresh_presence": False})
+    issued = await _service(hub).issue_commissioning_voucher(payload=_request())
 
     header, claims, signature = issued.voucher.split(".")
     expected = hmac.new(
@@ -127,7 +125,7 @@ async def test_a_voucher_is_bound_to_the_key_and_verifiable_with_the_derived_sec
 
 @pytest.mark.asyncio
 async def test_two_bodies_never_receive_the_same_minted_identity() -> None:
-    service = _service(None)
+    service = _service(Hub({"device_base_id": None, "requires_fresh_presence": False}))
     first = await service.issue_commissioning_voucher(payload=_request())
     second = await service.issue_commissioning_voucher(payload=_request())
     assert first.device_base_id != second.device_base_id
@@ -135,25 +133,27 @@ async def test_two_bodies_never_receive_the_same_minted_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_presented_identity_is_re_signed_only_when_hub_issued_it_to_this_key() -> None:
-    hub = Hub({"known": True, "bound_to_this_key": True})
-    issued = await _service(hub).issue_commissioning_voucher(
-        payload=_request(KNOWN_BASE_ID)
-    )
+async def test_the_identity_hub_issued_to_this_key_is_the_one_signed() -> None:
+    """A Body that was removed comes back on the identity it already had.
+
+    Nothing the device says decides this: the Host asks Hub about the key, and
+    Hub answers with what it issued to that key. That is what keeps the Claim
+    generation fence attached to the same Body across a removal.
+    """
+
+    _public_key, key_id = _operational_public_key()
+    hub = Hub({"device_base_id": KNOWN_BASE_ID, "requires_fresh_presence": False})
+    issued = await _service(hub).issue_commissioning_voucher(payload=_request())
     assert issued.device_base_id == KNOWN_BASE_ID
-    assert hub.asked[0]["device_base_id"] == KNOWN_BASE_ID
+    assert hub.asked == [key_id]
 
 
 @pytest.mark.asyncio
-async def test_an_identity_hub_does_not_recognise_is_replaced_rather_than_trusted() -> None:
-    """A device that presents someone else's identity gets its own, not theirs."""
-
-    hub = Hub({"known": True, "bound_to_this_key": False})
-    issued = await _service(hub).issue_commissioning_voucher(
-        payload=_request(KNOWN_BASE_ID)
-    )
-    assert issued.device_base_id != KNOWN_BASE_ID
+async def test_a_key_hub_has_never_issued_to_gets_a_new_identity() -> None:
+    hub = Hub({"device_base_id": None, "requires_fresh_presence": False})
+    issued = await _service(hub).issue_commissioning_voucher(payload=_request())
     assert issued.device_base_id.startswith("device-base-")
+    assert issued.device_base_id != KNOWN_BASE_ID
 
 
 @pytest.mark.asyncio

@@ -275,7 +275,6 @@ def commissioning_voucher_request(
     owner_domain_id: OwnerDomainId,
     business_owner_id: BusinessOwnerId,
     operational_spki_sha256: str,
-    presented_device_base_id: str | None,
 ) -> ControllerCommissioningVoucherRequest:
     return ControllerCommissioningVoucherRequest(
         contract_version="1",
@@ -285,7 +284,6 @@ def commissioning_voucher_request(
         business_owner_id=business_owner_id,
         owner_domain_id=owner_domain_id,
         operational_spki_sha256=operational_spki_sha256,
-        presented_device_base_id=presented_device_base_id,
     )
 
 

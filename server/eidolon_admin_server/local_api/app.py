@@ -123,9 +123,9 @@ class HostProofRequest(BaseModel):
 class CommissioningVoucherRequest(BaseModel):
     """What the Controller knows about the Body it is commissioning.
 
-    `presented_device_base_id` is whatever the device says it already has. It is
-    forwarded, not believed: the Host re-signs it only when Hub confirms it
-    issued that identity to this very key, and mints a new one otherwise.
+    Only the key fingerprint the device stated in its own setup descriptor. The
+    Host resolves which identity that key already holds; the device is not
+    asked, so it cannot name itself.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -135,9 +135,6 @@ class CommissioningVoucherRequest(BaseModel):
     #: digest under the name the firmware uses, and both spellings are accepted
     #: so the phone forwards what it read instead of translating it.
     operational_spki_sha256: str = Field(pattern=r"^(sha256|p256):[0-9a-f]{64}$")
-    presented_device_base_id: str | None = Field(
-        default=None, pattern=r"^(device-base-[0-9a-f]{64}|software-body-[0-9a-f]{40})$"
-    )
 
 
 class ControllerChallengeRequest(BaseModel):
@@ -623,7 +620,6 @@ def create_app(
                     business_owner_id=business_owner_id,
                     operational_spki_sha256="sha256:"
                     + payload.operational_spki_sha256.split(":", 1)[1],
-                    presented_device_base_id=payload.presented_device_base_id,
                 )
             )
         except DeviceAdmissionError as exc:
