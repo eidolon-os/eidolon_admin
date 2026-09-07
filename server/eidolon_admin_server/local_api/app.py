@@ -106,7 +106,6 @@ from .runtime import (
 from .workspace import (
     AdminWorkspaceClient,
     AdminWorkspacePort,
-    ORPHANED_OWNER_BINDING_REASON,
     WorkspaceSetupError,
     WorkspaceSetupRequest,
     existing_workspace,
@@ -118,32 +117,6 @@ from .workspace import (
 
 
 _LOGGER = logging.getLogger("eidolon.local_api")
-
-
-def _log_orphaned_owner_binding(
-    operation_id: str, bound_owner_id: str | None
-) -> None:
-    """Say it once, in the words of whoever has to act on it.
-
-    The phone is told a sentence about the Host; this is the other half of the
-    same fact, carrying the identifiers and the command, written where the
-    person who can run it will be looking. Both routes that can discover the
-    condition come here, so the wording cannot drift between the screen a
-    person happens to hit and the gate that happens to run.
-
-    The Owner is named only when the caller was a Controller, because the
-    readiness route has no principal to read it from — and printing
-    ``owner_id=None`` there would say the opposite of what is wrong.
-    """
-
-    _LOGGER.warning(
-        "Host Owner binding has no Data workspace: operation_id=%s%s; the Data "
-        "plane lost this Host's Workspace, or was restored without it. No phone "
-        "can complete setup until the Workspace is restored or "
-        "`eidolon-bootstrapctl owner-reset` clears the binding.",
-        operation_id,
-        "" if bound_owner_id is None else f" owner_id={bound_owner_id}",
-    )
 
 
 class HostProofRequest(BaseModel):
@@ -455,38 +428,82 @@ def create_app(
                 "bootstrap Host identity is unavailable",
             ) from exc
 
+    async def owner_scope(session: Any) -> str | None:
+        """This session's Owner scope, from the plane that holds the Workspace.
+
+        Bootstrap used to answer this from a stored row, and went on answering
+        long after the row stopped being true. Data is asked instead, once per
+        session, and the answer is remembered on the session: a fact about the
+        Host that had to be asked for belongs where the asking happened, and a
+        session expires.
+
+        ``None`` is a real answer — this Host has no Workspace yet, so nothing
+        can be Owner-scoped — and it is remembered, because "Data says no" is
+        as much an answer as a Workspace is. What is never remembered is a
+        failure to ask, which is why the refusal propagates rather than being
+        cached as an absence.
+        """
+
+        if session.owner_resolved:
+            return session.owner_id
+        operation_id = await operation_id_for_host()
+        try:
+            existing = await existing_workspace(workspace, operation_id=operation_id)
+        except WorkspaceSetupError as exc:
+            raise HTTPException(
+                exc.status_code, workspace_setup_detail(exc)
+            ) from exc
+        session.remember_owner(None if existing is None else existing.owner.owner_id)
+        return session.owner_id
+
+    async def owner_and_controller(principal: dict, session: Any) -> tuple[str, str]:
+        """The Owner this request is scoped to, and the phone that asked.
+
+        One place, because every Owner-scoped route needs both, and an
+        identifier in a path is not authority. It replaces reading ``owner_id``
+        off the Bootstrap principal: that value was Host state, so a phone
+        claimed at any time inherited whatever the Host had last recorded,
+        whether or not the Data plane still agreed with it.
+        """
+
+        controller_id = principal.get("controller_id")
+        if not isinstance(controller_id, str) or not controller_id:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "Controller identity is unavailable",
+            )
+        owner_id = await owner_scope(session)
+        if not isinstance(owner_id, str) or not owner_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Host Workspace is not initialized",
+            )
+        return owner_id, controller_id
+
     @app.get("/api/local/v1/setup/readiness")
     async def setup_readiness() -> dict:
-        """Whether a phone claimed onto this Host right now could finish setup.
+        """Whether this Host's Workspace authority answers for it.
 
         Its own route, and not a field on ``/healthz`` or ``/api/local/v1/host``,
         because answering it costs a call to the Data plane through Admin. On
         ``/healthz`` a slow Data plane would make this component read as down;
         on the Host overview it would sit in front of every phone's first
-        screen. Here the cost lands only on the caller that asked the question,
-        which is the readiness gate, and a readiness gate is allowed to wait.
+        screen. Here the cost lands only on the caller that asked, which is a
+        readiness gate and a saved-Host list, both of which may wait.
 
-        Unauthenticated for the same reason the Host overview is: the two facts
-        it composes are ``workspace_state``, which that overview already
-        publishes to the LAN, and whether the Data plane agrees. A Host nobody
-        can finish setting up is not a secret from the network it is sitting on.
+        Unauthenticated: whether a Host has been set up is what the phone in
+        front of it is about to be told anyway, and a Host that cannot answer
+        is not a secret from the network it sits on.
 
-        ``unknown`` rather than a guess when Data cannot be reached. The gate
-        reads that as not-ready — a check that could not be made is not a check
-        that passed, and Data being unreachable is separately a fact this Host
-        is not ready.
+        Two states and an admission of ignorance, because that is all there is
+        to say. There was briefly a third — ``orphaned``, for a Host whose
+        Bootstrap held an Owner its Data plane had no Workspace for — and it
+        was reachable only because two stores held one fact. Bootstrap holds
+        none of it now, so nothing can disagree, and a state nothing can
+        produce is not a state a reader has to handle.
         """
 
-        health = await request_bootstrap("health")
-        try:
-            operation_id = host_workspace_operation_id(
-                health["descriptor"]["host_id"]
-            )
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "bootstrap Host identity is unavailable",
-            ) from exc
+        operation_id = await operation_id_for_host()
 
         def answer(state: str) -> dict:
             return {
@@ -495,37 +512,29 @@ def create_app(
                 "state": state,
             }
 
-        # Bootstrap claiming no Workspace cannot be the half that is wrong: the
-        # binding only ever over-claims, so with nothing claimed there is
-        # nothing to disagree with, and Data need not be asked at all.
-        if health.get("state", {}).get("workspace_state") != "ready":
-            return answer("absent")
         try:
-            await workspace.get(operation_id)
-        except WorkspaceSetupError as exc:
-            if exc.status_code != 404:
-                return answer("unknown")
-            _log_orphaned_owner_binding(operation_id, None)
-            return answer("orphaned")
-        return answer("ready")
+            existing = await existing_workspace(workspace, operation_id=operation_id)
+        except WorkspaceSetupError:
+            # Named rather than guessed. A gate reads it as not-ready, because
+            # a check that could not be made is not a check that passed.
+            return answer("unknown")
+        return answer("ready" if existing is not None else "absent")
 
     @app.get("/api/local/v1/setup/workspace")
     async def get_workspace(
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> dict:
-        principal, _session = await authenticated_controller(authorization)
+        _principal, session = await authenticated_controller(authorization)
         operation_id = await operation_id_for_host()
-        owner_id = principal.get("owner_id")
-        if owner_id is None:
-            return workspace_status(operation_id=operation_id, result=None)
         try:
-            result = await existing_workspace(
-                workspace,
-                operation_id=operation_id,
-                bound_owner_id=owner_id,
-            )
+            result = await existing_workspace(workspace, operation_id=operation_id)
         except WorkspaceSetupError as exc:
-            raise _workspace_refusal(exc, operation_id, owner_id) from exc
+            raise HTTPException(
+                exc.status_code, workspace_setup_detail(exc)
+            ) from exc
+        # This asked the only authority there is, so the session need not ask
+        # again on its first Owner-scoped request.
+        session.remember_owner(None if result is None else result.owner.owner_id)
         return workspace_status(operation_id=operation_id, result=result)
 
     @app.put("/api/local/v1/setup/workspace")
@@ -533,51 +542,26 @@ def create_app(
         payload: WorkspaceSetupRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> dict:
-        principal, _session = await authenticated_controller(authorization)
+        _principal, session = await authenticated_controller(authorization)
         operation_id = await operation_id_for_host()
         try:
             result = await resolve_workspace_setup(
                 workspace,
                 operation_id=operation_id,
                 payload=payload.to_admin(),
-                bound_owner_id=principal.get("owner_id"),
             )
         except WorkspaceSetupError as exc:
-            raise _workspace_refusal(
-                exc, operation_id, principal.get("owner_id")
-            ) from exc
-        bound = await request_bootstrap(
-            "controller.bind_owner",
-            authentication=True,
-            controller_id=principal["controller_id"],
-            reset_epoch=principal["reset_epoch"],
-            owner_id=result.owner.owner_id,
-        )
-        if bound.get("owner_id") != result.owner.owner_id:
             raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "bootstrap did not confirm the Data Owner scope",
-            )
+                exc.status_code, workspace_setup_detail(exc)
+            ) from exc
+        # Where this used to tell Bootstrap to record the Owner for the whole
+        # Host. It does not need telling: the scope belongs to whoever is
+        # asking, every session resolves it from the plane that holds the
+        # Workspace, and this one has just been given the answer. Nothing has
+        # to be propagated to the other phones, and nothing outlives the
+        # Workspace it describes.
+        session.remember_owner(result.owner.owner_id)
         return workspace_status(operation_id=operation_id, result=result)
-
-    def _workspace_refusal(
-        exc: WorkspaceSetupError,
-        operation_id: str,
-        bound_owner_id: str | None,
-    ) -> HTTPException:
-        """Refuse in the App's words, and leave the operator's in the log.
-
-        A Host that has come apart this way is one nobody is standing in front
-        of: the phone shows a sentence and the person puts it down. So the
-        sentence that names the repair goes to the App, and the identifiers
-        needed to *run* the repair go where whoever runs it will be looking.
-        Only this condition is logged — the rest are ordinary refusals of one
-        request, and a warning per phone poll would bury it.
-        """
-
-        if exc.reason == ORPHANED_OWNER_BINDING_REASON:
-            _log_orphaned_owner_binding(operation_id, bound_owner_id)
-        return HTTPException(exc.status_code, workspace_setup_detail(exc))
 
     async def _owned_companion(
         companion_id: str,
@@ -591,13 +575,8 @@ def create_app(
         routes below cannot drift into judging it differently.
         """
 
-        principal, _session = await authenticated_controller(authorization)
-        owner_id = principal.get("owner_id")
-        if not isinstance(owner_id, str) or not owner_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Host Workspace is not initialized",
-            )
+        principal, session = await authenticated_controller(authorization)
+        owner_id, _controller_id = await owner_and_controller(principal, session)
         try:
             existing = await runtime.get_companion(companion_id)
         except WorkspaceRuntimeError as exc:
@@ -612,8 +591,8 @@ def create_app(
     async def owner_device_inventory(
         authorization: str | None,
     ) -> LocalDeviceInventoryView:
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
             endpoints = await devices.list_body_endpoints(owner_id)
@@ -660,8 +639,8 @@ def create_app(
     async def get_device_onboarding_target(
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> LocalDeviceOnboardingTarget:
-        principal, _session = await authenticated_controller(authorization)
-        _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        await owner_and_controller(principal, session)
         target = resolved.device_onboarding_target
         if target is None:
             raise HTTPException(
@@ -716,8 +695,8 @@ def create_app(
         Owner Domain, and only while this Controller's authorization stands.
         """
 
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
             return await device_admission.issue_commissioning_voucher(
@@ -750,8 +729,8 @@ def create_app(
         after_resource_id: Annotated[str | None, Query(max_length=128)] = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> EnrollmentProposalPage:
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         cursor = _admission_cursor(owner_domain_id, after_sort_key, after_resource_id)
         try:
@@ -795,8 +774,8 @@ def create_app(
         phone may have been closed while it happened.
         """
 
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
             return await device_admission.recover_enrollment(
@@ -827,8 +806,8 @@ def create_app(
         after_resource_id: Annotated[str | None, Query(max_length=128)] = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> ClaimPage:
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         cursor = _admission_cursor(owner_domain_id, after_sort_key, after_resource_id)
         try:
@@ -864,8 +843,8 @@ def create_app(
         payload: LocalEnrollmentDecisionRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> AdmissionDecisionWorkflowResult:
-        principal, _session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        principal, session = await authenticated_controller(authorization)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
             return await device_admission.decide(
@@ -902,7 +881,7 @@ def create_app(
         """
 
         principal, session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
             page = await device_admission.query_claims(
@@ -952,7 +931,8 @@ def create_app(
         them, and it is carried rather than guessed.
         """
         try:
-            principal, _session = await authenticated_controller(authorization)
+            principal, session = await authenticated_controller(authorization)
+            owner_id = await owner_scope(session)
         except HTTPException as exc:
             raise refuse(
                 exc.status_code,
@@ -961,7 +941,6 @@ def create_app(
                 if exc.status_code == status.HTTP_401_UNAUTHORIZED
                 else None,
             ) from exc
-        owner_id = principal.get("owner_id")
         if not isinstance(owner_id, str) or not owner_id:
             raise refuse(
                 status.HTTP_409_CONFLICT,
@@ -1066,7 +1045,7 @@ def create_app(
 
     async def management_device_session(authorization: str | None) -> "_DeviceSession":
         principal, session = await authenticated_controller(authorization)
-        owner_id, controller_id = _owner_principal(principal)
+        owner_id, controller_id = await owner_and_controller(principal, session)
         return _DeviceSession(
             owner_id=owner_id,
             controller_id=controller_id,
@@ -1239,19 +1218,3 @@ def _bearer_token(value: str | None) -> str:
     if separator != " " or scheme.lower() != "bearer" or not token:
         return ""
     return token
-
-
-def _owner_principal(principal: dict) -> tuple[str, str]:
-    owner_id = principal.get("owner_id")
-    controller_id = principal.get("controller_id")
-    if not isinstance(owner_id, str) or not owner_id:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "Host Workspace is not initialized",
-        )
-    if not isinstance(controller_id, str) or not controller_id:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Controller identity is unavailable",
-        )
-    return owner_id, controller_id

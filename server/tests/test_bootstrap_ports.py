@@ -181,7 +181,7 @@ def test_sqlite_v6_keeps_authority_and_drops_what_no_longer_holds_state(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 7
+        assert version == 8
         assert "daemon_runs" not in tables
         # recovery_state only ever held "normal"; a Host that carried one is
         # migrated out of it without losing the authority beside it.
@@ -190,6 +190,10 @@ def test_sqlite_v6_keeps_authority_and_drops_what_no_longer_holds_state(
             for row in store.connection.execute("PRAGMA table_info(bootstrap_state)")
         }
         assert "recovery_state" not in columns
+        # And the two that recorded what the Data plane held. The authority
+        # beside them — the epoch, the claim, the sessions — is untouched.
+        assert "workspace_state" not in columns
+        assert "owner_id" not in columns
         assert store.get_state().reset_epoch == 7
         assert store.latest_commissioning_session().session_id == "session-1"
         assert store.latest_commissioning_session().failed_attempts == 0
@@ -218,7 +222,7 @@ def test_fresh_sqlite_contains_only_durable_authority_tables(tmp_path: Path) -> 
         store.close()
 
 
-def test_sqlite_v4_host_state_migrates_with_unbound_owner(
+def test_sqlite_v4_host_state_migrates_without_ever_gaining_an_owner_column(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "bootstrap.sqlite3"
@@ -249,10 +253,14 @@ def test_sqlite_v4_host_state_migrates_with_unbound_owner(
     finally:
         store.close()
 
-    # Rebuild what a real v4 Host carried: no owner binding yet, and a
-    # recovery_state column that never held anything but "normal".
+    # Rebuild what a real v4 Host carried: a workspace_state column, no owner
+    # binding yet (v5 added that), and a recovery_state that never held
+    # anything but "normal".
     connection = sqlite3.connect(path)
-    connection.execute("ALTER TABLE bootstrap_state DROP COLUMN owner_id")
+    connection.execute(
+        "ALTER TABLE bootstrap_state ADD COLUMN workspace_state TEXT NOT NULL "
+        "DEFAULT 'ready'"
+    )
     connection.execute(
         "ALTER TABLE bootstrap_state ADD COLUMN recovery_state TEXT NOT NULL DEFAULT 'normal'"
     )
@@ -266,8 +274,20 @@ def test_sqlite_v4_host_state_migrates_with_unbound_owner(
         migrated.initialize("2026-08-05T01:00:00Z")
         controller = migrated.get_controller("ectrl-v4-controller")
         assert controller is not None
-        assert migrated.get_state().owner_id is None
-        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        # The ladder runs v5 (add owner_id), v6, v7, then v8 (drop both). A
+        # Host that came all the way from v4 must arrive with neither column,
+        # not with the one v5 gave it -- the whole point of v8 is that no
+        # version of this store keeps a claim about the Data plane.
+        columns = {
+            row[1]
+            for row in migrated.connection.execute(
+                "PRAGMA table_info(bootstrap_state)"
+            )
+        }
+        assert "owner_id" not in columns
+        assert "workspace_state" not in columns
+        assert migrated.get_state().claim_state is ClaimState.UNCLAIMED
+        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 8
     finally:
         migrated.close()
 
@@ -366,28 +386,17 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         assert claimed["controller"]["role"] == "host_admin"
         assert len(store.list_controllers()) == 1
 
-        bound = bootstrap.bind_controller_owner(
-            controller_id=claimed["controller"]["controller_id"],
-            reset_epoch=0,
-            owner_id="owner_onboarding_result",
-        )
-        assert bound["owner_id"] == "owner_onboarding_result"
-        assert store.get_state().workspace_state.value == "ready"
-        assert store.get_state().owner_id == "owner_onboarding_result"
-        assert (
-            bootstrap.bind_controller_owner(
-                controller_id=claimed["controller"]["controller_id"],
-                reset_epoch=0,
-                owner_id="owner_onboarding_result",
-            )
-            == bound
-        )
-        with pytest.raises(BootstrapOperationRejected, match="another Owner"):
-            bootstrap.bind_controller_owner(
-                controller_id=claimed["controller"]["controller_id"],
-                reset_epoch=0,
-                owner_id="owner_conflict",
-            )
+        # A claim tells this store who holds the Host and nothing about what
+        # the Data plane holds. There is no binding step here any more: the
+        # Owner a phone acts for is resolved by the session that needs it,
+        # from the only component that can answer.
+        assert not hasattr(bootstrap, "bind_controller_owner")
+        assert set(claimed["state"]) == {
+            "reset_epoch",
+            "claim_state",
+            "network_state",
+            "updated_at",
+        }
 
         retried = commissioning.claim_controller(authorization, controller_payload)
         assert retried["controller"] == claimed["controller"]
@@ -409,10 +418,15 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         assert reset["after"]["network_state"] == "unconfigured"
         assert reset["after"]["reset_epoch"] == 1
         assert reset["forgot_wifi_profiles"] is True
-        # Claim reset revokes Controllers but does not silently delete or switch
-        # the Host's existing Data workspace authority.
-        assert store.get_state().workspace_state.value == "ready"
-        assert store.get_state().owner_id == "owner_onboarding_result"
+        # Claim reset revokes Controllers and reaches nothing of the Owner's.
+        # It used to have to preserve a workspace row here; it now cannot
+        # affect one, because it holds none to preserve or to get wrong.
+        assert set(reset["after"]) == {
+            "reset_epoch",
+            "claim_state",
+            "network_state",
+            "updated_at",
+        }
         assert store.list_controllers()[0].revoked_at is not None
         with pytest.raises(CommissioningRequestRejected, match="unavailable"):
             commissioning.status(authorization)
@@ -620,19 +634,25 @@ def test_every_modelled_state_is_one_something_can_produce() -> None:
     promising the Host could report physical arming or a pending factory
     reset — neither of which any code path could ever set. The field is gone;
     what remains has to keep earning its place.
+
+    ``WorkspaceState`` went the same way for a stronger reason. Two of its
+    four modelled values never had a writer, and the two that did were writing
+    a claim about the *Data* plane into Bootstrap's store — where it outlived
+    the Workspace it described and stranded a Host. A state only another
+    component can know is not one this store may hold at all.
     """
 
     from eidolon_admin_server.bootstrap.adapters.persistence import (
         memory as memory_store,
         sqlite as sqlite_store,
     )
-    from eidolon_admin_server.bootstrap.domain import ClaimState, NetworkState, WorkspaceState
+    from eidolon_admin_server.bootstrap.domain import ClaimState, NetworkState
 
     sources = (
         Path(memory_store.__file__).read_text(encoding="utf-8"),
         Path(sqlite_store.__file__).read_text(encoding="utf-8"),
     )
-    for enum in (ClaimState, NetworkState, WorkspaceState):
+    for enum in (ClaimState, NetworkState):
         for member in enum:
             written = any(f"{enum.__name__}.{member.name}" in source for source in sources)
             assert written, (

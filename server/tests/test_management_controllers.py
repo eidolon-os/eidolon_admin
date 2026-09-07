@@ -24,6 +24,7 @@ import pytest
 
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
+from tests.controller_session_support import stub_controller_session
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
 
@@ -120,12 +121,7 @@ def _stub_controller(monkeypatch, *, owner_id: str | None = "owner-1") -> None:
     if owner_id is not None:
         principal["owner_id"] = owner_id
 
-    async def bootstrap_request(self, operation: str, **_parameters):
-        if operation in {"controller.authenticate", "controller.validate"}:
-            return principal
-        raise AssertionError(f"unexpected bootstrap operation: {operation}")
-
-    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    stub_controller_session(monkeypatch, principal)
 
 
 async def _authenticate(client: httpx.AsyncClient) -> dict[str, str]:

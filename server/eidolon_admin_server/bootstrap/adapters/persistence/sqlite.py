@@ -18,7 +18,6 @@ from ...domain import (
     ControllerGrant,
     ControllerRole,
     NetworkState,
-    WorkspaceState,
 )
 from ...ports.state_store import (
     MAX_COMMISSIONING_FAILED_ATTEMPTS,
@@ -26,7 +25,7 @@ from ...ports.state_store import (
 )
 
 
-BOOTSTRAP_SCHEMA_VERSION = 7
+BOOTSTRAP_SCHEMA_VERSION = 8
 _SCHEMA_VERSION = BOOTSTRAP_SCHEMA_VERSION
 
 #: A Grant belongs to one reset epoch, so its identity carries the epoch.
@@ -101,6 +100,7 @@ class SQLiteBootstrapStateStore:
                 self._migrate_v4_to_v5,
                 self._migrate_v5_to_v6,
                 self._migrate_v6_to_v7,
+                self._migrate_v7_to_v8,
             )
             for step in ladder[version - 1 :]:
                 step()
@@ -115,8 +115,6 @@ class SQLiteBootstrapStateStore:
                     reset_epoch INTEGER NOT NULL CHECK (reset_epoch >= 0),
                     claim_state TEXT NOT NULL,
                     network_state TEXT NOT NULL,
-                    workspace_state TEXT NOT NULL,
-                    owner_id TEXT,
                     updated_at TEXT NOT NULL
                 );
 
@@ -151,14 +149,12 @@ class SQLiteBootstrapStateStore:
         self.connection.execute(
             """
             INSERT INTO bootstrap_state (
-                singleton, reset_epoch, claim_state, network_state,
-                workspace_state, owner_id, updated_at
-            ) VALUES (1, 0, ?, ?, ?, NULL, ?)
+                singleton, reset_epoch, claim_state, network_state, updated_at
+            ) VALUES (1, 0, ?, ?, ?)
             """,
             (
                 ClaimState.UNCLAIMED.value,
                 NetworkState.UNCONFIGURED.value,
-                WorkspaceState.ABSENT.value,
                 now,
             ),
         )
@@ -268,6 +264,31 @@ class SQLiteBootstrapStateStore:
             """
         )
 
+    def _migrate_v7_to_v8(self) -> None:
+        """Stop storing what the Data plane holds.
+
+        ``owner_id`` and ``workspace_state`` were a record that Data held a
+        Workspace for this Host's Owner. Neither was Bootstrap's to keep:
+        ``owner_id`` is ``owner_<uuid5(host_id).hex>``, derivable from the Host
+        id this store already has, and whether the Workspace exists is Data's
+        answer. What they actually stored was a durable claim about another
+        plane, and one Host proved a durable claim can outlive its subject —
+        it went on asserting a Workspace a data reset had destroyed, so every
+        phone claimed onto it afterwards inherited that Owner scope and could
+        never finish setup.
+
+        Dropping the columns rather than clearing them: a column nothing may
+        write is a column somebody writes. Owner scope now reaches a request
+        from the Controller session that resolved it against Data.
+        """
+
+        self.connection.executescript(
+            """
+            ALTER TABLE bootstrap_state DROP COLUMN owner_id;
+            ALTER TABLE bootstrap_state DROP COLUMN workspace_state;
+            """
+        )
+
     def get_state(self) -> BootstrapState:
         row = self.connection.execute(
             "SELECT * FROM bootstrap_state WHERE singleton = 1"
@@ -279,8 +300,6 @@ class SQLiteBootstrapStateStore:
                 reset_epoch=int(row["reset_epoch"]),
                 claim_state=ClaimState(row["claim_state"]),
                 network_state=NetworkState(row["network_state"]),
-                workspace_state=WorkspaceState(row["workspace_state"]),
-                owner_id=row["owner_id"],
                 updated_at=row["updated_at"],
             )
         except ValueError as exc:
@@ -545,64 +564,6 @@ class SQLiteBootstrapStateStore:
         if result is None:
             raise SQLiteBootstrapStoreError("revoked controller grant disappeared")
         return result
-
-    def bind_controller_owner(
-        self,
-        *,
-        controller_id: str,
-        owner_id: str,
-        reset_epoch: int,
-        now: str,
-    ) -> ControllerGrant:
-        with self.connection:
-            row = self.connection.execute(
-                """
-                SELECT * FROM controller_grants
-                 WHERE controller_id = ? AND reset_epoch = ?
-                """,
-                (controller_id, reset_epoch),
-            ).fetchone()
-            state = self.get_state()
-            if (
-                row is None
-                or row["revoked_at"] is not None
-                or int(row["reset_epoch"]) != reset_epoch
-                or state.reset_epoch != reset_epoch
-                or state.claim_state is not ClaimState.CLAIMED
-            ):
-                raise BootstrapStateConflict(
-                    "controller is not authorized for this Host"
-                )
-            existing_owner_id = state.owner_id
-            if existing_owner_id is not None and existing_owner_id != owner_id:
-                raise BootstrapStateConflict("Host is already bound to another Owner")
-            self.connection.execute(
-                """
-                UPDATE bootstrap_state
-                   SET workspace_state = ?, owner_id = ?, updated_at = ?
-                 WHERE singleton = 1
-                """,
-                (WorkspaceState.READY.value, owner_id, now),
-            )
-        result = self.get_controller(controller_id)
-        if result is None:
-            raise SQLiteBootstrapStoreError("bound controller grant disappeared")
-        return result
-
-    def release_owner_binding(self, *, now: str) -> BootstrapState:
-        state = self.get_state()
-        if state.owner_id is None and state.workspace_state is WorkspaceState.ABSENT:
-            return state
-        with self.connection:
-            self.connection.execute(
-                """
-                UPDATE bootstrap_state
-                   SET workspace_state = ?, owner_id = NULL, updated_at = ?
-                 WHERE singleton = 1
-                """,
-                (WorkspaceState.ABSENT.value, now),
-            )
-        return self.get_state()
 
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation:
         current = self.get_operation(operation.operation_id)

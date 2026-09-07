@@ -19,9 +19,9 @@ from eidolon_admin_server.local_api.config import (
     load_local_api_settings,
 )
 from eidolon_admin_server.local_api.workspace import (
-    ORPHANED_OWNER_BINDING_REASON,
     AdminWorkspaceClient,
     WorkspaceSetupError,
+    changed_setup_input_reason,
     existing_workspace,
     host_workspace_operation_id,
     resolve_workspace_setup,
@@ -181,7 +181,6 @@ async def test_setup_resumes_a_completed_operation_before_owner_binding() -> Non
         workspace,  # type: ignore[arg-type]
         operation_id=operation_id,
         payload=payload,
-        bound_owner_id=None,
     )
     assert resumed == result
     assert workspace.initialize_calls == 0
@@ -210,7 +209,6 @@ async def test_setup_rejects_changed_input_before_owner_binding() -> None:
             ExistingWorkspace(),  # type: ignore[arg-type]
             operation_id=operation_id,
             payload=WorkspaceInitializeRequest(owner_display_name="Changed"),
-            bound_owner_id=None,
         )
     assert caught.value.status_code == 409
     # The only way to reach this screen is a Host that showed a setup form
@@ -241,56 +239,40 @@ class _AbsentWorkspace:
 
     def __init__(self) -> None:
         self.initialize_calls = 0
+        self.get_calls = 0
 
     async def get(self, _operation_id: str) -> WorkspaceOperation:
+        self.get_calls += 1
         raise WorkspaceSetupError(
             "Workspace operation does not exist", status_code=404
         )
 
     async def initialize(self, **_kwargs) -> WorkspaceOperation:
         self.initialize_calls += 1
-        raise AssertionError("a bound Host must not be re-initialized")
+        raise AssertionError("this fixture is asked to initialize by name")
 
     async def close(self) -> None:
         return None
 
 
 @pytest.mark.asyncio
-async def test_an_owner_binding_without_a_workspace_refuses_the_same_way_on_both_verbs() -> None:
-    """The condition is one Host, not two requests.
+async def test_a_host_with_no_data_workspace_reads_as_absent_rather_than_refusing() -> None:
+    """The condition that stranded a real Host, and what it costs now.
 
-    Reading answered the raw 404 from Data and writing answered 503; the phone
-    only ever reached the first, and neither said what was wrong. Both are now
-    the conflict they always were, and both carry the sentence.
+    Bootstrap used to hold an Owner beside this, so a Data plane with no
+    Workspace was a Host whose two halves disagreed: reading answered a bare
+    404 and writing turned the same 404 into a 503, forever, for every phone.
+    With one holder there is nothing to disagree with — Data has no Workspace,
+    which is a state the contract can simply say.
     """
 
     operation_id = host_workspace_operation_id("ehost-56475aa75463474c0285")
-    marker = operation_id.replace("-", "")
+    workspace = _AbsentWorkspace()
 
-    read = _AbsentWorkspace()
-    with pytest.raises(WorkspaceSetupError) as reading:
-        await existing_workspace(
-            read,  # type: ignore[arg-type]
-            operation_id=operation_id,
-            bound_owner_id=f"owner_{marker}",
-        )
-
-    written = _AbsentWorkspace()
-    with pytest.raises(WorkspaceSetupError) as writing:
-        await resolve_workspace_setup(
-            written,  # type: ignore[arg-type]
-            operation_id=operation_id,
-            payload=WorkspaceInitializeRequest(owner_display_name="Manson"),
-            bound_owner_id=f"owner_{marker}",
-        )
-
-    assert reading.value.status_code == writing.value.status_code == 409
-    assert reading.value.reason == writing.value.reason
-    assert reading.value.reason == ORPHANED_OWNER_BINDING_REASON
-    # A bound Host is never quietly given a second Workspace in place of the
-    # one it lost: which of "Data lost it" and "Data is pointed somewhere
-    # empty" this is, the Host cannot tell.
-    assert written.initialize_calls == 0
+    assert (
+        await existing_workspace(workspace, operation_id=operation_id) is None
+    )
+    assert workspace.get_calls == 1
 
 
 @pytest.mark.asyncio
@@ -311,7 +293,6 @@ async def test_an_unbound_host_still_initializes_when_data_has_nothing() -> None
         await existing_workspace(
             workspace,  # type: ignore[arg-type]
             operation_id=operation_id,
-            bound_owner_id=None,
         )
         is None
     )
@@ -320,7 +301,6 @@ async def test_an_unbound_host_still_initializes_when_data_has_nothing() -> None
             workspace,  # type: ignore[arg-type]
             operation_id=operation_id,
             payload=payload,
-            bound_owner_id=None,
         )
         == created
     )
@@ -330,17 +310,21 @@ async def test_an_unbound_host_still_initializes_when_data_has_nothing() -> None
 def test_only_a_tagged_refusal_reaches_a_person() -> None:
     """The App drops a bare string detail, deliberately, so this must not be one."""
 
+    named = changed_setup_input_reason("Manson")
     tagged = workspace_setup_detail(
         WorkspaceSetupError(
-            "Host Owner binding has no Data workspace operation",
+            "This Host workspace was initialized with different setup input",
             status_code=409,
-            reason=ORPHANED_OWNER_BINDING_REASON,
+            reason=named,
         )
     )
-    assert tagged == {"reason": ORPHANED_OWNER_BINDING_REASON}
+    assert tagged == {"reason": named}
+    # The Owner the Workspace is under, which is the one thing a person on
+    # that screen needs and has never been shown.
+    assert "Manson" in named
     # Under the App's own cap on what it will show.
-    assert len(ORPHANED_OWNER_BINDING_REASON) <= 300
-    assert "owner-reset" in ORPHANED_OWNER_BINDING_REASON
+    assert len(named) <= 300
+    assert len(changed_setup_input_reason()) <= 300
 
     diagnostic = workspace_setup_detail(
         WorkspaceSetupError("Admin workspace control plane is unavailable")

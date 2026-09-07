@@ -14,13 +14,50 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class LocalControllerSession:
+    """One phone's management session, and the Owner scope it resolved.
+
+    ``owner_id`` is not authority — a claimed Controller is entitled to this
+    Host's Owner scope whatever the value is, and the value is
+    ``owner_<uuid5(host_id).hex>`` either way. What it is, is the answer to
+    "does the Data plane hold that Workspace", which only Data can give.
+
+    It lives here rather than in Bootstrap's durable state because that is the
+    difference between a memo and a lie. Bootstrap kept it across restarts and
+    across data resets, so a Host went on asserting a Workspace that no longer
+    existed and every phone claimed onto it afterwards inherited the assertion.
+    Held on a session, it expires with the session and dies with the process:
+    the worst a stale answer can cost is the rest of one session, and it can
+    never be the reason a Host cannot be set up again.
+    """
+
     token_hash: str
     controller_id: str
     reset_epoch: int
     principal: dict[str, Any]
     expires_at: datetime
+    #: Resolved on first need, or set by the setup that created the Workspace.
+    #: ``None`` means "not resolved yet", which is why it is not a bool: the
+    #: absence of an answer and the answer "no Workspace" are different, and
+    #: only the second one may be cached.
+    owner_id: str | None = None
+    owner_resolved: bool = False
+
+    def remember_owner(self, owner_id: str | None) -> None:
+        self.owner_id = owner_id
+        self.owner_resolved = True
+
+    def forget_owner(self) -> None:
+        """Drop the memo, so the next need resolves against Data again.
+
+        Called where this session's Owner scope may have just stopped being
+        true — the setup that creates a Workspace, and any refusal that says
+        Data disagrees with what we remembered.
+        """
+
+        self.owner_id = None
+        self.owner_resolved = False
 
 
 class LocalControllerSessionStore:

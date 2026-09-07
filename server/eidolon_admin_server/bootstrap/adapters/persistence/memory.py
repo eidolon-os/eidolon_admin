@@ -14,7 +14,6 @@ from ...domain import (
     CommissioningSessionSeed,
     ControllerGrant,
     NetworkState,
-    WorkspaceState,
 )
 from ...ports.state_store import (
     MAX_COMMISSIONING_FAILED_ATTEMPTS,
@@ -52,8 +51,6 @@ class InMemoryBootstrapStateStore:
                 reset_epoch=0,
                 claim_state=ClaimState.UNCLAIMED,
                 network_state=NetworkState.UNCONFIGURED,
-                workspace_state=WorkspaceState.ABSENT,
-                owner_id=None,
                 updated_at=now,
             )
 
@@ -247,52 +244,6 @@ class InMemoryBootstrapStateStore:
         revoked = replace(target, revoked_at=now)
         self._controllers[(state.reset_epoch, controller_id)] = revoked
         return revoked
-
-    def bind_controller_owner(
-        self,
-        *,
-        controller_id: str,
-        owner_id: str,
-        reset_epoch: int,
-        now: str,
-    ) -> ControllerGrant:
-        self._require_open()
-        grant = self._controllers.get((reset_epoch, controller_id))
-        state = self.get_state()
-        if (
-            grant is None
-            or grant.revoked_at is not None
-            or grant.reset_epoch != reset_epoch
-            or state.reset_epoch != reset_epoch
-            or state.claim_state is not ClaimState.CLAIMED
-        ):
-            raise BootstrapStateConflict("controller is not authorized for this Host")
-        if state.owner_id is not None and state.owner_id != owner_id:
-            raise BootstrapStateConflict("Host is already bound to another Owner")
-        assert self._state is not None
-        self._state = replace(
-            self._state,
-            workspace_state=WorkspaceState.READY,
-            owner_id=owner_id,
-            updated_at=now,
-        )
-        return grant
-
-    def release_owner_binding(self, *, now: str) -> BootstrapState:
-        self._require_open()
-        assert self._state is not None
-        if (
-            self._state.owner_id is None
-            and self._state.workspace_state is WorkspaceState.ABSENT
-        ):
-            return self._state
-        self._state = replace(
-            self._state,
-            workspace_state=WorkspaceState.ABSENT,
-            owner_id=None,
-            updated_at=now,
-        )
-        return self._state
 
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation:
         self._require_open()

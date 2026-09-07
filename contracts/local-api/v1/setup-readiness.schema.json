@@ -2,15 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eidolon.local/contracts/local-api/v1/setup-readiness.schema.json",
   "title": "Eidolon Local API Setup Readiness V1",
-  "description": "Whether a phone that claims this Host could finish setting it up. Composed by the Local API from the Owner binding Bootstrap holds and the Workspace the Data plane has, because it is the only component holding both. Unauthenticated, like the Host overview: a Host nobody can finish setting up is not a secret from the network it sits on.",
+  "description": "Whether this Host's Workspace authority answers for it, composed by the Local API from the Data plane. Unauthenticated, like the Host overview: whether a Host has been set up is what the phone in front of it is about to be told anyway.",
   "type": "object",
-  "required": ["contract_version", "operation_id", "state"],
+  "required": [
+    "contract_version",
+    "operation_id",
+    "state"
+  ],
   "properties": {
-    "contract_version": { "const": "1" },
-    "operation_id": { "type": "string", "format": "uuid" },
+    "contract_version": {
+      "const": "1"
+    },
+    "operation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
     "state": {
-      "description": "absent: no Workspace and no binding, so setup can proceed. ready: both halves agree. orphaned: this Host holds an Owner its Data plane has no Workspace for, so every phone is refused at setup identically and forever, and the repair is Host-side. unknown: the Data plane could not be asked, which a readiness gate must not read as a check that passed.",
-      "enum": ["absent", "ready", "orphaned", "unknown"]
+      "description": "absent: the Data plane has no Workspace for this Host, so setup can proceed. ready: it has one. unknown: it could not be asked, which a readiness gate must not read as a check that passed. There was briefly an orphaned state, for a Host whose Bootstrap held an Owner its Data plane had no Workspace for; Bootstrap no longer holds any of that, so nothing can disagree and nothing can produce it.",
+      "enum": [
+        "absent",
+        "ready",
+        "unknown"
+      ]
     }
   },
   "additionalProperties": false

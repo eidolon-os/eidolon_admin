@@ -47,6 +47,8 @@ _CONTROLLER_ID = "ectrl-0123456789abcdefabcd"
 _OWNER_DOMAIN = "owner-b0a862b0aab941d64554"
 _BUSINESS_OWNER = "owner_683f0000000000000000"
 _DEVICE = named_device_instance_id("device-companion")
+
+from tests.controller_session_support import stub_controller_session
 _NOW = datetime(2026, 8, 25, tzinfo=UTC)
 
 
@@ -225,12 +227,7 @@ def _controller_principal(monkeypatch: pytest.MonkeyPatch) -> None:
         "reset_epoch": 0,
     }
 
-    async def bootstrap_request(self, operation: str, **_parameters):
-        if operation in {"controller.authenticate", "controller.validate"}:
-            return principal
-        raise AssertionError(f"unexpected bootstrap operation: {operation}")
-
-    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    stub_controller_session(monkeypatch, principal)
 
 
 async def test_a_device_can_be_bound_to_a_companion_and_released(

@@ -128,12 +128,6 @@ class BootstrapControlServer:
             return self._service.validate_controller(
                 request.get("controller_id"), request.get("reset_epoch")
             )
-        if operation == "controller.bind_owner":
-            return self._service.bind_controller_owner(
-                controller_id=request.get("controller_id"),
-                reset_epoch=request.get("reset_epoch"),
-                owner_id=request.get("owner_id"),
-            )
         if operation == "controller.invite":
             raw_ttl = request.get("ttl_seconds")
             return self._service.invite_controller(
@@ -162,8 +156,6 @@ class BootstrapControlServer:
                 setup_code=request.get("setup_code"),
                 controller=controller,
             )
-        if operation == "owner.release":
-            return self._service.release_owner_binding()
         if operation == "controller.reset":
             raw_ttl = request.get("ttl_seconds")
             return self._service.open_controller_recovery_window(

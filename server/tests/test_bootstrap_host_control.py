@@ -14,6 +14,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -49,7 +51,11 @@ from eidolon_admin_server.bootstrap.control import (
     BootstrapControlServer,
 )
 from eidolon_admin_server.bootstrap.daemon import run_daemon
-from eidolon_admin_server.bootstrap.domain import NetworkState
+from eidolon_admin_server.bootstrap.domain import (
+    BootstrapState,
+    ClaimState,
+    NetworkState,
+)
 from eidolon_admin_server.bootstrap.identity import (
     HostIdentityError,
     HostIdentityManager,
@@ -77,10 +83,7 @@ from eidolon_admin_server.app.control_plane.workspace_policy import (
 )
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.workspace import (
-    ORPHANED_OWNER_BINDING_REASON,
-    WorkspaceSetupError,
-)
+from eidolon_admin_server.local_api.workspace import WorkspaceSetupError
 
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
@@ -1278,7 +1281,9 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             )
             assert current.status_code == 200
             assert current.json()["controller"]["reset_epoch"] == 0
-            assert current.json()["controller"]["owner_id"] is None
+            # Bootstrap says who this phone is and nothing about the Data
+            # plane. Owner scope is resolved by the session that needs it.
+            assert "owner_id" not in current.json()["controller"]
 
             workspace_headers = {"Authorization": f"Bearer {token}"}
             absent = await client.get(
@@ -1406,17 +1411,18 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
                 headers={"Authorization": f"Bearer {token}"},
             )
             assert refreshed.status_code == 200
-            assert (
-                refreshed.json()["controller"]["owner_id"]
-                == "owner_workspace_authority"
+            # Setting a Workspace up does not teach Bootstrap an Owner. It used
+            # to, for the whole Host, which is how a phone claimed long after a
+            # data reset inherited a Workspace that no longer existed.
+            assert "owner_id" not in refreshed.json()["controller"]
+            # Owner-scoped routes work all the same, because the session that
+            # created the Workspace was handed the scope by the plane that
+            # holds it.
+            scoped = await client.get(
+                "/api/management/v1/devices",
+                headers={"Authorization": f"Bearer {token}"},
             )
-            with pytest.raises(BootstrapControlError, match="another Owner"):
-                await control.request(
-                    "controller.bind_owner",
-                    controller_id=controller_id,
-                    reset_epoch=0,
-                    owner_id="owner_conflict",
-                )
+            assert scoped.status_code != 409
 
             await control.request("dev.reset")
             invalidated = await client.get(
@@ -1542,13 +1548,6 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
             "platform": "android",
         },
     )
-    store.bind_controller_owner(
-        controller_id=controller_id,
-        owner_id="owner-1",
-        reset_epoch=0,
-        now="2026-08-11T00:00:00Z",
-    )
-
     # A production Host refuses the development reset but must still recover.
     production = BootstrapService(
         settings=replace(settings, mode=BootstrapMode.PRODUCTION),
@@ -1568,7 +1567,6 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
         # this Host" — it is only in the record of who once did.
         current_grant = store.get_controller(controller_id)
         history = store.list_controllers()
-        preserved_owner = store.get_state().owner_id
     finally:
         service.shutdown()
 
@@ -1577,7 +1575,11 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
     assert result["after"]["claim_state"] == "unclaimed"
     assert result["after"]["reset_epoch"] == result["before"]["reset_epoch"] + 1
     # Recovery replaces the manager, not the Host and not the Owner's data.
-    assert preserved_owner == "owner-1"
+    # There is no Owner row here to preserve any more; what proves the Owner's
+    # data survived is that nothing in this operation reaches the Data plane,
+    # and the next phone resolves the same Workspace from it.
+    assert "owner_id" not in result["after"]
+    assert "owner_binding" not in result["preserved"]
     assert result["after"]["network_state"] == result["before"]["network_state"]
     assert result["host_id"] == host_id
     assert current_grant is None
@@ -1612,18 +1614,23 @@ async def test_controller_reset_is_reachable_over_the_control_socket(
 
 
 @pytest.mark.asyncio
-async def test_a_host_whose_data_lost_its_workspace_says_so_and_can_be_repaired(
+async def test_a_host_whose_data_lost_its_workspace_can_simply_be_set_up_again(
     tmp_path: Path,
     short_runtime_dir: Path,
 ) -> None:
-    """The state a real Host reached on 2026-09-06, and the way out of it.
+    """The state a real Host reached on 2026-09-06, and why it is now nothing.
 
-    Bootstrap held an Owner and the Data plane had no Workspace under it.
-    Because ``owner_id`` is Host state rather than per-Controller state, a
-    phone claimed long afterwards inherited that binding, and both halves of
-    the setup contract refused it: reading answered a bare 404, writing would
-    have answered 503, and neither said anything a person could act on. The
-    Host was reported by its own readiness gate as fully healthy throughout.
+    A Mac dev Host reported 12/12 services healthy while no phone could finish
+    setting it up. Bootstrap held an Owner its Data plane had no Workspace for,
+    ``owner_id`` was Host state rather than per-Controller state, so a phone
+    claimed months later inherited the assertion and was refused at setup —
+    identically, forever, with no operation offered that could clear it.
+
+    The starting condition here is exactly that one: the Data plane loses the
+    Workspace under a Host whose phones already hold it. What follows is the
+    whole point of the change. Nobody is refused, no operator is summoned, and
+    no repair verb is run. There is one holder of the fact now, so there is
+    nothing for a second holder to be wrong about.
     """
 
     async with _local_api_session(tmp_path, short_runtime_dir) as (
@@ -1634,84 +1641,73 @@ async def test_a_host_whose_data_lost_its_workspace_says_so_and_can_be_repaired(
         workspace_client,
         settings,
     ):
-        # Exactly the drift: the Data plane loses the Workspace, Bootstrap
-        # keeps the row that claims it has one.
+        setup_before = await client.get(
+            "/api/local/v1/setup/workspace", headers=headers
+        )
+        assert setup_before.json()["state"] == "ready"
+
+        # The Data plane loses this Host's Workspace.
         workspace_client.result = None
 
+        # Reading says so, in the contract's own vocabulary, rather than
+        # refusing. There is no third state to report because there is no
+        # second opinion to disagree with.
         read = await client.get("/api/local/v1/setup/workspace", headers=headers)
-        written = await client.put(
-            "/api/local/v1/setup/workspace",
-            headers=headers,
-            json={"owner_display_name": "Manson"},
-        )
-        assert read.status_code == written.status_code == 409
-        assert read.json()["detail"] == written.json()["detail"]
-        assert read.json()["detail"]["reason"] == ORPHANED_OWNER_BINDING_REASON
-        # Nothing quietly built a second Workspace over the lost one.
-        assert len(workspace_client.initialize_calls) == 1
+        assert read.status_code == 200
+        assert read.json()["state"] == "absent"
 
-        # The pair that makes this Host self-contradicting, in one place.
-        #
-        # ``/api/local/v1/host`` still reports ``workspace_state: ready``, and
-        # that is not a bug being left in: ``state`` there is Bootstrap's own
-        # state, published unauthenticated, and Bootstrap has no way to ask the
-        # Data plane anything. What was missing was anywhere that compared the
-        # two — so a reader who fetched both got "ready" and a refusal about
-        # the same Workspace and had to work out for itself which was true.
+        # And the unauthenticated answer agrees with it, which it could not do
+        # before: it used to be composed from two stores.
+        readiness = await client.get("/api/local/v1/setup/readiness")
+        assert readiness.status_code == 200
+        assert readiness.json()["state"] == "absent"
+
+        # Nothing on the Host still claims otherwise. This is the assertion the
+        # whole change is for: there is no key here to contradict the answer
+        # above, because Bootstrap does not publish what Data holds.
         overview = await client.get("/api/local/v1/host")
-        assert overview.json()["state"]["workspace_state"] == "ready"
+        assert overview.status_code == 200
+        assert "workspace_state" not in overview.json()["state"]
 
-        # This route is that comparison, and it needs no credentials — so the
-        # gate can ask it without a phone having tried, and a phone can ask it
-        # before it has a session.
-        unready = await client.get("/api/local/v1/setup/readiness")
-        assert unready.status_code == 200
-        assert unready.json()["state"] == "orphaned"
-
-        control = BootstrapControlClient(settings.control_socket)
-        released = await control.request("owner.release")
-        assert released["released"] is True
-        assert released["before"]["workspace_state"] == "ready"
-        assert released["after"]["workspace_state"] == "absent"
-        assert "controller_grants" in released["preserved"]
-
-        # The phone that was already holding this Host still holds it: the
-        # repair takes a claim about the Data plane, not anybody's authority.
-        still_held = await client.get("/api/local/v1/auth/session", headers=headers)
-        assert still_held.status_code == 200
-        assert still_held.json()["controller"]["owner_id"] is None
-
-        absent = await client.get("/api/local/v1/setup/workspace", headers=headers)
-        assert absent.status_code == 200
-        assert absent.json()["state"] == "absent"
-        # And the overview stops saying the opposite: the two halves now agree
-        # because the one that was over-claiming has stopped.
-        repaired_overview = await client.get("/api/local/v1/host")
-        assert repaired_overview.json()["state"]["workspace_state"] == "absent"
-        assert repaired_overview.json()["state"]["claim_state"] == "claimed"
-        assert (
-            await client.get("/api/local/v1/setup/readiness")
-        ).json()["state"] == "absent"
-
-        # A different name than the lost Workspace carried is accepted now,
-        # because there is no longer a Workspace to contradict.
-        repaired = await client.put(
+        # The phone that already holds this Host sets it up again, with a name
+        # of its own choosing, and is not refused for having changed it -- the
+        # Workspace it would have contradicted is gone.
+        again = await client.put(
             "/api/local/v1/setup/workspace",
             headers=headers,
             json={"owner_display_name": "Manson", "companion_display_name": "小忆"},
         )
-        assert repaired.status_code == 200, repaired.text
-        assert repaired.json()["state"] == "ready"
+        assert again.status_code == 200, again.text
+        assert again.json()["state"] == "ready"
+        # The same Owner id as before, because it is derived from the Host id:
+        # what was lost was rows, never an identity.
+        assert again.json()["owner"]["owner_id"] == (
+            setup_before.json()["owner"]["owner_id"]
+        )
         assert (
             await client.get("/api/local/v1/setup/readiness")
         ).json()["state"] == "ready"
 
+        # Nobody was unpaired to get here, and no epoch was advanced.
+        held = await client.get("/api/local/v1/auth/session", headers=headers)
+        assert held.status_code == 200
+        assert held.json()["controller"]["reset_epoch"] == 0
+        # And Bootstrap never learned an Owner, so it has none to keep.
+        assert "owner_id" not in held.json()["controller"]
+
 
 @pytest.mark.asyncio
-async def test_releasing_an_owner_binding_twice_is_the_same_as_releasing_it_once(
+async def test_bootstrap_offers_no_operation_that_records_a_data_plane_owner(
     tmp_path: Path, short_runtime_dir: Path
 ) -> None:
-    """The reset that destroys the Data authority runs this unconditionally."""
+    """The write path is gone, not merely unused.
+
+    ``owner_id`` was write-once — set beside ``workspace_state = READY``,
+    refused if it would change, never cleared — so a Host that reached the
+    stranded state had no way out. A column nothing may write is a column
+    somebody writes, so neither the column nor the operations that wrote it
+    are here to be reached.
+    """
 
     settings = _settings(tmp_path, runtime_dir=short_runtime_dir)
     service = _service(settings, network=InMemoryNetworkProvisioning())
@@ -1720,12 +1716,17 @@ async def test_releasing_an_owner_binding_twice_is_the_same_as_releasing_it_once
     await server.start()
     client = BootstrapControlClient(settings.control_socket)
     try:
-        first = await client.request("owner.release")
-        second = await client.request("owner.release")
-        assert first["released"] is False
-        assert second["released"] is False
-        assert first["after"] == second["after"]
-        assert first["after"]["workspace_state"] == "absent"
+        for operation in ("controller.bind_owner", "owner.release"):
+            with pytest.raises(BootstrapControlError, match="unknown control operation"):
+                await client.request(operation)
+        # What Bootstrap does publish is only what it can know by itself.
+        health = await client.request("health")
+        assert set(health["state"]) == {
+            "reset_epoch",
+            "claim_state",
+            "network_state",
+            "updated_at",
+        }
     finally:
         await server.close()
         service.shutdown()

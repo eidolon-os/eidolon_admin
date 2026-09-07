@@ -7,13 +7,19 @@
     "reset_epoch",
     "claim_state",
     "network_state",
-    "workspace_state",
-    "recovery_state",
     "updated_at"
   ],
   "properties": {
-    "reset_epoch": { "type": "integer", "minimum": 0 },
-    "claim_state": { "enum": ["unclaimed", "claimed"] },
+    "reset_epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "claim_state": {
+      "enum": [
+        "unclaimed",
+        "claimed"
+      ]
+    },
     "network_state": {
       "enum": [
         "unconfigured",
@@ -23,18 +29,11 @@
         "rolling_back"
       ]
     },
-    "workspace_state": {
-      "enum": ["absent", "provisioning", "ready", "degraded"]
-    },
-    "recovery_state": {
-      "enum": [
-        "normal",
-        "physically_armed",
-        "controller_recovery",
-        "factory_reset_pending"
-      ]
-    },
-    "updated_at": { "type": "string", "format": "date-time" }
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "description": "What this Host knows about its own authority. It carried workspace_state and, in an earlier revision, recovery_state; neither is a fact Bootstrap holds. workspace_state was a durable claim that the Data plane held a Workspace for this Host, which outlived a data reset and stranded the Host; whether that Workspace exists is answered by GET /api/local/v1/setup/readiness. recovery_state was dropped from the store two schema versions ago and only ever held one value."
 }

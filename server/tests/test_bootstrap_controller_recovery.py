@@ -407,7 +407,11 @@ def test_recovery_revokes_and_opens_the_window_in_one_act(
         ]
         assert recovery["after"]["reset_epoch"] == 1
         assert recovery["after"]["claim_state"] == "unclaimed"
-        assert "owner_binding" in recovery["preserved"]
+        # Not "owner_binding" any more: there is none to preserve, and a
+        # promise to preserve a thing that does not exist is how the help text
+        # came to describe a Host nobody could set up.
+        assert "owner_binding" not in recovery["preserved"]
+        assert "component_data" in recovery["preserved"]
 
         window = recovery["setup_session"]
         assert window["commissioning_id"]
@@ -443,18 +447,25 @@ def test_the_recovery_window_is_bounded(tmp_path: Path, store_kind: str) -> None
         service.shutdown()
 
 
-def test_recovery_leaves_the_owner_and_the_workspace_alone(tmp_path: Path) -> None:
-    """The promise the operator help text makes has to survive the reset."""
+def test_recovery_cannot_reach_the_owner_because_it_holds_none(tmp_path: Path) -> None:
+    """The promise the operator help text makes, kept by construction.
+
+    It used to be kept by remembering not to clear a row: recovery revoked
+    every Grant and deliberately left ``owner_id`` and ``workspace_state``
+    behind, so the Owner's data survived the phone being replaced. That was
+    the right intention and the wrong mechanism — the row it preserved was a
+    claim about the Data plane, and preserving it across a *data* reset is
+    exactly what stranded a Host.
+
+    Now there is nothing here to leave alone. What the reclaimed phone gets is
+    the same Owner as before because the Owner is resolved from the plane that
+    holds it, and that plane was never touched.
+    """
 
     service, store, network = _host(tmp_path, "sqlite")
     try:
         phone = _controller_public_key()
-        claimed = _claim(store, network, service.issue_setup_code(300), phone, "Pad")
-        service.bind_controller_owner(
-            controller_id=claimed["controller"]["controller_id"],
-            reset_epoch=0,
-            owner_id="owner-1",
-        )
+        _claim(store, network, service.issue_setup_code(300), phone, "Pad")
 
         recovery = service.open_controller_recovery_window(ttl_seconds=900)
         reclaimed = _claim(store, network, recovery["setup_session"], phone, "Pad")
@@ -462,8 +473,17 @@ def test_recovery_leaves_the_owner_and_the_workspace_alone(tmp_path: Path) -> No
         principal = service.validate_controller(
             reclaimed["controller"]["controller_id"], 1
         )
-        assert principal["owner_id"] == "owner-1"
-        assert store.get_state().workspace_state.value == "ready"
+        # The phone is authorised again, and Bootstrap says nothing about
+        # whose Workspace it will be acting on.
+        assert principal["controller_id"] == reclaimed["controller"]["controller_id"]
+        assert principal["reset_epoch"] == 1
+        assert "owner_id" not in principal
+        assert set(store.get_state().to_dict()) == {
+            "reset_epoch",
+            "claim_state",
+            "network_state",
+            "updated_at",
+        }
     finally:
         service.shutdown()
 
@@ -504,6 +524,11 @@ def test_sqlite_v6_grants_migrate_to_epoch_scoped_identity(tmp_path: Path) -> No
             'Pad', 'android', 0, '2026-08-05T00:00:00Z', '2026-08-06T00:00:00Z'
         );
         UPDATE bootstrap_state SET reset_epoch = 1, claim_state = 'unclaimed';
+        -- A v6 Host also carried the two columns that recorded what the Data
+        -- plane held, so the ladder has them to drop on the way to v8.
+        ALTER TABLE bootstrap_state
+            ADD COLUMN workspace_state TEXT NOT NULL DEFAULT 'ready';
+        ALTER TABLE bootstrap_state ADD COLUMN owner_id TEXT;
         PRAGMA user_version = 6;
         """
     )
@@ -514,7 +539,7 @@ def test_sqlite_v6_grants_migrate_to_epoch_scoped_identity(tmp_path: Path) -> No
     store.open()
     try:
         store.initialize("2026-08-25T00:00:00Z")
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
 
         history = store.list_controllers()
         assert [(grant.controller_id, grant.reset_epoch) for grant in history] == [

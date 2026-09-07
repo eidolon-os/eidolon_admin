@@ -61,18 +61,25 @@ Controller-authenticated `GET/PUT /api/local/v1/setup/workspace` 负责创建或
 自有 SQLite 只保存 commissioning/claim 状态，不读取或复制 Data、Kernel、Hub
 的权威数据。
 
-它保存的一样东西是别处的镜像：Owner 绑定，也就是「Data 平面持有这台 Host 的
-Workspace」这句断言。`owner_id` 是 `owner_<uuid5(host_id).hex>`，完全由 Host id
-决定，所以这一行携带的是断言而不是身份。断言可能比它所指的东西活得更久——销毁
-Data 权威而保留 Bootstrap 根就会这样——于是：
+它**不**保存的一样东西是别处的状态。Bootstrap 曾经记着 Owner 绑定，也就是
+「Data 平面持有这台 Host 的 Workspace」这句断言，而 `owner_id` 是
+`owner_<uuid5(host_id).hex>`，完全由 Host id 决定 —— 那一行携带的从来不是身份，
+只是那句断言。断言会比它所指的东西活得更久：有一台 Host 在数据被重置之后仍在断言
+一个已经不存在的 Workspace，此后认领它的每一台手机都继承了这个 Owner scope，在
+setup 处被同样地拒绝，永远如此。
 
-- `GET /api/local/v1/setup/readiness` 无需认证地报告两半是否一致
-  （`absent` / `ready` / `orphaned` / `unknown`），`eidolon_ops` 的 `app-ready`
-  把它作为 `host_setup_completable` 计分；
-- 两个 setup 动词对 `orphaned` 给出同一个 409 和同一句 `{"detail": {"reason": ...}}`，
-  而不是从前的「读 404、写 503」；
-- `eidolon-bootstrapctl owner-reset` 只撤回这一行，保留 Host identity、每一份
-  Controller Grant、网络和全部组件数据。
+所以现在只有一处持有这个事实：
+
+- `bootstrap_state` 里没有 `owner_id`，也没有 `workspace_state`（schema v8 把两列
+  都删了）。Bootstrap 只回答它自己能知道的事。
+- 一次请求的 Owner scope 由 **Controller 会话**解析，问的是真正持有 Workspace 的
+  那一面。会话有 TTL 且随进程消失 —— 一份活不过会话的备忘不可能困住一台 Host，
+  这正是备忘和谎言的区别。
+- `GET /api/local/v1/setup/readiness` 无需认证地报告
+  `absent` / `ready` / `unknown`，`eidolon_ops` 的 `app-ready` 用它计分
+  `host_setup_completable`。
+- 因此不存在「两半对不上」这种状态，也不需要修复它的操作。数据面丢了 Workspace 的
+  Host 就报 `absent`，直接重新 setup 即可，Owner id 还是同一个。
 
 树莓派只读预检命令为：
 

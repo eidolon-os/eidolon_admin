@@ -27,18 +27,6 @@ class NetworkState(StrEnum):
     ROLLING_BACK = "rolling_back"
 
 
-class WorkspaceState(StrEnum):
-    """Whether this Host has an Owner's workspace on it yet.
-
-    Provisioning and degraded were modelled and never written. A value nothing
-    can produce is not a state a reader has to handle; it is a promise the
-    screen makes on the Host's behalf.
-    """
-
-    ABSENT = "absent"
-    READY = "ready"
-
-
 class ControllerRole(StrEnum):
     HOST_ADMIN = "host_admin"
 
@@ -66,21 +54,34 @@ class HostIdentity:
 
 @dataclass(frozen=True, slots=True)
 class BootstrapState:
+    """What this Host knows about its own authority, and nothing else.
+
+    It used to also carry ``owner_id`` and ``workspace_state`` — a record that
+    the Data plane held a Workspace for this Host. Neither was a fact of
+    Bootstrap's: ``owner_id`` is ``owner_<uuid5(host_id).hex>``, so it named
+    nothing this Host did not already know, and whether that Workspace exists
+    is Data's to answer. Stored here it was a durable claim about another
+    plane's store, and a durable claim can outlive what it describes — one
+    Host kept asserting a Workspace a data reset had destroyed, so every phone
+    ever claimed onto it inherited that Owner scope and was refused at setup,
+    identically and forever, with no operation offered that could clear it.
+
+    Two stores holding one fact is what made that reachable, so now one does.
+    Owner scope reaches a request from the Controller session that resolved it
+    against Data; that memo expires with the session and dies with the
+    process, and a memo which cannot outlive a session cannot strand a Host.
+    """
+
     reset_epoch: int
     claim_state: ClaimState
     network_state: NetworkState
-    workspace_state: WorkspaceState
-    owner_id: str | None
     updated_at: str
 
     def to_dict(self) -> dict[str, Any]:
         result = asdict(self)
-        # Owner scope is authority state, not part of the public bootstrap state.
-        result.pop("owner_id")
         result.update(
             claim_state=self.claim_state.value,
             network_state=self.network_state.value,
-            workspace_state=self.workspace_state.value,
         )
         return result
 

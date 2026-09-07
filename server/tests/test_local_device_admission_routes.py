@@ -37,6 +37,8 @@ from eidolon_admin_server.app.control_plane.contracts import (
     AdmissionDecisionWorkflowResult,
 )
 
+from tests.controller_session_support import stub_controller_session
+
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
 _DEVICE_A = named_device_instance_id("device-a")
@@ -244,12 +246,7 @@ def _controller_principal(monkeypatch: pytest.MonkeyPatch) -> None:
         "reset_epoch": 0,
     }
 
-    async def bootstrap_request(self, operation: str, **_parameters):
-        if operation in {"controller.authenticate", "controller.validate"}:
-            return principal
-        raise AssertionError(f"unexpected bootstrap operation: {operation}")
-
-    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    stub_controller_session(monkeypatch, principal)
 
 
 async def test_local_is_the_only_admission_surface_a_controller_can_reach(

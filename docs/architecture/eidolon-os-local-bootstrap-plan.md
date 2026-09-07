@@ -89,7 +89,7 @@ Host: bootstrapd 常驻
   -> [最后迁移] conversation / Audio Channel
 ```
 
-`Host access setup`、`Host commissioning` 和 `Workspace onboarding` 是三个连续但不同的完成点。当前 Mobile 不会因为读到了 `workspace_state=absent` 就修改 Bootstrap 状态，也不会把只读连接误报为整机开箱初始化完成。
+`Host access setup`、`Host commissioning` 和 `Workspace onboarding` 是三个连续但不同的完成点。当前 Mobile 不会因为读到 setup readiness 是 `absent` 就修改 Bootstrap 状态，也不会把只读连接误报为整机开箱初始化完成。
 
 ## 2. 本次复盘后的决策变化
 
@@ -426,17 +426,22 @@ claim_state:
 network_state:
   unconfigured | staging | connected | degraded | rolling_back
 
-workspace_state:
-  absent | provisioning | ready | degraded
-
-recovery_state:
-  normal | physically_armed | controller_recovery | factory_reset_pending
-
 operation_state:
   pending | running | waiting_confirmation | succeeded | failed | compensating
 ```
 
 对外的综合状态由这些权威状态投影，不能单独写入第二份 `active` 标志。
+
+两条曾经写在这里的轴已经删掉，原因不同但同一条规则：
+
+- `recovery_state`（`normal | physically_armed | controller_recovery |
+  factory_reset_pending`）四个值只有一个写入者，另外三个没有任何代码路径能产生 ——
+  没人能产生的值不是读者要处理的状态，而是屏幕替 Host 许下的承诺。
+- `workspace_state`（`absent | provisioning | ready | degraded`）其中两个同样从未
+  被写过；剩下两个更糟 —— 它们把**另一个组件**（Data 平面）的状态写进了 Bootstrap
+  的存储，于是它比它所描述的 Workspace 活得更久，把一台 Host 变成任何手机都无法完成
+  setup 的状态。只有另一个组件能知道的事实，这里一开始就不该持有。Workspace 是否就绪
+  由 `GET /api/local/v1/setup/readiness` 向 Data 平面问出来。
 
 ## 9. 核心流程
 
@@ -463,13 +468,13 @@ operation_state:
 11. NetworkManager 激活后 App 通过 BLE 确认 operation；Bootstrap 创建 Controller
     Grant，并在同一事务消费 commissioning session、迁移 claim 状态。LAN Local API
     handoff 是下一步，不阻塞 Host commissioning 的本地完成语义。
-12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`、`recovery_state=normal`；`workspace_state` 不阻塞 Host commissioning。
+12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`；Workspace 是否就绪由 Data 平面回答，不在 Bootstrap 状态里，也不阻塞 Host commissioning。
 
 **C. Workspace onboarding（Host/Mobile 已接入，基础真机闭环已通过）**
 
 13. Local API 从稳定 Host ID 派生确定性的 `operation_id`，以独立内部服务身份调用 Admin；Admin 再用独立写令牌调用 Data Workspace Authority，创建或重放同一 Owner、主 Companion 和 Workspace operation。
 14. Bootstrap 只保存稳定的 Owner 引用，不拥有 Owner/Companion/Workspace 数据。
-15. 该阶段完成条件才包含 `workspace_state=ready`；之后再开放 conversation / Audio Channel。
+15. 该阶段完成条件是 `GET /api/local/v1/setup/readiness` 报 `ready`（由 Data 平面作答，不是 Bootstrap 的状态位）；之后再开放 conversation / Audio Channel。
 
 当前精确契约为 Local API `GET/PUT /api/local/v1/setup/workspace`、Admin
 `GET/PUT /api/control-plane/v1/workspace-onboarding/operations/{operation_id}` 和
@@ -551,19 +556,17 @@ PUT  /api/local/v1/setup/workspace
 GET  /api/local/v1/setup/readiness
 ```
 
-`GET /api/local/v1/setup/readiness` 是 Local API 自己回答「现在认领这台 Host 的
-手机能不能走完 setup」：它把 Bootstrap 持有的 Owner 绑定和 Data 平面真正拥有的
-Workspace 合成一个答案（`absent` / `ready` / `orphaned` / `unknown`），因为只有它
-同时持有这两半。单独一条路由而不是挂在 `/healthz` 或 `/api/local/v1/host` 上——
-回答它要向 Data 发一次请求，挂在 `/healthz` 上会让 Data 变慢时这个组件读起来像挂
-了，挂在 Host overview 上则会横在每台手机的第一屏前面。
+`GET /api/local/v1/setup/readiness` 是 Local API 自己回答「这台 Host 的 Workspace
+权威是否为它作答」：`absent` / `ready` / `unknown`。单独一条路由而不是挂在 `/healthz`
+或 `/api/local/v1/host` 上 —— 回答它要向 Data 发一次请求，挂在 `/healthz` 上会让 Data
+变慢时这个组件读起来像挂了，挂在 Host overview 上则会横在每台手机的第一屏前面。
 
-`orphaned` 是两半对不上：Bootstrap 记着一位 Owner，Data 平面没有对应的
-Workspace。`owner_id` 是 Host 状态而不是 per-Controller 状态，所以此后认领这台
-Host 的每一台手机都会继承这个绑定，`GET` 和 `PUT` 会以同一个理由（409，带
-`{"detail": {"reason": ...}}`）拒绝它们，永远如此。Host 不会自愈——Data 说「没有」
-既可能是丢了，也可能只是指向了一个空库，Host 分不出来——它命名这个状态，并把修复
-留给 `eidolon-bootstrapctl owner-reset`（或 `./eidolon <host> owner-reset --apply`）。
+这里曾经有第四个状态 `orphaned`：Bootstrap 记着一位 Owner，Data 平面没有对应的
+Workspace。它之所以能出现，只是因为同一个事实被两个存储各持一份 —— `owner_id` 是
+Host 状态而不是 per-Controller 状态，所以此后认领这台 Host 的每一台手机都继承这个
+绑定并被永久拒绝。现在 Bootstrap 不再保存关于 Data 平面的任何东西（schema v8 删除了
+`owner_id` 与 `workspace_state`），一次请求的 Owner scope 由 Controller 会话向 Data
+解析，没有第二份副本可以对不上，因此这个状态无法被产生，也不需要修复它的操作。
 
 后续计划；每个 mutation 在对应 contract、Owner scope 和 idempotency tests 落地前都不算已有 API：
 
