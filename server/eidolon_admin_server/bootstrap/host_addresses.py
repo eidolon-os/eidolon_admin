@@ -15,17 +15,14 @@ proves the identity at whichever answers.
 from __future__ import annotations
 
 import ipaddress
-import json
 import logging
-import subprocess
+import socket
+
+import psutil
 
 __all__ = ["local_api_base_urls", "reachable_ipv4_addresses"]
 
 logger = logging.getLogger(__name__)
-
-#: Reading the kernel's own view costs a few milliseconds and is asked for
-#: rarely; a Host with a wedged network must not wedge the endpoint too.
-_TIMEOUT_SECONDS = 5
 
 
 def local_api_base_urls(port: int) -> list[str]:
@@ -58,33 +55,36 @@ def reachable_ipv4_addresses() -> list[str]:
 
 
 def _kernel_reported_addresses() -> list[str]:
+    """Every IPv4 address the OS reports on any interface, in its own order.
+
+    Asked of ``psutil`` rather than of a command. This shelled out to
+    ``ip -json -4 addr show``, which is iproute2 and therefore Linux — so on
+    macOS the command did not exist, the ``OSError`` was logged and swallowed,
+    and the signed endpoint published an empty address list. Not a failure
+    anybody would see: the fallback exists for the case where announcements do
+    not reach the phone, so it is silent exactly until the day it is needed,
+    and only then is it discovered to have been empty all along on that
+    platform.
+
+    ``psutil`` is already this repository's answer to the same question —
+    ``app.system_health.probe`` uses it and says why: it works the same on
+    macOS and Linux with no knowledge of either. A second parser here would
+    have been a second thing to keep right.
+
+    Interfaces that are down are still reported, as they were before. The Host
+    does not know which network the phone is on, and a phone that tries an
+    address nothing answers on has lost a round trip; a phone offered no
+    address at all has lost the Host.
+    """
+
     try:
-        completed = subprocess.run(
-            ("ip", "-json", "-4", "addr", "show"),
-            capture_output=True,
-            text=True,
-            timeout=_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+        interfaces = psutil.net_if_addrs()
+    except OSError as exc:
         logger.warning("could not read this Host's addresses: %s", exc)
         return []
-    if completed.returncode != 0:
-        logger.warning(
-            "could not read this Host's addresses: ip exited %s", completed.returncode
-        )
-        return []
-    try:
-        interfaces = json.loads(completed.stdout or "[]")
-    except ValueError as exc:
-        logger.warning("could not parse this Host's addresses: %s", exc)
-        return []
-    found: list[str] = []
-    for interface in interfaces if isinstance(interfaces, list) else []:
-        if not isinstance(interface, dict):
-            continue
-        for entry in interface.get("addr_info") or []:
-            address = entry.get("local") if isinstance(entry, dict) else None
-            if isinstance(address, str):
-                found.append(address)
-    return found
+    return [
+        entry.address
+        for entries in interfaces.values()
+        for entry in entries
+        if entry.family is socket.AF_INET and isinstance(entry.address, str)
+    ]

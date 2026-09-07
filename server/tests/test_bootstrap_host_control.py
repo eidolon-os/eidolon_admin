@@ -1801,6 +1801,31 @@ async def test_bootstrap_offers_no_operation_that_records_a_data_plane_owner(
         service.shutdown()
 
 
+def test_this_host_can_actually_read_its_own_addresses() -> None:
+    """The mechanism, on whatever platform is running the suite.
+
+    Everything else about this module was tested above the enumeration, by
+    substituting a list — so the enumeration itself was never exercised, and it
+    shelled out to ``ip``, which does not exist on macOS. The command failed,
+    the warning was swallowed, and the signed endpoint published no addresses
+    at all on that platform. A fallback for the case where announcements do not
+    reach the phone is silent until the day it is needed, so nothing noticed.
+
+    Loopback is asserted because every machine has one and the filter above
+    drops it: what this proves is that the enumeration returns this Host's
+    addresses here, not what they happen to be.
+    """
+
+    from eidolon_admin_server.bootstrap import host_addresses
+
+    reported = host_addresses._kernel_reported_addresses()
+
+    assert "127.0.0.1" in reported, reported
+    # And the published list is drawn from it without loopback, so a Host that
+    # can read its addresses always publishes at least the one a phone uses.
+    assert "https://127.0.0.1:9002" not in host_addresses.local_api_base_urls(9002)
+
+
 def test_the_endpoint_says_where_this_host_answers(monkeypatch) -> None:
     """A Host that can only be found by announcement cannot be found at all
     on a network that does not carry them to the phone in front of it.
