@@ -90,6 +90,24 @@ class BootstrapStateStore(Protocol):
         now: str,
     ) -> ControllerGrant: ...
 
+    def release_owner_binding(self, *, now: str) -> BootstrapState:
+        """Forget which Owner this Host holds, and nothing else.
+
+        The binding is not a fact of its own. ``owner_id`` is
+        ``owner_<uuid5(host_id).hex>`` — a pure function of the Host id — so
+        what Bootstrap stores here is not *who* the Owner is but the claim
+        that the Data plane holds a Workspace for them. A claim about another
+        plane's store can outlive it: destroying the Data authority and
+        keeping this row is what leaves a Host whose Owner has no Workspace,
+        and no phone can complete setup on such a Host.
+
+        So this exists to be called by whoever destroys the thing it mirrors,
+        and by an operator repairing a Host where the two already disagree.
+        Idempotent: a Host with no binding is already in the state this asks
+        for, and the caller that runs it unconditionally must not have to know.
+        """
+        ...
+
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation: ...
 
     def get_operation(self, operation_id: str) -> BootstrapOperation | None: ...

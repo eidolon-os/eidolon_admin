@@ -77,7 +77,10 @@ from eidolon_admin_server.app.control_plane.workspace_policy import (
 )
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
-from eidolon_admin_server.local_api.workspace import WorkspaceSetupError
+from eidolon_admin_server.local_api.workspace import (
+    ORPHANED_OWNER_BINDING_REASON,
+    WorkspaceSetupError,
+)
 
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
 
@@ -1148,7 +1151,14 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
                 },
             )
             assert initialized.status_code == 200, initialized.text
-            yield client, headers, runtime_client, devices_client
+            yield (
+                client,
+                headers,
+                runtime_client,
+                devices_client,
+                workspace_client,
+                settings,
+            )
     finally:
         stop.set()
         await daemon_task
@@ -1440,7 +1450,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
         json.loads(path.read_text())
         for path in (root / "contracts" / "local-api" / "v1").glob("*.json")
     ]
-    assert len(local_api_documents) == 13
+    assert len(local_api_documents) == 14
     assert all(
         document["$schema"].endswith("2020-12/schema")
         for document in local_api_documents
@@ -1601,6 +1611,126 @@ async def test_controller_reset_is_reachable_over_the_control_socket(
         service.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_a_host_whose_data_lost_its_workspace_says_so_and_can_be_repaired(
+    tmp_path: Path,
+    short_runtime_dir: Path,
+) -> None:
+    """The state a real Host reached on 2026-09-06, and the way out of it.
+
+    Bootstrap held an Owner and the Data plane had no Workspace under it.
+    Because ``owner_id`` is Host state rather than per-Controller state, a
+    phone claimed long afterwards inherited that binding, and both halves of
+    the setup contract refused it: reading answered a bare 404, writing would
+    have answered 503, and neither said anything a person could act on. The
+    Host was reported by its own readiness gate as fully healthy throughout.
+    """
+
+    async with _local_api_session(tmp_path, short_runtime_dir) as (
+        client,
+        headers,
+        _runtime_client,
+        _devices_client,
+        workspace_client,
+        settings,
+    ):
+        # Exactly the drift: the Data plane loses the Workspace, Bootstrap
+        # keeps the row that claims it has one.
+        workspace_client.result = None
+
+        read = await client.get("/api/local/v1/setup/workspace", headers=headers)
+        written = await client.put(
+            "/api/local/v1/setup/workspace",
+            headers=headers,
+            json={"owner_display_name": "Manson"},
+        )
+        assert read.status_code == written.status_code == 409
+        assert read.json()["detail"] == written.json()["detail"]
+        assert read.json()["detail"]["reason"] == ORPHANED_OWNER_BINDING_REASON
+        # Nothing quietly built a second Workspace over the lost one.
+        assert len(workspace_client.initialize_calls) == 1
+
+        # The pair that makes this Host self-contradicting, in one place.
+        #
+        # ``/api/local/v1/host`` still reports ``workspace_state: ready``, and
+        # that is not a bug being left in: ``state`` there is Bootstrap's own
+        # state, published unauthenticated, and Bootstrap has no way to ask the
+        # Data plane anything. What was missing was anywhere that compared the
+        # two — so a reader who fetched both got "ready" and a refusal about
+        # the same Workspace and had to work out for itself which was true.
+        overview = await client.get("/api/local/v1/host")
+        assert overview.json()["state"]["workspace_state"] == "ready"
+
+        # This route is that comparison, and it needs no credentials — so the
+        # gate can ask it without a phone having tried, and a phone can ask it
+        # before it has a session.
+        unready = await client.get("/api/local/v1/setup/readiness")
+        assert unready.status_code == 200
+        assert unready.json()["state"] == "orphaned"
+
+        control = BootstrapControlClient(settings.control_socket)
+        released = await control.request("owner.release")
+        assert released["released"] is True
+        assert released["before"]["workspace_state"] == "ready"
+        assert released["after"]["workspace_state"] == "absent"
+        assert "controller_grants" in released["preserved"]
+
+        # The phone that was already holding this Host still holds it: the
+        # repair takes a claim about the Data plane, not anybody's authority.
+        still_held = await client.get("/api/local/v1/auth/session", headers=headers)
+        assert still_held.status_code == 200
+        assert still_held.json()["controller"]["owner_id"] is None
+
+        absent = await client.get("/api/local/v1/setup/workspace", headers=headers)
+        assert absent.status_code == 200
+        assert absent.json()["state"] == "absent"
+        # And the overview stops saying the opposite: the two halves now agree
+        # because the one that was over-claiming has stopped.
+        repaired_overview = await client.get("/api/local/v1/host")
+        assert repaired_overview.json()["state"]["workspace_state"] == "absent"
+        assert repaired_overview.json()["state"]["claim_state"] == "claimed"
+        assert (
+            await client.get("/api/local/v1/setup/readiness")
+        ).json()["state"] == "absent"
+
+        # A different name than the lost Workspace carried is accepted now,
+        # because there is no longer a Workspace to contradict.
+        repaired = await client.put(
+            "/api/local/v1/setup/workspace",
+            headers=headers,
+            json={"owner_display_name": "Manson", "companion_display_name": "小忆"},
+        )
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["state"] == "ready"
+        assert (
+            await client.get("/api/local/v1/setup/readiness")
+        ).json()["state"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_releasing_an_owner_binding_twice_is_the_same_as_releasing_it_once(
+    tmp_path: Path, short_runtime_dir: Path
+) -> None:
+    """The reset that destroys the Data authority runs this unconditionally."""
+
+    settings = _settings(tmp_path, runtime_dir=short_runtime_dir)
+    service = _service(settings, network=InMemoryNetworkProvisioning())
+    service.initialize()
+    server = BootstrapControlServer(settings.control_socket, service)
+    await server.start()
+    client = BootstrapControlClient(settings.control_socket)
+    try:
+        first = await client.request("owner.release")
+        second = await client.request("owner.release")
+        assert first["released"] is False
+        assert second["released"] is False
+        assert first["after"] == second["after"]
+        assert first["after"]["workspace_state"] == "absent"
+    finally:
+        await server.close()
+        service.shutdown()
+
+
 def test_the_endpoint_says_where_this_host_answers(monkeypatch) -> None:
     """A Host that can only be found by announcement cannot be found at all
     on a network that does not carry them to the phone in front of it.
@@ -1657,6 +1787,8 @@ async def test_an_owner_can_see_what_happened_to_their_devices(
         headers,
         _runtime_client,
         _devices_client,
+        _workspace_client,
+        _settings,
     ):
         answered = await client.get("/api/local/v1/activity", headers=headers)
 
@@ -1677,6 +1809,8 @@ async def test_a_history_that_could_not_be_read_never_reads_as_nothing_happened(
         headers,
         _runtime_client,
         devices_client,
+        _workspace_client,
+        _settings,
     ):
         devices_client.history_failure = DeviceInventoryError(
             "Admin Device history control plane is unavailable"
@@ -1713,6 +1847,8 @@ async def test_a_directory_that_cannot_be_reached_costs_names_and_nothing_else(
         headers,
         _runtime_client,
         devices_client,
+        _workspace_client,
+        _settings,
     ):
         devices = await client.get("/api/management/v1/devices", headers=headers)
         assert devices.status_code == 503
@@ -1740,6 +1876,8 @@ async def test_an_owner_names_a_device_and_the_list_says_so(
         headers,
         _runtime_client,
         devices_client,
+        _workspace_client,
+        _settings,
     ):
         renamed = await client.patch(
             "/api/management/v1/devices/device-local-1",
@@ -1760,6 +1898,8 @@ async def test_a_device_that_is_not_this_owners_cannot_be_renamed(
         headers,
         _runtime_client,
         devices_client,
+        _workspace_client,
+        _settings,
     ):
         refused = await client.patch(
             "/api/management/v1/devices/device-of-someone-else",

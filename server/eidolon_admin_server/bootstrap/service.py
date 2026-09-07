@@ -721,6 +721,53 @@ class BootstrapService:
             ],
         }
 
+    def release_owner_binding(self) -> dict[str, Any]:
+        """Forget the Owner this Host holds, keeping everything else.
+
+        The narrow repair for a Host whose two halves disagree: Bootstrap
+        holds an Owner and the Data plane has no Workspace under it. Both
+        halves of the Local API setup contract refuse that Host — the same way,
+        to every phone, forever — because a Controller's ``owner_id`` comes
+        from Host state, so a phone claimed today inherits a binding made
+        before the Data plane lost its Workspace.
+
+        Deliberately not self-healing. A Data plane that answers "no Workspace"
+        may have lost one or may merely be pointed somewhere empty, and this
+        Host cannot tell the two apart; clearing an Owner binding on its own
+        judgement would re-onboard a Host whose real Workspace is intact
+        somewhere else. So the Host refuses, names the condition, and waits for
+        whoever can tell — which is the same reason ``reset_authority`` keeps
+        the binding rather than guessing that a lost phone means a lost Owner.
+
+        What survives: the Host identity, every Controller Grant, the reset
+        epoch, the network. Nobody is unpaired by this, and no phone has to be
+        claimed again. What is lost is one row's worth of claim about another
+        plane's store — and on a Host that needs this, that claim was false.
+        """
+
+        before = self._store.get_state()
+        after = self._store.release_owner_binding(now=_timestamp(_now()))
+        released = before.owner_id is not None
+        if released:
+            logger.warning(
+                "Owner binding released owner_id=%s workspace_state=%s -> %s",
+                before.owner_id,
+                before.workspace_state.value,
+                after.workspace_state.value,
+            )
+        return {
+            "host_id": self._identity_manager.identity.host_id,
+            "released": released,
+            "before": before.to_dict(),
+            "after": after.to_dict(),
+            "preserved": [
+                "host_identity",
+                "controller_grants",
+                "network_profiles",
+                "component_data",
+            ],
+        }
+
     async def reset_development_state(
         self,
         *,

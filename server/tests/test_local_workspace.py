@@ -19,10 +19,13 @@ from eidolon_admin_server.local_api.config import (
     load_local_api_settings,
 )
 from eidolon_admin_server.local_api.workspace import (
+    ORPHANED_OWNER_BINDING_REASON,
     AdminWorkspaceClient,
     WorkspaceSetupError,
+    existing_workspace,
     host_workspace_operation_id,
     resolve_workspace_setup,
+    workspace_setup_detail,
 )
 
 
@@ -210,6 +213,11 @@ async def test_setup_rejects_changed_input_before_owner_binding() -> None:
             bound_owner_id=None,
         )
     assert caught.value.status_code == 409
+    # The only way to reach this screen is a Host that showed a setup form
+    # while already holding a Workspace, so the refusal names the one string
+    # that would work rather than leaving it to be guessed.
+    assert caught.value.reason is not None
+    assert "Manson" in caught.value.reason
 
 
 def test_local_api_settings_keep_admin_transport_separate(tmp_path) -> None:
@@ -226,3 +234,115 @@ def test_local_api_settings_keep_admin_transport_separate(tmp_path) -> None:
     )
     assert settings.admin_base_url == "http://127.0.0.1:9000"
     assert settings.admin_service_token != ""
+
+
+class _AbsentWorkspace:
+    """A Data plane that has no operation under this Host's id."""
+
+    def __init__(self) -> None:
+        self.initialize_calls = 0
+
+    async def get(self, _operation_id: str) -> WorkspaceOperation:
+        raise WorkspaceSetupError(
+            "Workspace operation does not exist", status_code=404
+        )
+
+    async def initialize(self, **_kwargs) -> WorkspaceOperation:
+        self.initialize_calls += 1
+        raise AssertionError("a bound Host must not be re-initialized")
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_an_owner_binding_without_a_workspace_refuses_the_same_way_on_both_verbs() -> None:
+    """The condition is one Host, not two requests.
+
+    Reading answered the raw 404 from Data and writing answered 503; the phone
+    only ever reached the first, and neither said what was wrong. Both are now
+    the conflict they always were, and both carry the sentence.
+    """
+
+    operation_id = host_workspace_operation_id("ehost-56475aa75463474c0285")
+    marker = operation_id.replace("-", "")
+
+    read = _AbsentWorkspace()
+    with pytest.raises(WorkspaceSetupError) as reading:
+        await existing_workspace(
+            read,  # type: ignore[arg-type]
+            operation_id=operation_id,
+            bound_owner_id=f"owner_{marker}",
+        )
+
+    written = _AbsentWorkspace()
+    with pytest.raises(WorkspaceSetupError) as writing:
+        await resolve_workspace_setup(
+            written,  # type: ignore[arg-type]
+            operation_id=operation_id,
+            payload=WorkspaceInitializeRequest(owner_display_name="Manson"),
+            bound_owner_id=f"owner_{marker}",
+        )
+
+    assert reading.value.status_code == writing.value.status_code == 409
+    assert reading.value.reason == writing.value.reason
+    assert reading.value.reason == ORPHANED_OWNER_BINDING_REASON
+    # A bound Host is never quietly given a second Workspace in place of the
+    # one it lost: which of "Data lost it" and "Data is pointed somewhere
+    # empty" this is, the Host cannot tell.
+    assert written.initialize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_unbound_host_still_initializes_when_data_has_nothing() -> None:
+    operation_id = host_workspace_operation_id("ehost-56475aa75463474c0285")
+    payload = WorkspaceInitializeRequest(owner_display_name="Manson")
+    created = WorkspaceOperation.model_validate(
+        _workspace_response(operation_id, payload)
+    )
+
+    class FirstSetup(_AbsentWorkspace):
+        async def initialize(self, **_kwargs) -> WorkspaceOperation:
+            self.initialize_calls += 1
+            return created
+
+    workspace = FirstSetup()
+    assert (
+        await existing_workspace(
+            workspace,  # type: ignore[arg-type]
+            operation_id=operation_id,
+            bound_owner_id=None,
+        )
+        is None
+    )
+    assert (
+        await resolve_workspace_setup(
+            workspace,  # type: ignore[arg-type]
+            operation_id=operation_id,
+            payload=payload,
+            bound_owner_id=None,
+        )
+        == created
+    )
+    assert workspace.initialize_calls == 1
+
+
+def test_only_a_tagged_refusal_reaches_a_person() -> None:
+    """The App drops a bare string detail, deliberately, so this must not be one."""
+
+    tagged = workspace_setup_detail(
+        WorkspaceSetupError(
+            "Host Owner binding has no Data workspace operation",
+            status_code=409,
+            reason=ORPHANED_OWNER_BINDING_REASON,
+        )
+    )
+    assert tagged == {"reason": ORPHANED_OWNER_BINDING_REASON}
+    # Under the App's own cap on what it will show.
+    assert len(ORPHANED_OWNER_BINDING_REASON) <= 300
+    assert "owner-reset" in ORPHANED_OWNER_BINDING_REASON
+
+    diagnostic = workspace_setup_detail(
+        WorkspaceSetupError("Admin workspace control plane is unavailable")
+    )
+    assert diagnostic == "Admin workspace control plane is unavailable"

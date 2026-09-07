@@ -27,6 +27,15 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     reset.add_argument("--ttl", type=int, default=None)
+    subparsers.add_parser(
+        "owner-reset",
+        help=(
+            "forget which Owner this Host holds, when its Data plane no longer "
+            "has that Owner's Workspace and no phone can finish setup; keeps "
+            "the Host identity, every Controller Grant, the network and all "
+            "component data"
+        ),
+    )
     code = subparsers.add_parser(
         "commissioning-code",
         help=(
@@ -69,6 +78,8 @@ async def _execute(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "controller-reset":
         parameters = {} if args.ttl is None else {"ttl_seconds": args.ttl}
         return await client.request("controller.reset", **parameters)
+    if args.command == "owner-reset":
+        return await client.request("owner.release")
     if args.command == "commissioning-code":
         parameters: dict[str, Any] = {}
         if args.ttl is not None:

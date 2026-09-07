@@ -589,6 +589,21 @@ class SQLiteBootstrapStateStore:
             raise SQLiteBootstrapStoreError("bound controller grant disappeared")
         return result
 
+    def release_owner_binding(self, *, now: str) -> BootstrapState:
+        state = self.get_state()
+        if state.owner_id is None and state.workspace_state is WorkspaceState.ABSENT:
+            return state
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE bootstrap_state
+                   SET workspace_state = ?, owner_id = NULL, updated_at = ?
+                 WHERE singleton = 1
+                """,
+                (WorkspaceState.ABSENT.value, now),
+            )
+        return self.get_state()
+
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation:
         current = self.get_operation(operation.operation_id)
         if current is not None:

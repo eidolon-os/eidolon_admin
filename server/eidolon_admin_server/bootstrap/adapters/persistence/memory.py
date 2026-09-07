@@ -278,6 +278,22 @@ class InMemoryBootstrapStateStore:
         )
         return grant
 
+    def release_owner_binding(self, *, now: str) -> BootstrapState:
+        self._require_open()
+        assert self._state is not None
+        if (
+            self._state.owner_id is None
+            and self._state.workspace_state is WorkspaceState.ABSENT
+        ):
+            return self._state
+        self._state = replace(
+            self._state,
+            workspace_state=WorkspaceState.ABSENT,
+            owner_id=None,
+            updated_at=now,
+        )
+        return self._state
+
     def create_operation(self, operation: BootstrapOperation) -> BootstrapOperation:
         self._require_open()
         current = self._operations.get(operation.operation_id)

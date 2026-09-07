@@ -548,7 +548,22 @@ POST /api/local/v1/auth/sessions
 GET  /api/local/v1/auth/session
 GET  /api/local/v1/setup/workspace
 PUT  /api/local/v1/setup/workspace
+GET  /api/local/v1/setup/readiness
 ```
+
+`GET /api/local/v1/setup/readiness` 是 Local API 自己回答「现在认领这台 Host 的
+手机能不能走完 setup」：它把 Bootstrap 持有的 Owner 绑定和 Data 平面真正拥有的
+Workspace 合成一个答案（`absent` / `ready` / `orphaned` / `unknown`），因为只有它
+同时持有这两半。单独一条路由而不是挂在 `/healthz` 或 `/api/local/v1/host` 上——
+回答它要向 Data 发一次请求，挂在 `/healthz` 上会让 Data 变慢时这个组件读起来像挂
+了，挂在 Host overview 上则会横在每台手机的第一屏前面。
+
+`orphaned` 是两半对不上：Bootstrap 记着一位 Owner，Data 平面没有对应的
+Workspace。`owner_id` 是 Host 状态而不是 per-Controller 状态，所以此后认领这台
+Host 的每一台手机都会继承这个绑定，`GET` 和 `PUT` 会以同一个理由（409，带
+`{"detail": {"reason": ...}}`）拒绝它们，永远如此。Host 不会自愈——Data 说「没有」
+既可能是丢了，也可能只是指向了一个空库，Host 分不出来——它命名这个状态，并把修复
+留给 `eidolon-bootstrapctl owner-reset`（或 `./eidolon <host> owner-reset --apply`）。
 
 后续计划；每个 mutation 在对应 contract、Owner scope 和 idempotency tests 落地前都不算已有 API：
 

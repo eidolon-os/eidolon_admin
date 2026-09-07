@@ -11,6 +11,7 @@ projection rather than accepting Hub credentials from Mobile.
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
@@ -105,12 +106,44 @@ from .runtime import (
 from .workspace import (
     AdminWorkspaceClient,
     AdminWorkspacePort,
+    ORPHANED_OWNER_BINDING_REASON,
     WorkspaceSetupError,
     WorkspaceSetupRequest,
+    existing_workspace,
     host_workspace_operation_id,
     resolve_workspace_setup,
+    workspace_setup_detail,
     workspace_status,
 )
+
+
+_LOGGER = logging.getLogger("eidolon.local_api")
+
+
+def _log_orphaned_owner_binding(
+    operation_id: str, bound_owner_id: str | None
+) -> None:
+    """Say it once, in the words of whoever has to act on it.
+
+    The phone is told a sentence about the Host; this is the other half of the
+    same fact, carrying the identifiers and the command, written where the
+    person who can run it will be looking. Both routes that can discover the
+    condition come here, so the wording cannot drift between the screen a
+    person happens to hit and the gate that happens to run.
+
+    The Owner is named only when the caller was a Controller, because the
+    readiness route has no principal to read it from — and printing
+    ``owner_id=None`` there would say the opposite of what is wrong.
+    """
+
+    _LOGGER.warning(
+        "Host Owner binding has no Data workspace: operation_id=%s%s; the Data "
+        "plane lost this Host's Workspace, or was restored without it. No phone "
+        "can complete setup until the Workspace is restored or "
+        "`eidolon-bootstrapctl owner-reset` clears the binding.",
+        operation_id,
+        "" if bound_owner_id is None else f" owner_id={bound_owner_id}",
+    )
 
 
 class HostProofRequest(BaseModel):
@@ -422,6 +455,60 @@ def create_app(
                 "bootstrap Host identity is unavailable",
             ) from exc
 
+    @app.get("/api/local/v1/setup/readiness")
+    async def setup_readiness() -> dict:
+        """Whether a phone claimed onto this Host right now could finish setup.
+
+        Its own route, and not a field on ``/healthz`` or ``/api/local/v1/host``,
+        because answering it costs a call to the Data plane through Admin. On
+        ``/healthz`` a slow Data plane would make this component read as down;
+        on the Host overview it would sit in front of every phone's first
+        screen. Here the cost lands only on the caller that asked the question,
+        which is the readiness gate, and a readiness gate is allowed to wait.
+
+        Unauthenticated for the same reason the Host overview is: the two facts
+        it composes are ``workspace_state``, which that overview already
+        publishes to the LAN, and whether the Data plane agrees. A Host nobody
+        can finish setting up is not a secret from the network it is sitting on.
+
+        ``unknown`` rather than a guess when Data cannot be reached. The gate
+        reads that as not-ready — a check that could not be made is not a check
+        that passed, and Data being unreachable is separately a fact this Host
+        is not ready.
+        """
+
+        health = await request_bootstrap("health")
+        try:
+            operation_id = host_workspace_operation_id(
+                health["descriptor"]["host_id"]
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "bootstrap Host identity is unavailable",
+            ) from exc
+
+        def answer(state: str) -> dict:
+            return {
+                "contract_version": "1",
+                "operation_id": operation_id,
+                "state": state,
+            }
+
+        # Bootstrap claiming no Workspace cannot be the half that is wrong: the
+        # binding only ever over-claims, so with nothing claimed there is
+        # nothing to disagree with, and Data need not be asked at all.
+        if health.get("state", {}).get("workspace_state") != "ready":
+            return answer("absent")
+        try:
+            await workspace.get(operation_id)
+        except WorkspaceSetupError as exc:
+            if exc.status_code != 404:
+                return answer("unknown")
+            _log_orphaned_owner_binding(operation_id, None)
+            return answer("orphaned")
+        return answer("ready")
+
     @app.get("/api/local/v1/setup/workspace")
     async def get_workspace(
         authorization: str | None = Header(default=None, alias="Authorization"),
@@ -432,14 +519,13 @@ def create_app(
         if owner_id is None:
             return workspace_status(operation_id=operation_id, result=None)
         try:
-            result = await workspace.get(operation_id)
-        except WorkspaceSetupError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
-        if result.owner.owner_id != owner_id:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Host Owner scope does not match its Data workspace",
+            result = await existing_workspace(
+                workspace,
+                operation_id=operation_id,
+                bound_owner_id=owner_id,
             )
+        except WorkspaceSetupError as exc:
+            raise _workspace_refusal(exc, operation_id, owner_id) from exc
         return workspace_status(operation_id=operation_id, result=result)
 
     @app.put("/api/local/v1/setup/workspace")
@@ -457,7 +543,9 @@ def create_app(
                 bound_owner_id=principal.get("owner_id"),
             )
         except WorkspaceSetupError as exc:
-            raise HTTPException(exc.status_code, str(exc)) from exc
+            raise _workspace_refusal(
+                exc, operation_id, principal.get("owner_id")
+            ) from exc
         bound = await request_bootstrap(
             "controller.bind_owner",
             authentication=True,
@@ -471,6 +559,25 @@ def create_app(
                 "bootstrap did not confirm the Data Owner scope",
             )
         return workspace_status(operation_id=operation_id, result=result)
+
+    def _workspace_refusal(
+        exc: WorkspaceSetupError,
+        operation_id: str,
+        bound_owner_id: str | None,
+    ) -> HTTPException:
+        """Refuse in the App's words, and leave the operator's in the log.
+
+        A Host that has come apart this way is one nobody is standing in front
+        of: the phone shows a sentence and the person puts it down. So the
+        sentence that names the repair goes to the App, and the identifiers
+        needed to *run* the repair go where whoever runs it will be looking.
+        Only this condition is logged — the rest are ordinary refusals of one
+        request, and a warning per phone poll would bury it.
+        """
+
+        if exc.reason == ORPHANED_OWNER_BINDING_REASON:
+            _log_orphaned_owner_binding(operation_id, bound_owner_id)
+        return HTTPException(exc.status_code, workspace_setup_detail(exc))
 
     async def _owned_companion(
         companion_id: str,

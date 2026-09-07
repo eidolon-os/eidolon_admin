@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/local-api/v1/setup-readiness.schema.json",
+  "title": "Eidolon Local API Setup Readiness V1",
+  "description": "Whether a phone that claims this Host could finish setting it up. Composed by the Local API from the Owner binding Bootstrap holds and the Workspace the Data plane has, because it is the only component holding both. Unauthenticated, like the Host overview: a Host nobody can finish setting up is not a secret from the network it sits on.",
+  "type": "object",
+  "required": ["contract_version", "operation_id", "state"],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "operation_id": { "type": "string", "format": "uuid" },
+    "state": {
+      "description": "absent: no Workspace and no binding, so setup can proceed. ready: both halves agree. orphaned: this Host holds an Owner its Data plane has no Workspace for, so every phone is refused at setup identically and forever, and the repair is Host-side. unknown: the Data plane could not be asked, which a readiness gate must not read as a check that passed.",
+      "enum": ["absent", "ready", "orphaned", "unknown"]
+    }
+  },
+  "additionalProperties": false
+}

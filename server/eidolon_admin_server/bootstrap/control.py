@@ -162,6 +162,8 @@ class BootstrapControlServer:
                 setup_code=request.get("setup_code"),
                 controller=controller,
             )
+        if operation == "owner.release":
+            return self._service.release_owner_binding()
         if operation == "controller.reset":
             raw_ttl = request.get("ttl_seconds")
             return self._service.open_controller_recovery_window(
