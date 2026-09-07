@@ -27,25 +27,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import rfc8785
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from eidolon_sdk.device_foundation.v1 import (
+    COMMISSIONING_VOUCHER_PURPOSE as VOUCHER_PURPOSE,
+)
 
-#: Domain separation from the management credential the same secret signs.
-#: Without it a management JWT could be replayed as a commissioning proof.
-VOUCHER_KEY_INFO = b"eidolon-commissioning-voucher-v1"
-VOUCHER_PURPOSE = "eidolon-commissioning-voucher-v1"
+# Re-exported, not redefined. Hub derives the same key to verify what this
+# issues, so a second spelling here would be discovered only as a device
+# refused at first commissioning — never as a disagreement about a derivation.
+from eidolon_sdk.device_foundation.v1 import (  # noqa: F401
+    derive_voucher_signing_key,
+)
 
 #: Long enough for a device to leave the setup network, join the Owner's Wi-Fi
 #: and reach the Host. The window is not what makes the voucher one-shot — Hub
 #: keeps a durable jti ledger for that — it only bounds how long a voucher
 #: issued just before a Controller was revoked can still buy a pending Proposal.
 DEFAULT_TTL = timedelta(hours=24)
-
-
-def derive_voucher_signing_key(management_secret: bytes) -> bytes:
-    return HKDF(
-        algorithm=hashes.SHA256(), length=32, salt=None, info=VOUCHER_KEY_INFO
-    ).derive(management_secret)
 
 
 def _b64(raw: bytes) -> str:
