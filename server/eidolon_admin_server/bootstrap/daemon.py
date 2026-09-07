@@ -126,10 +126,19 @@ async def run_daemon(
         try:
             recovered_network = await network.recover_interrupted()
             logger.info(
-                "network provisioning recovery complete state=%s",
+                "network provisioning recovery complete state=%s observed=%s",
                 recovered_network.state.value,
+                network.observes_host_network,
             )
-            service.reconcile_network_state(recovered_network.state)
+            # Recovery always runs — an interrupted change has to be rolled
+            # back either way. What is conditional is keeping the answer: a
+            # simulated adapter starts every process knowing nothing, so its
+            # ``unconfigured`` is the absence of an observation, and writing it
+            # into the durable record replaced a ``connected`` that a claim had
+            # actually established. The last state anything observed or caused
+            # is a better record than a fresh guess.
+            if network.observes_host_network:
+                service.reconcile_network_state(recovered_network.state)
         except Exception:
             logger.exception("network provisioning recovery failed closed")
         commissioning = CommissioningService(store=store, network=network)

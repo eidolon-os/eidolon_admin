@@ -37,6 +37,24 @@ class NetworkProvisioningSnapshot:
 
 @runtime_checkable
 class NetworkProvisioning(Protocol):
+    #: Whether this adapter's snapshots are observations of the Host's real
+    #: network, or a simulation of one.
+    #:
+    #: Bootstrap keeps ``network_state`` durably, and a durable record must not
+    #: be written from a report that is not an observation. The simulated
+    #: adapter has no memory across processes, so a fresh one reports
+    #: ``unconfigured`` — which means "I have never been told", not "this Host
+    #: has no network". Reconciled at startup, that ignorance replaced a
+    #: ``connected`` a claim had actually established, and the phone talking to
+    #: the Host over that very network was shown a warning saying it had none.
+    #:
+    #: The concrete adapter has the same failure mode from a different cause —
+    #: NetworkManager reports no active access point until its autoconnect
+    #: policy settles — and handles it where it belongs, by waiting until its
+    #: own answer is worth having. An adapter that can never make its answer
+    #: worth having says so here instead.
+    observes_host_network: bool
+
     async def recover_interrupted(self) -> NetworkProvisioningSnapshot: ...
 
     async def scan(self) -> list[WifiAccessPoint]: ...

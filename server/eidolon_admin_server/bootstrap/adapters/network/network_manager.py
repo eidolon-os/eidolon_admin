@@ -66,6 +66,11 @@ class NetworkManagerProvisioning:
         self._active: _ActiveNetworkChange | None = None
         self._recovery_complete = True
 
+    #: This adapter reads the Host's actual link, so Bootstrap may keep what
+    #: it reports. ``_wait_until_manager_startup_complete`` is what makes that
+    #: true at startup rather than merely claimed.
+    observes_host_network = True
+
     async def recover_interrupted(self) -> NetworkProvisioningSnapshot:
         """Rollback checkpoints for this Wi-Fi device after bootstrapd restart."""
 

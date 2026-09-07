@@ -711,26 +711,95 @@ def test_both_transports_carry_the_same_document_on_every_host(
             service.shutdown()
 
 
+@pytest.mark.asyncio
+async def test_a_restart_does_not_erase_a_network_fact_nobody_observed_otherwise(
+    tmp_path: Path, short_runtime_dir: Path
+) -> None:
+    """A simulated adapter's fresh ignorance must not become a durable fact.
+
+    ``bootstrapd`` reconciles the adapter's post-recovery state on every start.
+    The simulated adapter keeps its state in the object, so a new process
+    reports ``unconfigured`` because it has never been told — and that replaced
+    the ``connected`` a LAN claim had established. Nothing was left unable to
+    proceed: the claim path publishes CONNECTED on this adapter anyway. What it
+    cost was the truth of the record, and the phone reading it over the very
+    network the Host claimed not to have was shown a warning for it.
+
+    Recovery still runs; only keeping its answer is conditional.
+    """
+
+    settings = _settings(tmp_path, runtime_dir=short_runtime_dir)
+    store = SQLiteBootstrapStateStore(settings.database_path)
+    store.open()
+    try:
+        store.initialize("2026-09-07T00:00:00Z")
+        store.reconcile_network_state(
+            network_state=NetworkState.CONNECTED, now="2026-09-07T00:00:00Z"
+        )
+        assert store.get_state().network_state is NetworkState.CONNECTED
+    finally:
+        store.close()
+
+    stop = asyncio.Event()
+    daemon_task = asyncio.create_task(run_daemon(settings, stop_event=stop))
+    try:
+        for _ in range(200):
+            if settings.control_socket.exists():
+                break
+            await asyncio.sleep(0.01)
+        client = BootstrapControlClient(settings.control_socket)
+        health = await client.request("health")
+        assert health["state"]["network_state"] == "connected"
+    finally:
+        stop.set()
+        await asyncio.wait_for(daemon_task, timeout=5)
+
+    # And an adapter that does observe is still authoritative on restart: what
+    # it reports is a fact about the Host, so it replaces whatever was kept.
+    from eidolon_admin_server.bootstrap.adapters.network import (
+        InMemoryNetworkProvisioning as _Simulated,
+    )
+
+    class ObservingNetwork(_Simulated):
+        observes_host_network = True
+
+    service = _service(settings, network=ObservingNetwork())
+    service.initialize()
+    try:
+        recovered = await ObservingNetwork().recover_interrupted()
+        service.reconcile_network_state(recovered.state)
+        assert service.health()["state"]["network_state"] == "unconfigured"
+    finally:
+        service.shutdown()
+
+
 def test_a_claim_never_overwrites_a_real_adapter_s_network_state(
     tmp_path: Path,
 ) -> None:
-    """Only the memory adapter lets a request publish a network fact.
+    """Only a simulated adapter lets a request publish a network fact.
 
     The LAN claim path published CONNECTED unconditionally, because the only
-    Host that could reach it had a memory adapter with no OS state to discover.
-    On a Host with a real adapter that would let a caller's claim overwrite a
-    fact it holds no authority over — so the store's own refusal stands, and it
-    is the correct answer.
+    Host that could reach it had a simulated adapter with no OS state to
+    discover. On a Host whose adapter observes the real link that would let a
+    caller's claim overwrite a fact it holds no authority over — so the store's
+    own refusal stands, and it is the correct answer.
+
+    Which of the two this is comes from the adapter, not from configuration.
+    This test used to name ``NETWORK_MANAGER`` in settings while injecting a
+    simulator, describing a Host that cannot exist; the adapter that will
+    actually answer is the one asked.
     """
+
+    class ObservingNetwork(InMemoryNetworkProvisioning):
+        observes_host_network = True
 
     development = _settings(tmp_path)
     HostIdentityManager(development.identity_key_path, development.mode).load()
     settings = replace(
         _settings(tmp_path),
         commissioning_adapter=CommissioningAdapter.BLUEZ,
-        network_adapter=NetworkAdapter.NETWORK_MANAGER,
     )
-    service = _service(settings, network=InMemoryNetworkProvisioning())
+    service = _service(settings, network=ObservingNetwork())
     service.initialize()
     try:
         private_key = ec.generate_private_key(ec.SECP256R1())

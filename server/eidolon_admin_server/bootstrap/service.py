@@ -17,7 +17,6 @@ from .commissioning_service import CommissioningService
 from .config import (
     BootstrapMode,
     BootstrapSettings,
-    NetworkAdapter,
 )
 from .identity import HostIdentityManager
 from .controller_auth import (
@@ -492,19 +491,23 @@ class BootstrapService:
             session_id=commissioning_id,
             secret=setup_code,
         )
-        # The store refuses a claim unless the Host is on a network, and the
-        # memory adapter has no OS state to discover — so on that adapter the
-        # fact that this pinned Local API was reached at all is the only
+        # The store refuses a claim unless the Host is on a network, and a
+        # simulated adapter has no OS state to discover — so on that adapter
+        # the fact that this pinned Local API was reached at all is the only
         # evidence there is, and it is published here.
         #
-        # A Host with a real adapter has a real answer, already reconciled by
-        # the daemon at startup and on every change. Publishing CONNECTED here
-        # would let a caller's request overwrite a network fact it holds no
-        # authority over — a Pi reachable over its link-local cable while
-        # NetworkManager reports the Wi-Fi down would be recorded as connected
-        # because somebody asked to claim it. If the real state says otherwise
-        # the store refuses, and that refusal is correct.
-        if self._settings.network_adapter is NetworkAdapter.MEMORY:
+        # A Host with an observing adapter has a real answer. Publishing
+        # CONNECTED here would let a caller's request overwrite a network fact
+        # it holds no authority over — a Pi reachable over its link-local cable
+        # while NetworkManager reports the Wi-Fi down would be recorded as
+        # connected because somebody asked to claim it. If the real state says
+        # otherwise the store refuses, and that refusal is correct.
+        #
+        # Asked of the adapter rather than of configuration. This used to read
+        # the settings enum, which named the same adapter twice — here and at
+        # startup — and let the two places disagree about which reports carry
+        # authority.
+        if not self._network.observes_host_network:
             self.reconcile_network_state(NetworkState.CONNECTED)
         result = commissioning.claim_controller(authorization, controller)
         return {

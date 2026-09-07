@@ -14,6 +14,12 @@ from ...ports import (
 class InMemoryNetworkProvisioning:
     """Simulates stage/confirm/rollback without claiming hardware behavior."""
 
+    #: Nothing here observes a Host. State lives in this object, so a new
+    #: process starts with none and reports ``unconfigured`` because it has
+    #: never been told otherwise — not because the Host is off the network.
+    #: Bootstrap must not write that into a durable record.
+    observes_host_network = False
+
     def __init__(
         self,
         *,
