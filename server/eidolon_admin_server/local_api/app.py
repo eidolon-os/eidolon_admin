@@ -118,6 +118,37 @@ from .workspace import (
 
 _LOGGER = logging.getLogger("eidolon.local_api")
 
+def _refusal_sentence(detail: object) -> str:
+    """The one sentence in a refusal, whichever shape it arrived in.
+
+    Two surfaces phrase refusals differently — the Local API tags a body, the
+    management surface wraps its own envelope — and one resolver now raises
+    into both. Whichever it is, what a person is shown is a sentence.
+    """
+
+    if isinstance(detail, dict):
+        reason = detail.get("reason")
+        if isinstance(reason, str) and reason:
+            return reason
+    return str(detail)
+
+
+#: Which hop could not answer when a session tried to learn its Owner scope.
+#:
+#: Every Owner-scoped route resolves through one place, so an untagged failure
+#: there is one status code standing for two unrelated outages, on every route
+#: at once. Both are transient and neither is the phone's to fix, so both say
+#: to wait rather than offering a control — but they are repaired in different
+#: places, and whoever is asked will want to know which.
+_OWNER_SCOPE_BOOTSTRAP_REASON = (
+    "主机的 Bootstrap 暂时没有应答，读不到它自己的身份，因此无法确定这台手机代表哪位 Owner。"
+    "稍后重试；如果一直这样，要在主机上查 bootstrapd。"
+)
+_OWNER_SCOPE_DATA_REASON = (
+    "主机的数据面暂时没有应答，无法确定这台手机代表哪位 Owner。"
+    "稍后重试；如果一直这样，要在主机上查 data 与 data-workspace 服务。"
+)
+
 
 class HostProofRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -446,13 +477,26 @@ def create_app(
 
         if session.owner_resolved:
             return session.owner_id
-        operation_id = await operation_id_for_host()
+        # Two hops, and which one failed is the only useful thing to say about
+        # a failure. Untagged, both arrived at the phone as a bare 503 that the
+        # App drops by convention, so a person and whoever they asked saw a
+        # status code and a route name — and every Owner-scoped route shows the
+        # same one, because they all resolve through here.
+        try:
+            operation_id = await operation_id_for_host()
+        except HTTPException as exc:
+            raise HTTPException(
+                exc.status_code, {"reason": _OWNER_SCOPE_BOOTSTRAP_REASON}
+            ) from exc
         try:
             existing = await existing_workspace(workspace, operation_id=operation_id)
         except WorkspaceSetupError as exc:
-            raise HTTPException(
-                exc.status_code, workspace_setup_detail(exc)
-            ) from exc
+            # A refusal Data graded itself keeps its own words; only the
+            # unreachable case is ours to name.
+            detail = workspace_setup_detail(exc)
+            if not isinstance(detail, dict):
+                detail = {"reason": _OWNER_SCOPE_DATA_REASON}
+            raise HTTPException(exc.status_code, detail) from exc
         session.remember_owner(None if existing is None else existing.owner.owner_id)
         return session.owner_id
 
@@ -620,9 +664,19 @@ def create_app(
     def _admission_scope(owner_id: str) -> tuple[OwnerDomainId, BusinessOwnerId]:
         target = resolved.device_onboarding_target
         if target is None:
+            # Read once at startup, so this answer is the same for every
+            # request this process serves. Said in the body because the route
+            # has more than one way to answer 503 and they are repaired in
+            # completely different places: this one is the Host's rendered
+            # configuration, and never a transient.
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Hub Device onboarding target is not configured",
+                {
+                    "reason": (
+                        "这台主机没有配置设备接入所需的 Owner Domain 信任材料，"
+                        "手机这边重试不会有别的结果。要在主机上重新生成配置。"
+                    )
+                },
             )
         try:
             return OwnerDomainId(target.owner_domain_id), BusinessOwnerId(owner_id)
@@ -934,9 +988,13 @@ def create_app(
             principal, session = await authenticated_controller(authorization)
             owner_id = await owner_scope(session)
         except HTTPException as exc:
+            # This surface carries its own refusal envelope, so a tagged detail
+            # is unwrapped into it rather than stringified. ``str()`` on a dict
+            # would put `{'reason': '...'}` in front of a person — the shape of
+            # the sentence surviving and the sentence itself not.
             raise refuse(
                 exc.status_code,
-                str(exc.detail),
+                _refusal_sentence(exc.detail),
                 code="controller_session_invalid"
                 if exc.status_code == status.HTTP_401_UNAUTHORIZED
                 else None,

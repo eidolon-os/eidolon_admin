@@ -27,8 +27,10 @@ from eidolon_admin_server.app.management.context import (
 )
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
+from eidolon_admin_server.local_api import app as local_api_app
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
+from eidolon_admin_server.local_api.workspace import WorkspaceSetupError
 from eidolon_admin_server.local_api.management.router import (
     ManagementBackendError,
     refusal_for_status,
@@ -468,3 +470,42 @@ async def test_the_reason_map_and_the_boolean_map_cannot_disagree() -> None:
         )
         for name, available in context.capabilities.items():
             assert available is (name not in context.unavailable), name
+
+
+async def test_a_hop_that_could_not_answer_names_itself_rather_than_the_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One 503 standing for unrelated outages is one nobody can act on.
+
+    Owner scope is resolved in one place, so every Owner-scoped route reports
+    the same status when that resolution fails. Reported as operator prose the
+    App drops by convention, a phone shows a status code and a route name —
+    which is exactly how this reached a teammate as "returns 503 and I cannot
+    tell which exit fired". The Host knows which hop it was every time.
+
+    And it arrives through this surface's own envelope, so the sentence is
+    unwrapped into it rather than stringified: ``str()`` on the tagged body
+    would put ``{'reason': ...}`` in front of a person.
+    """
+
+    _stub_controller(monkeypatch, owner_id="owner-1")
+
+    async def unreachable(_workspace, *, operation_id: str):
+        raise WorkspaceSetupError("Admin workspace control plane is unavailable")
+
+    monkeypatch.setattr(local_api_app, "existing_workspace", unreachable)
+    backend = _ManagementBackend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.get(_CONTEXT, headers=headers)
+
+    assert answered.status_code == 503
+    detail = answered.json()["detail"]
+    assert detail["kind"] == "upstream"
+    assert detail["retryable"] is True
+    assert "数据面" in detail["reason"], detail
+    assert "{" not in detail["reason"], "the envelope was handed a dict, not a sentence"
+    assert backend.owners_asked == []
