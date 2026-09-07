@@ -19,23 +19,22 @@ less clearly:
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-import rfc8785
-from eidolon_sdk.device_foundation.v1 import (
-    COMMISSIONING_VOUCHER_PURPOSE as VOUCHER_PURPOSE,
-)
-
-# Re-exported, not redefined. Hub derives the same key to verify what this
-# issues, so a second spelling here would be discovered only as a device
-# refused at first commissioning — never as a disagreement about a derivation.
+# The signed bytes are eidolon_sdk's, not this module's. Hub verifies what this
+# issues without either side ever comparing an intermediate value, so a second
+# spelling of the derivation, the claim set or the compact framing would be
+# discovered only as a device refused at its first commissioning — never as a
+# disagreement about any of the three. What stays here is Host policy: how the
+# window is chosen, and how a base identity and a one-shot `jti` are minted.
+# `derive_voucher_signing_key` is re-exported because the tests that sign for
+# this issuer reach it through this module.
 from eidolon_sdk.device_foundation.v1 import (  # noqa: F401
+    commissioning_voucher_claims,
     derive_voucher_signing_key,
+    sign_commissioning_voucher,
 )
 
 #: Long enough for a device to leave the setup network, join the Owner's Wi-Fi
@@ -43,10 +42,6 @@ from eidolon_sdk.device_foundation.v1 import (  # noqa: F401
 #: keeps a durable jti ledger for that — it only bounds how long a voucher
 #: issued just before a Controller was revoked can still buy a pending Proposal.
 DEFAULT_TTL = timedelta(hours=24)
-
-
-def _b64(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,24 +72,19 @@ class CommissioningVoucherIssuer:
         expires_at = issued_at + self.ttl
         base_id = device_base_id or "device-base-" + secrets.token_bytes(32).hex()
         jti = "jti-" + secrets.token_hex(16)
-        claims = {
-            "base_identity_provenance": provenance,
-            "device_base_id": base_id,
-            "exp": int(expires_at.timestamp()),
-            "jti": jti,
-            "operational_spki_sha256": operational_spki_sha256,
-            "owner_domain_id": owner_domain_id,
-            "purpose": VOUCHER_PURPOSE,
-        }
-        signing_input = (
-            f"{_b64(rfc8785.dumps({'alg': 'HS256', 'typ': 'JWT'}))}."
-            f"{_b64(rfc8785.dumps(claims))}"
+        claims = commissioning_voucher_claims(
+            device_base_id=base_id,
+            owner_domain_id=owner_domain_id,
+            operational_spki_sha256=operational_spki_sha256,
+            jti=jti,
+            expires_at_unix=int(expires_at.timestamp()),
+            provenance=provenance,
         )
-        signature = hmac.new(
-            derive_voucher_signing_key(self.secret), signing_input.encode(), hashlib.sha256
-        ).digest()
         return CommissioningVoucher(
-            voucher=f"{signing_input}.{_b64(signature)}",
+            voucher=sign_commissioning_voucher(
+                claims=claims,
+                signing_key=derive_voucher_signing_key(self.secret),
+            ),
             jti=jti,
             device_base_id=base_id,
             expires_at=expires_at,
