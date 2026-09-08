@@ -42,13 +42,17 @@ class CommissioningProtocolSession:
 
     async def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("request_id")
+        # Read before the try so the refusal log below can name the operation
+        # even when the refusal came from the two checks that precede it — a
+        # malformed request_id and a wrong contract version are exactly the
+        # cases where an operator most needs to know what was being attempted.
+        operation = request.get("operation")
         try:
             self._validate_request_id(request_id)
             if request.get("contract_version") != "1":
                 raise CommissioningRequestRejected(
                     "unsupported_contract", "Unsupported commissioning contract"
                 )
-            operation = request.get("operation")
             payload = request.get("payload", {})
             if not isinstance(payload, dict):
                 raise CommissioningRequestRejected(
@@ -137,6 +141,20 @@ class CommissioningProtocolSession:
                 "result": result,
             }
         except CommissioningRequestRejected as exc:
+            # Every deterministic refusal used to be silent: only the
+            # `except Exception` below wrote anything, so a Host that refused a
+            # phone on purpose left no trace and the only way to learn why was
+            # to open bootstrap.sqlite3 by hand. That is how "this Host has not
+            # opened first Setup" was diagnosed on a Host with zero grants.
+            #
+            # The operation and the code, never the payload: a Setup code, a
+            # controller public key and a Wi-Fi passphrase all arrive in there.
+            logger.warning(
+                "commissioning request refused: operation=%s code=%s request_id=%s",
+                operation if isinstance(operation, str) else "<malformed>",
+                exc.code,
+                request_id if isinstance(request_id, str) else "<malformed>",
+            )
             return {
                 "contract_version": "1",
                 "request_id": request_id if isinstance(request_id, str) else None,

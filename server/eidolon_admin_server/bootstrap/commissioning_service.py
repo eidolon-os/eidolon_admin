@@ -19,6 +19,7 @@ from .domain import (
     BootstrapOperation,
     BootstrapOperationState,
     BootstrapOperationType,
+    ClaimState,
     ControllerGrant,
     ControllerRole,
     NetworkState,
@@ -192,6 +193,27 @@ class CommissioningService:
             or grant.reset_epoch != state.reset_epoch
             or grant.role is not ControllerRole.HOST_ADMIN
         ):
+            # Both refusals mean "not you", but they mean different things to
+            # the person holding the phone, and the endpoint document cannot
+            # tell them apart: `setup_session` reads null on a Host that was
+            # never commissioned and on a claimed Host whose window closed.
+            #
+            # A claimed Host says so. Then "this Host belongs to someone
+            # already" and "this Host is waiting for its first Setup code" stop
+            # being one message that guesses, which is what sent an operator
+            # down the controller-reset path on a Host that had no grants at
+            # all. `already_claimed` was declared in
+            # contracts/bootstrap/v1/error.schema.json from the start and never
+            # raised; this is what it was for.
+            #
+            # It tells an unauthenticated peer in BLE range whether this Host is
+            # claimed. That is the same fact a claimed Host already leaks by
+            # refusing every claim, one round trip later.
+            if state.claim_state is ClaimState.CLAIMED:
+                raise CommissioningRequestRejected(
+                    "already_claimed",
+                    "This Host is already claimed and this Controller is not one of its Host Admins",
+                )
             raise CommissioningRequestRejected(
                 "controller_denied", "Controller is not authorized for this Host"
             )

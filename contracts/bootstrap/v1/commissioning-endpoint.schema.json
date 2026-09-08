@@ -3,14 +3,24 @@
   "$id": "https://eidolon.local/contracts/bootstrap/v1/commissioning-endpoint.schema.json",
   "title": "Eidolon BLE Commissioning Endpoint V1",
   "type": "object",
-  "required": ["contract_version", "purpose", "host_public_key", "reset_epoch", "tls_spki_fingerprint", "development_setup", "signature"],
+  "required": [
+    "contract_version",
+    "purpose",
+    "host_public_key",
+    "reset_epoch",
+    "tls_spki_fingerprint",
+    "setup_session",
+    "local_api_base_urls",
+    "signature"
+  ],
   "properties": {
     "contract_version": { "const": "1" },
     "purpose": { "const": "eidolon-ble-commissioning-endpoint-v1" },
     "host_public_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
     "reset_epoch": { "type": "integer", "minimum": 0 },
     "tls_spki_fingerprint": { "type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$" },
-    "development_setup": {
+    "setup_session": {
+      "description": "The open claim window, or null when there is none. Null does not say why: a Host that was never commissioned and a claimed Host whose window closed both read null here. A Controller that needs to tell them apart asks, and is answered `controller_denied` or `already_claimed`.",
       "oneOf": [
         { "type": "null" },
         {
@@ -23,6 +33,11 @@
           "additionalProperties": false
         }
       ]
+    },
+    "local_api_base_urls": {
+      "description": "Addresses the Local API answers on, signed with everything else, and trimmed to whatever the GATT payload ceiling leaves — so an empty array is a Host with no room to say, not a Host with no Local API.",
+      "type": "array",
+      "items": { "type": "string", "format": "uri" }
     },
     "signature": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
   },
