@@ -3,6 +3,9 @@
 - 状态：Accepted
 - 日期：2026-08-27
 - 取代：[ADR-0005](adr-0005-development-lan-commissioning.md)
+- 被 [ADR-0007](adr-0007-factory-setup-code-and-one-window-logic.md) 收窄：
+  下面第 1 条删掉固定开发码的三个理由都成立，但连带删掉的「未认领 Host 有一个窗口」
+  不在其中。出厂 Setup 码作为设备上的文件回来了，窗口的边界只剩「被消费」。
 
 ## Context
 
