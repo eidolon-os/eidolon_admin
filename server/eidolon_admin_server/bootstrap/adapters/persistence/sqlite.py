@@ -18,11 +18,8 @@ from ...domain import (
     ControllerGrant,
     ControllerRole,
     NetworkState,
-    lockout_until,
 )
 from ...ports.state_store import (
-    COMMISSIONING_LOCKOUT_SECONDS,
-    MAX_COMMISSIONING_FAILED_ATTEMPTS,
     BootstrapStateConflict,
 )
 
@@ -58,9 +55,9 @@ class SQLiteBootstrapStoreError(RuntimeError):
 def _session_of(row) -> CommissioningSessionMetadata:
     """One place a session row becomes a session.
 
-    It was built by hand at two call sites, and the second one is where
-    `locked_until` would have been forgotten — the same shape of omission that
-    let `expires_at` drift out of the endpoint contract.
+    It was built by hand at two call sites, which is one more than the number
+    of places that can forget a column — the same shape of omission that let
+    `expires_at` drift out of the endpoint contract.
     """
 
     return CommissioningSessionMetadata(
@@ -70,7 +67,6 @@ def _session_of(row) -> CommissioningSessionMetadata:
         consumed_at=row["consumed_at"],
         revoked_at=row["revoked_at"],
         failed_attempts=int(row["failed_attempts"]),
-        locked_until=row["locked_until"],
     )
 
 
@@ -152,8 +148,7 @@ class SQLiteBootstrapStateStore:
                     revoked_at TEXT,
                     claimed_controller_id TEXT,
                     failed_attempts INTEGER NOT NULL DEFAULT 0
-                        CHECK (failed_attempts >= 0),
-                    locked_until TEXT
+                        CHECK (failed_attempts >= 0)
                 );
 
                 CREATE TABLE bootstrap_operations (
@@ -313,8 +308,7 @@ class SQLiteBootstrapStateStore:
                 revoked_at TEXT,
                 claimed_controller_id TEXT,
                 failed_attempts INTEGER NOT NULL DEFAULT 0
-                    CHECK (failed_attempts >= 0),
-                locked_until TEXT
+                    CHECK (failed_attempts >= 0)
             );
 
             INSERT INTO commissioning_sessions (
@@ -405,7 +399,7 @@ class SQLiteBootstrapStateStore:
         row = self.connection.execute(
             """
             SELECT session_id, created_at, expires_at, consumed_at, revoked_at,
-                   failed_attempts, locked_until
+                   failed_attempts
               FROM commissioning_sessions
              ORDER BY created_at DESC, session_id DESC
              LIMIT 1
@@ -429,27 +423,15 @@ class SQLiteBootstrapStateStore:
         if row is None or not _session_of(row).is_open(now):
             raise BootstrapStateConflict("commissioning session is unavailable")
         if not hmac.compare_digest(row["secret_hash"], secret_hash):
-            failed_attempts = int(row["failed_attempts"]) + 1
-            locked = failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS
+            # Counted as evidence; nothing acts on it.
             with self.connection:
                 self.connection.execute(
                     """
                     UPDATE commissioning_sessions
-                       SET failed_attempts = ?, locked_until = ?
+                       SET failed_attempts = failed_attempts + 1
                      WHERE session_id = ?
                     """,
-                    (
-                        # The count restarts with the lock, so serving the wait
-                        # returns a full allowance instead of leaving the window
-                        # one guess from locking again forever.
-                        0 if locked else failed_attempts,
-                        (
-                            lockout_until(now, seconds=COMMISSIONING_LOCKOUT_SECONDS)
-                            if locked
-                            else row["locked_until"]
-                        ),
-                        session_id,
-                    ),
+                    (session_id,),
                 )
             raise BootstrapStateConflict("commissioning session is unavailable")
         return _session_of(row)

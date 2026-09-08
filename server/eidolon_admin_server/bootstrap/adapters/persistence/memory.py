@@ -14,11 +14,8 @@ from ...domain import (
     CommissioningSessionSeed,
     ControllerGrant,
     NetworkState,
-    lockout_until,
 )
 from ...ports.state_store import (
-    COMMISSIONING_LOCKOUT_SECONDS,
-    MAX_COMMISSIONING_FAILED_ATTEMPTS,
     BootstrapStateConflict,
 )
 
@@ -114,21 +111,10 @@ class InMemoryBootstrapStateStore:
                 break
             if hmac.compare_digest(stored_hash, secret_hash):
                 return metadata
-            failed_attempts = metadata.failed_attempts + 1
-            locked = failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS
+            # Counted as evidence; nothing acts on it. A wrong code is refused
+            # and the window stays as it was — see CommissioningSessionMetadata.
             self._sessions[index] = (
-                replace(
-                    metadata,
-                    # Counting restarts with the lock, so serving the wait
-                    # returns the window to a full allowance rather than
-                    # leaving it one guess from locking again forever.
-                    failed_attempts=0 if locked else failed_attempts,
-                    locked_until=(
-                        lockout_until(now, seconds=COMMISSIONING_LOCKOUT_SECONDS)
-                        if locked
-                        else metadata.locked_until
-                    ),
-                ),
+                replace(metadata, failed_attempts=metadata.failed_attempts + 1),
                 stored_hash,
             )
             break

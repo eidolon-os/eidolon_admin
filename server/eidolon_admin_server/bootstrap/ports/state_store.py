@@ -19,18 +19,6 @@ class BootstrapStateConflict(RuntimeError):
     """A durable authority mutation conflicts with current Bootstrap state."""
 
 
-MAX_COMMISSIONING_FAILED_ATTEMPTS = 5
-
-#: How long a window stops accepting codes after that many wrong ones.
-#:
-#: It used to be revoked outright, which is right for a window an operator can
-#: mint again on the spot and wrong for the one printed on the chassis: an
-#: unexpiring window that has been revoked cannot be reopened by anyone, so
-#: five wrong guesses from across the room bricked a device out of its box
-#: (ADR-0007). A lock makes guessing cost time — 10^8 codes at one try per
-#: fifteen minutes is not a way in — and costs a legitimate owner who fat
-#: fingered five times exactly one wait.
-COMMISSIONING_LOCKOUT_SECONDS = 900
 
 
 @runtime_checkable

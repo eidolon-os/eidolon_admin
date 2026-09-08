@@ -439,10 +439,24 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
 
 
 @pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
-def test_commissioning_locks_setup_code_after_five_wrong_attempts(
+def test_a_wrong_setup_code_is_refused_without_closing_the_window(
     tmp_path: Path,
     store_kind: str,
 ) -> None:
+    """Nothing closes a window on a wrong code.
+
+    Revoking one on the fifth guess was right for a window an operator could
+    mint again on the spot, and wrong for the one printed on the chassis: an
+    unexpiring window that has been revoked cannot be reopened by anyone, so
+    five wrong guesses from across the room bricked a device out of its box.
+
+    A lockout was the first answer and it was too much machinery for the
+    threat — eight digits is 10^8, and each guess needs a round trip from
+    inside Bluetooth range. `failed_attempts` is kept as evidence, and nothing
+    acts on it. That is a deliberate departure from ADR-0006, which listed
+    "5 次失败吊销" among the properties it preserved; ADR-0007 records it.
+    """
+
     settings = _settings(tmp_path)
     store = (
         InMemoryBootstrapStateStore()
@@ -462,7 +476,7 @@ def test_commissioning_locks_setup_code_after_five_wrong_attempts(
             network=InMemoryNetworkProvisioning(),
         )
         wrong_code = "00000012" if descriptor["setup_code"] != "00000012" else "00000013"
-        for attempt in range(5):
+        for attempt in range(6):
             with pytest.raises(
                 CommissioningRequestRejected,
                 match="Commissioning session is unavailable",
@@ -471,34 +485,22 @@ def test_commissioning_locks_setup_code_after_five_wrong_attempts(
                     session_id=descriptor["commissioning_id"],
                     secret=wrong_code,
                 )
-            expected = 0 if attempt == 4 else attempt + 1
-            assert store.latest_commissioning_session().failed_attempts == expected
+            assert store.latest_commissioning_session().failed_attempts == attempt + 1
 
-        # Locked, not revoked. Revoking an unexpiring window means nobody can
-        # reopen it, and the window this rule guards is the one whose code is
-        # printed on the chassis — five wrong guesses from across the room used
-        # to brick a device out of its box (ADR-0007).
+        # Still open, and the right code still works — the sixth guess being
+        # allowed is the whole point.
         session = store.latest_commissioning_session()
         assert session.revoked_at is None
-        assert session.locked_until is not None
-
-        # The right code is refused too, while the lock stands.
-        with pytest.raises(CommissioningRequestRejected):
+        assert session.is_open(session.created_at)
+        assert (
             commissioning.authorize(
                 session_id=descriptor["commissioning_id"],
                 secret=descriptor["setup_code"],
             )
+            is not None
+        )
         assert store.get_state().claim_state.value == "unclaimed"
         assert store.list_controllers() == []
-
-        # And it is a wait, not an ending: the same window opens again once the
-        # lock has passed, with a full allowance rather than one guess left.
-        # `locked_until` is the moment it reopens, not the last moment it is
-        # shut — "locked until T" reads that way, and the boundary has to be
-        # one of the two.
-        assert not session.is_open(session.created_at)
-        assert session.is_open(session.locked_until)
-        assert session.failed_attempts == 0
     finally:
         bootstrap.shutdown()
 
