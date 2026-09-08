@@ -26,6 +26,7 @@ from .controller_auth import (
 )
 from .domain import (
     SETUP_CODE_DIGITS,
+    ClaimState,
     CommissioningSessionSeed,
     ControllerGrant,
     ControllerRole,
@@ -111,6 +112,7 @@ class BootstrapService:
                 "marked %s interrupted bootstrap operation(s) failed",
                 interrupted,
             )
+        self._open_factory_window(now)
         self._run_id = str(uuid.uuid4())
         self._started_at = now
         logger.info(
@@ -118,6 +120,60 @@ class BootstrapService:
             self._run_id,
             os.getpid(),
         )
+
+    def _open_factory_window(self, now: str) -> None:
+        """Stand up the window the code on the chassis is for (ADR-0007).
+
+        A device is unboxed, powered on, and claimed by the code printed on it.
+        Nothing about that involves anyone reaching this Host's control socket,
+        so the window cannot wait for `commissioning-code` — which is exactly
+        why there was no out-of-box flow at all.
+
+        Three conditions, each of which is the whole answer on its own:
+
+        * the file exists — its absence is how a development fleet sharing one
+          code stays safe, and how a Host built without a code behaves as it
+          did before;
+        * the Host is unclaimed — a claimed Host's window is its owner's to
+          open, and standing one up here would hand a second admin to whoever
+          read the chassis;
+        * nothing is open already — minting supersedes, so doing this on every
+          start would throw away a window an operator had just issued, and
+          would rebuild one a claim had already consumed.
+        """
+
+        code = self._read_factory_setup_code()
+        if code is None:
+            return
+        if self._store.get_state().claim_state is not ClaimState.UNCLAIMED:
+            return
+        session = self._store.latest_commissioning_session()
+        if session is not None and session.is_open(now):
+            return
+        self._issue_setup_code(code)
+        logger.info("opened the factory claim window from %s", self._settings.factory_setup_code_path)
+
+    def _read_factory_setup_code(self) -> str | None:
+        path = self._settings.factory_setup_code_path
+        try:
+            code = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return None
+        except OSError as error:
+            logger.warning("cannot read %s: %s", path, error)
+            return None
+        if not is_usable_setup_code(code):
+            # Refused rather than used: a code this Host would not have drawn
+            # is one a person guesses first, and an unexpiring window is the
+            # last place to accept one. Says so without saying what it read.
+            logger.error(
+                "%s does not hold a usable %s-digit Setup code; no factory "
+                "window was opened",
+                path,
+                SETUP_CODE_DIGITS,
+            )
+            return None
+        return code
 
     def shutdown(self) -> None:
         if self._run_id is not None:

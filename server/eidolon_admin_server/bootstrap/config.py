@@ -60,6 +60,24 @@ class BootstrapSettings:
         return self.state_dir / "host_identity.ed25519"
 
     @property
+    def factory_setup_code_path(self) -> Path:
+        """The Setup code this device was manufactured with, if it has one.
+
+        Beside the identity key, on purpose: same directory, same owner, same
+        0600, delivered by the same write-once manufacturing channel. Not an
+        environment variable — `systemctl show -p Environment` prints every one
+        of them to any user who asks, which was measured, and a 0600 file does
+        not (ADR-0007).
+
+        The file's absence is the switch. A Host that was never given a code
+        opens no standing window and falls back to `commissioning-code`, which
+        is also what keeps a development fleet sharing one code safe: don't
+        deliver the file, and there is nothing standing to walk up to.
+        """
+
+        return self.state_dir / "factory_setup_code"
+
+    @property
     def commissioning_tls_pem_path(self) -> Path:
         return self.state_dir / "commissioning_tls.pem"
 
