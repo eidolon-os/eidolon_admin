@@ -24,6 +24,7 @@ from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
 from eidolon_admin_server.bootstrap.adapters.persistence import (
+    BOOTSTRAP_SCHEMA_VERSION,
     InMemoryBootstrapStateStore,
     SQLiteBootstrapStateStore,
 )
@@ -539,7 +540,10 @@ def test_sqlite_v6_grants_migrate_to_epoch_scoped_identity(tmp_path: Path) -> No
     store.open()
     try:
         store.initialize("2026-08-25T00:00:00Z")
-        assert store.connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert (
+            store.connection.execute("PRAGMA user_version").fetchone()[0]
+            == BOOTSTRAP_SCHEMA_VERSION
+        )
 
         history = store.list_controllers()
         assert [(grant.controller_id, grant.reset_epoch) for grant in history] == [

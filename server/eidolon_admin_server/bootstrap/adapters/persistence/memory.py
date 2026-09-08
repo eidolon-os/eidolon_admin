@@ -14,8 +14,10 @@ from ...domain import (
     CommissioningSessionSeed,
     ControllerGrant,
     NetworkState,
+    lockout_until,
 )
 from ...ports.state_store import (
+    COMMISSIONING_LOCKOUT_SECONDS,
     MAX_COMMISSIONING_FAILED_ATTEMPTS,
     BootstrapStateConflict,
 )
@@ -66,7 +68,7 @@ class InMemoryBootstrapStateStore:
         session_id: str,
         secret_hash: str,
         created_at: str,
-        expires_at: str,
+        expires_at: str | None = None,
     ) -> None:
         self._require_open()
         self._sessions = [
@@ -108,23 +110,23 @@ class InMemoryBootstrapStateStore:
         for index, (metadata, stored_hash) in enumerate(self._sessions):
             if metadata.session_id != session_id:
                 continue
-            if (
-                metadata.consumed_at is not None
-                or metadata.revoked_at is not None
-                or metadata.expires_at <= now
-            ):
+            if not metadata.is_open(now):
                 break
             if hmac.compare_digest(stored_hash, secret_hash):
                 return metadata
             failed_attempts = metadata.failed_attempts + 1
+            locked = failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS
             self._sessions[index] = (
                 replace(
                     metadata,
-                    failed_attempts=failed_attempts,
-                    revoked_at=(
-                        now
-                        if failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS
-                        else None
+                    # Counting restarts with the lock, so serving the wait
+                    # returns the window to a full allowance rather than
+                    # leaving it one guess from locking again forever.
+                    failed_attempts=0 if locked else failed_attempts,
+                    locked_until=(
+                        lockout_until(now, seconds=COMMISSIONING_LOCKOUT_SECONDS)
+                        if locked
+                        else metadata.locked_until
                     ),
                 ),
                 stored_hash,

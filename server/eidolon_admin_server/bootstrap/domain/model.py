@@ -7,6 +7,8 @@ Controller grants, network operations, and their reset-epoch boundary.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import re
 import secrets
 from dataclasses import asdict, dataclass
@@ -86,14 +88,43 @@ class BootstrapState:
         return result
 
 
+def lockout_until(now: str, *, seconds: int) -> str:
+    """When a window that has just locked starts accepting codes again.
+
+    Takes and returns the same ISO-8601 `...Z` shape the stores keep, so the
+    comparison that reads it stays a string comparison like every other one
+    beside it — a lock expressed in a different format is a lock that sorts
+    wrong on the day someone compares them directly.
+    """
+
+    moment = datetime.fromisoformat(now.replace("Z", "+00:00"))
+    return (moment + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+
+
 @dataclass(frozen=True, slots=True)
 class CommissioningSessionMetadata:
+    """One setup window.
+
+    ``expires_at`` is None for a window with no clock on it, which is every
+    window this Host opens now: the only thing that closes one is being
+    consumed by a claim, or being superseded when a newer one is minted
+    (ADR-0007). A device sits in its box for a month, and a person who powers
+    it on and walks off to make tea comes back to a window still open — neither
+    of which a timer can be set for.
+
+    ``locked_until`` is what replaced revoking on the fifth wrong code. Revoking
+    an unexpiring window means nobody can reopen it, which for the code printed
+    on the chassis is a device bricked out of the box; a lock lets the guesses
+    cost time instead.
+    """
+
     session_id: str
     created_at: str
-    expires_at: str
+    expires_at: str | None = None
     consumed_at: str | None = None
     revoked_at: str | None = None
     failed_attempts: int = 0
+    locked_until: str | None = None
 
     def to_dict(self) -> dict[str, str | int | None]:
         return {
@@ -103,7 +134,17 @@ class CommissioningSessionMetadata:
             "consumed_at": self.consumed_at,
             "revoked_at": self.revoked_at,
             "failed_attempts": self.failed_attempts,
+            "locked_until": self.locked_until,
         }
+
+    def is_open(self, now: str) -> bool:
+        """Whether a code submitted at ``now`` could still be accepted."""
+
+        if self.consumed_at is not None or self.revoked_at is not None:
+            return False
+        if self.expires_at is not None and self.expires_at <= now:
+            return False
+        return self.locked_until is None or self.locked_until <= now
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +160,7 @@ class CommissioningSessionSeed:
 
     session_id: str
     secret_hash: str
-    expires_at: str
+    expires_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

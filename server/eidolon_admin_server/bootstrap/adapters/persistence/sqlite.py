@@ -18,14 +18,16 @@ from ...domain import (
     ControllerGrant,
     ControllerRole,
     NetworkState,
+    lockout_until,
 )
 from ...ports.state_store import (
+    COMMISSIONING_LOCKOUT_SECONDS,
     MAX_COMMISSIONING_FAILED_ATTEMPTS,
     BootstrapStateConflict,
 )
 
 
-BOOTSTRAP_SCHEMA_VERSION = 8
+BOOTSTRAP_SCHEMA_VERSION = 9
 _SCHEMA_VERSION = BOOTSTRAP_SCHEMA_VERSION
 
 #: A Grant belongs to one reset epoch, so its identity carries the epoch.
@@ -51,6 +53,25 @@ CREATE TABLE controller_grants (
 
 class SQLiteBootstrapStoreError(RuntimeError):
     """Raised when bootstrap persistence is unknown or inconsistent."""
+
+
+def _session_of(row) -> CommissioningSessionMetadata:
+    """One place a session row becomes a session.
+
+    It was built by hand at two call sites, and the second one is where
+    `locked_until` would have been forgotten — the same shape of omission that
+    let `expires_at` drift out of the endpoint contract.
+    """
+
+    return CommissioningSessionMetadata(
+        session_id=row["session_id"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+        consumed_at=row["consumed_at"],
+        revoked_at=row["revoked_at"],
+        failed_attempts=int(row["failed_attempts"]),
+        locked_until=row["locked_until"],
+    )
 
 
 class SQLiteBootstrapStateStore:
@@ -101,6 +122,7 @@ class SQLiteBootstrapStateStore:
                 self._migrate_v5_to_v6,
                 self._migrate_v6_to_v7,
                 self._migrate_v7_to_v8,
+                self._migrate_v8_to_v9,
             )
             for step in ladder[version - 1 :]:
                 step()
@@ -122,12 +144,16 @@ class SQLiteBootstrapStateStore:
                     session_id TEXT PRIMARY KEY,
                     secret_hash TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
+                    -- Nullable: a window with no clock on it, which is every
+                    -- window this Host opens now (ADR-0007). Rows written
+                    -- before that carry their old timestamp and still expire.
+                    expires_at TEXT,
                     consumed_at TEXT,
                     revoked_at TEXT,
                     claimed_controller_id TEXT,
                     failed_attempts INTEGER NOT NULL DEFAULT 0
-                        CHECK (failed_attempts >= 0)
+                        CHECK (failed_attempts >= 0),
+                    locked_until TEXT
                 );
 
                 CREATE TABLE bootstrap_operations (
@@ -264,6 +290,46 @@ class SQLiteBootstrapStateStore:
             """
         )
 
+    def _migrate_v8_to_v9(self) -> None:
+        """Windows lose their clock, and gain a lock instead (ADR-0007).
+
+        SQLite cannot drop a NOT NULL, so `expires_at` is relaxed by rebuilding
+        the table. Existing rows keep the timestamp they were written with: a
+        window minted under the old rule still expires when it said it would,
+        which is the only reading that does not silently extend authority
+        somebody already granted.
+        """
+
+        self.connection.executescript(
+            """
+            ALTER TABLE commissioning_sessions RENAME TO commissioning_sessions_v8;
+
+            CREATE TABLE commissioning_sessions (
+                session_id TEXT PRIMARY KEY,
+                secret_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT,
+                consumed_at TEXT,
+                revoked_at TEXT,
+                claimed_controller_id TEXT,
+                failed_attempts INTEGER NOT NULL DEFAULT 0
+                    CHECK (failed_attempts >= 0),
+                locked_until TEXT
+            );
+
+            INSERT INTO commissioning_sessions (
+                session_id, secret_hash, created_at, expires_at,
+                consumed_at, revoked_at, claimed_controller_id, failed_attempts
+            )
+            SELECT
+                session_id, secret_hash, created_at, expires_at,
+                consumed_at, revoked_at, claimed_controller_id, failed_attempts
+            FROM commissioning_sessions_v8;
+
+            DROP TABLE commissioning_sessions_v8;
+            """
+        )
+
     def _migrate_v7_to_v8(self) -> None:
         """Stop storing what the Data plane holds.
 
@@ -313,7 +379,7 @@ class SQLiteBootstrapStateStore:
         session_id: str,
         secret_hash: str,
         created_at: str,
-        expires_at: str,
+        expires_at: str | None = None,
     ) -> None:
         with self.connection:
             self.connection.execute(
@@ -339,7 +405,7 @@ class SQLiteBootstrapStateStore:
         row = self.connection.execute(
             """
             SELECT session_id, created_at, expires_at, consumed_at, revoked_at,
-                   failed_attempts
+                   failed_attempts, locked_until
               FROM commissioning_sessions
              ORDER BY created_at DESC, session_id DESC
              LIMIT 1
@@ -347,14 +413,7 @@ class SQLiteBootstrapStateStore:
         ).fetchone()
         if row is None:
             return None
-        return CommissioningSessionMetadata(
-            session_id=row["session_id"],
-            created_at=row["created_at"],
-            expires_at=row["expires_at"],
-            consumed_at=row["consumed_at"],
-            revoked_at=row["revoked_at"],
-            failed_attempts=int(row["failed_attempts"]),
-        )
+        return _session_of(row)
 
     def authorize_commissioning_session(
         self,
@@ -367,36 +426,33 @@ class SQLiteBootstrapStateStore:
             "SELECT * FROM commissioning_sessions WHERE session_id = ?",
             (session_id,),
         ).fetchone()
-        if (
-            row is None
-            or row["consumed_at"] is not None
-            or row["revoked_at"] is not None
-            or row["expires_at"] <= now
-        ):
+        if row is None or not _session_of(row).is_open(now):
             raise BootstrapStateConflict("commissioning session is unavailable")
         if not hmac.compare_digest(row["secret_hash"], secret_hash):
             failed_attempts = int(row["failed_attempts"]) + 1
-            revoked_at = (
-                now if failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS else None
-            )
+            locked = failed_attempts >= MAX_COMMISSIONING_FAILED_ATTEMPTS
             with self.connection:
                 self.connection.execute(
                     """
                     UPDATE commissioning_sessions
-                       SET failed_attempts = ?, revoked_at = ?
+                       SET failed_attempts = ?, locked_until = ?
                      WHERE session_id = ?
                     """,
-                    (failed_attempts, revoked_at, session_id),
+                    (
+                        # The count restarts with the lock, so serving the wait
+                        # returns a full allowance instead of leaving the window
+                        # one guess from locking again forever.
+                        0 if locked else failed_attempts,
+                        (
+                            lockout_until(now, seconds=COMMISSIONING_LOCKOUT_SECONDS)
+                            if locked
+                            else row["locked_until"]
+                        ),
+                        session_id,
+                    ),
                 )
             raise BootstrapStateConflict("commissioning session is unavailable")
-        return CommissioningSessionMetadata(
-            session_id=row["session_id"],
-            created_at=row["created_at"],
-            expires_at=row["expires_at"],
-            consumed_at=row["consumed_at"],
-            revoked_at=row["revoked_at"],
-            failed_attempts=int(row["failed_attempts"]),
-        )
+        return _session_of(row)
 
     def claim_controller(
         self,

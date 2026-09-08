@@ -533,13 +533,11 @@ class BootstrapService:
         """
 
         session = self._store.latest_commissioning_session()
-        now = _timestamp(_now())
-        if (
-            session is None
-            or session.consumed_at is not None
-            or session.revoked_at is not None
-            or session.expires_at <= now
-        ):
+        # One predicate, on the session itself: consumed, revoked, expired (for
+        # a row written before windows stopped expiring) or locked out are four
+        # ways of being shut, and every place that used to spell them out was a
+        # place that could forget the fourth.
+        if session is None or not session.is_open(_timestamp(_now())):
             return None
         return {
             "commissioning_id": session.session_id,
@@ -576,23 +574,24 @@ class BootstrapService:
         have been willing to draw.
         """
 
-        ttl = ttl_seconds or self._settings.setup_code_ttl_seconds
-        if not 60 <= ttl <= 86400:
-            raise BootstrapOperationRejected("ttl_seconds must be between 60 and 86400")
+        # `ttl_seconds` is a vestige (ADR-0007). A window's only boundary is
+        # being consumed or superseded, so there is nothing here for a duration
+        # to set. It is still accepted because every caller sends one — the ops
+        # CLI defaults `--ttl-seconds` to 600 — and refusing them all to make a
+        # point would take the Host with it. What it must not do is pretend:
+        # the answer below carries `expires_at: None`, which is what a caller
+        # reads to learn the duration it asked for was not applied.
+        del ttl_seconds
         if setup_code is None:
-            return self._issue_setup_code(generate_setup_code(), ttl)
+            return self._issue_setup_code(generate_setup_code())
         if not is_usable_setup_code(setup_code):
             raise BootstrapOperationRejected(
                 f"setup_code must be a usable {SETUP_CODE_DIGITS}-digit Setup code: "
                 "digits only, not all the same, and not the plain run up or down"
             )
-        return self._issue_setup_code(setup_code, ttl)
+        return self._issue_setup_code(setup_code)
 
-    def _issue_setup_code(
-        self,
-        setup_code: str,
-        ttl_seconds: int,
-    ) -> dict[str, Any]:
+    def _issue_setup_code(self, setup_code: str) -> dict[str, Any]:
         now = _now()
         session_id = str(uuid.uuid4())
         result = {
@@ -600,13 +599,17 @@ class BootstrapService:
             "commissioning_id": session_id,
             "setup_code": setup_code,
             "issued_at": _timestamp(now),
-            "expires_at": _timestamp(now + timedelta(seconds=ttl_seconds)),
+            # No clock on it. A device sits in a box for a month, and someone
+            # who powers one on and walks off to make tea comes back to a
+            # window still open — neither is a duration anyone can set in
+            # advance. Minting supersedes whatever was open, and a claim
+            # consumes it; those are the two ways one closes (ADR-0007).
+            "expires_at": None,
         }
         self._store.issue_commissioning_session(
             session_id=session_id,
             secret_hash=hashlib.sha256(setup_code.encode("utf-8")).hexdigest(),
             created_at=result["issued_at"],
-            expires_at=result["expires_at"],
         )
         return result
 

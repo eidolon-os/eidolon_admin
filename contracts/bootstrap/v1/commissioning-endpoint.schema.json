@@ -28,7 +28,13 @@
           "required": ["commissioning_id", "expires_at"],
           "properties": {
             "commissioning_id": { "type": "string", "format": "uuid" },
-            "expires_at": { "type": "string", "format": "date-time" }
+            "expires_at": {
+              "description": "Null for a window with no clock on it, which is every window this Host opens now (ADR-0007): the only things that close one are being consumed by a claim and being superseded by a newer mint. A timestamp here is a window written before that rule and still bound by it. A reader must treat null as no expiry, never as expired.",
+              "oneOf": [
+                { "type": "null" },
+                { "type": "string", "format": "date-time" }
+              ]
+            }
           },
           "additionalProperties": false
         }

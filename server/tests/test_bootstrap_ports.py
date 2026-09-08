@@ -15,6 +15,7 @@ from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
 from eidolon_admin_server.bootstrap.adapters.persistence import (
+    BOOTSTRAP_SCHEMA_VERSION,
     InMemoryBootstrapStateStore,
     SQLiteBootstrapStateStore,
 )
@@ -181,7 +182,7 @@ def test_sqlite_v6_keeps_authority_and_drops_what_no_longer_holds_state(
         }
         version = store.connection.execute("PRAGMA user_version").fetchone()[0]
 
-        assert version == 8
+        assert version == BOOTSTRAP_SCHEMA_VERSION
         assert "daemon_runs" not in tables
         # recovery_state only ever held "normal"; a Host that carried one is
         # migrated out of it without losing the authority beside it.
@@ -287,7 +288,10 @@ def test_sqlite_v4_host_state_migrates_without_ever_gaining_an_owner_column(
         assert "owner_id" not in columns
         assert "workspace_state" not in columns
         assert migrated.get_state().claim_state is ClaimState.UNCLAIMED
-        assert migrated.connection.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert (
+            migrated.connection.execute("PRAGMA user_version").fetchone()[0]
+            == BOOTSTRAP_SCHEMA_VERSION
+        )
     finally:
         migrated.close()
 
@@ -435,7 +439,7 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
 
 
 @pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
-def test_commissioning_revokes_setup_code_after_five_wrong_attempts(
+def test_commissioning_locks_setup_code_after_five_wrong_attempts(
     tmp_path: Path,
     store_kind: str,
 ) -> None:
@@ -467,8 +471,18 @@ def test_commissioning_revokes_setup_code_after_five_wrong_attempts(
                     session_id=descriptor["commissioning_id"],
                     secret=wrong_code,
                 )
-            assert store.latest_commissioning_session().failed_attempts == attempt + 1
-        assert store.latest_commissioning_session().revoked_at is not None
+            expected = 0 if attempt == 4 else attempt + 1
+            assert store.latest_commissioning_session().failed_attempts == expected
+
+        # Locked, not revoked. Revoking an unexpiring window means nobody can
+        # reopen it, and the window this rule guards is the one whose code is
+        # printed on the chassis — five wrong guesses from across the room used
+        # to brick a device out of its box (ADR-0007).
+        session = store.latest_commissioning_session()
+        assert session.revoked_at is None
+        assert session.locked_until is not None
+
+        # The right code is refused too, while the lock stands.
         with pytest.raises(CommissioningRequestRejected):
             commissioning.authorize(
                 session_id=descriptor["commissioning_id"],
@@ -476,6 +490,15 @@ def test_commissioning_revokes_setup_code_after_five_wrong_attempts(
             )
         assert store.get_state().claim_state.value == "unclaimed"
         assert store.list_controllers() == []
+
+        # And it is a wait, not an ending: the same window opens again once the
+        # lock has passed, with a full allowance rather than one guess left.
+        # `locked_until` is the moment it reopens, not the last moment it is
+        # shut — "locked until T" reads that way, and the boundary has to be
+        # one of the two.
+        assert not session.is_open(session.created_at)
+        assert session.is_open(session.locked_until)
+        assert session.failed_attempts == 0
     finally:
         bootstrap.shutdown()
 

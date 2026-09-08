@@ -257,3 +257,61 @@ async def test_a_refusal_log_never_carries_the_payload(
     assert "commissioning_denied" in message
     assert secret not in message
     assert "0" * len(secret) not in message
+
+
+# --- 窗口的边界只有被消费与被顶掉（ADR-0007）---------------------------------
+
+
+def test_a_minted_window_carries_no_expiry(tmp_path: Path) -> None:
+    """A device in a box for a month, and tea made while it waits.
+
+    Neither is a duration anyone can set in advance, so the window has none.
+    The old `--ttl-seconds` is still accepted because every caller sends one;
+    what it must not do is claim it was applied.
+    """
+
+    service, store = _service(tmp_path)
+    issued = service.issue_setup_code(600)
+
+    assert issued["expires_at"] is None
+    assert store.latest_commissioning_session().expires_at is None
+    # And the phone is told the same thing, inside the signature.
+    assert service.commissioning_endpoint()["setup_session"]["expires_at"] is None
+
+
+def test_minting_a_window_supersedes_the_one_before_it(tmp_path: Path) -> None:
+    """At most one window is open, which is what replaces the clock."""
+
+    service, store = _service(tmp_path)
+    first = service.issue_setup_code(600)
+    second = service.issue_setup_code(600)
+
+    assert first["commissioning_id"] != second["commissioning_id"]
+    open_now = service.commissioning_endpoint()["setup_session"]
+    assert open_now["commissioning_id"] == second["commissioning_id"]
+
+    # The first one is shut, and shut by revocation rather than by a timer.
+    session = store.latest_commissioning_session()
+    assert session.session_id == second["commissioning_id"]
+    assert session.is_open(session.created_at)
+
+
+def test_a_window_written_before_the_rule_still_expires(tmp_path: Path) -> None:
+    """Rows carrying an old timestamp keep it.
+
+    Reading a stored expiry as "no expiry" would silently extend authority
+    somebody granted for ten minutes, which is the one migration outcome that
+    must not happen.
+    """
+
+    _, store = _service(tmp_path)
+    store.issue_commissioning_session(
+        session_id="0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f",
+        secret_hash="0" * 64,
+        created_at="2026-01-01T00:00:00Z",
+        expires_at="2026-01-01T00:10:00Z",
+    )
+
+    session = store.latest_commissioning_session()
+    assert session.is_open("2026-01-01T00:05:00Z")
+    assert not session.is_open("2026-01-01T00:10:01Z")
