@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from eidolon_sdk.system.v1 import HostVitalsWire
+from eidolon_sdk.system.v1 import HostVitalsWire, HostMonitorWire
 
 RuntimeState = Literal[
     "unknown", "inactive", "starting", "ready", "degraded", "blocked", "failed"
@@ -41,6 +41,8 @@ class HostMachinePort(Protocol):
     async def list_services(self) -> dict: ...
 
     async def read_vitals(self) -> HostVitalsWire: ...
+
+    async def read_monitor(self) -> HostMonitorWire: ...
 
     async def mutate(
         self,
@@ -167,6 +169,13 @@ class AdminHostServicesClient:
 
     async def list_services(self) -> dict:
         return await self._request("GET", "/api/host/services")
+
+    async def read_monitor(self) -> HostMonitorWire:
+        document = await self._request("GET", "/api/host/monitor")
+        try:
+            return HostMonitorWire.model_validate(document)
+        except ValidationError as exc:
+            raise HostServiceControlError("Host monitor did not match the shared contract", status_code=502) from exc
 
     async def read_vitals(self) -> HostVitalsWire:
         document = await self._request("GET", "/api/host/vitals")

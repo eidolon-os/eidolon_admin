@@ -236,6 +236,9 @@ def _class(name: str, schema: dict) -> str:
             expression = (
                 f"{accessor} == null ? null : {mapping}" if field["optional"] else mapping
             )
+        elif field["raw_type"] == "double":
+            expression = (f"({accessor} as num?)?.toDouble()" if field["optional"]
+                          else f"({accessor} as num).toDouble()")
         elif field["raw_type"] in _PRIMITIVES.values():
             expression = f"{accessor} as {field['type']}"
         else:

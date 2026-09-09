@@ -14,9 +14,9 @@ and therefore only work on a development Mac.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from eidolon_sdk.system.v1 import HostVitalsWire
+from eidolon_sdk.system.v1 import HostVitalsWire, HostMonitorWire
 
 from .contracts import (
     HostService,
@@ -63,6 +63,15 @@ async def list_capabilities(request: Request) -> dict[str, object]:
 
     capabilities = getattr(request.app.state, "workstation_capabilities", ())
     return {"workstation": [item.to_wire() for item in capabilities]}
+
+
+@router.get("/monitor", response_model=HostMonitorWire)
+async def host_monitor(request: Request, response: Response) -> HostMonitorWire:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await _client(request).read_monitor()
+    except HostServiceError as exc:
+        raise _fail(exc) from exc
 
 
 @router.get("/vitals", response_model=HostVitalsWire)

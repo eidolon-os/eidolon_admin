@@ -13,6 +13,8 @@ authenticates, and is passed down as an argument.
 
 from __future__ import annotations
 
+from eidolon_sdk.system.v1 import HostMonitorWire
+
 from typing import Literal, Protocol, runtime_checkable
 
 from eidolon_sdk.biz.contracts.refusal import Refusal
@@ -2047,6 +2049,18 @@ def register_management_routes(
             moments=[ActivityMomentView(**moment) for moment in answer["moments"]],
             next_cursor=None if position is None else str(position),
         )
+
+    @router.get("/host/monitor", response_model=HostMonitorWire)
+    async def read_host_monitor(
+        response: Response,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostMonitorWire:
+        await authenticated_controller_id(authorization)
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await host.read_monitor()
+        except HostServiceControlError as exc:
+            raise refuse(exc.status_code, str(exc)) from exc
 
     @router.get("/host/vitals", response_model=HostVitalsView)
     async def read_host_vitals(

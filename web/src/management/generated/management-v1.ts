@@ -263,6 +263,22 @@ export interface HomeView {
   unavailable?: Record<string, string>
 }
 
+export interface HostMonitorWire {
+  cpu: MonitorProcessor
+  disks?: Array<MonitorDisk>
+  hostname: string
+  machine_model?: string | null
+  memory: MonitorMemory
+  npu_unavailable_reason?: string | null
+  npus?: Array<MonitorProcessor>
+  observed_at: string
+  operating_system?: string | null
+  operation?: "system.host-monitor"
+  services?: Array<MonitorService>
+  services_unavailable_reason?: string | null
+  uptime_seconds?: number | null
+}
+
 export interface HostServiceInventoryView {
   services?: Array<HostServiceView>
 }
@@ -397,6 +413,70 @@ export interface MemoryWingView {
   entry_count: number
   rooms: Array<MemoryRoomView>
   wing_id: string
+}
+
+export interface MonitorCore {
+  core_id: string
+  frequency_mhz?: number | null
+  model?: string | null
+  unavailable_reason?: string | null
+  usage_percent?: number | null
+}
+
+export interface MonitorDisk {
+  available_bytes?: number | null
+  path: string
+  total_bytes?: number | null
+  unavailable_reason?: string | null
+}
+
+export interface MonitorMemory {
+  available_bytes?: number | null
+  total_bytes?: number | null
+  unavailable_reason?: string | null
+}
+
+export interface MonitorProcess {
+  command?: string | null
+  cpu_percent?: number | null
+  entry_module?: string | null
+  executable?: string | null
+  name: string
+  parent_pid: number
+  pid: number
+  rss_bytes?: number | null
+  source_path?: string | null
+  started_at?: string | null
+  state: string
+  unavailable_reason?: string | null
+  uptime_seconds?: number | null
+  user?: string | null
+  working_directory?: string | null
+}
+
+export interface MonitorProcessor {
+  cores?: Array<MonitorCore>
+  device_id: string
+  model?: string | null
+  temperature_celsius?: number | null
+  unavailable_reason?: string | null
+  usage_percent?: number | null
+}
+
+export interface MonitorService {
+  configuration_path?: string | null
+  cpu_percent?: number | null
+  exit_code?: number | null
+  main_pid?: number | null
+  memory_bytes?: number | null
+  memory_kind?: string
+  processes?: Array<MonitorProcess>
+  service_id: string
+  state: string
+  unavailable_reason?: string | null
+  unit?: string | null
+  user?: string | null
+  working_directory?: string | null
 }
 
 export interface OwnerContextView {
@@ -561,6 +641,7 @@ export interface ManagementResponses {
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
   'GET /api/management/v1/home': HomeView
+  'GET /api/management/v1/host/monitor': HostMonitorWire
   'GET /api/management/v1/host/services': HostServiceInventoryView
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView

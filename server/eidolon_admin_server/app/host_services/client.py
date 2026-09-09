@@ -15,7 +15,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 from pydantic import ValidationError
-from eidolon_sdk.system.v1 import HostVitalsWire
+from eidolon_sdk.system.v1 import HostVitalsWire, HostMonitorWire
 
 from .contracts import (
     HostService,
@@ -54,6 +54,13 @@ class HostServiceClient:
                 httpx.AsyncHTTPTransport(uds=str(uds_path)) if uds_path else None
             )
             self._client = httpx.AsyncClient(transport=transport, trust_env=False)
+
+    async def read_monitor(self) -> HostMonitorWire:
+        document = await self._request("GET", "/api/system/v1/monitor")
+        try:
+            return HostMonitorWire.model_validate(document)
+        except ValidationError as exc:
+            raise self._invalid("host monitor did not match the shared contract") from exc
 
     async def read_vitals(self) -> HostVitalsWire:
         document = await self._request("GET", "/api/system/v1/vitals")
