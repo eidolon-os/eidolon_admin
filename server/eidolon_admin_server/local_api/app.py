@@ -264,7 +264,9 @@ def create_app(
     management = management_backend or AdminManagementClient(
         base_url=resolved.admin_base_url,
         service_token=resolved.admin_service_token,
-        client=httpx.AsyncClient(),
+        # This credential-bearing hop is loopback-only; never send it through
+        # a workstation/system proxy (including macOS proxy discovery).
+        client=httpx.AsyncClient(trust_env=False),
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_management_client = management_backend is None
