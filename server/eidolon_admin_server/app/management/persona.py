@@ -33,7 +33,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from eidolon_sdk.biz.persona import PersonaAuthoring
+from eidolon_sdk.biz.persona import (
+    PersonaEditRequest,
+    PersonaEditSnapshot,
+)
 
 from eidolon_admin_server.app.control_plane.contracts import (
     PersonaChapter,
@@ -67,14 +70,14 @@ class PersonaHistorian(Protocol):
         change_summary: str,
     ) -> PersonaChapter: ...
 
-    async def get_persona(self, companion_id: str) -> PersonaAuthoring: ...
+    async def get_persona(self, companion_id: str) -> PersonaEditSnapshot: ...
 
     async def author_persona(
         self,
         companion_id: str,
-        persona: PersonaAuthoring,
+        persona: PersonaEditRequest,
         change_summary: str,
-    ) -> PersonaChapter: ...
+    ) -> PersonaEditSnapshot: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +152,7 @@ async def read_persona(
     companion_id: str,
     persona: PersonaHistorian,
     companions: RosterReader,
-) -> PersonaAuthoring:
+) -> PersonaEditSnapshot:
     """Who this Eidolon is now, in the words somebody wrote.
 
     Ownership is proved by asking the owner-scoped Companion route first, the
@@ -166,10 +169,10 @@ async def write_persona(
     *,
     owner_id: str,
     companion_id: str,
-    authored: PersonaAuthoring,
+    authored: PersonaEditRequest,
     persona: PersonaHistorian,
     companions: RosterReader,
-) -> PersonaAuthoring:
+) -> PersonaEditSnapshot:
     """Say who this Eidolon is now, and answer with what it now is.
 
     Relayed, not composed. The genome is built by the persona authority — a
@@ -183,8 +186,7 @@ async def write_persona(
     """
 
     await companions.get_owner_companion(owner_id, companion_id)
-    await persona.author_persona(companion_id, authored, OWNER_AUTHORED_SUMMARY)
-    return await persona.get_persona(companion_id)
+    return await persona.author_persona(companion_id, authored, OWNER_AUTHORED_SUMMARY)
 
 
 def _history(timeline: PersonaTimeline) -> PersonaHistory:

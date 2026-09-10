@@ -133,6 +133,16 @@
                 "type": "null"
               }
             ]
+          },
+          "preferences": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationPreferences"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -784,6 +794,42 @@
           "conversations"
         ],
         "title": "ConversationPageView",
+        "type": "object"
+      },
+      "ConversationPreferences": {
+        "additionalProperties": false,
+        "description": "Explicit owner choices, stored outside the immutable genome.",
+        "properties": {
+          "advice": {
+            "default": "when_asked",
+            "enum": [
+              "when_asked",
+              "proactive"
+            ],
+            "title": "Advice",
+            "type": "string"
+          },
+          "follow_up": {
+            "default": "when_needed",
+            "enum": [
+              "when_needed",
+              "conversational"
+            ],
+            "title": "Follow Up",
+            "type": "string"
+          },
+          "response_length": {
+            "default": "brief",
+            "enum": [
+              "brief",
+              "balanced",
+              "detailed"
+            ],
+            "title": "Response Length",
+            "type": "string"
+          }
+        },
+        "title": "ConversationPreferences",
         "type": "object"
       },
       "ConversationView": {
@@ -3063,6 +3109,76 @@
         "title": "PersonaChapterView",
         "type": "object"
       },
+      "PersonaEditRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_base_genome_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Expected Base Genome Id",
+            "type": "string"
+          },
+          "expected_preference_revision": {
+            "minimum": 1.0,
+            "title": "Expected Preference Revision",
+            "type": "integer"
+          },
+          "operation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "persona": {
+            "$ref": "#/components/schemas/PersonaAuthoring"
+          },
+          "preferences": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationPreferences"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "expected_base_genome_id",
+          "expected_preference_revision",
+          "operation_id",
+          "persona"
+        ],
+        "title": "PersonaEditRequest",
+        "type": "object"
+      },
+      "PersonaEditSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "genome_id": {
+            "title": "Genome Id",
+            "type": "string"
+          },
+          "persona": {
+            "$ref": "#/components/schemas/PersonaAuthoring"
+          },
+          "preference_revision": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Preference Revision",
+            "type": "integer"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ConversationPreferences"
+          }
+        },
+        "required": [
+          "genome_id",
+          "persona"
+        ],
+        "title": "PersonaEditSnapshot",
+        "type": "object"
+      },
       "PersonaHistoryView": {
         "additionalProperties": false,
         "description": "What my Eidolon has been, newest first.",
@@ -3092,6 +3208,59 @@
           "chapters"
         ],
         "title": "PersonaHistoryView",
+        "type": "object"
+      },
+      "PersonaPreset": {
+        "additionalProperties": false,
+        "properties": {
+          "examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Examples",
+            "type": "array"
+          },
+          "persona": {
+            "$ref": "#/components/schemas/PersonaAuthoring"
+          },
+          "preset_id": {
+            "title": "Preset Id",
+            "type": "string"
+          },
+          "revision": {
+            "default": "1",
+            "title": "Revision",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "preset_id",
+          "title",
+          "persona",
+          "examples"
+        ],
+        "title": "PersonaPreset",
+        "type": "object"
+      },
+      "PersonaPresetCatalog": {
+        "additionalProperties": false,
+        "properties": {
+          "presets": {
+            "items": {
+              "$ref": "#/components/schemas/PersonaPreset"
+            },
+            "title": "Presets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "presets"
+        ],
+        "title": "PersonaPresetCatalog",
         "type": "object"
       },
       "PersonaRestoreRequest": {
@@ -4484,7 +4653,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PersonaAuthoring"
+                  "$ref": "#/components/schemas/PersonaEditSnapshot"
                 }
               }
             },
@@ -4540,7 +4709,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/PersonaAuthoring"
+                "$ref": "#/components/schemas/PersonaEditRequest"
               }
             }
           },
@@ -4551,7 +4720,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PersonaAuthoring"
+                  "$ref": "#/components/schemas/PersonaEditSnapshot"
                 }
               }
             },
@@ -6526,6 +6695,56 @@
           }
         },
         "summary": "Get Persona Authoring Template",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persona-presets": {
+      "get": {
+        "description": "What an Eidolon would be if the create form came back untouched.\n\nA form starts from this instead of from blanks, and that is a product\ndecision rather than a convenience: an empty box labelled 人格画像 asks\nsomebody to invent a personality from nothing, while a filled one asks\nthem to change something they can already read. It also makes the whole\nscreen skippable — \"继续、继续、创建\" gives the Eidolon the Host would\nhave made anyway.\n\nNot its own capability. A client that may create an Eidolon needs to see\nwhat it is starting from; two flags could disagree, and \"you may create\none but not see who it will be\" is not a state worth being able to\nexpress.\n\nTop-level rather than under ``/companions`` so it can never be confused\nwith a Companion whose id happens to be a word.",
+        "operationId": "get_persona_presets_api_management_v1_persona_presets_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaPresetCatalog"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Persona Presets",
         "tags": [
           "management"
         ]

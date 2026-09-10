@@ -23,7 +23,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from eidolon_sdk.biz.persona import PersonaAuthoring
+from eidolon_sdk.biz.persona import (
+    ConversationPreferences,
+    PersonaAuthoring,
+    PersonaEditRequest,
+    PersonaEditSnapshot,
+    PersonaPresetCatalog,
+)
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -181,6 +187,7 @@ class CompanionCreateRequestInternal(BaseModel):
     #: this is a place a field can be dropped in transit, and a dropped field
     #: here is a sentence somebody wrote about their Eidolon that never arrived.
     persona: PersonaAuthoring | None = None
+    preferences: ConversationPreferences | None = None
 
 
 class CompanionCreateResponseInternal(BaseModel):
@@ -738,6 +745,27 @@ async def get_persona_authoring_template(request: Request) -> PersonaAuthoring:
     return await request.app.state.control_plane.data.persona_authoring_template()
 
 
+@router.get("/persona-presets", response_model=PersonaPresetCatalog)
+async def get_persona_presets(request: Request) -> PersonaPresetCatalog:
+    """The starting point a create form shows, from the authority that writes it.
+
+    Owner-independent, so it takes no Owner — a product default is nobody's
+    data, and asking per Owner would invite a per-Owner default nobody asked
+    for.
+
+    Relayed rather than answered here even though this process holds the same
+    SDK. The value of the read is that it is what *Data* would write, and a copy
+    on this side would be a second default personality that agrees right up
+    until one of the two is upgraded.
+
+    From the persona authority, beside the genome routes. It was first taken
+    from the Owner-scoped one because that is where provisioning lives, which
+    put the Owner/Companion boundary one route to the left of where it is.
+    """
+
+    return await request.app.state.control_plane.data.persona_presets()
+
+
 @router.put(
     "/companion-provisions/{operation_id}",
     response_model=CompanionCreateResponseInternal,
@@ -756,6 +784,7 @@ async def put_companion_provision(
         display_name=payload.display_name,
         kind=payload.kind,
         persona=payload.persona,
+        preferences=payload.preferences,
         companions=control_plane.workspace,
         memory=getattr(control_plane, "memory_supervisor", None),
     )
@@ -1106,12 +1135,12 @@ def _task_page_internal(companion_id: str, page) -> TaskPageInternal:
     )
 
 
-@router.get("/companions/{companion_id}/persona", response_model=PersonaAuthoring)
+@router.get("/companions/{companion_id}/persona", response_model=PersonaEditSnapshot)
 async def get_persona(
     request: Request,
     companion_id: str,
     owner_id: str,
-) -> PersonaAuthoring:
+) -> PersonaEditSnapshot:
     """Who this Eidolon is now, in the part somebody wrote."""
     return await read_persona(
         owner_id=owner_id,
@@ -1121,13 +1150,13 @@ async def get_persona(
     )
 
 
-@router.put("/companions/{companion_id}/persona", response_model=PersonaAuthoring)
+@router.put("/companions/{companion_id}/persona", response_model=PersonaEditSnapshot)
 async def put_persona(
     request: Request,
     companion_id: str,
     owner_id: str,
-    payload: PersonaAuthoring,
-) -> PersonaAuthoring:
+    payload: PersonaEditRequest,
+) -> PersonaEditSnapshot:
     """Say who this Eidolon is now. Appends a chapter; never edits one."""
     return await write_persona(
         owner_id=owner_id,

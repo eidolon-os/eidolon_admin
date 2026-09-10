@@ -91,7 +91,9 @@ class AdminManagementClient:
         self._timeout = timeout_seconds
 
     async def context(self, *, owner_id: str) -> dict:
-        return await self._get("/api/internal/v1/management/context", {"owner_id": owner_id})
+        return await self._get(
+            "/api/internal/v1/management/context", {"owner_id": owner_id}
+        )
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
         return await self._get(
@@ -143,6 +145,7 @@ class AdminManagementClient:
         display_name: str,
         kind: str,
         persona: dict | None = None,
+        preferences: dict | None = None,
     ) -> dict:
         return await self._put(
             "/api/internal/v1/management/companion-provisions/"
@@ -156,6 +159,7 @@ class AdminManagementClient:
                 # older client sends. That is what keeps a retry across an
                 # upgrade a replay instead of a conflict.
                 **({} if persona is None else {"persona": persona}),
+                **({} if preferences is None else {"preferences": preferences}),
             },
         )
 
@@ -165,6 +169,11 @@ class AdminManagementClient:
         return await self._get(
             "/api/internal/v1/management/persona-authoring-template", {}
         )
+
+    async def persona_presets(self) -> dict:
+        """What an Eidolon would be if the create form came back untouched."""
+
+        return await self._get("/api/internal/v1/management/persona-presets", {})
 
     async def activity(
         self, *, owner_id: str, limit: int | None, before: int | None
@@ -176,9 +185,7 @@ class AdminManagementClient:
             params["before"] = str(before)
         return await self._get("/api/internal/v1/management/activity", params)
 
-    async def companion_face_state(
-        self, *, owner_id: str, companion_id: str
-    ) -> dict:
+    async def companion_face_state(self, *, owner_id: str, companion_id: str) -> dict:
         return await self._get(
             f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
             "/face-state",
@@ -232,9 +239,7 @@ class AdminManagementClient:
         )
         return self._decoded(response)
 
-    async def clear_companion_face(
-        self, *, owner_id: str, companion_id: str
-    ) -> dict:
+    async def clear_companion_face(self, *, owner_id: str, companion_id: str) -> dict:
         return await self._put(
             f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}"
             "/face",
@@ -282,17 +287,13 @@ class AdminManagementClient:
             body,
         )
 
-    async def memory_library(
-        self, *, owner_id: str, companion_id: str | None
-    ) -> dict:
+    async def memory_library(self, *, owner_id: str, companion_id: str | None) -> dict:
         params = {"owner_id": owner_id}
         if companion_id:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/library", params)
 
-    async def memory_graph(
-        self, *, owner_id: str, companion_id: str | None
-    ) -> dict:
+    async def memory_graph(self, *, owner_id: str, companion_id: str | None) -> dict:
         params = {"owner_id": owner_id}
         if companion_id:
             params["companion_id"] = companion_id
@@ -313,9 +314,7 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/entries", params)
 
-    async def memory_export(
-        self, *, owner_id: str, companion_id: str | None
-    ) -> dict:
+    async def memory_export(self, *, owner_id: str, companion_id: str | None) -> dict:
         params = {"owner_id": owner_id}
         if companion_id:
             params["companion_id"] = companion_id
@@ -455,9 +454,7 @@ class AdminManagementClient:
             "/api/internal/v1/management/memory/recollections", params
         )
 
-    async def forget_preview(
-        self, *, owner_id: str, target: str, action: str
-    ) -> dict:
+    async def forget_preview(self, *, owner_id: str, target: str, action: str) -> dict:
         return await self._put(
             "/api/internal/v1/management/memory/forget/preview",
             {"owner_id": owner_id},
@@ -517,7 +514,11 @@ class AdminManagementClient:
                 },
                 timeout=self._timeout,
             )
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ) as exc:
             raise ManagementBackendError(
                 "Host management backend is unreachable",
                 status_code=503,

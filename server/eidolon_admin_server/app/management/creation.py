@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from eidolon_sdk.biz.persona import PersonaAuthoring
+from eidolon_sdk.biz.persona import ConversationPreferences, PersonaAuthoring
 
 from eidolon_admin_server.app.control_plane.contracts import CompanionProvision
 
@@ -39,6 +39,7 @@ class CompanionProvisioner(Protocol):
         companion_display_name: str,
         kind: str,
         persona: PersonaAuthoring | None,
+        preferences: ConversationPreferences | None = None,
     ) -> CompanionProvision: ...
 
 
@@ -76,6 +77,7 @@ async def create_companion(
     display_name: str,
     kind: str,
     persona: PersonaAuthoring | None = None,
+    preferences: ConversationPreferences | None = None,
     companions: CompanionProvisioner,
     memory: MemoryReconciler | None,
 ) -> CreatedCompanion:
@@ -89,6 +91,7 @@ async def create_companion(
         companion_display_name=display_name,
         kind=kind,
         persona=persona,
+        **({} if preferences is None else {"preferences": preferences}),
     )
 
     memory_ready = True

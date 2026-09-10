@@ -13,13 +13,27 @@ authenticates, and is passed down as an argument.
 
 from __future__ import annotations
 
-from eidolon_sdk.system.v1 import HostMonitorWire
-
 from typing import Literal, Protocol, runtime_checkable
 
 from eidolon_sdk.biz.contracts.refusal import Refusal
-from eidolon_sdk.biz.persona import PersonaAuthoring
-from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
+from eidolon_sdk.biz.persona import (
+    ConversationPreferences,
+    PersonaAuthoring,
+    PersonaEditRequest,
+    PersonaEditSnapshot,
+    PersonaPresetCatalog,
+)
+from eidolon_sdk.system.v1 import HostMonitorWire
+from fastapi import (
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
@@ -740,6 +754,7 @@ class CompanionCreateRequest(BaseModel):
     #: copy would be a place a field goes missing, and a field missing here is a
     #: sentence about somebody's Eidolon that never arrived.
     persona: PersonaAuthoring | None = None
+    preferences: ConversationPreferences | None = None
     #: Absent means an ordinary conversational Eidolon. A client should not have
     #: to know the other values exist to create the normal thing.
     kind: str = Field(default="conversational", min_length=1, max_length=32)
@@ -2301,6 +2316,35 @@ def register_management_routes(
             raise _refused(exc) from exc
         return PersonaAuthoring.model_validate(answer)
 
+    @router.get("/persona-presets", response_model=PersonaPresetCatalog)
+    async def get_persona_presets(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaPresetCatalog:
+        """What an Eidolon would be if the create form came back untouched.
+
+        A form starts from this instead of from blanks, and that is a product
+        decision rather than a convenience: an empty box labelled 人格画像 asks
+        somebody to invent a personality from nothing, while a filled one asks
+        them to change something they can already read. It also makes the whole
+        screen skippable — "继续、继续、创建" gives the Eidolon the Host would
+        have made anyway.
+
+        Not its own capability. A client that may create an Eidolon needs to see
+        what it is starting from; two flags could disagree, and "you may create
+        one but not see who it will be" is not a state worth being able to
+        express.
+
+        Top-level rather than under ``/companions`` so it can never be confused
+        with a Companion whose id happens to be a word.
+        """
+
+        await authenticated_owner(authorization)
+        try:
+            answer = await backend.persona_presets()
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return PersonaPresetCatalog.model_validate(answer)
+
     @router.put("/companions", response_model=CompanionCreatedView)
     async def create_companion(
         payload: CompanionCreateRequest,
@@ -2321,6 +2365,11 @@ def register_management_routes(
                 operation_id=payload.operation_id,
                 display_name=payload.display_name,
                 kind=payload.kind,
+                **(
+                    {}
+                    if payload.preferences is None
+                    else {"preferences": payload.preferences.model_dump(mode="json")}
+                ),
                 persona=(
                     None
                     if payload.persona is None
@@ -2816,12 +2865,12 @@ def register_management_routes(
 
     @router.get(
         "/companions/{companion_id}/persona",
-        response_model=PersonaAuthoring,
+        response_model=PersonaEditSnapshot,
     )
     async def get_persona(
         companion_id: str,
         authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> PersonaAuthoring:
+    ) -> PersonaEditSnapshot:
         """Who this Eidolon is now, in the words somebody wrote.
 
         The read an edit screen opens on: editing has to start from who it
@@ -2833,17 +2882,23 @@ def register_management_routes(
             answer = await backend.persona(owner_id=owner_id, companion_id=companion_id)
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        return PersonaAuthoring.model_validate(answer)
+        return PersonaEditSnapshot.model_validate(answer)
+
+    async def authorize_persona_edit(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ):
+        await authenticated_owner(authorization)
 
     @router.put(
         "/companions/{companion_id}/persona",
-        response_model=PersonaAuthoring,
+        response_model=PersonaEditSnapshot,
+        dependencies=[Depends(authorize_persona_edit)],
     )
     async def put_persona(
         companion_id: str,
-        payload: PersonaAuthoring,
+        payload: PersonaEditRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> PersonaAuthoring:
+    ) -> PersonaEditSnapshot:
         """Say who this Eidolon is now.
 
         Somebody describing their Eidolon for the first time will mostly get it
@@ -2864,11 +2919,11 @@ def register_management_routes(
             answer = await backend.author_persona(
                 owner_id=owner_id,
                 companion_id=companion_id,
-                persona=payload.model_dump(mode="json"),
+                persona=payload.model_dump(mode="json", exclude_unset=True),
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        return PersonaAuthoring.model_validate(answer)
+        return PersonaEditSnapshot.model_validate(answer)
 
     @router.get(
         "/companions/{companion_id}/persona-history",

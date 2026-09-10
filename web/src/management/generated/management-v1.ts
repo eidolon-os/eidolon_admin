@@ -28,6 +28,7 @@ export interface CompanionCreateRequest {
   kind?: string
   operation_id: string
   persona?: PersonaAuthoring | null
+  preferences?: ConversationPreferences | null
 }
 
 export interface CompanionCreatedView {
@@ -136,6 +137,12 @@ export interface ConversationPageView {
   contract_version?: "1"
   conversations: Array<ConversationView>
   next_cursor?: string | null
+}
+
+export interface ConversationPreferences {
+  advice?: "when_asked" | "proactive"
+  follow_up?: "when_needed" | "conversational"
+  response_length?: "brief" | "balanced" | "detailed"
 }
 
 export interface ConversationView {
@@ -517,10 +524,37 @@ export interface PersonaChapterView {
   what_changed?: string
 }
 
+export interface PersonaEditRequest {
+  expected_base_genome_id: string
+  expected_preference_revision: number
+  operation_id: string
+  persona: PersonaAuthoring
+  preferences?: ConversationPreferences | null
+}
+
+export interface PersonaEditSnapshot {
+  genome_id: string
+  persona: PersonaAuthoring
+  preference_revision?: number
+  preferences?: ConversationPreferences
+}
+
 export interface PersonaHistoryView {
   chapters: Array<PersonaChapterView>
   companion_id: string
   contract_version?: "1"
+}
+
+export interface PersonaPreset {
+  examples: Array<string>
+  persona: PersonaAuthoring
+  preset_id: string
+  revision?: string
+  title: string
+}
+
+export interface PersonaPresetCatalog {
+  presets: Array<PersonaPreset>
 }
 
 export interface PersonaRestoreRequest {
@@ -625,8 +659,8 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions/{companion_id}/face': CompanionFaceView
   'GET /api/management/v1/companions/{companion_id}/face-state': CompanionFaceView
   'PUT /api/management/v1/companions/{companion_id}/lifecycle': CompanionLifecycleView
-  'GET /api/management/v1/companions/{companion_id}/persona': PersonaAuthoring
-  'PUT /api/management/v1/companions/{companion_id}/persona': PersonaAuthoring
+  'GET /api/management/v1/companions/{companion_id}/persona': PersonaEditSnapshot
+  'PUT /api/management/v1/companions/{companion_id}/persona': PersonaEditSnapshot
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
   'GET /api/management/v1/companions/{companion_id}/tasks': TaskPageView
@@ -658,4 +692,5 @@ export interface ManagementResponses {
   'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
   'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
+  'GET /api/management/v1/persona-presets': PersonaPresetCatalog
 }

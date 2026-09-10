@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+
 import httpx
 import pytest
 from eidolon_admin_server.app.control_plane.contracts import (
@@ -27,16 +28,15 @@ from eidolon_admin_server.app.control_plane.contracts import (
 )
 from eidolon_admin_server.app.management.roster import read_roster
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
-from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
 from eidolon_admin_server.local_api.management.router import (
     ManagementBackendError,
     refusal_for_status,
 )
+from eidolon_sdk.biz.persona import PersonaAuthoring
 
 from tests.controller_session_support import stub_controller_session
-from eidolon_sdk.biz.persona import PersonaAuthoring
 
 pytestmark = pytest.mark.asyncio
 
@@ -47,7 +47,13 @@ _COMPANIONS = "/api/management/v1/companions"
 _MADE = datetime(2026, 8, 24, 9, 30, tzinfo=UTC)
 
 
-def _row(companion_id: str, *, name: str = "小忆", state: str = "active", kind: str = "standard"):
+def _row(
+    companion_id: str,
+    *,
+    name: str = "小忆",
+    state: str = "active",
+    kind: str = "standard",
+):
     return CompanionSummary(
         companion_id=companion_id,
         display_name=name,
@@ -323,7 +329,7 @@ class _Backend:
         self.asked: list[tuple[str, str | None]] = []
         self.personas: list[dict | None] = []
         self.authored: list[dict] = []
-        self.standing_persona = PersonaAuthoring(self_concept='我原本是这样')
+        self.standing_persona = PersonaAuthoring(self_concept="我原本是这样")
         self.current = "g_2"
 
     async def context(self, *, owner_id: str) -> dict:
@@ -511,7 +517,9 @@ class _Backend:
             raise ManagementBackendError(
                 "revocation_kv not configured on agent",
                 status_code=503,
-                refusal=refusal_for_status(503, "revocation_kv not configured on agent"),
+                refusal=refusal_for_status(
+                    503, "revocation_kv not configured on agent"
+                ),
             )
         return {
             "contract_version": "1",
@@ -603,7 +611,9 @@ class _Backend:
             raise ManagementBackendError(
                 "long task already finished as succeeded",
                 status_code=409,
-                refusal=refusal_for_status(409, "long task already finished as succeeded"),
+                refusal=refusal_for_status(
+                    409, "long task already finished as succeeded"
+                ),
             )
         return self._task(status="cancelled" if action == "cancel" else "accepted")
 
@@ -625,14 +635,22 @@ class _Backend:
         }
 
     async def persona(self, *, owner_id: str, companion_id: str) -> dict:
-        return self.standing_persona.model_dump(mode="json")
+        return {
+            "genome_id": "g1",
+            "persona": self.standing_persona.model_dump(mode="json"),
+            "preference_revision": 1,
+        }
 
     async def author_persona(
         self, *, owner_id: str, companion_id: str, persona: dict
     ) -> dict:
         self.authored.append(persona)
-        self.standing_persona = PersonaAuthoring.model_validate(persona)
-        return self.standing_persona.model_dump(mode="json")
+        self.standing_persona = PersonaAuthoring.model_validate(persona["persona"])
+        return {
+            "genome_id": "g1",
+            "persona": self.standing_persona.model_dump(mode="json"),
+            "preference_revision": 1,
+        }
 
     async def persona_history(self, *, owner_id: str, companion_id: str) -> dict:
         self.asked.append((owner_id, companion_id))
@@ -658,7 +676,9 @@ class _Backend:
             raise ManagementBackendError(
                 "only a committed persona genome can be restored",
                 status_code=409,
-                refusal=refusal_for_status(409, "only a committed persona genome can be restored"),
+                refusal=refusal_for_status(
+                    409, "only a committed persona genome can be restored"
+                ),
             )
         self.current = chapter_id
         return self._history()
@@ -837,7 +857,9 @@ async def test_the_roster_is_the_authenticated_owners(tmp_path, monkeypatch) -> 
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_COMPANIONS)
         headers = await _authenticate(client)
         answered = await client.get(_COMPANIONS, headers=headers)
@@ -852,7 +874,9 @@ async def test_the_roster_is_the_authenticated_owners(tmp_path, monkeypatch) -> 
     assert body["next_cursor"] == "next-page"
 
 
-async def test_the_public_response_does_not_name_an_owner(tmp_path, monkeypatch) -> None:
+async def test_the_public_response_does_not_name_an_owner(
+    tmp_path, monkeypatch
+) -> None:
     """It would be a second place to read something the session already fixed.
 
     A client that could read an Owner here would eventually compare it with one
@@ -860,7 +884,9 @@ async def test_the_public_response_does_not_name_an_owner(tmp_path, monkeypatch)
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (await client.get(_COMPANIONS, headers=headers)).json()
 
@@ -873,7 +899,9 @@ async def test_an_owner_cannot_be_asked_for(tmp_path, monkeypatch) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(
             _COMPANIONS, params={"owner_id": "owner-2"}, headers=headers
@@ -883,11 +911,15 @@ async def test_an_owner_cannot_be_asked_for(tmp_path, monkeypatch) -> None:
     assert backend.asked == [("owner-1", None)], "the session's Owner, not the query's"
 
 
-async def test_the_cursor_a_client_sends_reaches_the_authority(tmp_path, monkeypatch) -> None:
+async def test_the_cursor_a_client_sends_reaches_the_authority(
+    tmp_path, monkeypatch
+) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(_COMPANIONS, params={"cursor": "page-2"}, headers=headers)
 
@@ -906,7 +938,9 @@ async def test_a_session_with_no_owner_is_a_conflict_not_an_empty_list(
     _stub_controller(monkeypatch, owner_id=None)
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(_COMPANIONS, headers=headers)
 
@@ -923,7 +957,9 @@ async def test_opening_one_asks_for_it_under_the_session_owner(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(
             "/api/management/v1/companions/companion-a", headers=headers
@@ -944,7 +980,9 @@ async def test_someone_elses_companion_is_absent_rather_than_forbidden(
     """403 would confirm the id exists. 404 says nothing either way."""
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(
             "/api/management/v1/companions/someone-elses", headers=headers
@@ -980,7 +1018,9 @@ async def test_the_switch_is_made_for_the_session_owner(tmp_path, monkeypatch) -
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.put(
             _DEFAULT, json={"companion_id": "companion-b", "expected_revision": 3}
         )
@@ -1008,7 +1048,9 @@ async def test_the_answer_is_where_the_pointer_now_is_not_what_was_asked(
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (
             await client.put(
@@ -1031,7 +1073,9 @@ async def test_a_stale_revision_arrives_as_a_conflict(tmp_path, monkeypatch) -> 
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.put(
             _DEFAULT,
@@ -1052,7 +1096,9 @@ async def test_a_write_without_a_revision_is_refused(tmp_path, monkeypatch) -> N
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.put(
             _DEFAULT, headers=headers, json={"companion_id": "companion-b"}
@@ -1066,7 +1112,9 @@ async def test_no_owner_may_be_named_in_the_write(tmp_path, monkeypatch) -> None
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.put(
             _DEFAULT,
@@ -1094,7 +1142,9 @@ async def test_adding_one_is_for_the_session_owner(tmp_path, monkeypatch) -> Non
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.put(
             _COMPANIONS_WRITE,
             json={"operation_id": _OPERATION, "display_name": "阿力"},
@@ -1125,7 +1175,9 @@ async def test_asking_twice_with_one_operation_id_creates_one(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = {"operation_id": _OPERATION, "display_name": "阿力"}
         first = await client.put(_COMPANIONS_WRITE, headers=headers, json=body)
@@ -1144,7 +1196,9 @@ async def test_an_operation_id_is_required(tmp_path, monkeypatch) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.put(
             _COMPANIONS_WRITE, headers=headers, json={"display_name": "阿力"}
@@ -1158,7 +1212,9 @@ async def test_no_owner_may_be_named_when_adding(tmp_path, monkeypatch) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.put(
             _COMPANIONS_WRITE,
@@ -1179,7 +1235,9 @@ async def test_the_ordinary_case_needs_no_kind(tmp_path, monkeypatch) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.put(
             _COMPANIONS_WRITE,
@@ -1200,7 +1258,9 @@ async def test_the_library_is_the_authenticated_owners(tmp_path, monkeypatch) ->
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_LIBRARY)
         headers = await _authenticate(client)
         answered = await client.get(_LIBRARY, headers=headers)
@@ -1221,7 +1281,9 @@ async def test_the_withheld_count_reaches_the_client(tmp_path, monkeypatch) -> N
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (await client.get(_LIBRARY, headers=headers)).json()
 
@@ -1229,11 +1291,15 @@ async def test_the_withheld_count_reaches_the_client(tmp_path, monkeypatch) -> N
     assert body["truncated"] is False
 
 
-async def test_graph_is_private_to_the_selected_companion(tmp_path, monkeypatch) -> None:
+async def test_graph_is_private_to_the_selected_companion(
+    tmp_path, monkeypatch
+) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(
             _GRAPH,
@@ -1251,7 +1317,9 @@ async def test_naming_a_companion_selects_an_audience(tmp_path, monkeypatch) -> 
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(_LIBRARY, params={"companion_id": "c-a"}, headers=headers)
 
@@ -1266,7 +1334,9 @@ async def test_the_library_names_no_owner_and_no_space(tmp_path, monkeypatch) ->
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (await client.get(_LIBRARY, headers=headers)).json()
 
@@ -1286,7 +1356,9 @@ async def test_a_preview_is_for_the_session_owner_and_changes_nothing(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.post(_FORGET_PREVIEW, json={"target": "上周那件事"})
         headers = await _authenticate(client)
         answered = await client.post(
@@ -1310,7 +1382,9 @@ async def test_the_token_reaches_the_confirm_untouched(tmp_path, monkeypatch) ->
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         preview = (
             await client.post(
@@ -1333,10 +1407,12 @@ async def test_the_token_reaches_the_confirm_untouched(tmp_path, monkeypatch) ->
 async def test_too_broad_is_not_flattened_into_an_empty_list(
     tmp_path, monkeypatch
 ) -> None:
-    """"You never told me that" and "say which one" are different sentences."""
+    """ "You never told me that" and "say which one" are different sentences."""
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (
             await client.post(_FORGET_PREVIEW, headers=headers, json={"target": "一切"})
@@ -1352,7 +1428,9 @@ async def test_an_action_outside_the_contract_is_refused(tmp_path, monkeypatch) 
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.post(
             _FORGET_PREVIEW,
@@ -1368,7 +1446,9 @@ async def test_no_owner_may_be_named_when_forgetting(tmp_path, monkeypatch) -> N
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.post(
             _FORGET_PREVIEW,
@@ -1390,7 +1470,9 @@ async def test_the_day_is_the_authenticated_owners(tmp_path, monkeypatch) -> Non
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_ENTRIES, params={"since": _NOON})
         headers = await _authenticate(client)
         answered = await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
@@ -1411,7 +1493,9 @@ async def test_the_client_says_when_the_day_started(tmp_path, monkeypatch) -> No
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(_ENTRIES, headers=headers)
 
@@ -1427,7 +1511,9 @@ async def test_the_two_partial_answers_stay_apart(tmp_path, monkeypatch) -> None
     """
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (
             await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
@@ -1443,7 +1529,9 @@ async def test_the_window_and_audience_reach_the_backend(tmp_path, monkeypatch) 
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(
             _ENTRIES,
@@ -1457,7 +1545,9 @@ async def test_the_window_and_audience_reach_the_backend(tmp_path, monkeypatch) 
 async def test_the_day_names_no_owner_and_no_space(tmp_path, monkeypatch) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (
             await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
@@ -1483,7 +1573,9 @@ async def test_the_copy_is_the_authenticated_owners_and_arrives_whole(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_EXPORT)
         headers = await _authenticate(client)
         answered = await client.get(_EXPORT, headers=headers)
@@ -1502,7 +1594,9 @@ async def test_the_copy_says_what_it_could_not_date_and_where_it_stopped(
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (await client.get(_EXPORT, headers=headers)).json()
 
@@ -1528,7 +1622,9 @@ async def test_the_copy_names_no_owner_and_answers_for_no_other_one(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(_EXPORT, params={"owner_id": "owner-2"}, headers=headers)
         body = (await client.get(_EXPORT, headers=headers)).json()
@@ -1546,7 +1642,9 @@ async def test_a_copy_may_be_asked_for_one_companions_audience(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(_EXPORT, params={"companion_id": "c-a"}, headers=headers)
 
@@ -1571,7 +1669,9 @@ async def test_asking_what_it_remembers_answers_in_sentences(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_RECOLLECTIONS, params={"q": "散步"})
         headers = await _authenticate(client)
         answered = await client.get(
@@ -1596,7 +1696,9 @@ async def test_a_question_is_required_and_an_unbounded_one_is_refused(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         empty = await client.get(_RECOLLECTIONS, headers=headers)
         huge = await client.get(
@@ -1616,7 +1718,9 @@ async def test_a_recollection_may_be_asked_of_one_companions_audience(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(
             _RECOLLECTIONS,
@@ -1638,7 +1742,9 @@ def _restorations(companion_id: str = "companion-a") -> str:
     return f"/api/management/v1/companions/{companion_id}/persona-restorations"
 
 
-async def test_a_person_is_shown_what_their_eidolon_became(tmp_path, monkeypatch) -> None:
+async def test_a_person_is_shown_what_their_eidolon_became(
+    tmp_path, monkeypatch
+) -> None:
     """Migrated from ``/api/local/v1/companions/{id}/persona``, now deleted.
 
     A record rather than a settings screen, and nothing about how a Companion is
@@ -1648,7 +1754,9 @@ async def test_a_person_is_shown_what_their_eidolon_became(tmp_path, monkeypatch
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_persona())
         headers = await _authenticate(client)
         answered = await client.get(_persona(), headers=headers)
@@ -1680,7 +1788,9 @@ async def test_going_back_answers_with_where_that_leaves_them(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         restored = await client.put(
             _restorations(), headers=headers, json={"chapter_id": "g_1"}
@@ -1702,7 +1812,9 @@ async def test_going_back_to_where_it_already_is_is_not_a_conflict(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         first = await client.put(
             _restorations(), headers=headers, json={"chapter_id": "g_1"}
@@ -1723,7 +1835,9 @@ async def test_a_chapter_it_never_was_cannot_be_returned_to(
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.put(
             _restorations(), headers=headers, json={"chapter_id": "g_never"}
@@ -1744,7 +1858,9 @@ async def test_another_owners_persona_is_not_readable_or_restorable(
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         read = await client.get(_persona("companion-elsewhere"), headers=headers)
         wrote = await client.put(
@@ -1777,7 +1893,9 @@ async def test_when_we_talked_is_visible_and_says_nothing_about_what_was_said(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.get(_conversations())
         headers = await _authenticate(client)
         answered = await client.get(_conversations(), headers=headers)
@@ -1796,7 +1914,9 @@ async def test_what_it_was_asked_to_do_is_visible(tmp_path, monkeypatch) -> None
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         body = (await client.get(_tasks(), headers=headers)).json()
 
@@ -1827,11 +1947,17 @@ async def test_a_page_may_be_narrowed_by_state_and_walked_by_cursor(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         await client.get(
             _tasks(),
-            params={"limit": 5, "status": "running", "cursor": "2026-08-24T09:00:00+00:00"},
+            params={
+                "limit": 5,
+                "status": "running",
+                "cursor": "2026-08-24T09:00:00+00:00",
+            },
             headers=headers,
         )
 
@@ -1848,7 +1974,9 @@ async def test_stopping_a_task_reports_what_the_host_says_it_became(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         cancelled = await client.post(f"{_tasks()}/j-1/cancel", headers=headers)
         retried = await client.post(f"{_tasks()}/j-1/retry", headers=headers)
@@ -1869,7 +1997,9 @@ async def test_a_runtime_refusal_reaches_the_client_as_a_refusal(
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.post(f"{_tasks()}/j-done/cancel", headers=headers)
 
@@ -1881,7 +2011,9 @@ async def test_another_owners_task_is_not_readable_here_either(
 ) -> None:
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.get(f"{_tasks()}/j-theirs", headers=headers)
 
@@ -1901,7 +2033,9 @@ async def test_signing_every_device_out_says_when(tmp_path, monkeypatch) -> None
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.post(_REVOKE)
         headers = await _authenticate(client)
         answered = await client.post(_REVOKE, headers=headers)
@@ -1917,7 +2051,9 @@ async def test_it_names_no_owner_and_takes_no_body(tmp_path, monkeypatch) -> Non
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         operation = _app(tmp_path, _Backend()).openapi()["paths"][_REVOKE]["post"]
         answered = await client.post(_REVOKE, headers=headers)
@@ -1940,7 +2076,9 @@ async def test_a_host_that_cannot_do_it_says_so_rather_than_claiming_success(
 
     _stub_controller(monkeypatch, owner_id="owner-no-kv")
     transport = httpx.ASGITransport(app=_app(tmp_path, _Backend()))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.post(_REVOKE, headers=headers)
 
@@ -1954,7 +2092,9 @@ async def test_what_was_said_that_time_is_readable(tmp_path, monkeypatch) -> Non
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         path = f"{_conversations()}/conv-1/turns"
         anonymous = await client.get(path)
         headers = await _authenticate(client)
@@ -2135,7 +2275,7 @@ async def test_the_edit_screen_opens_on_who_it_currently_is(
         answered = await client.get(_PERSONA, headers=headers)
 
     assert answered.status_code == 200, answered.text
-    assert answered.json()["self_concept"] == "我原本是这样"
+    assert answered.json()["persona"]["self_concept"] == "我原本是这样"
 
 
 async def test_what_somebody_rewrote_reaches_the_authority_verbatim(
@@ -2158,15 +2298,20 @@ async def test_what_somebody_rewrote_reaches_the_authority_verbatim(
         answered = await client.put(
             _PERSONA,
             headers=headers,
-            json={"self_concept": "我现在是这样", "values": ["诚实"]},
+            json={
+                "expected_base_genome_id": "g1",
+                "expected_preference_revision": 1,
+                "operation_id": "edit-1",
+                "persona": {"self_concept": "我现在是这样", "values": ["诚实"]},
+            },
         )
 
     assert answered.status_code == 200, answered.text
-    assert backend.authored[-1]["self_concept"] == "我现在是这样"
-    assert backend.authored[-1]["values"] == ["诚实"]
+    assert backend.authored[-1]["persona"]["self_concept"] == "我现在是这样"
+    assert backend.authored[-1]["persona"]["values"] == ["诚实"]
     # It answers with the Eidolon, not with the edit: what a screen shows next
     # is who it is now.
-    assert answered.json()["self_concept"] == "我现在是这样"
+    assert answered.json()["persona"]["self_concept"] == "我现在是这样"
 
 
 async def test_an_invented_field_is_refused_rather_than_dropped(

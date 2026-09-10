@@ -6,7 +6,13 @@ from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
-from eidolon_sdk.biz.persona import PersonaAuthoring
+from eidolon_sdk.biz.persona import (
+    ConversationPreferences,
+    PersonaAuthoring,
+    PersonaEditRequest,
+    PersonaEditSnapshot,
+    PersonaPresetCatalog,
+)
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
@@ -39,8 +45,8 @@ from .contracts import (
     MemoryEntries,
     MemoryExport,
     MemoryGraph,
-    MemoryStatus,
     MemoryRealmRuntimePage,
+    MemoryStatus,
     OwnerGovernanceEvents,
     OwnerIdentity,
     OwnerRuntimeCompanions,
@@ -427,33 +433,68 @@ class DataAuthorityClient:
         )
         return _parse("data", response, PersonaAuthoring)
 
-    async def get_persona(self, companion_id: str) -> PersonaAuthoring:
+    async def persona_presets(self) -> PersonaPresetCatalog:
+        """Who an Eidolon is before anybody has said anything about it.
+
+        Fetched rather than constructed, every time, because the value of this
+        read is that it is *the authority's* answer: what would be written if a
+        form came back untouched. A copy here would be a second default
+        personality, and the day the two disagree the person is editing a
+        description of an Eidolon this Host will not create.
+        """
+
+        if not self._token:
+            raise AuthorityFailure(
+                "data",
+                "configuration",
+                "Admin Data authority credential is not configured",
+                503,
+                retryable=False,
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        # Not through ``_companion_call``: that helper builds
+        # ``/companions/{id}/…`` and this route has no Companion in it, which is
+        # the whole reason it is a template. Bending the helper to accept a
+        # missing id would let every other caller pass one too.
+        response = await _request(
+            "data",
+            self._client,
+            "GET",
+            f"{endpoint.address.rstrip('/')}"
+            "/api/companion-authority/v1/persona-presets",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+        )
+        return _parse("data", response, PersonaPresetCatalog)
+
+    async def get_persona(self, companion_id: str) -> PersonaEditSnapshot:
         """Who this Companion is now, in the part a person wrote."""
 
         return await self._companion_call(
             "GET",
             f"{companion_id}/persona",
             companion_id,
-            PersonaAuthoring,
+            PersonaEditSnapshot,
         )
 
     async def author_persona(
         self,
         companion_id: str,
-        persona: PersonaAuthoring,
+        persona: PersonaEditRequest,
         change_summary: str,
-    ) -> PersonaChapter:
+    ) -> PersonaEditSnapshot:
         """Say who this Companion is now. Appends a chapter; never edits one."""
 
         return await self._companion_call(
             "PUT",
             f"{companion_id}/persona",
             companion_id,
-            PersonaChapter,
-            json={
-                "persona": persona.model_dump(mode="json"),
-                "change_summary": change_summary,
-            },
+            PersonaEditSnapshot,
+            json=persona.model_dump(mode="json", exclude_unset=True),
         )
 
     async def get_companion_face_state(self, companion_id: str) -> CompanionFace:
@@ -692,6 +733,7 @@ class DataWorkspaceAuthorityClient:
         companion_display_name: str,
         kind: str,
         persona: PersonaAuthoring | None = None,
+        preferences: ConversationPreferences | None = None,
     ) -> CompanionProvision:
         """Add a Companion to this Owner, exactly once per operation id.
 
@@ -718,6 +760,11 @@ class DataWorkspaceAuthorityClient:
             json={
                 "companion_display_name": companion_display_name,
                 "kind": kind,
+                **(
+                    {}
+                    if preferences is None
+                    else {"preferences": preferences.model_dump(mode="json")}
+                ),
                 **(
                     {}
                     if persona is None
