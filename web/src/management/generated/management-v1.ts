@@ -504,10 +504,8 @@ export interface PersonaAuthoring {
   behavior_guidance?: Array<string>
   boundaries?: Array<string>
   character_portrait?: string
-  commitments?: Array<string>
   dialogue_examples?: Array<string>
   modality_notes?: Record<string, string>
-  pinned_facts?: Array<string>
   relationship_narrative?: string
   safety_boundaries?: Array<string>
   self_concept?: string
@@ -525,14 +523,19 @@ export interface PersonaChapterView {
 }
 
 export interface PersonaEditRequest {
+  action?: "edit" | "rename" | "restore"
+  display_name?: string | null
   expected_base_genome_id: string
   expected_preference_revision: number
   operation_id: string
   persona: PersonaAuthoring
   preferences?: ConversationPreferences | null
+  restore_genome_id?: string | null
 }
 
 export interface PersonaEditSnapshot {
+  companion_revision?: number
+  display_name?: string
   genome_id: string
   persona: PersonaAuthoring
   preference_revision?: number
@@ -555,6 +558,23 @@ export interface PersonaPreset {
 
 export interface PersonaPresetCatalog {
   presets: Array<PersonaPreset>
+}
+
+export interface PersonaPreviewRequest {
+  base_genome_id?: string | null
+  companion_id?: string | null
+  modality?: "voice" | "text"
+  name: string
+  persona: PersonaAuthoring
+  preferences?: ConversationPreferences
+  text: string
+}
+
+export interface PersonaPreviewResponse {
+  draft_digest: string
+  finish_reason: string
+  reply: string
+  truncated?: boolean
 }
 
 export interface PersonaRestoreRequest {
@@ -693,4 +713,5 @@ export interface ManagementResponses {
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
   'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
   'GET /api/management/v1/persona-presets': PersonaPresetCatalog
+  'POST /api/management/v1/persona-preview': PersonaPreviewResponse
 }

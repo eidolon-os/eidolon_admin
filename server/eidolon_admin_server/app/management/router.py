@@ -29,8 +29,10 @@ from eidolon_sdk.biz.persona import (
     PersonaEditRequest,
     PersonaEditSnapshot,
     PersonaPresetCatalog,
+    PersonaPreviewRequest,
+    PersonaPreviewResponse,
 )
-from fastapi import APIRouter, Depends, Header, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
@@ -59,11 +61,10 @@ from eidolon_admin_server.app.management.memory import (
     read_graph,
     read_library,
 )
-from eidolon_admin_server.app.management.naming import rename_companion, rename_owner
+from eidolon_admin_server.app.management.naming import rename_owner
 from eidolon_admin_server.app.management.persona import (
     read_history,
     read_persona,
-    restore_chapter,
     write_persona,
 )
 from eidolon_admin_server.app.management.recollecting import recall
@@ -745,6 +746,15 @@ async def get_persona_authoring_template(request: Request) -> PersonaAuthoring:
     return await request.app.state.control_plane.data.persona_authoring_template()
 
 
+@router.post("/persona-preview", response_model=PersonaPreviewResponse)
+async def preview_persona(
+    request: Request, payload: PersonaPreviewRequest, owner_id: str
+) -> PersonaPreviewResponse:
+    return await request.app.state.control_plane.activity.preview_persona(
+        payload, owner_id=owner_id
+    )
+
+
 @router.get("/persona-presets", response_model=PersonaPresetCatalog)
 async def get_persona_presets(request: Request) -> PersonaPresetCatalog:
     """The starting point a create form shows, from the authority that writes it.
@@ -1211,14 +1221,7 @@ async def put_persona_restoration(
     Answers with the history rather than the new chapter, because what someone
     wants after going back is where that leaves them.
     """
-    history = await restore_chapter(
-        owner_id=owner_id,
-        companion_id=companion_id,
-        chapter_id=payload.chapter_id,
-        persona=request.app.state.control_plane.data,
-        companions=request.app.state.control_plane.data,
-    )
-    return _persona_history_internal(history)
+    raise HTTPException(410, "Use versioned PUT /persona with action=restore")
 
 
 @router.get("/activity", response_model=ActivityFeedInternal)
@@ -1379,18 +1382,7 @@ async def patch_companion(
     payload: RenameRequestInternal,
 ) -> CompanionNameInternal:
     """Set what this Owner calls their Eidolon."""
-    identity = await rename_companion(
-        owner_id=owner_id,
-        companion_id=companion_id,
-        display_name=payload.display_name,
-        companions=request.app.state.control_plane.data,
-        namer=request.app.state.control_plane.data,
-    )
-    return CompanionNameInternal(
-        companion_id=identity.companion_id,
-        display_name=identity.display_name,
-        revision=identity.revision,
-    )
+    raise HTTPException(410, "Use versioned PUT /persona with action=rename")
 
 
 @router.patch("/owner", response_model=OwnerNameInternal)

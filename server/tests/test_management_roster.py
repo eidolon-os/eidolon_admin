@@ -1796,10 +1796,8 @@ async def test_going_back_answers_with_where_that_leaves_them(
             _restorations(), headers=headers, json={"chapter_id": "g_1"}
         )
 
-    assert restored.status_code == 200
-    assert backend.asked == [("owner-1", "companion-a", "g_1")]
-    chapters = {c["chapter_id"]: c["is_current"] for c in restored.json()["chapters"]}
-    assert chapters == {"g_1": True, "g_2": False}
+    assert restored.status_code == 410
+    assert backend.asked == []
 
 
 async def test_going_back_to_where_it_already_is_is_not_a_conflict(
@@ -1823,7 +1821,7 @@ async def test_going_back_to_where_it_already_is_is_not_a_conflict(
             _restorations(), headers=headers, json={"chapter_id": "g_1"}
         )
 
-    assert (first.status_code, second.status_code) == (200, 200)
+    assert (first.status_code, second.status_code) == (410, 410)
     assert first.json() == second.json()
 
 
@@ -1843,7 +1841,7 @@ async def test_a_chapter_it_never_was_cannot_be_returned_to(
             _restorations(), headers=headers, json={"chapter_id": "g_never"}
         )
 
-    assert answered.status_code == 409
+    assert answered.status_code == 410
 
 
 async def test_another_owners_persona_is_not_readable_or_restorable(
@@ -1870,7 +1868,7 @@ async def test_another_owners_persona_is_not_readable_or_restorable(
         )
 
     assert read.status_code == 404
-    assert wrote.status_code == 404
+    assert wrote.status_code == 410
 
 
 # --- 它做了什么 -------------------------------------------------------------
@@ -2346,3 +2344,64 @@ async def test_the_persona_is_the_authenticated_owners(tmp_path, monkeypatch) ->
         assert (
             await client.put(_PERSONA, json={"self_concept": "x"})
         ).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "action,fields",
+    [
+        ("rename", {"display_name": "新名字"}),
+        ("restore", {"restore_genome_id": "g_old"}),
+    ],
+)
+async def test_versioned_actions_reach_authority_without_losing_guards(
+    tmp_path, monkeypatch, action, fields
+):
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    body = {
+        "persona": {},
+        "expected_base_genome_id": "g1",
+        "expected_preference_revision": 7,
+        "operation_id": "stable-retry-id",
+        "action": action,
+        **fields,
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(tmp_path, backend)),
+        base_url="https://local.test",
+    ) as client:
+        headers = await _authenticate(client)
+        result = await client.put(_PERSONA, json=body, headers=headers)
+    assert result.status_code == 200, result.text
+    assert backend.authored == [body]
+
+
+async def test_draft_preview_uses_session_owner_and_requires_auth(
+    tmp_path, monkeypatch
+):
+    _stub_controller(monkeypatch, owner_id="owner-1")
+
+    class Backend(_Backend):
+        async def preview_persona(self, *, owner_id, payload):
+            self.asked.append((owner_id, payload))
+            return {"draft_digest": "digest", "reply": "hi", "finish_reason": "stop"}
+
+    backend = Backend()
+    body = {"name": "小南", "persona": {"voice_portrait": "简短"}, "text": "hi"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(tmp_path, backend)),
+        base_url="https://local.test",
+    ) as client:
+        assert (
+            await client.post("/api/management/v1/persona-preview", json=body)
+        ).status_code == 401
+        assert backend.asked == []
+        headers = await _authenticate(client)
+        result = await client.post(
+            "/api/management/v1/persona-preview?owner_id=other",
+            json=body,
+            headers=headers,
+        )
+    assert result.status_code == 200, result.text
+    assert backend.asked[0][0] == "owner-1"
+    assert backend.asked[0][1]["persona"]["voice_portrait"] == "简短"

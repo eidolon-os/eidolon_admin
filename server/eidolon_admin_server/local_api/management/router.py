@@ -22,6 +22,8 @@ from eidolon_sdk.biz.persona import (
     PersonaEditRequest,
     PersonaEditSnapshot,
     PersonaPresetCatalog,
+    PersonaPreviewRequest,
+    PersonaPreviewResponse,
 )
 from eidolon_sdk.system.v1 import HostMonitorWire
 from fastapi import (
@@ -2316,6 +2318,20 @@ def register_management_routes(
             raise _refused(exc) from exc
         return PersonaAuthoring.model_validate(answer)
 
+    @router.post("/persona-preview", response_model=PersonaPreviewResponse)
+    async def preview_persona(
+        payload: PersonaPreviewRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> PersonaPreviewResponse:
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.preview_persona(
+                owner_id=owner_id, payload=payload.model_dump(mode="json")
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return PersonaPreviewResponse.model_validate(answer)
+
     @router.get("/persona-presets", response_model=PersonaPresetCatalog)
     async def get_persona_presets(
         authorization: str | None = Header(default=None, alias="Authorization"),
@@ -2507,20 +2523,8 @@ def register_management_routes(
         trims it into a shape, or refuses a name for being unusual. Only a name
         that is not one — blank — is refused.
         """
-        owner_id = await authenticated_owner(authorization)
-        try:
-            answer = await backend.rename_companion(
-                owner_id=owner_id,
-                companion_id=companion_id,
-                display_name=payload.display_name,
-            )
-        except ManagementBackendError as exc:
-            raise _refused(exc) from exc
-        return CompanionNameView(
-            companion_id=answer["companion_id"],
-            display_name=answer["display_name"],
-            revision=answer["revision"],
-        )
+        await authenticated_owner(authorization)
+        raise refuse(410, "Use versioned PUT /persona with action=rename")
 
     @router.patch("/owner", response_model=OwnerNameView)
     async def patch_owner(
@@ -2963,16 +2967,8 @@ def register_management_routes(
         the months in between and says when I went back. The answer is the whole
         history, because what I want to see afterwards is where that leaves it.
         """
-        owner_id = await authenticated_owner(authorization)
-        try:
-            answer = await backend.restore_persona(
-                owner_id=owner_id,
-                companion_id=companion_id,
-                chapter_id=payload.chapter_id,
-            )
-        except ManagementBackendError as exc:
-            raise _refused(exc) from exc
-        return _persona_history_view(answer)
+        await authenticated_owner(authorization)
+        raise refuse(410, "Use versioned PUT /persona with action=restore")
 
     @router.get("/memory/recollections", response_model=RecollectionsView)
     async def get_memory_recollections(

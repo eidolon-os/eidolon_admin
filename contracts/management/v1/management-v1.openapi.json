@@ -2995,13 +2995,6 @@
             "title": "Character Portrait",
             "type": "string"
           },
-          "commitments": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Commitments",
-            "type": "array"
-          },
           "dialogue_examples": {
             "items": {
               "type": "string"
@@ -3015,13 +3008,6 @@
             },
             "title": "Modality Notes",
             "type": "object"
-          },
-          "pinned_facts": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Pinned Facts",
-            "type": "array"
           },
           "relationship_narrative": {
             "default": "",
@@ -3112,6 +3098,29 @@
       "PersonaEditRequest": {
         "additionalProperties": false,
         "properties": {
+          "action": {
+            "default": "edit",
+            "enum": [
+              "edit",
+              "rename",
+              "restore"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "expected_base_genome_id": {
             "maxLength": 64,
             "minLength": 1,
@@ -3141,6 +3150,19 @@
                 "type": "null"
               }
             ]
+          },
+          "restore_genome_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restore Genome Id"
           }
         },
         "required": [
@@ -3155,6 +3177,16 @@
       "PersonaEditSnapshot": {
         "additionalProperties": false,
         "properties": {
+          "companion_revision": {
+            "default": 1,
+            "title": "Companion Revision",
+            "type": "integer"
+          },
+          "display_name": {
+            "default": "",
+            "title": "Display Name",
+            "type": "string"
+          },
           "genome_id": {
             "title": "Genome Id",
             "type": "string"
@@ -3261,6 +3293,96 @@
           "presets"
         ],
         "title": "PersonaPresetCatalog",
+        "type": "object"
+      },
+      "PersonaPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "base_genome_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Genome Id"
+          },
+          "companion_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Companion Id"
+          },
+          "modality": {
+            "default": "voice",
+            "enum": [
+              "voice",
+              "text"
+            ],
+            "title": "Modality",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "persona": {
+            "$ref": "#/components/schemas/PersonaAuthoring"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ConversationPreferences"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "persona",
+          "text"
+        ],
+        "title": "PersonaPreviewRequest",
+        "type": "object"
+      },
+      "PersonaPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "draft_digest": {
+            "title": "Draft Digest",
+            "type": "string"
+          },
+          "finish_reason": {
+            "title": "Finish Reason",
+            "type": "string"
+          },
+          "reply": {
+            "title": "Reply",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "draft_digest",
+          "reply",
+          "finish_reason"
+        ],
+        "title": "PersonaPreviewResponse",
         "type": "object"
       },
       "PersonaRestoreRequest": {
@@ -6745,6 +6867,65 @@
           }
         },
         "summary": "Get Persona Presets",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persona-preview": {
+      "post": {
+        "operationId": "preview_persona_api_management_v1_persona_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonaPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonaPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Preview Persona",
         "tags": [
           "management"
         ]

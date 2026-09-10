@@ -170,6 +170,14 @@ class AdminManagementClient:
             "/api/internal/v1/management/persona-authoring-template", {}
         )
 
+    async def preview_persona(self, *, owner_id: str, payload: dict) -> dict:
+        return await self._put(
+            "/api/internal/v1/management/persona-preview",
+            {"owner_id": owner_id},
+            payload,
+            method="POST",
+        )
+
     async def persona_presets(self) -> dict:
         """What an Eidolon would be if the create form came back untouched."""
 
@@ -512,7 +520,9 @@ class AdminManagementClient:
                     "Authorization": f"Bearer {self._service_token}",
                     **(headers or {}),
                 },
-                timeout=self._timeout,
+                timeout=max(self._timeout, 40)
+                if path.endswith("/persona-preview")
+                else self._timeout,
             )
         except (
             httpx.TimeoutException,

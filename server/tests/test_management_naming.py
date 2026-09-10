@@ -84,7 +84,9 @@ class _Namer:
         )
 
 
-async def test_ownership_is_proved_by_the_authority_before_anything_is_written() -> None:
+async def test_ownership_is_proved_by_the_authority_before_anything_is_written() -> (
+    None
+):
     """The rename route is keyed on a Companion alone and says nothing about
     whose it is. Asking the owner-scoped route first is what turns "someone
     else's" into a 404 — proved there rather than compared here, so there is no
@@ -236,7 +238,9 @@ async def test_a_name_of_spaces_is_refused_at_the_boundary_a_person_types_into(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         blank = await client.patch(
             "/api/management/v1/companions/companion-a",
@@ -254,9 +258,7 @@ async def test_a_name_of_spaces_is_refused_at_the_boundary_a_person_types_into(
     assert backend.asked == []
 
 
-async def test_the_name_a_person_typed_arrives_as_they_typed_it(
-    tmp_path, monkeypatch
-) -> None:
+async def test_unversioned_companion_rename_is_retired(tmp_path, monkeypatch) -> None:
     """Surrounding space is not a name; everything else is.
 
     No case folding, no length "tidying", no substituting an identifier for an
@@ -266,7 +268,9 @@ async def test_the_name_a_person_typed_arrives_as_they_typed_it(
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
         answered = await client.patch(
             "/api/management/v1/companions/companion-a",
@@ -274,16 +278,8 @@ async def test_the_name_a_person_typed_arrives_as_they_typed_it(
             headers=headers,
         )
 
-    assert answered.status_code == 200
-    assert answered.json()["display_name"] == "小忆 🌙"
-    assert answered.json()["revision"] == 3
-    assert backend.asked == [
-        {
-            "owner_id": "owner-1",
-            "companion_id": "companion-a",
-            "display_name": "小忆 🌙",
-        }
-    ]
+    assert answered.status_code == 410
+    assert backend.asked == []
 
 
 async def test_an_owner_cannot_be_named_by_a_caller(tmp_path, monkeypatch) -> None:
@@ -294,7 +290,9 @@ async def test_an_owner_cannot_be_named_by_a_caller(tmp_path, monkeypatch) -> No
     _stub_controller(monkeypatch, owner_id="owner-1")
     backend = _Backend()
     transport = httpx.ASGITransport(app=_app(tmp_path, backend))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         anonymous = await client.patch(
             "/api/management/v1/owner", json={"display_name": "Manson"}
         )
@@ -328,7 +326,10 @@ async def test_the_published_contract_declares_no_owner_parameter(tmp_path) -> N
 
     created = _app(tmp_path, _Backend())
     paths = created.openapi()["paths"]
-    for path in ("/api/management/v1/owner", "/api/management/v1/companions/{companion_id}"):
+    for path in (
+        "/api/management/v1/owner",
+        "/api/management/v1/companions/{companion_id}",
+    ):
         for parameter in paths[path]["patch"].get("parameters", []):
             assert parameter["in"] != "query", (path, parameter)
             assert parameter["name"] != "owner_id", (path, parameter)

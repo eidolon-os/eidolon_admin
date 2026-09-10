@@ -12,6 +12,8 @@ from eidolon_sdk.biz.persona import (
     PersonaEditRequest,
     PersonaEditSnapshot,
     PersonaPresetCatalog,
+    PersonaPreviewRequest,
+    PersonaPreviewResponse,
 )
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
@@ -1550,12 +1552,24 @@ class AgentActivityClient:
         )
         return _parse("agent", response, RuntimeSessionRevocation)
 
+    async def preview_persona(
+        self, payload: PersonaPreviewRequest, *, owner_id: str
+    ) -> PersonaPreviewResponse:
+        response = await self._call(
+            "POST",
+            "/persona/preview",
+            params={"owner_id": owner_id},
+            json=payload.model_dump(mode="json"),
+        )
+        return _parse("agent", response, PersonaPreviewResponse)
+
     async def _call(
         self,
         method: str,
         leaf: str,
         *,
         params: dict[str, str] | None,
+        json: dict | None = None,
     ):
         """One route of the Agent's admin surface, with this Host's credential.
 
@@ -1576,9 +1590,12 @@ class AgentActivityClient:
             self._client,
             method,
             f"{self._base_url}/api/admin{leaf}",
-            timeout=self._timeout,
+            timeout=max(self._timeout, 35)
+            if leaf == "/persona/preview"
+            else self._timeout,
             headers={"Authorization": f"Bearer {self._service_token}"},
             params=params,
+            json=json,
         )
 
 
