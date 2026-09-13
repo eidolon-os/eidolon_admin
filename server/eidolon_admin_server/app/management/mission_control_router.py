@@ -57,6 +57,22 @@ async def _owner_audit_tail(
     rather than an empty list, which on a map looks exactly like a quiet house.
     """
 
+    # Two facts, recorded separately: whether the index can be read, and whether
+    # anything is keeping it current. An index that is readable and empty is a
+    # quiet house; an index that is readable and abandoned is a broken camera,
+    # and they used to render identically.
+    health = getattr(request.app.state, "audit_indexer", None)
+    if health is None:
+        ledger.record(
+            "audit.indexer",
+            ok=False,
+            detail="这台 Host 没有配置审计事件流：没有东西在填充索引",
+        )
+    elif not health.ok:
+        ledger.record("audit.indexer", ok=False, detail=health.detail)
+    else:
+        ledger.record("audit.indexer", ok=True)
+
     store = getattr(request.app.state, "audit_index", None)
     if store is None:
         ledger.record(

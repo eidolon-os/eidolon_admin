@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -102,3 +102,123 @@ async def test_the_indexer_only_runs_when_a_stream_is_configured(tmp_path) -> No
             if task.get_name() == "eidolon-admin-audit-indexer"
         ]
         assert running == []
+
+
+def _event(seq: int, *, occurred_at: datetime) -> AuditEnvelope:
+    return AuditEnvelope(
+        event_id=f"audit-retention-{seq}",
+        producer="eidolon-system-data",
+        producer_seq=seq,
+        category="governance",
+        owner_id="owner-1",
+        subject_type="companion",
+        subject_id="cmp-1",
+        action="companion.archived",
+        occurred_at=occurred_at,
+    )
+
+
+async def test_the_projection_keeps_a_window_not_a_history(tmp_path) -> None:
+    """Unbounded growth inside a hardened unit's state directory.
+
+    The index had no retention at all. It is a projection of a stream that keeps
+    thirty days, serving a lane that reads the newest 120 rows — so anything
+    older than the stream can never be rebuilt and is never read.
+    """
+
+    index = AuditIndexStore.open(
+        AuditIndexSettings(sqlite_path=str(tmp_path / "audit-index.sqlite3"))
+    )
+    await index.init_schema()
+    now = datetime.now(UTC)
+    try:
+        await index.ingest(
+            [
+                _event(1, occurred_at=now - timedelta(days=40)),
+                _event(2, occurred_at=now - timedelta(days=31)),
+                _event(3, occurred_at=now - timedelta(days=2)),
+            ]
+        )
+
+        assert await index.prune(before=now - timedelta(days=30), max_rows=1_000) == 2
+
+        rows = await index.list_for_owner("owner-1")
+        assert [row.event_id for row in rows] == ["audit-retention-3"]
+    finally:
+        await index.close()
+
+
+async def test_a_producer_that_got_loud_hits_a_row_bound_too(tmp_path) -> None:
+    """An age bound reacts far too slowly to a producer that suddenly floods."""
+
+    index = AuditIndexStore.open(
+        AuditIndexSettings(sqlite_path=str(tmp_path / "audit-index.sqlite3"))
+    )
+    await index.init_schema()
+    now = datetime.now(UTC)
+    try:
+        await index.ingest([_event(seq, occurred_at=now) for seq in range(1, 11)])
+
+        # All ten are well inside the age window; only the bound removes them.
+        assert await index.prune(before=now - timedelta(days=30), max_rows=4) == 6
+
+        rows = await index.tail_for_owner("owner-1", limit=100)
+        # The newest four, and the order this index assigned them is intact —
+        # a reader's cursor still means what it meant.
+        assert [row.envelope.producer_seq for row in rows] == [7, 8, 9, 10]
+        assert [row.ingest_seq for row in rows] == sorted(r.ingest_seq for r in rows)
+    finally:
+        await index.close()
+
+
+async def test_pruning_gives_the_pages_back_to_the_filesystem(tmp_path) -> None:
+    """DELETE frees pages *inside* the database; only VACUUM returns them.
+
+    Measured in pages rather than bytes on disk: this index runs in WAL mode, so
+    right after a write the bytes are in the ``-wal`` sidecar and the main file's
+    size says nothing. ``page_count`` is the size that actually grows without
+    bound, which is what a retention policy is for.
+    """
+
+    path = tmp_path / "audit-index.sqlite3"
+    index = AuditIndexStore.open(AuditIndexSettings(sqlite_path=str(path)))
+    await index.init_schema()
+    now = datetime.now(UTC)
+
+    async def _pages() -> tuple[int, int]:
+        async with index.engine.connect() as connection:
+            total = await connection.scalar(text("PRAGMA page_count"))
+            free = await connection.scalar(text("PRAGMA freelist_count"))
+            return int(total), int(free)
+
+    try:
+        await index.ingest([_event(seq, occurred_at=now) for seq in range(1, 501)])
+        await index.prune(before=now - timedelta(days=30), max_rows=10)
+        grown, freed = await _pages()
+        # The rows are gone and the pages they used are not.
+        assert freed > 0
+
+        await index.reclaim()
+
+        reclaimed, still_free = await _pages()
+        assert reclaimed < grown
+        assert still_free == 0
+    finally:
+        await index.close()
+
+
+async def test_a_read_only_client_may_not_prune_or_vacuum(tmp_path) -> None:
+    path = tmp_path / "audit-index.sqlite3"
+    writer = AuditIndexStore.open(AuditIndexSettings(sqlite_path=str(path)))
+    await writer.init_schema()
+    await writer.close()
+    reader = AuditIndexStore.open(
+        AuditIndexSettings(sqlite_path=str(path), read_only=True)
+    )
+    try:
+        with pytest.raises(RuntimeError):
+            await reader.prune(before=datetime.now(UTC), max_rows=1)
+        with pytest.raises(RuntimeError):
+            await reader.reclaim()
+    finally:
+        await reader.close()

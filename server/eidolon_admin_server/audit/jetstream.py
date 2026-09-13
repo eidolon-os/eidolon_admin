@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
 from eidolon_sdk.biz.audit import AuditEnvelope
+from eidolon_sdk.integrations.audit import (
+    AUDIT_STREAM_NAME,
+    AUDIT_SUBJECT_PREFIX,
+    ensure_audit_stream,
+)
 
 from .index import AuditIndexStore
 
@@ -15,11 +19,12 @@ from .index import AuditIndexStore
 @dataclass(frozen=True)
 class AuditJetStreamSettings:
     url: str = "nats://127.0.0.1:4222"
-    stream: str = "EIDOLON_AUDIT_V1"
-    subject_prefix: str = "eidolon.audit.v1"
+    #: Named by the SDK, which is also where the publishers read it from. The
+    #: stream's shape is a contract between repositories, and this side used to
+    #: hold a private copy of it — along with the only code that created it.
+    stream: str = AUDIT_STREAM_NAME
+    subject_prefix: str = AUDIT_SUBJECT_PREFIX
     durable_consumer: str = "eidolon-audit-indexer-v1"
-    max_age: timedelta = timedelta(days=30)
-    max_bytes: int = 512 * 1024 * 1024
     fetch_batch: int = 200
     fetch_timeout_seconds: float = 1.0
     connect_timeout_seconds: float = 2.0
@@ -51,7 +56,11 @@ class JetStreamAuditIndexer:
         )
         jetstream = connection.jetstream()
         try:
-            await _ensure_stream(jetstream, self.settings)
+            # Ensured, not asserted. Publishers ensure it too, so neither side
+            # waits for the other — but on a Host where nothing has published
+            # yet, refusing to subscribe until something does would turn a quiet
+            # Host into a failing one.
+            await ensure_audit_stream(jetstream)
             subscription = await jetstream.pull_subscribe(
                 f"{self.settings.subject_prefix}.>",
                 durable=self.settings.durable_consumer,
@@ -64,23 +73,34 @@ class JetStreamAuditIndexer:
         self._subscription = subscription
 
     async def close(self) -> None:
-        if self._connection is not None:
-            await self._connection.drain()
+        connection = self._connection
+        # Cleared first, and unconditionally. A drain that raises used to leave
+        # the handles in place, so the retry path's ``close()`` did not actually
+        # reopen anything: ``connect()`` saw a connection and returned, and the
+        # loop went on asking a subscription that was already dead.
         self._connection = None
         self._subscription = None
+        if connection is not None:
+            await connection.drain()
 
     async def consume_once(self) -> int:
         await self.connect()
         subscription = self._subscription
         assert subscription is not None
-        from nats.errors import TimeoutError as NatsTimeoutError
 
         try:
             messages = await subscription.fetch(
                 self.settings.fetch_batch,
                 timeout=self.settings.fetch_timeout_seconds,
             )
-        except NatsTimeoutError:
+        # The builtin, deliberately. ``nats.errors.TimeoutError`` is a *subclass*
+        # of it, so catching the builtin covers both — while catching only the
+        # nats one missed the bare ``asyncio.TimeoutError`` that nats-py raises
+        # when a fetch's deadline runs out. Nothing waiting is the most ordinary
+        # thing an idle indexer does, and it was arriving at the caller as a
+        # failure: a full traceback and a five-second backoff, 235 times on one
+        # Host, in the log a real failure would have to be found in.
+        except TimeoutError:
             return 0
         envelopes: list[AuditEnvelope] = []
         valid_messages: list[Any] = []
@@ -97,24 +117,3 @@ class JetStreamAuditIndexer:
         await self._index.ingest(envelopes)
         await asyncio.gather(*(message.ack() for message in valid_messages))
         return len(envelopes)
-
-
-async def _ensure_stream(jetstream: Any, settings: AuditJetStreamSettings) -> None:
-    from nats.js import api
-    from nats.js.errors import NotFoundError
-
-    try:
-        await jetstream.stream_info(settings.stream)
-        return
-    except NotFoundError:
-        pass
-    await jetstream.add_stream(
-        config=api.StreamConfig(
-            name=settings.stream,
-            subjects=[f"{settings.subject_prefix}.>"],
-            retention=api.RetentionPolicy.LIMITS,
-            storage=api.StorageType.FILE,
-            max_age=settings.max_age.total_seconds(),
-            max_bytes=settings.max_bytes,
-        )
-    )

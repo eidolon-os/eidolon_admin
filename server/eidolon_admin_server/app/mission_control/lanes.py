@@ -114,6 +114,14 @@ SOURCE_LANES: dict[str, tuple[Lane, ...]] = {
     # ``ingest_seq`` is what makes this lane resumable, and it is the reason the
     # events contract requires one.
     "audit.index": ("events",),
+    # Whether anything is filling that index. A second source on the same lane
+    # because reading the file and the file being kept current are two separate
+    # facts, and only the first one used to be asked: a Host whose indexer had
+    # never consumed a message answered `ok` with an empty list, which on a map
+    # is indistinguishable from a quiet house. With both recorded the ledger's
+    # own rule does the rest — rows that were read plus a source that failed is
+    # `degraded`, which is exactly true.
+    "audit.indexer": ("events",),
 }
 
 

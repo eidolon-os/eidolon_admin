@@ -33,6 +33,7 @@ from .gateway.router import router as gateway_router
 from .routers.overview import router as overview_router
 from .routers.services import router as services_router
 from ..audit import (
+    AuditIndexerHealth,
     AuditIndexSettings,
     AuditIndexStore,
     default_audit_index_path,
@@ -131,14 +132,19 @@ def create_app(
             app.state.audit_index = audit_reader
             # The audit index is this process's own projection, so the loop that
             # fills it lives here rather than in a unit of its own. Unset URL
-            # means no indexer — and since the consumer is what creates the
-            # stream, no authority publishes either. Nothing is lost by that:
-            # they keep what they could not send.
+            # means no indexer, and the lane says so rather than showing an
+            # Owner an empty history. Publishing no longer depends on this
+            # loop — the authorities ensure the stream themselves — so a Host
+            # without it loses the map's events lane, not its audit trail.
             if settings.audit_nats_url:
+                # Shared with the events lane, which cannot otherwise tell an
+                # index nobody is writing from a Host where nothing happened.
+                app.state.audit_indexer = AuditIndexerHealth()
                 indexer = asyncio.create_task(
                     run_audit_indexer(
                         nats_url=settings.audit_nats_url,
                         sqlite_path=default_audit_index_path(),
+                        health=app.state.audit_indexer,
                     ),
                     name="eidolon-admin-audit-indexer",
                 )

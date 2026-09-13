@@ -551,3 +551,80 @@ async def test_only_the_source_with_a_position_stamps_a_frame() -> None:
 
     assert stamped.startswith(b"id: 2026-08-25T09:00:00+00:00\n")
     assert not unstamped.startswith(b"id:")
+
+
+class _StubIndex:
+    """An audit index that reads fine and happens to hold nothing."""
+
+    def __init__(self, events: list[Any] | None = None) -> None:
+        self._events = events or []
+
+    async def tail_for_owner(self, owner_id: str, **kwargs: Any) -> list[Any]:
+        return self._events
+
+
+async def _events_lane(request: Any) -> Any:
+    """Read the Owner's audit tail the way the snapshot does, and grade it."""
+
+    from eidolon_admin_server.app.management.mission_control_router import (
+        _owner_audit_tail,
+    )
+
+    ledger = LaneLedger()
+    await _owner_audit_tail(request, _OWNER_ID, ledger)
+    return ledger.outcome("events")
+
+
+async def test_an_index_nobody_fills_is_not_a_quiet_house() -> None:
+    """The defect this pair of sources exists to name.
+
+    A readable, empty index and a Host where nothing has happened are the same
+    table. Only the second is something an Owner should be shown as calm. The
+    lane used to answer `ok` for both because the only question asked was
+    whether the file could be opened.
+    """
+
+    from eidolon_admin_server.audit import AuditIndexerHealth
+
+    request = _Request(_ControlPlane())
+    request.app.state.audit_index = _StubIndex()
+    # Started, never got an answer back from the bus — the state a Host sits in
+    # when no authority can publish.
+    request.app.state.audit_indexer = AuditIndexerHealth()
+
+    outcome = await _events_lane(request)
+
+    assert outcome.state != "ok"
+    assert "审计索引" in outcome.detail
+
+
+async def test_a_host_with_no_event_stream_configured_says_which_it_is() -> None:
+    request = _Request(_ControlPlane())
+    request.app.state.audit_index = _StubIndex()
+    # No indexer at all: `audit_nats_url` was never set on this Host.
+
+    outcome = await _events_lane(request)
+
+    assert outcome.state != "ok"
+    assert "没有配置审计事件流" in outcome.detail
+
+
+async def test_a_filled_index_reads_as_ok_even_when_this_owner_is_new() -> None:
+    """The other half: empty must stay sayable as empty.
+
+    An Owner with no history on a healthy Host is a quiet house, and calling
+    that degraded would be the same lie in the opposite direction.
+    """
+
+    from eidolon_admin_server.audit import AuditIndexerHealth
+
+    health = AuditIndexerHealth()
+    health.observed()
+    request = _Request(_ControlPlane())
+    request.app.state.audit_index = _StubIndex()
+    request.app.state.audit_indexer = health
+
+    outcome = await _events_lane(request)
+
+    assert outcome.state == "ok"
+    assert outcome.detail == ""

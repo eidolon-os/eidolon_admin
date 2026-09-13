@@ -13,11 +13,19 @@ from .index import (
     IndexedAuditEvent,
     default_audit_index_path,
 )
-from .runner import run_audit_indexer
+from .runner import (
+    INDEX_MAX_ROWS,
+    INDEX_RETENTION,
+    AuditIndexerHealth,
+    run_audit_indexer,
+)
 
 __all__ = [
+    "INDEX_MAX_ROWS",
+    "INDEX_RETENTION",
     "AuditIndexSettings",
     "AuditIndexStore",
+    "AuditIndexerHealth",
     "IndexedAuditEvent",
     "default_audit_index_path",
     "run_audit_indexer",

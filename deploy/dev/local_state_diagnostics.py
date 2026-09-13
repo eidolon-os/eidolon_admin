@@ -129,11 +129,13 @@ async def diagnose_audit_backpressure(
     )
     indexer = JetStreamAuditIndexer(
         index,
+        # The stream's limits are the SDK's, the same ones a Host gets. This
+        # used to override max_bytes, which stopped being a consumer setting
+        # when the declaration moved to where the publishers can read it too.
         AuditJetStreamSettings(
             url=url,
             fetch_batch=fetch_batch,
             fetch_timeout_seconds=0.5,
-            max_bytes=32 * 1024 * 1024,
         ),
     )
     publisher = None

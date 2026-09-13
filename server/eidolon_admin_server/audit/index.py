@@ -8,7 +8,17 @@ from datetime import datetime
 from pathlib import Path
 
 from eidolon_sdk.biz.audit import AuditEnvelope
-from sqlalchemy import JSON, DateTime, Index, Integer, String, event, select, text
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    delete,
+    event,
+    select,
+    text,
+)
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -199,6 +209,69 @@ class AuditIndexStore:
             )
             await session.commit()
             return int(result.rowcount or 0)
+
+    async def prune(self, *, before: datetime, max_rows: int) -> int:
+        """Drop what this projection no longer owes anyone. Returns rows deleted.
+
+        **A window, not a history.** What a person reads back is each authority's
+        own table, kept on its own schedule; this index exists so the Owner's map
+        has a bounded now with a total order on it. Keeping it unbounded bought
+        nothing and grew a file inside the state directory of a hardened unit.
+
+        Two bounds, because they fail differently. ``before`` is the ordinary
+        one and should track the stream's own ``max_age``: replaying a stream
+        that only holds thirty days into an index holding a year produces a year
+        of nothing. ``max_rows`` is the one that catches a producer which
+        suddenly got loud, where an age bound reacts far too slowly.
+
+        Nothing here disturbs a reader's cursor. ``ingest_seq`` is never reused,
+        and the events lane asks for the newest page rather than resuming from a
+        sequence, so pruning behind that page is invisible to it. A reader that
+        one day *does* resume from a sequence older than what survives would need
+        telling — the contract has ``stream.reset`` for it — but no such reader
+        exists yet, and building for it now would be inventing a requirement.
+        """
+
+        if self.read_only:
+            raise RuntimeError("read-only audit index clients cannot prune")
+        async with self._session_factory() as session:
+            aged = await session.execute(
+                delete(_AuditIndexRow).where(_AuditIndexRow.occurred_at < before)
+            )
+            # Everything but the newest ``max_rows``, by the order this index
+            # assigns rather than by timestamp — two events in one millisecond
+            # must not be able to trade places with each other here.
+            floor = await session.scalar(
+                select(_AuditIndexRow.ingest_seq)
+                .order_by(_AuditIndexRow.ingest_seq.desc())
+                .limit(1)
+                .offset(max_rows - 1)
+            )
+            overflow = 0
+            if floor is not None:
+                result = await session.execute(
+                    delete(_AuditIndexRow).where(_AuditIndexRow.ingest_seq < floor)
+                )
+                overflow = int(result.rowcount or 0)
+            await session.commit()
+            return int(aged.rowcount or 0) + overflow
+
+    async def reclaim(self) -> None:
+        """Give the deleted pages back to the filesystem.
+
+        SQLite's ``DELETE`` frees pages inside the file and never shrinks it, so
+        a retention policy without this is a policy on row counts only — the
+        thing that actually fills a disk stays exactly as large as its high water
+        mark. Rare on purpose: ``VACUUM`` rewrites the database and takes a write
+        lock for as long as that takes.
+        """
+
+        if self.read_only:
+            raise RuntimeError("read-only audit index clients cannot vacuum")
+        # Outside a transaction: SQLite refuses to VACUUM inside one.
+        async with self.engine.connect() as connection:
+            await connection.execution_options(isolation_level="AUTOCOMMIT")
+            await connection.execute(text("VACUUM"))
 
     async def tail_for_owner(
         self,

@@ -142,3 +142,35 @@ async def test_a_cancelled_indexer_is_not_an_error() -> None:
     # No logging assertion needed: the point is that it returns without asking
     # a cancelled task for an exception, which would raise.
     _report_indexer_exit(task)
+
+
+async def test_a_dead_subscription_is_rebuilt_rather_than_asked_again() -> None:
+    """A pull subscription can die while its socket stays perfectly healthy.
+
+    Delete the stream or its durable consumer — recreating a stream does both —
+    and every later fetch answers ServiceUnavailable forever. ``connect()``
+    returns early while the connection is alive, so without dropping it the loop
+    re-asks the same dead consumer every five seconds. Observed exactly that:
+    three published events sat in a stream nobody was consuming.
+    """
+
+    from eidolon_admin_server.audit.jetstream import JetStreamAuditIndexer
+
+    indexer = JetStreamAuditIndexer.__new__(JetStreamAuditIndexer)
+
+    class _Connection:
+        drained = False
+
+        async def drain(self):
+            type(self).drained = True
+            raise RuntimeError("connection already gone")
+
+    indexer._connection = _Connection()
+    indexer._subscription = object()
+
+    with pytest.raises(RuntimeError):
+        await indexer.close()
+
+    # Cleared despite the failure, so the next connect() rebuilds both.
+    assert indexer._connection is None
+    assert indexer._subscription is None
