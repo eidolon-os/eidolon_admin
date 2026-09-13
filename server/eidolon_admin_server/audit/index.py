@@ -28,9 +28,9 @@ def default_audit_index_path() -> str:
     existed, and the Owner's events lane read "this Host has no audit index" for
     a reason nobody could see.
 
-    Three copies of this expression existed (here, the CLI, and the app's
-    lifespan twice). One function now, because the next person to move it will
-    move it once.
+    This expression used to be spelled out in several places at once — here, a
+    standalone indexer CLI that no longer exists, and the app's lifespan twice.
+    One function now, because the next person to move it will move it once.
     """
 
     root = Path(os.environ.get("EIDOLON_STATE_ROOT", "~/eidolon/data")).expanduser()

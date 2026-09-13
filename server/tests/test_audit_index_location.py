@@ -42,22 +42,18 @@ async def test_the_index_lives_inside_the_directory_the_unit_may_write(
 
 
 async def test_one_source_for_the_path(monkeypatch) -> None:
-    """The expression had three copies; a moved path would have left two behind."""
+    """The expression had copies in several places; a move would strand them."""
 
     monkeypatch.setenv("EIDOLON_STATE_ROOT", "/tmp/eidolon-state-test")
-    from eidolon_admin_server.audit import cli, index
+    from eidolon_admin_server.audit import index
 
     assert index.AuditIndexSettings().sqlite_path == default_audit_index_path()
-    parser = cli._parser()
-    assert parser.get_default("sqlite_path") == default_audit_index_path()
     # And nothing recomputes it by hand.
-    for module in (
-        Path(index.__file__).with_name("cli.py"),
-        Path(index.__file__).parent.parent / "app" / "main.py",
-    ):
-        source = module.read_text(encoding="utf-8")
-        assert 'audit/audit-index.sqlite3' not in source, module
-        assert '"audit" / "audit-index.sqlite3"' not in source, module
+    source = (Path(index.__file__).parent.parent / "app" / "main.py").read_text(
+        encoding="utf-8"
+    )
+    assert "audit/audit-index.sqlite3" not in source
+    assert '"audit" / "audit-index.sqlite3"' not in source
 
 
 async def test_no_index_yet_is_an_error_the_lane_can_report(tmp_path) -> None:

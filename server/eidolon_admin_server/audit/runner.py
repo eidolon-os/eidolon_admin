@@ -1,15 +1,21 @@
 """Keeping the audit index up to date from inside the process that owns it.
 
-The indexer, the store and its CLI have existed and been tested for a while, and
-nothing on a Host ran any of them. So every authority's dispatcher published
-into a stream that did not exist — the consumer is what creates it — and the
-index stayed empty.
+The indexer and the store existed and were tested for a while, and nothing on a
+Host ran either. So every authority's dispatcher published into a stream that did
+not exist — the consumer is what creates it — and the index stayed empty.
 
 **It runs here rather than as its own service.** The index is Admin's own
 rebuildable projection, and Admin is where it is read from; a separate unit would
 mean a new entry in the reviewed product topology, which every operator's Host
 config has to agree with, to run a loop next to the process that owns the file
 anyway. The state directory it writes was already declared for this component.
+
+**This is the only way to start it.** There was once a second one — a
+``eidolon-audit-index`` console script driving a supervisor program — left over
+from the separate-worker design. It was never included by any profile, and
+keeping it meant a second process could be pointed at the same SQLite file,
+which is precisely the single-writer property this arrangement exists to hold.
+Both are gone; do not reintroduce an entry point without answering that.
 
 **A bus that is down must not take Admin with it.** Failures are logged and
 retried with a bounded backoff, never raised into the app: an audit projection
