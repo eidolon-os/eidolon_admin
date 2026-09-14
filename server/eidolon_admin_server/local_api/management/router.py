@@ -25,7 +25,12 @@ from eidolon_sdk.biz.persona import (
     PersonaPreviewRequest,
     PersonaPreviewResponse,
 )
-from eidolon_sdk.system.v1 import HostMonitorWire
+from eidolon_sdk.system.v1 import (
+    HostMonitorWire,
+    HostPowerOffAccepted,
+    HostPowerOffRequest,
+    HostPowerStatusWire,
+)
 from fastapi import (
     APIRouter,
     Depends,
@@ -2066,6 +2071,31 @@ def register_management_routes(
             moments=[ActivityMomentView(**moment) for moment in answer["moments"]],
             next_cursor=None if position is None else str(position),
         )
+
+    @router.get("/host/power", response_model=HostPowerStatusWire)
+    async def read_host_power(
+        response: Response,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostPowerStatusWire:
+        await authenticated_controller_id(authorization)
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await host.read_power()
+        except HostServiceControlError as exc:
+            raise refuse(exc.status_code, str(exc)) from exc
+
+    @router.post("/host/poweroff", response_model=HostPowerOffAccepted, status_code=202)
+    async def power_off_host(
+        payload: HostPowerOffRequest,
+        response: Response,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostPowerOffAccepted:
+        await authenticated_controller_id(authorization)
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return await host.power_off(request_id=payload.request_id)
+        except HostServiceControlError as exc:
+            raise refuse(exc.status_code, str(exc)) from exc
 
     @router.get("/host/monitor", response_model=HostMonitorWire)
     async def read_host_monitor(

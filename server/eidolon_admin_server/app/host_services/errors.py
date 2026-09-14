@@ -6,11 +6,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 HostServiceFailureKind = Literal[
-    "unavailable", "not_found", "conflict", "rejected", "invalid_response"
+    "unavailable", "not_found", "conflict", "rejected", "invalid_response", "denied"
 ]
 
 _STATUS: dict[HostServiceFailureKind, int] = {
     "unavailable": 503,
+    "denied": 403,
     "not_found": 404,
     "conflict": 409,
     "rejected": 502,

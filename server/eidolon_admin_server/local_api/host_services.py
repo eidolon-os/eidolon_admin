@@ -19,8 +19,13 @@ from typing import Literal, Protocol, runtime_checkable
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.system.v1 import (
+    HostMonitorWire,
+    HostPowerOffAccepted,
+    HostPowerStatusWire,
+    HostVitalsWire,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from eidolon_sdk.system.v1 import HostVitalsWire, HostMonitorWire
 
 RuntimeState = Literal[
     "unknown", "inactive", "starting", "ready", "degraded", "blocked", "failed"
@@ -43,6 +48,10 @@ class HostMachinePort(Protocol):
     async def read_vitals(self) -> HostVitalsWire: ...
 
     async def read_monitor(self) -> HostMonitorWire: ...
+
+    async def read_power(self) -> HostPowerStatusWire: ...
+
+    async def power_off(self, *, request_id: str) -> HostPowerOffAccepted: ...
 
     async def mutate(
         self,
@@ -166,6 +175,23 @@ class AdminHostServicesClient:
         self._timeout = timeout_seconds
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(trust_env=False)
+
+    async def read_power(self) -> HostPowerStatusWire:
+        document = await self._request("GET", "/api/host/power")
+        try:
+            return HostPowerStatusWire.model_validate(document)
+        except ValidationError as exc:
+            raise HostServiceControlError("Host power response did not match the shared contract", status_code=502) from exc
+
+    async def power_off(self, *, request_id: str) -> HostPowerOffAccepted:
+        document = await self._request("POST", "/api/host/poweroff", json={"request_id": request_id})
+        try:
+            result = HostPowerOffAccepted.model_validate(document)
+            if result.request_id != request_id:
+                raise ValueError("poweroff request identity mismatch")
+            return result
+        except (ValidationError, ValueError) as exc:
+            raise HostServiceControlError("Host power response did not match the shared contract", status_code=502) from exc
 
     async def list_services(self) -> dict:
         return await self._request("GET", "/api/host/services")

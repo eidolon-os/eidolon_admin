@@ -286,6 +286,21 @@ export interface HostMonitorWire {
   uptime_seconds?: number | null
 }
 
+export interface HostPowerOffAccepted {
+  operation?: "system.poweroff"
+  request_id: string
+  status?: "accepted"
+}
+
+export interface HostPowerOffRequest {
+  request_id: string
+}
+
+export interface HostPowerStatusWire {
+  can_power_off: boolean
+  unavailable_reason?: string | null
+}
+
 export interface HostServiceInventoryView {
   services?: Array<HostServiceView>
 }
@@ -696,6 +711,8 @@ export interface ManagementResponses {
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire
+  'GET /api/management/v1/host/power': HostPowerStatusWire
+  'POST /api/management/v1/host/poweroff': HostPowerOffAccepted
   'GET /api/management/v1/host/services': HostServiceInventoryView
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView

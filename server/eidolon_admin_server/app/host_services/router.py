@@ -14,10 +14,17 @@ and therefore only work on a development Mac.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from eidolon_sdk.system.v1 import (
+    HostMonitorWire,
+    HostPowerOffAccepted,
+    HostPowerOffRequest,
+    HostPowerStatusWire,
+    HostVitalsWire,
+)
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from eidolon_sdk.system.v1 import HostVitalsWire, HostMonitorWire
 
+from ..service_auth import require_local_api_credential
 from .contracts import (
     HostService,
     HostServiceMutationResult,
@@ -63,6 +70,24 @@ async def list_capabilities(request: Request) -> dict[str, object]:
 
     capabilities = getattr(request.app.state, "workstation_capabilities", ())
     return {"workstation": [item.to_wire() for item in capabilities]}
+
+
+@router.get("/power", response_model=HostPowerStatusWire, dependencies=[Depends(require_local_api_credential)])
+async def host_power(request: Request, response: Response) -> HostPowerStatusWire:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await _client(request).read_power()
+    except HostServiceError as exc:
+        raise _fail(exc) from exc
+
+
+@router.post("/poweroff", response_model=HostPowerOffAccepted, status_code=202, dependencies=[Depends(require_local_api_credential)])
+async def power_off_host(payload: HostPowerOffRequest, request: Request, response: Response) -> HostPowerOffAccepted:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await _client(request).power_off(request_id=payload.request_id)
+    except HostServiceError as exc:
+        raise _fail(exc) from exc
 
 
 @router.get("/monitor", response_model=HostMonitorWire)

@@ -14,8 +14,13 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import httpx
+from eidolon_sdk.system.v1 import (
+    HostMonitorWire,
+    HostPowerOffAccepted,
+    HostPowerStatusWire,
+    HostVitalsWire,
+)
 from pydantic import ValidationError
-from eidolon_sdk.system.v1 import HostVitalsWire, HostMonitorWire
 
 from .contracts import (
     HostService,
@@ -54,6 +59,23 @@ class HostServiceClient:
                 httpx.AsyncHTTPTransport(uds=str(uds_path)) if uds_path else None
             )
             self._client = httpx.AsyncClient(transport=transport, trust_env=False)
+
+    async def read_power(self) -> HostPowerStatusWire:
+        document = await self._request("GET", "/api/system/v1/power")
+        try:
+            return HostPowerStatusWire.model_validate(document)
+        except ValidationError as exc:
+            raise self._invalid("Host power response did not match the shared contract") from exc
+
+    async def power_off(self, *, request_id: str) -> HostPowerOffAccepted:
+        document = await self._request("POST", "/api/system/v1/poweroff", json={"request_id": request_id})
+        try:
+            result = HostPowerOffAccepted.model_validate(document)
+            if result.request_id != request_id:
+                raise ValueError("poweroff request identity mismatch")
+            return result
+        except (ValidationError, ValueError) as exc:
+            raise self._invalid("Host power response did not match the shared contract") from exc
 
     async def read_monitor(self) -> HostMonitorWire:
         document = await self._request("GET", "/api/system/v1/monitor")
@@ -173,6 +195,8 @@ class HostServiceClient:
             raise HostServiceError(
                 "unavailable", "the Host system manager is unreachable"
             ) from exc
+        if response.status_code == 403 and path == "/api/system/v1/poweroff":
+            raise HostServiceError("denied", "主机拒绝关机，请检查关机权限")
         if response.status_code == 404:
             raise HostServiceError(
                 "not_found", "the Host does not manage this service"

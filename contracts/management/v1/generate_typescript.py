@@ -95,7 +95,11 @@ def build_output() -> bytes:
     operations: list[str] = []
     for path, methods in sorted(document["paths"].items()):
         for method, operation in sorted(methods.items()):
-            content = operation["responses"]["200"].get("content", {})
+            success = ([operation["responses"]["200"]] if "200" in operation["responses"] else
+                       [response for code, response in operation["responses"].items() if code.startswith("2")])
+            if len(success) != 1:
+                raise UnsupportedSchema(f"{method} {path}: expected one success response")
+            content = success[0].get("content", {})
             if "application/json" in content:
                 emitted = _type_of(content["application/json"]["schema"], where=path)
             else:
