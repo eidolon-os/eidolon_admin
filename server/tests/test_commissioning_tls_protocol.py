@@ -241,7 +241,9 @@ def test_endpoint_stays_readable_when_the_host_has_many_addresses(
 
     monkeypatch.setattr(
         "eidolon_admin_server.bootstrap.service.local_api_base_urls",
-        lambda port: [f"https://192.168.3.{index}:{port}" for index in range(1, 21)],
+        lambda port, _networks=(): [
+            f"https://192.168.3.{index}:{port}" for index in range(1, 21)
+        ],
     )
     settings = _settings(tmp_path)
     service = BootstrapService(
@@ -270,7 +272,7 @@ def test_the_addresses_kept_are_the_ones_most_likely_to_be_reachable(
 
     monkeypatch.setattr(
         "eidolon_admin_server.bootstrap.service.local_api_base_urls",
-        lambda port: [
+        lambda port, _networks=(): [
             "https://192.168.3.206:9002",
             *[f"https://169.254.{index}.1:9002" for index in range(1, 20)],
         ],

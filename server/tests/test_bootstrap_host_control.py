@@ -1853,6 +1853,44 @@ def test_the_endpoint_says_where_this_host_answers(monkeypatch) -> None:
     ]
 
 
+def test_the_one_link_the_host_may_rule_out_is_the_one_ops_declared(monkeypatch) -> None:
+    """Not a guess about the phone's network — a fact about this machine.
+
+    Everything else here stays as loose as it was, deliberately: an interface
+    that is down is still offered, and a link-local address is still offered
+    last, because a Host reachable only over a direct cable is still reachable
+    and this Host does not know which network the phone is on. The operator's
+    own cable is the exception it *does* know about, because Ops configured it
+    and says so in the sealed Host profile.
+
+    It is not a free extra either. This list is signed into one 512-byte GATT
+    read and truncated from the end, so an address no phone can use crowds out
+    one it could.
+    """
+
+    import ipaddress
+
+    from eidolon_admin_server.bootstrap import host_addresses
+
+    monkeypatch.setattr(
+        host_addresses,
+        "_kernel_reported_addresses",
+        lambda: ["127.0.0.1", "10.42.0.2", "169.254.181.137", "192.168.100.19"],
+    )
+
+    assert host_addresses.local_api_base_urls(9002) == [
+        "https://10.42.0.2:9002",
+        "https://192.168.100.19:9002",
+        "https://169.254.181.137:9002",
+    ]
+    assert host_addresses.local_api_base_urls(
+        9002, (ipaddress.ip_network("10.42.0.0/24"),)
+    ) == [
+        "https://192.168.100.19:9002",
+        "https://169.254.181.137:9002",
+    ]
+
+
 def test_a_host_that_cannot_read_its_own_addresses_publishes_none(monkeypatch) -> None:
     # Saying nothing leaves the phone to look elsewhere; saying something wrong
     # sends it somewhere that will never answer.

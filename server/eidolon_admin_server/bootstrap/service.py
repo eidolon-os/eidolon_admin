@@ -10,6 +10,7 @@ import re
 import secrets
 import time
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,7 +36,7 @@ from .domain import (
     is_usable_setup_code,
 )
 from .endpoint_encoding import GATT_MAX_ATTRIBUTE_BYTES, endpoint_size
-from .host_addresses import local_api_base_urls
+from .host_addresses import IPNetwork, local_api_base_urls
 from .ports import (
     BootstrapStateConflict,
     BootstrapStateStore,
@@ -82,8 +83,14 @@ class BootstrapService:
         identity_manager: HostIdentityManager,
         tls_identity_manager: CommissioningTlsIdentityManager | None = None,
         network: NetworkProvisioning | None = None,
+        #: The links Ops declared as its own on this Host, passed in from the
+        #: composition root. A phone is never on one of them, and the endpoint
+        #: they would go into has a hard size ceiling that drops addresses from
+        #: the end — so carrying one costs a real address, not nothing.
+        management_networks: Sequence[IPNetwork] = (),
     ) -> None:
         self._settings = settings
+        self._management_networks = tuple(management_networks)
         self._store = store
         self._identity_manager = identity_manager
         self._tls_identity_manager = (
@@ -462,7 +469,8 @@ class BootstrapService:
             "local_api_base_urls": [],
         }
         unsigned["local_api_base_urls"] = self._addresses_that_fit(
-            unsigned, local_api_base_urls(self._settings.local_api_port)
+            unsigned,
+            local_api_base_urls(self._settings.local_api_port, self._management_networks),
         )
         return {**unsigned, "signature": self._identity_manager.sign_mapping(unsigned)}
 

@@ -12,6 +12,8 @@ import logging
 import signal
 from contextlib import suppress
 
+from eidolon_sdk.system import declared_management_networks
+
 from .adapters.commissioning import BlueZCommissioningListener
 from .adapters.network import InMemoryNetworkProvisioning, NetworkManagerProvisioning
 from .adapters.persistence import SQLiteBootstrapStateStore
@@ -113,6 +115,11 @@ async def run_daemon(
         store=store,
         identity_manager=identity_manager,
         network=network,
+        # Read at the one place that composes this daemon rather than wherever
+        # an address list is built: Ops declares this about the machine in the
+        # sealed Host profile this unit already reads, and it does not change
+        # while the process runs.
+        management_networks=declared_management_networks(),
     )
     control = BootstrapControlServer(settings.control_socket, service)
     notifier = SystemdNotifier.from_environ()

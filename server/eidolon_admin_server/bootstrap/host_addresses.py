@@ -10,6 +10,13 @@ So the Host says it, over the channel that is already how a phone and a Host
 talk when the network cannot be relied on. Every address is offered because
 the Host does not know which network the phone is on; the phone tries them and
 proves the identity at whichever answers.
+
+Every address *of the product's*, since 2026-09-15. There is one kind of link
+the Host is in a position to rule out, and only because Ops tells it: the cable
+to an operator's workstation, which no phone is ever on. That is not a guess
+about the phone's network — it is a fact about this one, declared where it is
+known. Nothing else narrows: an interface that is down is still offered, and so
+is a link-local address, for the reasons each says below.
 """
 
 from __future__ import annotations
@@ -17,27 +24,42 @@ from __future__ import annotations
 import ipaddress
 import logging
 import socket
+from collections.abc import Sequence
 
 import psutil
+from eidolon_sdk.system import on_product_link
 
 __all__ = ["local_api_base_urls", "reachable_ipv4_addresses"]
 
 logger = logging.getLogger(__name__)
 
+IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
 
-def local_api_base_urls(port: int) -> list[str]:
+
+def local_api_base_urls(port: int, management_networks: Sequence[IPNetwork] = ()) -> list[str]:
     """Every address a Controller could reach this Host's Local API on."""
 
-    return [f"https://{address}:{port}" for address in reachable_ipv4_addresses()]
+    return [
+        f"https://{address}:{port}"
+        for address in reachable_ipv4_addresses(management_networks)
+    ]
 
 
-def reachable_ipv4_addresses() -> list[str]:
+def reachable_ipv4_addresses(management_networks: Sequence[IPNetwork] = ()) -> list[str]:
     """This Host's own IPv4 addresses, most routable first.
 
     Link-local addresses come last rather than being dropped: a phone is not
     normally on one, but a Host reachable only over a direct cable is still
     reachable, and the Host is in no position to decide which network the phone
     is on.
+
+    The links Ops keeps for itself are dropped, which is the one exception and
+    is not the same judgement: those are addresses this Host knows no phone can
+    be on, because the workstation at the other end of that cable is the only
+    thing there. They are not free to carry either — the endpoint they go into
+    is signed into a single 512-byte characteristic read, and the addresses
+    that do not fit are dropped from the end, so a cable near the front of the
+    list costs a real address at the back of it.
     """
 
     addresses: list[str] = []
@@ -47,6 +69,8 @@ def reachable_ipv4_addresses() -> list[str]:
         except ValueError:
             continue
         if parsed.is_loopback or parsed.is_multicast or parsed.is_unspecified:
+            continue
+        if not on_product_link(parsed, management_networks):
             continue
         if raw not in addresses:
             addresses.append(raw)
