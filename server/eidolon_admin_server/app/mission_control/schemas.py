@@ -155,6 +155,12 @@ class RuntimeTurn(BaseModel):
     channel_turn_id: str | None = None
     agent_turn_id: str | None = None
     conversation_id: str
+    #: Which entry into a voice room this turn belongs to — the named dispatch's
+    #: identity, and the name Channel gives the session trace it writes. It is
+    #: deliberately not ``conversation_id``: that one is the brain's own
+    #: long-lived thread, stable across sessions by design, so joining a trace on
+    #: it would fuse every session of one device into a single row.
+    runtime_session_id: str | None = None
     owner_id: str
     companion_id: str
     device_id: str | None = None

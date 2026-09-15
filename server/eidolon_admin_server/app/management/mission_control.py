@@ -238,6 +238,12 @@ def _turn(row: Any) -> dict[str, Any]:
         "turn_id": row.turn_id,
         "companion_id": row.companion_id,
         "device_id": row.device_id,
+        # The name of the voice session this turn happened inside — which is
+        # also the name Channel gives its session trace, so this is the one
+        # field that lets a client ask for the trace behind a turn it is already
+        # showing. Not `conversation_id`: see RuntimeTurn for why that one
+        # cannot serve as the join.
+        "runtime_session_id": row.runtime_session_id,
         "status": row.status,
         "trigger": row.trigger,
         "latency_ms": row.latency_ms,

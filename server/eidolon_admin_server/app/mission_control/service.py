@@ -1279,6 +1279,9 @@ def _project_runtime_turns(
                         "",
                     )
                 ),
+                runtime_session_id=(
+                    agent_turn.runtime_session_id if agent_turn else None
+                ),
                 owner_id=ordered[-1].owner_id or (agent_turn.owner_id if agent_turn else ""),
                 companion_id=ordered[-1].companion_id or (agent_turn.companion_id if agent_turn else ""),
                 device_id=next((event.device_id for event in ordered if event.device_id), None)
@@ -1395,6 +1398,7 @@ def _turn(row: dict[str, Any]) -> RuntimeTurn:
         trace_id=trace_id,
         agent_turn_id=agent_turn_id,
         conversation_id=str(row.get("conversation_id") or ""),
+        runtime_session_id=_str_or_none(row.get("runtime_session_id")),
         owner_id=str(row.get("owner_id") or ""),
         companion_id=str(row.get("companion_id") or ""),
         device_id=_str_or_none(row.get("device_id")),

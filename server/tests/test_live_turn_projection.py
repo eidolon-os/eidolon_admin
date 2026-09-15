@@ -35,6 +35,7 @@ def _row(**overrides):
     row = {
         "turn_id": "turn-live",
         "conversation_id": "conv-1",
+        "runtime_session_id": "rts-7f3a",
         "owner_id": "owner-1",
         "companion_id": "eidolon-xiaoer",
         "device_id": "dev-box3",
@@ -54,6 +55,37 @@ def _row(**overrides):
     }
     row.update(overrides)
     return row
+
+
+def test_the_session_a_turn_happened_inside_survives_the_read() -> None:
+    """The Agent records it; this side has to actually pick it up.
+
+    ``runtime_session_id`` is the only key that joins a turn to the session
+    trace Channel wrote, and the Agent has served it on this row all along —
+    this projection simply did not read it, so the key died one hop after the
+    authority that knew it.
+
+    ``conversation_id`` is asserted separately and to a different value on
+    purpose: it is the brain's own long-lived thread, stable across sessions, so
+    joining on it would fuse every session of one device into one row.
+    """
+
+    turn = _turn(_row())
+
+    assert turn.runtime_session_id == "rts-7f3a"
+    assert turn.conversation_id == "conv-1"
+
+
+def test_a_row_without_a_session_reads_as_null_not_empty_string() -> None:
+    """Absent has to stay distinguishable from blank.
+
+    A turn that never came through a runtime session, or one from a Host older
+    than this field, has no session to name — and `""` would read downstream as
+    a session whose name happens to be empty.
+    """
+
+    assert _turn(_row(runtime_session_id=None)).runtime_session_id is None
+    assert _turn(_row(runtime_session_id="")).runtime_session_id is None
 
 
 def _stages(row) -> dict[str, str]:

@@ -158,6 +158,7 @@ def _snapshot(**overrides) -> RuntimeSnapshot:
             RuntimeTurn(
                 turn_id="turn-1",
                 conversation_id="conv-1",
+                runtime_session_id="rts-7f3a",
                 owner_id="owner-1",
                 companion_id="companion-a",
                 device_id="dev-living",
@@ -293,6 +294,54 @@ def test_a_lane_nobody_could_read_carries_no_rows() -> None:
     assert payload["services"]["state"] == "ok"
     assert payload["turns"]["state"] == "ok"
     assert payload["services"]["items"]
+
+
+def test_a_turn_carries_the_session_it_happened_inside() -> None:
+    """The join key to Channel's session trace, and it is not conversation_id.
+
+    Channel names a session trace after the named dispatch's identity, and the
+    Agent records that same value on the turn. Carrying it here is what lets a
+    client holding a turn ask for the trace behind it — without it, the phone
+    can show that a turn was slow and has no way to say which recording explains
+    why.
+
+    ``conversation_id`` is asserted to be a *different* value on purpose. It is
+    the brain's own thread and is stable across sessions by design, so a join on
+    it would fuse every session of one device into one row. The two being equal
+    here would let that mistake pass unnoticed.
+    """
+
+    payload = owner_runtime_projection(
+        RuntimeComposition(snapshot=_snapshot(), ledger=_healthy_ledger())
+    )
+    turn = payload["turns"]["items"][0]
+    assert turn["runtime_session_id"] == "rts-7f3a"
+    assert turn["runtime_session_id"] != "conv-1"
+
+
+def test_a_turn_that_never_had_a_session_says_null_not_empty() -> None:
+    """Absent is null, because "" would read as a session whose name is blank.
+
+    A turn can legitimately have none — one that never came through a runtime
+    session, or a Host older than this field — and a client must be able to tell
+    that apart from one it simply failed to read.
+    """
+
+    snapshot = _snapshot(
+        recent_turns=[
+            RuntimeTurn(
+                turn_id="turn-nosession",
+                conversation_id="conv-1",
+                owner_id="owner-1",
+                companion_id="companion-a",
+                status="completed",
+            )
+        ]
+    )
+    payload = owner_runtime_projection(
+        RuntimeComposition(snapshot=snapshot, ledger=_healthy_ledger())
+    )
+    assert payload["turns"]["items"][0]["runtime_session_id"] is None
 
 
 def test_one_source_of_two_leaves_a_lane_partly_known() -> None:
