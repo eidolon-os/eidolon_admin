@@ -23,6 +23,7 @@ from .control_plane.router import (
     router as control_plane_router,
 )
 from .management.mission_control_router import router as management_mission_control_router
+from .management.session_traces_router import router as management_session_traces_router
 from .management.router import router as management_router
 from .control_plane.service import ControlPlaneService
 from .mission_control.router import router as mission_control_router
@@ -278,6 +279,7 @@ def create_app(
     # answers to two audiences and a third meaning is how this got confusing.
     app.include_router(management_router, prefix="/api")
     app.include_router(management_mission_control_router, prefix="/api")
+    app.include_router(management_session_traces_router, prefix="/api")
     # Read-only and second-hand: it asks the same authorities every other
     # surface here asks. Registered rather than merely present, because a
     # module nothing routes to is one nobody can tell is broken.

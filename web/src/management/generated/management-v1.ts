@@ -731,4 +731,6 @@ export interface ManagementResponses {
   'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
   'GET /api/management/v1/persona-presets': PersonaPresetCatalog
   'POST /api/management/v1/persona-preview': PersonaPreviewResponse
+  'GET /api/management/v1/session-traces': unknown
+  'GET /api/management/v1/session-traces/{session_id}': unknown
 }

@@ -1579,6 +1579,17 @@ class ControllerDirectoryPort(Protocol):
 class ManagementBackendPort(Protocol):
     """What this router needs from the process that holds the credentials."""
 
+    async def session_traces(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        since: str | None,
+        limit: int,
+    ) -> dict: ...
+
+    async def session_trace(self, *, owner_id: str, session_id: str) -> dict: ...
+
     async def context(self, *, owner_id: str) -> dict: ...
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
@@ -1851,6 +1862,55 @@ def register_management_routes(
             devices=rows if not inventory_failure else None,
             failure=inventory_failure,
         )
+
+    @router.get("/session-traces", response_model=None)
+    async def get_session_traces(
+        companion_id: str | None = None,
+        since: str | None = None,
+        limit: int = 50,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict:
+        """The Owner's recorded voice sessions, newest first.
+
+        Engineering data, not the Owner's reading: 26–30 marks a turn, per-packet
+        audio state, the evidence behind an interrupt decision. It is here
+        because the phone is the only surface this Host presents, not because a
+        person is expected to browse it — see the mobile plan's section 3.
+
+        No ``owner_id`` parameter, like everything else on this plane: the Owner
+        is the Controller session's and cannot be named by a client.
+        """
+
+        session = await authenticated_controller_session(authorization)
+        try:
+            return await backend.session_traces(
+                owner_id=session.owner_id,
+                companion_id=companion_id,
+                since=since,
+                limit=limit,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+
+    @router.get("/session-traces/{session_id}", response_model=None)
+    async def get_session_trace(
+        session_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> dict:
+        """One session's records, in the order the worker wrote them.
+
+        A session belonging to another Owner answers exactly as a session that
+        does not exist. That check is upstream, where the Provider's summary can
+        be compared against the asking Owner.
+        """
+
+        session = await authenticated_controller_session(authorization)
+        try:
+            return await backend.session_trace(
+                owner_id=session.owner_id, session_id=session_id
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
 
     @router.get("/mission-control/activities", response_model=None)
     async def get_mission_control_activities(

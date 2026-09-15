@@ -7106,6 +7106,153 @@
           "management"
         ]
       }
+    },
+    "/api/management/v1/session-traces": {
+      "get": {
+        "description": "The Owner's recorded voice sessions, newest first.\n\nEngineering data, not the Owner's reading: 26–30 marks a turn, per-packet\naudio state, the evidence behind an interrupt decision. It is here\nbecause the phone is the only surface this Host presents, not because a\nperson is expected to browse it — see the mobile plan's section 3.\n\nNo ``owner_id`` parameter, like everything else on this plane: the Owner\nis the Controller session's and cannot be named by a client.",
+        "operationId": "get_session_traces_api_management_v1_session_traces_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "companion_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Companion Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Session Traces",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/session-traces/{session_id}": {
+      "get": {
+        "description": "One session's records, in the order the worker wrote them.\n\nA session belonging to another Owner answers exactly as a session that\ndoes not exist. That check is upstream, where the Provider's summary can\nbe compared against the asking Owner.",
+        "operationId": "get_session_trace_api_management_v1_session_traces__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Session Trace",
+        "tags": [
+          "management"
+        ]
+      }
     }
   }
 }

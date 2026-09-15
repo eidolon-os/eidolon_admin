@@ -101,6 +101,28 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
+    async def session_traces(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        since: str | None,
+        limit: int,
+    ) -> dict:
+        params: dict[str, object] = {"owner_id": owner_id, "limit": limit}
+        if companion_id:
+            params["companion_id"] = companion_id
+        if since:
+            params["since"] = since
+        return await self._get("/api/internal/v1/management/session-traces", params)
+
+    async def session_trace(self, *, owner_id: str, session_id: str) -> dict:
+        params: dict[str, object] = {"owner_id": owner_id}
+        return await self._get(
+            f"/api/internal/v1/management/session-traces/{quote(session_id, safe='')}",
+            params,
+        )
+
     async def mission_control_activities(
         self, *, owner_id: str, before: str | None
     ) -> dict:
