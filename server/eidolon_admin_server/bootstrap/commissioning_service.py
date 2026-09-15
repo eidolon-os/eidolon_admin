@@ -151,10 +151,18 @@ class CommissioningService:
         store: BootstrapStateStore,
         network: NetworkProvisioning,
         clock: Callable[[], datetime] = _now,
+        on_claimed: Callable[[], None] | None = None,
     ) -> None:
         self._store = store
         self._network = network
         self._clock = clock
+        #: Called after a claim has been committed, so the composition that
+        #: knows this Host's claim-window policy can act on it. Kept as a
+        #: callback rather than a settings object: whether a window should be
+        #: standing is not a fact this service reasons about, and giving it the
+        #: factory code to re-mint would put a secret in the one place that
+        #: only ever needed a hash.
+        self._on_claimed = on_claimed
 
     def authorize(self, *, session_id: str, secret: str) -> CommissioningAuthorization:
         if not isinstance(session_id, str) or not session_id:
@@ -438,6 +446,11 @@ class CommissioningService:
                 else "operation_conflict"
             )
             raise CommissioningRequestRejected(code, reason) from exc
+        if self._on_claimed is not None:
+            try:
+                self._on_claimed()
+            except Exception:  # noqa: BLE001 - the claim is committed either way
+                logger.exception("claim committed but the claim window did not reopen")
         return {
             "controller": grant.to_dict(),
             "state": self._store.get_state().to_dict(),

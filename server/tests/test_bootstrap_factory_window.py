@@ -27,7 +27,13 @@ from eidolon_admin_server.bootstrap.commissioning_protocol import (
     CommissioningProtocolSession,
 )
 from eidolon_admin_server.bootstrap.commissioning_service import CommissioningService
-from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
+from dataclasses import replace
+
+from eidolon_admin_server.bootstrap.config import (
+    BootstrapMode,
+    BootstrapSettings,
+    ClaimWindowPolicy,
+)
 from eidolon_admin_server.bootstrap.domain import NetworkState
 from eidolon_admin_server.bootstrap.identity import HostIdentityManager
 from eidolon_admin_server.bootstrap.service import BootstrapService
@@ -222,3 +228,144 @@ def test_the_factory_code_is_what_the_window_accepts(tmp_path: Path) -> None:
     )
 
     assert authorization is not None
+
+
+async def _claim(session, service, auth_id: str, claim_id: str) -> dict:
+    assert (
+        await session.handle(
+            {
+                "contract_version": "1",
+                "request_id": f"{auth_id}-1111-4111-8111-111111111111",
+                "operation": "session.authenticate",
+                "payload": {
+                    "commissioning_id": service.commissioning_endpoint()[
+                        "setup_session"
+                    ]["commissioning_id"],
+                    "setup_code": FACTORY_CODE,
+                },
+            }
+        )
+    )["ok"] is True
+    return await session.handle(
+        {
+            "contract_version": "1",
+            "request_id": f"{claim_id}-2222-4222-8222-222222222222",
+            "operation": "claim.complete",
+            "payload": {
+                "public_key": _controller_public_key(),
+                "display_name": "Pad",
+                "platform": "android",
+            },
+        }
+    )
+
+
+# --- the declared exception ------------------------------------------------
+
+
+def _always_open(tmp_path: Path) -> BootstrapSettings:
+    base = _settings(tmp_path)
+    return replace(base, claim_window=ClaimWindowPolicy.ALWAYS_OPEN)
+
+
+def test_a_host_that_declares_a_standing_window_reopens_it_after_a_claim(
+    tmp_path: Path,
+) -> None:
+    """The lockout this declaration exists to prevent, including the delayed one.
+
+    A development rig has no way to prove possession that does not run through
+    a workstation: `commissioning-code` and `controller-reset` both need SSH
+    and an Ops checkout, so a lost phone locks the rig out of itself. A Host
+    may declare that the Setup code alone is enough.
+
+    Reopening is half the declaration. A claim consumes the session that
+    authorised it, so without this the Host would be closed again the moment it
+    was used -- the same lockout, one claim later.
+    """
+
+    settings = _always_open(tmp_path)
+    _write_factory_code(settings, FACTORY_CODE)
+    service, store = _service(settings)
+    service.reconcile_network_state(NetworkState.CONNECTED)
+
+    commissioning = CommissioningService(
+        store=store,
+        network=InMemoryNetworkProvisioning(),
+        on_claimed=service.reopen_standing_claim_window,
+    )
+    session = CommissioningProtocolSession(commissioning)
+    import asyncio
+
+    async def claim(request_prefix: str) -> dict:
+        assert (
+            await session.handle(
+                {
+                    "contract_version": "1",
+                    "request_id": f"{request_prefix}1111-1111-4111-8111-111111111111"[:36],
+                    "operation": "session.authenticate",
+                    "payload": {
+                        "commissioning_id": service.commissioning_endpoint()[
+                            "setup_session"
+                        ]["commissioning_id"],
+                        "setup_code": FACTORY_CODE,
+                    },
+                }
+            )
+        )["ok"] is True
+        return await session.handle(
+            {
+                "contract_version": "1",
+                "request_id": f"{request_prefix}2222-2222-4222-8222-222222222222"[:36],
+                "operation": "claim.complete",
+                "payload": {
+                    "public_key": _controller_public_key(),
+                    "display_name": "Pad",
+                    "platform": "android",
+                },
+            }
+        )
+
+    assert asyncio.run(claim("1111"))["ok"] is True
+
+    # The window is back without anyone reaching the control socket, which is
+    # the whole point: the phone that just claimed could be the lost one.
+    reopened = service.commissioning_endpoint()["setup_session"]
+    assert reopened is not None
+    assert store.get_state().claim_state.value == "claimed"
+
+
+def test_a_restart_reopens_the_window_on_a_claimed_host(tmp_path: Path) -> None:
+    """The other half, isolated from the post-claim hook.
+
+    Claimed here through a commissioning service with no ``on_claimed``, so the
+    window is genuinely closed and the only thing that can reopen it is the
+    start-up rule -- which under ``ON_DEMAND`` refuses on a claimed Host, and
+    is the condition this declaration relaxes.
+    """
+
+    settings = _always_open(tmp_path)
+    _write_factory_code(settings, FACTORY_CODE)
+    service, store = _service(settings)
+    service.reconcile_network_state(NetworkState.CONNECTED)
+
+    session = CommissioningProtocolSession(
+        CommissioningService(store=store, network=InMemoryNetworkProvisioning())
+    )
+    import asyncio
+
+    asyncio.run(_claim(session, service, "33333333", "44444444"))
+    assert service.commissioning_endpoint()["setup_session"] is None
+    assert store.get_state().claim_state.value == "claimed"
+
+    restarted, _ = _service(settings, store)
+    assert restarted.commissioning_endpoint()["setup_session"] is not None
+
+
+def test_the_declaration_is_reported_where_the_mode_is(tmp_path: Path) -> None:
+    """A Host that has given this up should have to say so out loud."""
+
+    default_service, _ = _service(_settings(tmp_path / "default"))
+    assert default_service.health()["claim_window"] == "on_demand"
+
+    standing_service, _ = _service(_always_open(tmp_path / "standing"))
+    assert standing_service.health()["claim_window"] == "always_open"

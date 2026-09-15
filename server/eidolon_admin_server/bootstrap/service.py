@@ -17,6 +17,7 @@ from typing import Any
 from .commissioning_service import CommissioningService
 from .config import (
     BootstrapMode,
+    ClaimWindowPolicy,
     BootstrapSettings,
 )
 from .identity import HostIdentityManager
@@ -143,7 +144,9 @@ class BootstrapService:
           did before;
         * the Host is unclaimed — a claimed Host's window is its owner's to
           open, and standing one up here would hand a second admin to whoever
-          read the chassis;
+          read the chassis. ``ClaimWindowPolicy.ALWAYS_OPEN`` is a Host
+          declaring that it accepts exactly that, because on a development rig
+          every other way to mint a window runs through a workstation;
         * nothing is open already — minting supersedes, so doing this on every
           start would throw away a window an operator had just issued, and
           would rebuild one a claim had already consumed.
@@ -152,13 +155,41 @@ class BootstrapService:
         code = self._read_factory_setup_code()
         if code is None:
             return
-        if self._store.get_state().claim_state is not ClaimState.UNCLAIMED:
+        if (
+            self._settings.claim_window is not ClaimWindowPolicy.ALWAYS_OPEN
+            and self._store.get_state().claim_state is not ClaimState.UNCLAIMED
+        ):
             return
         session = self._store.latest_commissioning_session()
         if session is not None and session.is_open(now):
             return
         self._issue_setup_code(code)
         logger.info("opened the factory claim window from %s", self._settings.factory_setup_code_path)
+
+    def reopen_standing_claim_window(self) -> None:
+        """Put the window back after a claim spent it, if this Host stands one.
+
+        A claim consumes the session that authorised it, which under
+        ``ALWAYS_OPEN`` would leave the Host closed until its next restart —
+        exactly the lockout the declaration exists to prevent, only delayed.
+
+        Minting supersedes, so this mints nothing while a window is already
+        open: a superseded code is one an operator has already read out and is
+        about to type. Failure here must not fail the claim that triggered it,
+        which is the caller's contract, not this method's.
+        """
+
+        if self._settings.claim_window is not ClaimWindowPolicy.ALWAYS_OPEN:
+            return
+        now = _timestamp(_now())
+        session = self._store.latest_commissioning_session()
+        if session is not None and session.is_open(now):
+            return
+        code = self._read_factory_setup_code()
+        if code is None:
+            return
+        self._issue_setup_code(code)
+        logger.info("reopened the standing claim window after a claim consumed it")
 
     def _read_factory_setup_code(self) -> str | None:
         path = self._settings.factory_setup_code_path
@@ -207,6 +238,11 @@ class BootstrapService:
         return {
             "status": "running",
             "mode": self._settings.mode.value,
+            # Beside the mode, because it is the same kind of fact: what this
+            # Host has decided to be. A standing window means the Setup code
+            # alone can add a Host Admin, and nothing should have to read the
+            # environment to find that out.
+            "claim_window": self._settings.claim_window.value,
             "pid": os.getpid(),
             "run_id": self._run_id,
             "started_at": self._started_at,

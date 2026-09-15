@@ -16,6 +16,29 @@ class BootstrapMode(StrEnum):
     PRODUCTION = "production"
 
 
+class ClaimWindowPolicy(StrEnum):
+    """When this Host stands a claim window up on its own.
+
+    ``ON_DEMAND`` is the product rule (ADR-0007): the factory window opens once
+    on an unclaimed Host, and after that a window is the owner's to mint —
+    which they do by reaching the control socket, i.e. by holding the Host.
+
+    ``ALWAYS_OPEN`` keeps one standing on a claimed Host too, and mints a fresh
+    one as soon as a claim consumes the last. It exists because a development
+    rig has no way to prove possession that does not run through a workstation:
+    every path to a new window (``commissioning-code``, ``controller-reset``)
+    needs SSH and an Ops checkout, so a lost phone locks the rig out of itself.
+
+    It is a declaration, not a default, and it is reported in ``health`` beside
+    the mode: the Setup code alone becomes sufficient to add a Host Admin, and
+    a Host that has given that up should have to say so out loud. Never set it
+    on a Host that leaves the bench.
+    """
+
+    ON_DEMAND = "on_demand"
+    ALWAYS_OPEN = "always_open"
+
+
 class CommissioningAdapter(StrEnum):
     DISABLED = "disabled"
     BLUEZ = "bluez"
@@ -50,6 +73,8 @@ class BootstrapSettings:
     #: that does not depend on the LAN carrying announcements. The default is
     #: the product's own contract, which is also what the Host advertises.
     local_api_port: int = 9002
+    #: Whether this Host keeps a claim window standing. See ClaimWindowPolicy.
+    claim_window: ClaimWindowPolicy = ClaimWindowPolicy.ON_DEMAND
 
     @property
     def database_path(self) -> Path:
@@ -199,6 +224,17 @@ def load_bootstrap_settings(
             "EIDOLON_BOOTSTRAP_LOCAL_API_PORT must be between 1 and 65535"
         )
 
+    try:
+        claim_window = ClaimWindowPolicy(
+            env.get("EIDOLON_BOOTSTRAP_CLAIM_WINDOW", ClaimWindowPolicy.ON_DEMAND.value)
+            .strip()
+            .lower()
+        )
+    except ValueError as exc:
+        raise BootstrapConfigurationError(
+            "EIDOLON_BOOTSTRAP_CLAIM_WINDOW must be on_demand or always_open"
+        ) from exc
+
     return BootstrapSettings(
         mode=mode,
         state_dir=state_dir,
@@ -209,4 +245,5 @@ def load_bootstrap_settings(
         commissioning_adapter=commissioning_adapter,
         network_adapter=network_adapter,
         local_api_port=local_api_port,
+        claim_window=claim_window,
     )
