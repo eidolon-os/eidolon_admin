@@ -369,3 +369,33 @@ def test_the_declaration_is_reported_where_the_mode_is(tmp_path: Path) -> None:
 
     standing_service, _ = _service(_always_open(tmp_path / "standing"))
     assert standing_service.health()["claim_window"] == "always_open"
+
+
+def test_an_undeclared_claim_window_is_empty_not_invalid() -> None:
+    """The sealed Host profile writes every declaration on every Host.
+
+    Ops renders `EIDOLON_BOOTSTRAP_CLAIM_WINDOW=` on a Host that makes no such
+    declaration, so that a reader never has to tell "not declared" from "line
+    lost". Reading "" as a bad value instead refused to start -- which took
+    bootstrapd down on a rig, and would have taken down every shipped Host.
+    """
+
+    from eidolon_admin_server.bootstrap.config import load_bootstrap_settings
+
+    base = {"EIDOLON_BOOTSTRAP_MODE": "development"}
+    assert load_bootstrap_settings(base).claim_window is ClaimWindowPolicy.ON_DEMAND
+    assert (
+        load_bootstrap_settings({**base, "EIDOLON_BOOTSTRAP_CLAIM_WINDOW": ""}).claim_window
+        is ClaimWindowPolicy.ON_DEMAND
+    )
+    assert (
+        load_bootstrap_settings(
+            {**base, "EIDOLON_BOOTSTRAP_CLAIM_WINDOW": "always_open"}
+        ).claim_window
+        is ClaimWindowPolicy.ALWAYS_OPEN
+    )
+
+    from eidolon_admin_server.bootstrap.config import BootstrapConfigurationError
+
+    with pytest.raises(BootstrapConfigurationError, match="on_demand or always_open"):
+        load_bootstrap_settings({**base, "EIDOLON_BOOTSTRAP_CLAIM_WINDOW": "always"})

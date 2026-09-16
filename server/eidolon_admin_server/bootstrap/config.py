@@ -224,11 +224,18 @@ def load_bootstrap_settings(
             "EIDOLON_BOOTSTRAP_LOCAL_API_PORT must be between 1 and 65535"
         )
 
+    # Empty means undeclared, not invalid. The sealed Host profile Ops renders
+    # writes every declaration on every Host, carrying "" for the ones this
+    # Host does not make -- so a reader that has to tell "not declared" from
+    # "line lost" is given one question instead of two. Treating "" as a bad
+    # value instead refuses to start every Host that declares nothing, which is
+    # every shipped Host.
+    raw_claim_window = env.get("EIDOLON_BOOTSTRAP_CLAIM_WINDOW", "").strip().lower()
     try:
-        claim_window = ClaimWindowPolicy(
-            env.get("EIDOLON_BOOTSTRAP_CLAIM_WINDOW", ClaimWindowPolicy.ON_DEMAND.value)
-            .strip()
-            .lower()
+        claim_window = (
+            ClaimWindowPolicy(raw_claim_window)
+            if raw_claim_window
+            else ClaimWindowPolicy.ON_DEMAND
         )
     except ValueError as exc:
         raise BootstrapConfigurationError(
