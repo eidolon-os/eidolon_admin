@@ -48,6 +48,7 @@ from .contracts import (
     RemovalCondition,
     SourceStatus,
     WorkspaceInitializeRequest,
+    assignment_revision_of,
     WorkspaceOperation,
     WorkflowStep,
 )
@@ -474,7 +475,7 @@ class ControlPlaneService:
                 companion_id=payload.companion_id,
                 request_id=assign_request_id,
                 expected_assignment_revision=(
-                    0 if endpoint is None else endpoint.assignment_revision
+                    0 if endpoint is None else assignment_revision_of(endpoint)
                 ),
                 origin="owner",
             )
@@ -505,7 +506,7 @@ class ControlPlaneService:
                 name="body_assignment",
                 state="committed",
                 request_id=assign_request_id,
-                revision=assigned.assignment_revision,
+                revision=assignment_revision_of(assigned),
             )
         )
         return OperatorDeviceAdmissionResult(

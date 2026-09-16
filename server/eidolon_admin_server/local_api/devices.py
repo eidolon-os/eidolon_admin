@@ -14,6 +14,7 @@ from ..app.control_plane.contracts import (
     ControllerBodyAssignment,
     KernelBodyEndpoint,
     KernelBodyEndpointPage,
+    assignment_revision_of,
 )
 
 
@@ -189,12 +190,12 @@ def _device_view(endpoint: KernelBodyEndpoint, claim: ClaimRecord) -> LocalDevic
         body=LocalDeviceBodyView(
             body_endpoint_id=endpoint.body_endpoint_id,
             mount_revision=endpoint.mount_revision,
-            assignment_revision=endpoint.assignment_revision,
+            assignment_revision=assignment_revision_of(endpoint),
             # What the authority says is in force, not what the spec names: a
             # Body keeps its assignment when its device goes away so it can come
             # back to the same Eidolon, and only the status knows the difference.
             answering_companion_id=(
-                None if assignment is None else assignment.effective_companion_id
+                None if assignment is None else assignment.status.effective_companion_id
             ),
             selection_provenance=(
                 None if assignment is None else assignment.selection_provenance

@@ -20,6 +20,7 @@ from eidolon_sdk.device_foundation.v1 import (
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
     DeviceRef,
+    KernelBodyEndpoint,
     KernelMount,
     KernelMountPage,
     KernelMutationResult,
@@ -31,6 +32,8 @@ from eidolon_admin_server.app.control_plane.workspace_policy import (
 )
 
 from eidolon_sdk.device_foundation.v1.testing import named_device_instance_id
+
+from tests.body_mesh_support import endpoint_document
 
 # Tests name the device they mean; the name becomes a real device
 # instance id, which is a digest of a key and never a chosen string.
@@ -470,3 +473,61 @@ def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> N
         assert command.required_scope in {"device.read", "device.claim.approve"}
         # And the check itself is inherited, never re-implemented.
         assert "_authority" not in vars(command)
+
+
+def test_the_body_documents_admin_consumes_are_the_producers_own_definition() -> None:
+    """Imported, so there is no copy left for this module to verify.
+
+    Everything else checked here is a hand-written copy of a producer's shape,
+    which is why these tests read producer source at a pinned commit. The Body
+    endpoint and assignment stopped being copies: Kernel builds its response
+    from these exact types and eidolon_channel validates its own reads with
+    them, so agreement is structural rather than asserted.
+
+    Worth stating as a test anyway. If someone reintroduces a local declaration
+    to add a field in a hurry, this is what says no.
+    """
+
+    from eidolon_sdk.device_foundation.v1 import BodyAssignment, BodyEndpoint
+
+    assert KernelBodyEndpoint is BodyEndpoint
+    endpoint = KernelBodyEndpoint.model_validate(
+        endpoint_document(device_id=_DEVICE_1, owner_id="owner-1", companion_id="companion-1")
+    )
+    assert isinstance(endpoint.assignment, BodyAssignment)
+
+
+def test_a_status_that_stopped_naming_who_answers_is_refused_not_read_as_nobody() -> None:
+    """The drift this consumer could not previously see, in its own words.
+
+    ``status`` was ``dict[str, Any]`` here, read through
+    ``.get("effective_companion_id")``. A producer that stopped sending the
+    field was therefore indistinguishable from a Body answering as nobody — the
+    Owner's device list and the mission-control map would both have shown every
+    body nameless and unbound, with nothing failing anywhere, which is the exact
+    shape of the incident that started this.
+    """
+
+    document = endpoint_document(
+        device_id=_DEVICE_1, owner_id="owner-1", companion_id="companion-1"
+    )
+    assert KernelBodyEndpoint.model_validate(document).assignment is not None
+
+    document["assignment"]["status"].pop("effective_companion_id")
+    with pytest.raises(ValueError):
+        KernelBodyEndpoint.model_validate(document)
+
+
+def test_a_condition_outside_the_authoritys_vocabulary_is_refused() -> None:
+    """``conditions`` is a closed vocabulary and is now enforced as one here.
+
+    Admin turns these words into sentences an Owner reads. One it has never been
+    told the meaning of must not arrive looking like one it has.
+    """
+
+    document = endpoint_document(
+        device_id=_DEVICE_1, owner_id="owner-1", companion_id="companion-1"
+    )
+    document["assignment"]["status"]["conditions"] = ["InForce"]
+    with pytest.raises(ValueError):
+        KernelBodyEndpoint.model_validate(document)

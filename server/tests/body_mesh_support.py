@@ -3,8 +3,12 @@
 Written once rather than in each test file, for the reason the plan keeps
 running into: a fake producer spelled slightly differently in five places is how
 tests come to agree with a bug. If the Kernel's endpoint document changes shape,
-exactly one thing here stops matching it — and the consumer contract tests that
-compare this shape to the producer's own schema are what catch that.
+exactly one thing here stops matching it.
+
+What catches that is no longer a test comparing this shape to the producer's
+schema — there never was one for Body Mesh, only for device mounts. It is that
+these documents are validated by the canonical type the producer itself builds
+its response from, so a document this file spells wrongly fails to parse.
 """
 
 from __future__ import annotations

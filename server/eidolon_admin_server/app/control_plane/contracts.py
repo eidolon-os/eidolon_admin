@@ -22,6 +22,14 @@ from eidolon_sdk.device_foundation.v1 import (
 from eidolon_sdk.device_foundation.v1 import (
     RevokeClaimResult as HubClaimRevocationResult,
 )
+# The Body Mesh read path, imported rather than declared a third time. Kernel
+# produces these, eidolon_channel consumes them, and this process was the third
+# to write them out by hand — each copy with ``status`` as an untyped mapping,
+# so the one field that says which Companion is actually answering sat outside
+# every shape check in the system. Named with the producer's prefix here, as
+# every other consumed model in this module is; the assignment inside it needs
+# no name of its own, because it arrives as the endpoint's own field type.
+from eidolon_sdk.device_foundation.v1 import BodyEndpoint as KernelBodyEndpoint
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
@@ -673,80 +681,27 @@ class KernelMountPage(StrictModel):
         return tuple(value) if isinstance(value, list) else value
 
 
-class KernelBodyAssignment(StrictModel):
-    """Which Companion answers through one Body, and why it says so.
+def assignment_revision_of(endpoint: KernelBodyEndpoint) -> int:
+    """What a change to this Body has to carry, as its compare-and-swap token.
 
-    ``selection_provenance`` is what lets a screen tell "you cleared this" apart
-    from "the Eidolon it answered as was put away". Both leave the same
-    ``companion_id: null`` behind, and a speaker that went quiet without a
-    sentence is indistinguishable from a broken one.
+    Zero for a Body nobody has decided about: there is no assignment row yet, so
+    there is no revision to match, and Kernel's own minimum for a first write is
+    zero for exactly that reason. Kept here rather than on the canonical type
+    because it is this consumer's convenience over the document, not a fact the
+    authority states.
     """
 
-    operation: Literal["kernel.body-assignment"]
-    assignment_id: str = Field(min_length=1, max_length=160)
-    body_endpoint_id: str = Field(min_length=1, max_length=128)
-    device_id: str = Field(min_length=1, max_length=128)
-    endpoint_id: str = Field(min_length=1, max_length=64)
-    owner_id: str = Field(min_length=1, max_length=64)
-    companion_id: str | None = Field(default=None, min_length=1, max_length=64)
-    selection_provenance: Literal[
-        "user_selected", "user_cleared", "companion_deleted", "policy_reconciled"
-    ]
-    change_reason: str | None = Field(default=None, min_length=1, max_length=256)
-    mode: Literal["default"]
-    policy_refs: tuple[str, ...] = Field(default=(), max_length=16)
-    revision: int = Field(ge=1)
-    generation: int = Field(ge=1)
-    updated_at: datetime
-    status: dict[str, Any]
-
-    @field_validator("policy_refs", mode="before")
-    @classmethod
-    def _array(cls, value: Any) -> Any:
-        return tuple(value) if isinstance(value, list) else value
-
-    @property
-    def effective_companion_id(self) -> str | None:
-        """Who is actually answering, as the authority reports it.
-
-        Not ``companion_id``: a Body whose device is gone keeps its assignment
-        on purpose, and the status is where the authority says whether it is in
-        force.
-        """
-
-        value = self.status.get("effective_companion_id")
-        return value if isinstance(value, str) and value else None
-
-
-class KernelBodyEndpoint(StrictModel):
-    operation: Literal["kernel.body-endpoint"]
-    body_endpoint_id: str = Field(min_length=1, max_length=128)
-    device_id: str = Field(min_length=1, max_length=128)
-    owner_id: str = Field(min_length=1, max_length=64)
-    endpoint_id: str = Field(min_length=1, max_length=64)
-    device_ref: DeviceRef
-    mount_revision: int = Field(ge=1)
-    roles: tuple[str, ...] = Field(default=(), max_length=8)
-    assignment_policy: Literal["required", "optional", "forbidden"]
-    risk_class: Literal["safe", "sensitive", "hazardous"]
-    concurrency: Literal["shared", "exclusive", "leased"]
-    source: Literal["derived", "manifest"]
-    present: bool
-    assignment: KernelBodyAssignment | None = None
-
-    @field_validator("roles", mode="before")
-    @classmethod
-    def _array(cls, value: Any) -> Any:
-        return tuple(value) if isinstance(value, list) else value
-
-    @property
-    def assignment_revision(self) -> int:
-        """What a change has to carry. Zero for a Body nobody has decided about."""
-
-        return 0 if self.assignment is None else self.assignment.revision
+    return 0 if endpoint.assignment is None else endpoint.assignment.revision
 
 
 class KernelBodyEndpointPage(StrictModel):
+    """Kernel's pagination envelope around the canonical endpoint document.
+
+    Still declared here, unlike the document inside it. How one authority chunks
+    a listing is a thin fact — one literal and one array — and everything it
+    could get wrong about a Body is caught by the imported type it holds.
+    """
+
     operation: Literal["kernel.body-endpoint-page"]
     endpoints: tuple[KernelBodyEndpoint, ...] = Field(default=(), max_length=100)
 
