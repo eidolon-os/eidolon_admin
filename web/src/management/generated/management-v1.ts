@@ -168,6 +168,17 @@ export interface DeviceCompanionRequest {
   request_id: string
 }
 
+export interface DeviceOutputsRequest {
+  allowed: OutputSelection
+  expected_revision: number
+}
+
+export interface DeviceOutputsView {
+  allowed?: OutputSelection | null
+  capabilities: OutputSelection
+  revision: number
+}
+
 export interface DeviceRemovalConditionView {
   authority: string
   name: string
@@ -200,6 +211,7 @@ export interface DeviceView {
   mount_revision: number
   online?: "unknown" | "online" | "offline"
   online_reason?: string
+  outputs: DeviceOutputsView
   owner_domain_generation: number
   quiet_because?: string
   revision: number
@@ -501,6 +513,14 @@ export interface MonitorService {
   working_directory?: string | null
 }
 
+export interface OutputSelection {
+  audio_cue?: boolean
+  dialogue_text?: boolean
+  expression?: boolean
+  motion?: boolean
+  speech?: boolean
+}
+
 export interface OwnerContextView {
   display_name?: string
   owner_id: string
@@ -711,6 +731,7 @@ export interface ManagementResponses {
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
   'GET /api/management/v1/devices': DevicesView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
+  'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire

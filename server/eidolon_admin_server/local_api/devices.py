@@ -3,19 +3,34 @@
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import Mapping
 from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
-from eidolon_sdk.device_foundation.v1 import ClaimPage, ClaimRecord
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy, OutputSelection
+from eidolon_sdk.biz.presentation.device import (
+    DeviceOutputConfiguration,
+    SetDeviceOutputPolicy,
+)
+from eidolon_sdk.device_foundation.v1 import (
+    BusinessOwnerId,
+    ClaimPage,
+    ClaimRecord,
+    DeviceRef,
+    OwnerDomainId,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..app.control_plane.contracts import (
     ControllerBodyAssignment,
+    ControllerDeviceOutputPolicyQuery,
+    ControllerDeviceOutputPolicyUpdate,
     KernelBodyEndpoint,
     KernelBodyEndpointPage,
     assignment_revision_of,
 )
+from .device_admissions import admission_actor
 
 
 class DeviceInventoryError(RuntimeError):
@@ -29,7 +44,53 @@ class AdminOwnerDevicesPort(Protocol):
     async def set_companion(
         self, *, payload: ControllerBodyAssignment
     ) -> KernelBodyEndpoint: ...
+    async def read_output_configuration(
+        self, *, payload: ControllerDeviceOutputPolicyQuery
+    ) -> DeviceOutputConfiguration: ...
+    async def set_output_policy(
+        self, *, payload: ControllerDeviceOutputPolicyUpdate
+    ) -> DeviceOutputPolicy: ...
     async def close(self) -> None: ...
+
+
+def output_configuration_query(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    device_ref: DeviceRef,
+) -> ControllerDeviceOutputPolicyQuery:
+    return ControllerDeviceOutputPolicyQuery(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        device_ref=device_ref,
+    )
+
+
+def output_policy_decision(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    device_ref: DeviceRef,
+    expected_revision: int,
+    allowed: OutputSelection,
+) -> ControllerDeviceOutputPolicyUpdate:
+    return ControllerDeviceOutputPolicyUpdate(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        policy=SetDeviceOutputPolicy(
+            device_ref=device_ref,
+            expected_revision=expected_revision,
+            allowed=allowed,
+        ),
+    )
 
 
 class LocalDeviceBodyView(BaseModel):
@@ -53,11 +114,19 @@ class LocalDeviceBodyView(BaseModel):
 
 
 class LocalDeviceView(BaseModel):
-    """Kernel Body plus Hub's canonical Claim, without copied authority."""
+    """Kernel Body plus Hub's canonical Claim, without copied authority.
+
+    ``outputs`` is the Authority's own answer carried whole: what this device
+    declared it can present, and what its Owner has allowed. A ``policy`` of
+    ``None`` is the one thing a Companion device cannot serve without and the
+    only thing nobody but the Owner can supply, so it is shown beside the
+    device rather than left to be inferred from a channel that never arrives.
+    """
 
     model_config = ConfigDict(extra="forbid")
     claim: ClaimRecord
     body: LocalDeviceBodyView
+    outputs: DeviceOutputConfiguration
 
     @property
     def device_id(self) -> str:
@@ -154,13 +223,94 @@ class AdminOwnerDevicesClient:
             )
         return endpoint
 
+    async def _device_scoped(self, *, verb: str, suffix: str, owner_id: str,
+                            device_id: str, payload, model, operation: str):
+        """One device-scoped call to the Admin control plane, and its refusals.
+
+        The two output-policy calls differ only in verb, suffix and answer
+        type, so they share the transport rather than each carrying its own
+        copy of the status mapping — the one place a read and a write silently
+        disagree about what 409 means.
+        """
+
+        if not self._token:
+            raise DeviceInventoryError(
+                "Local API Admin service credential is not configured"
+            )
+        try:
+            response = await self._client.request(
+                verb,
+                f"{self._base_url}/api/control-plane/v1/owners/"
+                f"{quote(owner_id, safe='')}/devices/"
+                f"{quote(device_id, safe='')}/{suffix}",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=payload.model_dump(mode="json"),
+                timeout=self._timeout,
+            )
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            raise DeviceInventoryError(f"Admin Device {operation} is unavailable") from exc
+        if response.status_code not in {200, 202}:
+            raise DeviceInventoryError(
+                f"Admin Device {operation} did not complete",
+                status_code=response.status_code
+                if response.status_code in {401, 403, 404, 409}
+                else 503,
+            )
+        try:
+            return model.model_validate(response.json())
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise DeviceInventoryError(
+                f"Admin Device {operation} response violated its contract"
+            ) from exc
+
+    async def read_output_configuration(
+        self, *, payload: ControllerDeviceOutputPolicyQuery
+    ) -> DeviceOutputConfiguration:
+        configuration = await self._device_scoped(
+            verb="POST",
+            suffix="output-policy-queries",
+            owner_id=str(payload.business_owner_id),
+            device_id=payload.device_ref.device_instance_id,
+            payload=payload,
+            model=DeviceOutputConfiguration,
+            operation="output configuration",
+        )
+        if configuration.device_ref != payload.device_ref:
+            raise DeviceInventoryError(
+                "Admin Device output configuration answered about another device",
+                status_code=502,
+            )
+        return configuration
+
+    async def set_output_policy(
+        self, *, payload: ControllerDeviceOutputPolicyUpdate
+    ) -> DeviceOutputPolicy:
+        policy = await self._device_scoped(
+            verb="PUT",
+            suffix="output-policy",
+            owner_id=str(payload.business_owner_id),
+            device_id=payload.policy.device_ref.device_instance_id,
+            payload=payload,
+            model=DeviceOutputPolicy,
+            operation="output policy decision",
+        )
+        if policy.allowed != payload.policy.allowed:
+            raise DeviceInventoryError(
+                "Admin Device output policy stored another decision", status_code=502
+            )
+        return policy
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
 
 def owner_device_inventory_view(
-    *, endpoints: KernelBodyEndpointPage, bound_owner_id: str, claims: ClaimPage
+    *,
+    endpoints: KernelBodyEndpointPage,
+    bound_owner_id: str,
+    claims: ClaimPage,
+    outputs: Mapping[str, DeviceOutputConfiguration],
 ) -> LocalDeviceInventoryView:
     if any(endpoint.owner_id != bound_owner_id for endpoint in endpoints.endpoints):
         raise DeviceInventoryError(
@@ -176,17 +326,27 @@ def owner_device_inventory_view(
         raise DeviceInventoryError(
             "Kernel membership and Hub Claim projection do not match", status_code=502
         )
+    if any(endpoint.device_id not in outputs for endpoint in present):
+        raise DeviceInventoryError(
+            "Device output configuration is missing for a claimed device", status_code=502
+        )
     return LocalDeviceInventoryView(
         devices=tuple(
-            _device_view(endpoint, claimed[endpoint.device_id]) for endpoint in present
+            _device_view(endpoint, claimed[endpoint.device_id], outputs[endpoint.device_id])
+            for endpoint in present
         )
     )
 
 
-def _device_view(endpoint: KernelBodyEndpoint, claim: ClaimRecord) -> LocalDeviceView:
+def _device_view(
+    endpoint: KernelBodyEndpoint,
+    claim: ClaimRecord,
+    outputs: DeviceOutputConfiguration,
+) -> LocalDeviceView:
     assignment = endpoint.assignment
     return LocalDeviceView(
         claim=claim,
+        outputs=outputs,
         body=LocalDeviceBodyView(
             body_endpoint_id=endpoint.body_endpoint_id,
             mount_revision=endpoint.mount_revision,

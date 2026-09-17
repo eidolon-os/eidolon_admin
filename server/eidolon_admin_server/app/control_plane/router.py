@@ -13,9 +13,14 @@ from eidolon_sdk.device_foundation.v1 import (
     EnrollmentRecoveryProjection,
 )
 
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy
+from eidolon_sdk.biz.presentation.device import DeviceOutputConfiguration
+
 from .contracts import (
     CommissioningVoucherIssued,
     ControllerCommissioningVoucherRequest,
+    ControllerDeviceOutputPolicyQuery,
+    ControllerDeviceOutputPolicyUpdate,
     BoundaryCapabilities,
     AdmissionDecisionWorkflowResult,
     ControllerClaimQuery,
@@ -272,6 +277,40 @@ async def set_body_assignment(
     if payload.owner_id != owner_id or payload.device_id != device_id:
         raise HTTPException(409, "Assignment path and command do not match")
     return await _service(request).set_device_companion(payload=payload)
+
+
+@router.post(
+    "/owners/{owner_id}/devices/{device_id}/output-policy-queries",
+    response_model=DeviceOutputConfiguration,
+)
+async def read_device_output_configuration(
+    owner_id: str,
+    device_id: str,
+    payload: ControllerDeviceOutputPolicyQuery,
+    request: Request,
+) -> DeviceOutputConfiguration:
+    if str(payload.business_owner_id) != owner_id or (
+        payload.device_ref.device_instance_id != device_id
+    ):
+        raise HTTPException(409, "Output policy path and query do not match")
+    return await _service(request).read_device_output_configuration(payload=payload)
+
+
+@router.put(
+    "/owners/{owner_id}/devices/{device_id}/output-policy",
+    response_model=DeviceOutputPolicy,
+)
+async def set_device_output_policy(
+    owner_id: str,
+    device_id: str,
+    payload: ControllerDeviceOutputPolicyUpdate,
+    request: Request,
+) -> DeviceOutputPolicy:
+    if str(payload.business_owner_id) != owner_id or (
+        payload.policy.device_ref.device_instance_id != device_id
+    ):
+        raise HTTPException(409, "Output policy path and decision do not match")
+    return await _service(request).set_device_output_policy(payload=payload)
 
 
 @router.post("/admission/enrollment-queries", response_model=EnrollmentProposalPage)

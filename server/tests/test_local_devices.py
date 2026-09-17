@@ -13,6 +13,9 @@ from eidolon_sdk.device_foundation.v1 import (
     OwnerDomainId,
 )
 
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy, OutputSelection
+from eidolon_sdk.biz.presentation.device import DeviceOutputConfiguration
+
 from eidolon_admin_server.app.control_plane.contracts import KernelBodyEndpointPage
 from eidolon_admin_server.local_api.devices import (
     AdminOwnerDevicesClient,
@@ -92,6 +95,25 @@ def _claims(owner_id: str = "owner-1") -> ClaimPage:
     )
 
 
+def _outputs(owner_id: str = "owner-1") -> dict[str, DeviceOutputConfiguration]:
+    """What the Authority answers about each mounted device's outputs.
+
+    The ready device has been decided about; the one nobody has pointed
+    anywhere has not, which is the state this projection has to keep visible.
+    """
+
+    decided = {_DEVICE_READY: DeviceOutputPolicy(revision=2, allowed=OutputSelection(expression=True))}
+    return {
+        mount.device_id: DeviceOutputConfiguration(
+            device_ref=mount.device_ref,
+            capabilities=OutputSelection(speech=True, expression=True),
+            policy=decided.get(mount.device_id),
+        )
+        for mount in _endpoint_page(owner_id=owner_id).endpoints
+        if mount.present
+    }
+
+
 @pytest.mark.asyncio
 async def test_admin_device_client_uses_exact_owner_route_and_service_token() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -124,6 +146,7 @@ def test_mobile_device_projection_is_sanitized_and_explicitly_mount_scoped() -> 
         endpoints=_endpoint_page(),
         bound_owner_id="owner-1",
         claims=_claims(),
+        outputs=_outputs(),
     )
 
     payload = view.model_dump(mode="json")
@@ -147,6 +170,7 @@ def test_the_revision_a_phone_echoes_back_is_the_bodys_not_the_devices() -> None
         endpoints=_endpoint_page(),
         bound_owner_id="owner-1",
         claims=_claims(),
+        outputs=_outputs(),
     )
     bodies = {item.device_id: item.body for item in view.devices}
 
@@ -164,6 +188,7 @@ def test_mobile_device_projection_drops_the_mounts_removal_left_behind() -> None
         endpoints=_endpoint_page(),
         bound_owner_id="owner-1",
         claims=_claims(),
+        outputs=_outputs(),
     )
 
     assert [item.device_id for item in view.devices] == [
@@ -178,5 +203,42 @@ def test_mobile_device_projection_rejects_cross_owner_membership() -> None:
             endpoints=_endpoint_page(owner_id="owner-other"),
             bound_owner_id="owner-1",
             claims=_claims("owner-other"),
+            outputs=_outputs("owner-other"),
         )
     assert caught.value.status_code == 409
+
+
+def test_a_device_whose_outputs_nobody_read_is_not_projected_as_decided() -> None:
+    """Missing is refused, never rendered as "the Owner allowed nothing".
+
+    The two are opposite answers to the same question, and a projection that
+    quietly turned an unread device into a decided one would put the word
+    "ready" on the single screen that exists to say it is not.
+    """
+
+    outputs = _outputs()
+    del outputs[_DEVICE_READY]
+    with pytest.raises(DeviceInventoryError) as caught:
+        owner_device_inventory_view(
+            endpoints=_endpoint_page(),
+            bound_owner_id="owner-1",
+            claims=_claims(),
+            outputs=outputs,
+        )
+    assert caught.value.status_code == 502
+
+
+def test_the_owners_decision_and_the_devices_declaration_stay_two_facts() -> None:
+    view = owner_device_inventory_view(
+        endpoints=_endpoint_page(),
+        bound_owner_id="owner-1",
+        claims=_claims(),
+        outputs=_outputs(),
+    )
+    outputs = {item.device_id: item.outputs for item in view.devices}
+
+    assert outputs[_DEVICE_READY].capabilities.speech is True
+    # Narrowed to expression: what it may do never enlarges what it can do.
+    assert outputs[_DEVICE_READY].policy.allowed == OutputSelection(expression=True)
+    assert outputs[_DEVICE_MOUNTED].capabilities.speech is True
+    assert outputs[_DEVICE_MOUNTED].policy is None

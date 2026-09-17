@@ -959,6 +959,56 @@
         "title": "DeviceCompanionRequest",
         "type": "object"
       },
+      "DeviceOutputsRequest": {
+        "additionalProperties": false,
+        "description": "What this device may present, decided by its Owner.\n\nNo request id, unlike the Companion choice: the expected revision already\nmakes asking twice either the same decision or a refused one, and a second\nidempotency token would be a second answer to the question the revision\nalready answers.",
+        "properties": {
+          "allowed": {
+            "$ref": "#/components/schemas/OutputSelection"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "allowed",
+          "expected_revision"
+        ],
+        "title": "DeviceOutputsRequest",
+        "type": "object"
+      },
+      "DeviceOutputsView": {
+        "additionalProperties": false,
+        "description": "What this device can present, and what its Owner has allowed.\n\nThe two are separate facts and stay separate words: a device declares what\nit can do by asserting a Manifest, and nothing it declares grants it\nanything. ``allowed`` is null when nobody has decided, which is a different\nanswer from a decision that allows nothing.",
+        "properties": {
+          "allowed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutputSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/OutputSelection"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "capabilities",
+          "revision"
+        ],
+        "title": "DeviceOutputsView",
+        "type": "object"
+      },
       "DeviceRemovalConditionView": {
         "additionalProperties": false,
         "description": "One thing that has to become true, and whether it has.\n\nRemoval converges across three authorities and this is how it says where it\nis: not a percentage, but which specific facts are settled. A condition that\nis not yet met is not a failure.",
@@ -1149,6 +1199,9 @@
             "title": "Online Reason",
             "type": "string"
           },
+          "outputs": {
+            "$ref": "#/components/schemas/DeviceOutputsView"
+          },
           "owner_domain_generation": {
             "minimum": 0.0,
             "title": "Owner Domain Generation",
@@ -1193,7 +1246,8 @@
           "claim_state",
           "claim_generation",
           "trust_epoch",
-          "owner_domain_generation"
+          "owner_domain_generation",
+          "outputs"
         ],
         "title": "DeviceView",
         "type": "object"
@@ -2970,6 +3024,38 @@
           "state"
         ],
         "title": "MonitorService",
+        "type": "object"
+      },
+      "OutputSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_cue": {
+            "default": false,
+            "title": "Audio Cue",
+            "type": "boolean"
+          },
+          "dialogue_text": {
+            "default": false,
+            "title": "Dialogue Text",
+            "type": "boolean"
+          },
+          "expression": {
+            "default": false,
+            "title": "Expression",
+            "type": "boolean"
+          },
+          "motion": {
+            "default": false,
+            "title": "Motion",
+            "type": "boolean"
+          },
+          "speech": {
+            "default": false,
+            "title": "Speech",
+            "type": "boolean"
+          }
+        },
+        "title": "OutputSelection",
         "type": "object"
       },
       "OwnerContextView": {
@@ -5723,6 +5809,75 @@
           }
         },
         "summary": "Put Device Companion",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/outputs": {
+      "put": {
+        "description": "Say what this device of mine may present.\n\nThe Host narrows the decision to what the device declared it can do and\nrefuses a stale revision; nothing here pre-judges either. Allowing\nnothing is a decision this accepts — it is how a device is silenced —\nand it is not the same as never having decided.",
+        "operationId": "put_device_outputs_api_management_v1_devices__device_id__outputs_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceOutputsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Device Outputs",
         "tags": [
           "management"
         ]

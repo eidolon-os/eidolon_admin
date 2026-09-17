@@ -247,7 +247,14 @@ def admission_actor(
     return ControllerActorRef(
         principal_id=controller_id,
         owner_domain_id=owner_domain_id,
-        granted_scopes=("device.read", "device.claim.approve"),
+        granted_scopes=(
+            "device.read",
+            "device.claim.approve",
+            # What a device of theirs may present is the same Owner's decision,
+            # made on the same Host, through the same Controller. The Authority
+            # still authorizes it on its own terms.
+            "device.output-policy.write",
+        ),
         authentication_strength="software",
     )
 

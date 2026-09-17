@@ -21,6 +21,9 @@ from eidolon_sdk.device_foundation.v1 import (
     OwnerDomainDescriptor,
 )
 
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy, OutputSelection
+from eidolon_sdk.biz.presentation.device import DeviceOutputConfiguration
+
 from eidolon_admin_server.app.control_plane.contracts import (
     ControllerBodyAssignment,
     KernelBodyEndpoint,
@@ -129,6 +132,8 @@ class _Devices:
         self.companion_id: str | None = None
         self.revision = 1
         self.commands: list[ControllerBodyAssignment] = []
+        self.decisions: list = []
+        self.policy: DeviceOutputPolicy | None = None
         self.refuse = refuse
 
     async def list_body_endpoints(self, owner_id: str) -> KernelBodyEndpointPage:
@@ -147,6 +152,22 @@ class _Devices:
         return KernelBodyEndpoint.model_validate(
             _endpoint(companion_id=self.companion_id, revision=self.revision)
         )
+
+    async def read_output_configuration(self, *, payload) -> DeviceOutputConfiguration:
+        return DeviceOutputConfiguration(
+            device_ref=payload.device_ref,
+            capabilities=OutputSelection(speech=True, expression=True),
+            policy=self.policy,
+        )
+
+    async def set_output_policy(self, *, payload) -> DeviceOutputPolicy:
+        self.decisions.append(payload)
+        if self.refuse is not None:
+            raise self.refuse
+        self.policy = DeviceOutputPolicy(
+            revision=payload.policy.expected_revision + 1, allowed=payload.policy.allowed
+        )
+        return self.policy
 
     async def close(self) -> None:
         return None

@@ -11,6 +11,7 @@ projection rather than accepting Hub credentials from Mobile.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -76,6 +77,8 @@ from .devices import (
     ControllerBodyAssignment,
     LocalDeviceInventoryView,
     LocalDeviceView,
+    output_configuration_query,
+    output_policy_decision,
     owner_device_inventory_view,
 )
 from ..app.control_plane.contracts import ControllerDeviceRemovalRequest
@@ -634,31 +637,64 @@ def create_app(
             )
         return owner_id
 
+    async def composed_device_inventory(
+        *, owner_id: str, controller_id: str
+    ) -> LocalDeviceInventoryView:
+        """Kernel's mounts, Hub's Claims and Hub's output configurations, as one.
+
+        Both device surfaces of this process compose the same answer, so they
+        compose it here. They used to each build their own, which is how one of
+        them would have kept answering without the Owner decision the other had
+        learned to carry.
+        """
+
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        endpoints = await devices.list_body_endpoints(owner_id)
+        claims = await device_admission.query_claims(
+            payload=claim_query(
+                controller_id=controller_id,
+                owner_domain_id=owner_domain_id,
+                business_owner_id=business_owner_id,
+                query=ClaimQuery(
+                    owner_domain_id=owner_domain_id,
+                    states=(ClaimState.ACTIVE, ClaimState.SUSPENDED, ClaimState.REVOKED),
+                    cursor=None,
+                    limit=200,
+                ),
+            )
+        )
+        present = tuple(endpoint for endpoint in endpoints.endpoints if endpoint.present)
+        configurations = await asyncio.gather(
+            *(
+                devices.read_output_configuration(
+                    payload=output_configuration_query(
+                        controller_id=controller_id,
+                        owner_domain_id=owner_domain_id,
+                        business_owner_id=business_owner_id,
+                        device_ref=endpoint.device_ref,
+                    )
+                )
+                for endpoint in present
+            )
+        )
+        return owner_device_inventory_view(
+            endpoints=endpoints,
+            bound_owner_id=owner_id,
+            claims=claims,
+            outputs={
+                endpoint.device_id: configuration
+                for endpoint, configuration in zip(present, configurations, strict=True)
+            },
+        )
+
     async def owner_device_inventory(
         authorization: str | None,
     ) -> LocalDeviceInventoryView:
         principal, session = await authenticated_controller(authorization)
         owner_id, controller_id = await owner_and_controller(principal, session)
-        owner_domain_id, business_owner_id = _admission_scope(owner_id)
         try:
-            endpoints = await devices.list_body_endpoints(owner_id)
-            claims = await device_admission.query_claims(
-                payload=claim_query(
-                    controller_id=controller_id,
-                    owner_domain_id=owner_domain_id,
-                    business_owner_id=business_owner_id,
-                    query=ClaimQuery(
-                        owner_domain_id=owner_domain_id,
-                        states=(ClaimState.ACTIVE, ClaimState.SUSPENDED, ClaimState.REVOKED),
-                        cursor=None,
-                        limit=200,
-                    ),
-                )
-            )
-            return owner_device_inventory_view(
-                endpoints=endpoints,
-                bound_owner_id=owner_id,
-                claims=claims,
+            return await composed_device_inventory(
+                owner_id=owner_id, controller_id=controller_id
             )
         except (DeviceInventoryError, DeviceAdmissionError) as exc:
             raise HTTPException(exc.status_code, str(exc)) from exc
@@ -1123,32 +1159,9 @@ def create_app(
         """
 
         async def list_devices(self, *, session):
-            owner_id = session.owner_id
-            controller_id = session.controller_id
-            owner_domain_id, business_owner_id = _admission_scope(owner_id)
             try:
-                endpoints = await devices.list_body_endpoints(owner_id)
-                claims = await device_admission.query_claims(
-                    payload=claim_query(
-                        controller_id=controller_id,
-                        owner_domain_id=owner_domain_id,
-                        business_owner_id=business_owner_id,
-                        query=ClaimQuery(
-                            owner_domain_id=owner_domain_id,
-                            states=(
-                                ClaimState.ACTIVE,
-                                ClaimState.SUSPENDED,
-                                ClaimState.REVOKED,
-                            ),
-                            cursor=None,
-                            limit=200,
-                        ),
-                    )
-                )
-                return owner_device_inventory_view(
-                    endpoints=endpoints,
-                    bound_owner_id=owner_id,
-                    claims=claims,
+                return await composed_device_inventory(
+                    owner_id=session.owner_id, controller_id=session.controller_id
                 )
             except (DeviceInventoryError, DeviceAdmissionError) as exc:
                 raise ManagementBackendError(
@@ -1196,6 +1209,66 @@ def create_app(
                 owner_id=owner, device_id=device_id, result=result
             )
 
+        async def set_device_outputs(
+            self,
+            *,
+            session,
+            device_id: str,
+            allowed,
+            expected_revision: int,
+        ):
+            """Carry the Owner's decision about one device's outputs.
+
+            Which device is proved the same way the Companion choice proves it
+            — from the inventory this Owner holds — and for the same reason: an
+            identifier in a path is not authority. The DeviceRef comes from that
+            inventory rather than from the phone, so a decision cannot be aimed
+            at a generation the Owner is not looking at.
+            """
+
+            owner_domain_id, business_owner_id = _admission_scope(session.owner_id)
+            inventory = await self.list_devices(session=session)
+            held = next(
+                (item for item in inventory.devices if item.device_id == device_id), None
+            )
+            if held is None:
+                raise ManagementBackendError(
+                    "Device is not mounted",
+                    status_code=404,
+                    refusal=refusal_for_status(404, "Device is not mounted"),
+                )
+            try:
+                await devices.set_output_policy(
+                    payload=output_policy_decision(
+                        controller_id=session.controller_id,
+                        owner_domain_id=owner_domain_id,
+                        business_owner_id=business_owner_id,
+                        device_ref=held.claim.device_ref,
+                        expected_revision=expected_revision,
+                        allowed=allowed,
+                    )
+                )
+            except DeviceInventoryError as exc:
+                raise ManagementBackendError(
+                    str(exc),
+                    status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc)),
+                ) from exc
+            return await self._reread(session=session, device_id=device_id)
+
+        async def _reread(self, *, session, device_id: str):
+            """The device as the authorities now describe it, or say it is gone."""
+
+            refreshed = await self.list_devices(session=session)
+            for item in refreshed.devices:
+                if item.device_id == device_id:
+                    return item
+            raise ManagementBackendError(
+                "Device stopped being mounted",
+                status_code=409,
+                refusal=refusal_for_status(409, "Device stopped being mounted"),
+            )
+
         async def set_device_companion(
             self,
             *,
@@ -1237,15 +1310,7 @@ def create_app(
                     status_code=exc.status_code,
                     refusal=refusal_for_status(exc.status_code, str(exc)),
                 ) from exc
-            refreshed = await self.list_devices(session=session)
-            for item in refreshed.devices:
-                if item.device_id == device_id:
-                    return item
-            raise ManagementBackendError(
-                "Device stopped being mounted",
-                status_code=409,
-                refusal=refusal_for_status(409, "Device stopped being mounted"),
-            )
+            return await self._reread(session=session, device_id=device_id)
 
     async def management_controller(authorization: str | None) -> str:
         """Which phone is asking — the one thing these three routes need.

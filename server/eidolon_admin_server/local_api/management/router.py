@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Literal, Protocol, runtime_checkable
 
 from eidolon_sdk.biz.contracts.refusal import Refusal
+from eidolon_sdk.biz.presentation import OutputSelection
+from eidolon_sdk.biz.presentation.negotiation import output_policy_required
 from eidolon_sdk.biz.persona import (
     ConversationPreferences,
     PersonaAuthoring,
@@ -303,11 +305,7 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         # something a person can read out when asking for help. Never invented.
         label=kind or _identifier_tail(device_id),
         kind=kind,
-        state=(
-            "access_revoked"
-            if claim_state != "active"
-            else ("ready" if answering else "awaiting_companion")
-        ),
+        state=_device_state(claim_state, answering, device.outputs),
         answers_as_companion_id=answering,
         answers_as_companion_name=names.get(answering or "", ""),
         quiet_because=_quiet_because(device),
@@ -325,7 +323,31 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         owner_domain_generation=reference.owner_domain_generation,
         manifest_id=kind,
         manifest_revision=getattr(manifest, "revision", None),
+        outputs=DeviceOutputsView(
+            capabilities=device.outputs.capabilities,
+            allowed=None if device.outputs.policy is None else device.outputs.policy.allowed,
+            revision=0 if device.outputs.policy is None else device.outputs.policy.revision,
+        ),
     )
+
+
+def _device_state(claim_state: str, answering: str | None, outputs) -> str:
+    """What this device is waiting for, in the order a person resolves it.
+
+    A device whose Owner has not said what it may present cannot be served at
+    all when it is the kind that needs saying, and it used to read ``ready``:
+    the phone said the speaker was fine while the Host refused it a channel and
+    the device's own screen said the service was not ready. Which kind needs
+    saying is the Provider's predicate, asked here rather than restated.
+    """
+
+    if claim_state != "active":
+        return "access_revoked"
+    if not answering:
+        return "awaiting_companion"
+    if outputs.policy is None and output_policy_required(outputs.capabilities):
+        return "awaiting_outputs"
+    return "ready"
 
 
 #: Why a Body is answering as nobody, in the words a screen can use. The three
@@ -1296,8 +1318,9 @@ class DeviceView(BaseModel):
     #: not say, which is different from the label being absent.
     kind: str = Field(default="", max_length=128)
     #: What a person can act on: it is ready, it is waiting to be given an
-    #: Eidolon, or its access was withdrawn. A client that meets a value it does
-    #: not know must show the row and not the word.
+    #: Eidolon, it is waiting to be told what it may present, or its access was
+    #: withdrawn. A client that meets a value it does not know must show the row
+    #: and not the word.
     state: str = Field(min_length=1, max_length=32)
     #: Which Eidolon answers through it, and what that Eidolon is called. Null
     #: is a real state and the ordinary one for a device nobody has pointed
@@ -1338,6 +1361,43 @@ class DeviceView(BaseModel):
     owner_domain_generation: int = Field(ge=0)
     manifest_id: str = Field(default="", max_length=128)
     manifest_revision: int | None = Field(default=None, ge=0)
+    #: What it can present and what it is allowed to. Beside the device rather
+    #: than behind another tap, because for one kind of device this is the
+    #: difference between working and not.
+    outputs: DeviceOutputsView
+
+
+class DeviceOutputsView(BaseModel):
+    """What this device can present, and what its Owner has allowed.
+
+    The two are separate facts and stay separate words: a device declares what
+    it can do by asserting a Manifest, and nothing it declares grants it
+    anything. ``allowed`` is null when nobody has decided, which is a different
+    answer from a decision that allows nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    capabilities: OutputSelection
+    allowed: OutputSelection | None = None
+    #: What a change has to carry, so two phones cannot both win. Zero before
+    #: the first decision, which is the value that first decision carries.
+    revision: int = Field(ge=0)
+
+
+class DeviceOutputsRequest(BaseModel):
+    """What this device may present, decided by its Owner.
+
+    No request id, unlike the Companion choice: the expected revision already
+    makes asking twice either the same decision or a refused one, and a second
+    idempotency token would be a second answer to the question the revision
+    already answers.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed: OutputSelection
+    expected_revision: int = Field(ge=0)
 
 
 class DevicesView(BaseModel):
@@ -1551,6 +1611,15 @@ class OwnerDevicePort(Protocol):
         companion_id: str | None,
         expected_assignment_revision: int,
         request_id: str,
+    ): ...
+
+    async def set_device_outputs(
+        self,
+        *,
+        session,
+        device_id: str,
+        allowed,
+        expected_revision: int,
     ): ...
 
 
@@ -2057,6 +2126,31 @@ def register_management_routes(
                 companion_id=payload.companion_id,
                 expected_assignment_revision=payload.expected_revision,
                 request_id=payload.request_id,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return _device_view(device, await _companion_names(backend, session.owner_id))
+
+    @router.put("/devices/{device_id}/outputs", response_model=DeviceView)
+    async def put_device_outputs(
+        device_id: str,
+        payload: DeviceOutputsRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceView:
+        """Say what this device of mine may present.
+
+        The Host narrows the decision to what the device declared it can do and
+        refuses a stale revision; nothing here pre-judges either. Allowing
+        nothing is a decision this accepts — it is how a device is silenced —
+        and it is not the same as never having decided.
+        """
+        session = await authenticated_controller_session(authorization)
+        try:
+            device = await devices.set_device_outputs(
+                session=session,
+                device_id=device_id,
+                allowed=payload.allowed,
+                expected_revision=payload.expected_revision,
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc

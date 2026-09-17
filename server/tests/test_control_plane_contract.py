@@ -466,11 +466,17 @@ def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> N
         "ControllerEnrollmentQuery",
         "ControllerEnrollmentRecoveryQuery",
         "ControllerClaimQuery",
+        "ControllerDeviceOutputPolicyQuery",
+        "ControllerDeviceOutputPolicyUpdate",
         "ControllerEnrollmentDecisionIntent",
     }
     for command in commands:
         # Declared, not restated: the scope lives on the command that needs it.
-        assert command.required_scope in {"device.read", "device.claim.approve"}
+        assert command.required_scope in {
+            "device.read",
+            "device.claim.approve",
+            "device.output-policy.write",
+        }
         # And the check itself is inherited, never re-implemented.
         assert "_authority" not in vars(command)
 

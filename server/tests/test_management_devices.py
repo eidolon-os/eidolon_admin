@@ -37,6 +37,8 @@ from eidolon_admin_server.local_api.management.router import (
     refusal_for_status,
 )
 
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy, OutputSelection
+
 from tests.controller_session_support import stub_controller_session
 
 pytestmark = pytest.mark.asyncio
@@ -54,6 +56,8 @@ def _device(
     companion_id: str | None = "companion-a",
     kind: str = "atk-dnesp32s3",
     state: str = "active",
+    capabilities: OutputSelection | None = None,
+    policy: DeviceOutputPolicy | None = None,
 ):
     return SimpleNamespace(
         device_id=device_id,
@@ -75,6 +79,12 @@ def _device(
             answering_companion_id=companion_id,
             selection_provenance=None if companion_id is None else "user_selected",
         ),
+        # A device from before the vocabulary: it declares speech and nothing
+        # else, so it runs on the legacy outputs and needs no decision.
+        outputs=SimpleNamespace(
+            capabilities=capabilities or OutputSelection(speech=True, dialogue_text=True),
+            policy=policy,
+        ),
     )
 
 
@@ -84,6 +94,7 @@ class _Devices:
         self.refuse = refuse
         self.asked: list[dict] = []
         self.changed: list[dict] = []
+        self.decided: list[dict] = []
 
     async def list_devices(self, *, session):
         self.asked.append(
@@ -117,6 +128,27 @@ class _Devices:
             refusal=refusal_for_status(404, "Device is not mounted"),
         )
         return _device(companion_id=companion_id)
+
+    async def set_device_outputs(
+        self, *, session, device_id: str, allowed, expected_revision: int
+    ):
+        self.decided.append(
+            {
+                "device_id": device_id,
+                "allowed": allowed,
+                "expected_revision": expected_revision,
+            }
+        )
+        if device_id != _KNOWN:
+            raise ManagementBackendError(
+                "Device is not mounted",
+                status_code=404,
+                refusal=refusal_for_status(404, "Device is not mounted"),
+            )
+        return _device(
+            capabilities=OutputSelection(speech=True, dialogue_text=True, expression=True),
+            policy=DeviceOutputPolicy(revision=expected_revision + 1, allowed=allowed),
+        )
 
 
 class _Backend:
@@ -444,3 +476,93 @@ async def test_a_speaker_that_went_quiet_says_which_way_it_went_quiet(
     assert rows[_OTHER]["quiet_because"] == "companion_put_away"
     # And a Body that is answering says nothing about being quiet.
     assert all(row["state"] == "awaiting_companion" for row in rows.values())
+
+
+async def test_a_device_waiting_to_be_told_what_it_may_present_does_not_read_ready(
+    tmp_path, monkeypatch
+) -> None:
+    """The state a Companion device is in before anyone decides for it.
+
+    It has a Claim, it is mounted and an Eidolon answers through it, and it
+    still cannot be served: the Host refuses it a channel until its Owner says
+    what it may present, and the device's own screen says the service is not
+    ready. This screen used to say "ready" beside it.
+    """
+
+    _stub_controller(monkeypatch)
+    devices = _Devices(
+        _device(
+            capabilities=OutputSelection(
+                speech=True, dialogue_text=True, expression=True
+            )
+        )
+    )
+    transport = httpx.ASGITransport(app=_app(tmp_path, devices))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        listed = await client.get(_DEVICES, headers=headers)
+
+    row = listed.json()["devices"][0]
+    assert row["state"] == "awaiting_outputs"
+    assert row["outputs"]["capabilities"]["expression"] is True
+    # Nobody has decided, which is not the same as having allowed nothing.
+    assert row["outputs"]["allowed"] is None
+    assert row["outputs"]["revision"] == 0
+
+
+async def test_a_device_that_predates_the_vocabulary_is_not_made_to_wait(
+    tmp_path, monkeypatch
+) -> None:
+    """The migration bridge, asserted rather than assumed.
+
+    A device that declares no face runs on the legacy outputs, so an absent
+    decision is not something anyone has to act on, and telling its Owner it is
+    waiting would be telling them to repair something that works.
+    """
+
+    _stub_controller(monkeypatch)
+    transport = httpx.ASGITransport(app=_app(tmp_path, _Devices(_device())))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        listed = await client.get(_DEVICES, headers=headers)
+
+    assert listed.json()["devices"][0]["state"] == "ready"
+
+
+async def test_deciding_what_a_device_may_present_carries_the_revision_it_saw(
+    tmp_path, monkeypatch
+) -> None:
+    _stub_controller(monkeypatch)
+    devices = _Devices(_device())
+    transport = httpx.ASGITransport(app=_app(tmp_path, devices))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        decided = await client.put(
+            f"{_DEVICES}/{_KNOWN}/outputs",
+            json={
+                "allowed": {"expression": True, "dialogue_text": True},
+                "expected_revision": 0,
+            },
+            headers=headers,
+        )
+        elsewhere = await client.put(
+            f"{_DEVICES}/not-mine/outputs",
+            json={"allowed": {"expression": True}, "expected_revision": 0},
+            headers=headers,
+        )
+
+    assert decided.status_code == 200
+    body = decided.json()
+    assert body["state"] == "ready"
+    assert body["outputs"]["allowed"] == {
+        "speech": False,
+        "dialogue_text": True,
+        "expression": True,
+        "audio_cue": False,
+        "motion": False,
+    }
+    # The version the next change has to carry, moved by this one.
+    assert body["outputs"]["revision"] == 1
+    # Absent rather than forbidden, so an identifier cannot be probed.
+    assert elsewhere.status_code == 404
+    assert [call["expected_revision"] for call in devices.decided] == [0, 0]

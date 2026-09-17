@@ -6,6 +6,11 @@ from datetime import datetime
 from typing import Any, ClassVar, Literal
 
 from eidolon_sdk.biz.contracts.companion import CompanionLifecycleState
+from eidolon_sdk.biz.presentation.device import (
+    DeviceOutputConfiguration,
+    ReadDeviceOutputPolicy,
+    SetDeviceOutputPolicy,
+)
 from eidolon_sdk.biz.contracts.refusal import Refusal, RefusalKind
 from eidolon_sdk.device_foundation.v1 import (
     BusinessOwnerId,
@@ -839,6 +844,35 @@ class ControllerClaimQuery(ControllerCommand):
 
     def target_owner_domain_id(self) -> OwnerDomainId:
         return self.query.owner_domain_id
+
+
+class ControllerDeviceOutputPolicyQuery(ControllerCommand):
+    """Read what one device declares it can present, and what it is allowed to."""
+
+    required_scope: ClassVar[str] = "device.read"
+
+    business_owner_id: BusinessOwnerId
+    device_ref: DeviceRef
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.device_ref.owner_domain_id
+
+
+class ControllerDeviceOutputPolicyUpdate(ControllerCommand):
+    """The Owner's decision about what one device may present.
+
+    The decision itself is the SDK binding, carried whole. Admin adds only the
+    authority it travels under; what may be allowed, and how a revision is
+    compared, stay the Hub aggregate's rules.
+    """
+
+    required_scope: ClassVar[str] = "device.output-policy.write"
+
+    business_owner_id: BusinessOwnerId
+    policy: SetDeviceOutputPolicy
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.policy.device_ref.owner_domain_id
 
 
 class ControllerEnrollmentDecisionIntent(ControllerCommand):

@@ -15,6 +15,12 @@ from eidolon_sdk.biz.persona import (
     PersonaPreviewRequest,
     PersonaPreviewResponse,
 )
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy
+from eidolon_sdk.biz.presentation.device import (
+    DeviceOutputConfiguration,
+    ReadDeviceOutputPolicy,
+    SetDeviceOutputPolicy,
+)
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
@@ -1660,6 +1666,46 @@ class HubManagementClient:
                 "Hub Decision response changed the reviewed Proposal content revision",
             )
         return result
+
+    async def read_device_output_configuration(
+        self, *, query: ReadDeviceOutputPolicy, authorization: str
+    ) -> DeviceOutputConfiguration:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{base_url}/api/device-control/v1/output-policy-queries",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=query.model_dump(mode="json"),
+        )
+        configuration = _parse("hub", response, DeviceOutputConfiguration)
+        if configuration.device_ref != query.device_ref:
+            raise _contract_violation(
+                "hub", "Hub output configuration answered about another device"
+            )
+        return configuration
+
+    async def set_device_output_policy(
+        self, *, command: SetDeviceOutputPolicy, authorization: str
+    ) -> DeviceOutputPolicy:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "PUT",
+            f"{base_url}/api/device-control/v1/output-policy",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=command.model_dump(mode="json"),
+        )
+        policy = _parse("hub", response, DeviceOutputPolicy)
+        if policy.allowed != command.allowed:
+            raise _contract_violation(
+                "hub", "Hub stored an output policy other than the one decided"
+            )
+        return policy
 
     async def get_enrollment_recovery(
         self,

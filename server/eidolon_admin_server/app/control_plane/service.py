@@ -31,6 +31,8 @@ from .clients import (
 from .contracts import (
     AdmissionDecisionWorkflowResult,
     ControllerClaimQuery,
+    ControllerDeviceOutputPolicyQuery,
+    ControllerDeviceOutputPolicyUpdate,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
     ControllerBodyAssignment,
@@ -52,6 +54,12 @@ from .contracts import (
     WorkspaceOperation,
     WorkflowStep,
 )
+from eidolon_sdk.biz.presentation import DeviceOutputPolicy
+from eidolon_sdk.biz.presentation.device import (
+    DeviceOutputConfiguration,
+    ReadDeviceOutputPolicy,
+)
+
 from .admission_intents import (
     InMemoryAdmissionDecisionIntentStore,
     SqliteAdmissionDecisionIntentStore,
@@ -602,6 +610,40 @@ class ControlPlaneService:
             authorization=issuer.issue_admission_context(
                 actor=payload.actor,
                 business_owner_id=payload.business_owner_id,
+            ),
+        )
+
+    async def read_device_output_configuration(
+        self, *, payload: ControllerDeviceOutputPolicyQuery
+    ) -> DeviceOutputConfiguration:
+        issuer = self._admission_issuer()
+        return await self.hub.read_device_output_configuration(
+            query=ReadDeviceOutputPolicy(device_ref=payload.device_ref),
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+                target_device_ref=payload.device_ref,
+            ),
+        )
+
+    async def set_device_output_policy(
+        self, *, payload: ControllerDeviceOutputPolicyUpdate
+    ) -> DeviceOutputPolicy:
+        """Carry the Owner's decision to the one authority that holds it.
+
+        No intent ledger, unlike a Decision: the command already carries the
+        revision it expects, so a repeat is either the same write or a refused
+        one, and a second record of "what was asked" could only disagree with
+        the aggregate that answered.
+        """
+
+        issuer = self._admission_issuer()
+        return await self.hub.set_device_output_policy(
+            command=payload.policy,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+                target_device_ref=payload.policy.device_ref,
             ),
         )
 

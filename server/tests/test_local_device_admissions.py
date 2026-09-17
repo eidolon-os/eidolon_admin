@@ -111,7 +111,11 @@ def test_local_decision_refuses_an_owner_this_session_does_not_hold() -> None:
 def test_local_decision_derives_explicit_actor_and_owner_context() -> None:
     payload = _admin_payload()
     assert payload.actor.owner_domain_id == DOMAIN
-    assert payload.actor.granted_scopes == ("device.read", "device.claim.approve")
+    assert payload.actor.granted_scopes == (
+        "device.read",
+        "device.claim.approve",
+        "device.output-policy.write",
+    )
     assert payload.decision.target_business_owner_id == BUSINESS_OWNER
     assert payload.decision.reviewed_manifest_ref == MANIFEST
 
