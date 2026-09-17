@@ -50,11 +50,20 @@ export interface KernelMount {
   active: boolean
 }
 
-/** Which Companion answers through one Body, as the operator page reads it. */
+// The two below are what the operator page *reads*, not a copy of the Body
+// Mesh contract. That contract is a shared Python type every producer and
+// consumer of it now validates with; TypeScript cannot import it, and giving
+// this page a second, hand-kept description of the whole document would be a
+// copy that nothing checks — so it describes only the fields it renders.
+//
+// Notably absent: `status`. This column shows the assignment *record* — its
+// revision, the Companion the Owner chose, and why — beside a mount column
+// that says whether the device is there. A page that wanted to say who is
+// answering right now would have to read `status.effective_companion_id`
+// instead, and would be a different column with a different name.
+
+/** The assignment record, as the operator's Body column renders it. */
 export interface KernelBodyAssignment {
-  operation: 'kernel.body-assignment'
-  body_endpoint_id: string
-  device_id: string
   companion_id: string | null
   selection_provenance:
     | 'user_selected'
@@ -65,15 +74,9 @@ export interface KernelBodyAssignment {
   generation: number
 }
 
+/** One Body, keyed by device and carrying the record above. */
 export interface KernelBodyEndpoint {
-  operation: 'kernel.body-endpoint'
-  body_endpoint_id: string
   device_id: string
-  owner_id: string
-  endpoint_id: string
-  mount_revision: number
-  source: 'derived' | 'manifest'
-  present: boolean
   assignment: KernelBodyAssignment | null
 }
 
