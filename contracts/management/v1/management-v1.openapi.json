@@ -3313,6 +3313,18 @@
       "PersonaPreset": {
         "additionalProperties": false,
         "properties": {
+          "default_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Default Name",
+            "type": "string"
+          },
+          "description": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
           "examples": {
             "items": {
               "type": "string"
@@ -3322,6 +3334,9 @@
           },
           "persona": {
             "$ref": "#/components/schemas/PersonaAuthoring"
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/ConversationPreferences"
           },
           "preset_id": {
             "title": "Preset Id",
@@ -3340,6 +3355,9 @@
         "required": [
           "preset_id",
           "title",
+          "default_name",
+          "description",
+          "preferences",
           "persona",
           "examples"
         ],

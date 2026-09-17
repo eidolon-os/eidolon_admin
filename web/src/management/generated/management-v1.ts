@@ -564,8 +564,11 @@ export interface PersonaHistoryView {
 }
 
 export interface PersonaPreset {
+  default_name: string
+  description: string
   examples: Array<string>
   persona: PersonaAuthoring
+  preferences: ConversationPreferences
   preset_id: string
   revision?: string
   title: string
