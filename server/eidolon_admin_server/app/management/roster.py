@@ -24,15 +24,15 @@ from typing import Protocol, runtime_checkable
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionIdentity,
     CompanionRosterPage,
-    OwnerRuntimeCompanions,
+    OwnerCompanionActivity,
 )
 
 
 @runtime_checkable
-class RuntimeReader(Protocol):
-    """Which Companions the runtime is holding, right now."""
+class ActivityReader(Protocol):
+    """When each Companion was last spoken to."""
 
-    async def runtime_companions(self, *, owner_id: str) -> OwnerRuntimeCompanions: ...
+    async def companion_activity(self, *, owner_id: str) -> OwnerCompanionActivity: ...
 
 
 @runtime_checkable
@@ -65,12 +65,15 @@ class CompanionRow:
     updated_at: str
     genome_id: str | None = None
     memory_realm_id: str | None = None
-    #: Whether the runtime is holding this Companion at this moment, and when it
-    #: was last addressed. ``None`` is **unknown** — the runtime could not be
-    #: asked — and is not the same as ``False``, which is a real answer meaning
-    #: nothing is running for it. A client that renders unknown as "not running"
-    #: repeats, in the other direction, the guess this field exists to end.
-    running: bool | None = None
+    #: When this Owner last spoke to it. Empty means one of two things, and the
+    #: page says which: with ``activity_unavailable`` empty it means they never
+    #: have, and otherwise it means nobody could ask.
+    #:
+    #: This row used to carry ``running`` beside it — whether the Agent process
+    #: happened to hold a live object for this Companion. It was true and it was
+    #: meaningless: the next thing said to an Eidolon makes it running, nothing
+    #: is wrong while it is not, and there is no button that changes it. What it
+    #: produced on a phone was 「未运行」 on every row after a deploy.
     last_active_at: str = ""
 
 
@@ -78,9 +81,9 @@ class CompanionRow:
 class Roster:
     """One page. ``default_companion_id`` is named here and nowhere per row.
 
-    ``runtime_unavailable`` carries why the runtime could not be read, when it
-    could not. Lifecycle comes from an authority and runtime from a live
-    process, and the second failing must not take the first down with it: a
+    ``activity_unavailable`` carries why the conversation history could not be
+    read, when it could not. Lifecycle comes from an authority and history from
+    the runtime, and the second failing must not take the first down with it: a
     person should still see what Eidolons they have when the Agent is restarting.
     """
 
@@ -88,44 +91,45 @@ class Roster:
     default_companion_id: str | None
     companions: tuple[CompanionRow, ...]
     next_cursor: str | None
-    runtime_unavailable: str = ""
+    activity_unavailable: str = ""
 
 
 async def read_roster(
     *,
     owner_id: str,
     companions: RosterReader,
-    runtime: RuntimeReader | None = None,
+    activity: ActivityReader | None = None,
     cursor: str | None = None,
 ) -> Roster:
-    """What this Owner has, and which of them are running.
+    """What this Owner has, and when they last spoke to each of them.
 
     Two sources, and their failures are not the same size. The authority answers
-    what exists — without it there is no roster. The runtime answers what is
-    live — without it every row simply says "unknown", because a list of
-    somebody's Eidolons is worth showing even when the process that runs them is
-    momentarily unreachable.
+    what exists — without it there is no roster. The runtime answers when each
+    was last used — without it every row simply carries no time, because a list
+    of somebody's Eidolons is worth showing even when the process that keeps the
+    conversations is momentarily unreachable.
 
     Nothing is inferred across the two. In particular the default Companion is
-    not treated as the running one: that guess is what this read replaces.
+    not treated as the most recently used one: guessing like that, from a routing
+    fallback, is what both this read and the one before it exist to replace.
     """
 
     page = await companions.list_owner_companions(owner_id, cursor=cursor)
 
-    live: dict[str, str] | None = None
+    last_spoken: dict[str, str] | None = None
     unavailable = ""
-    if runtime is None:
+    if activity is None:
         unavailable = "runtime_not_configured"
     else:
         try:
-            answer = await runtime.runtime_companions(owner_id=owner_id)
+            answer = await activity.companion_activity(owner_id=owner_id)
         except Exception as exc:  # noqa: BLE001 - a degraded read, not a failure
             # Deliberately broad, and deliberately not re-raised: this is the
             # one source whose absence costs a column rather than the answer.
-            unavailable = _runtime_unavailable(exc)
+            unavailable = _activity_unavailable(exc)
         else:
-            live = {
-                row.companion_id: row.last_active_at for row in answer.companions
+            last_spoken = {
+                row.companion_id: row.last_conversation_at for row in answer.companions
             }
 
     return Roster(
@@ -144,17 +148,16 @@ async def read_roster(
                 updated_at=row.updated_at.isoformat(),
                 genome_id=row.current_genome_id,
                 memory_realm_id=row.memory_realm_id,
-                running=None if live is None else row.companion_id in live,
-                last_active_at=(live or {}).get(row.companion_id, ""),
+                last_active_at=(last_spoken or {}).get(row.companion_id, ""),
             )
             for row in page.companions
         ),
         next_cursor=page.next_cursor,
-        runtime_unavailable=unavailable,
+        activity_unavailable=unavailable,
     )
 
 
-def _runtime_unavailable(error: Exception) -> str:
+def _activity_unavailable(error: Exception) -> str:
     """Why the runtime could not say, in a word a client can act on.
 
     A reason rather than a sentence, for the same reason refusals carry codes:

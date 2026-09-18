@@ -54,7 +54,6 @@ export interface CompanionDetailView {
   lifecycle_state: string
   persona_chapter?: string
   revision: number
-  running?: boolean | null
 }
 
 export interface CompanionFaceView {
@@ -88,11 +87,11 @@ export interface CompanionNameView {
 }
 
 export interface CompanionRosterView {
+  activity_unavailable?: string
   companions: Array<CompanionSummaryView>
   contract_version?: "1"
   default_companion_id?: string | null
   next_cursor?: string | null
-  runtime_unavailable?: string
 }
 
 export interface CompanionSummaryView {
@@ -105,7 +104,6 @@ export interface CompanionSummaryView {
   lifecycle_state: string
   memory_realm_id?: string | null
   revision: number
-  running?: boolean | null
   updated_at: string
 }
 
@@ -271,6 +269,7 @@ export interface HomeCountsView {
 }
 
 export interface HomeView {
+  activity_unavailable?: string
   companion_counts: HomeCountsView
   companions?: Array<CompanionSummaryView>
   contract_version?: "1"
@@ -280,7 +279,6 @@ export interface HomeView {
   memory?: string
   owner_display_name?: string
   owner_revision: number
-  runtime_unavailable?: string
   unavailable?: Record<string, string>
 }
 

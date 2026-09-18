@@ -458,30 +458,30 @@ class RuntimeSessionRevocation(ConsumedModel):
     revoked_at: str = Field(min_length=1, max_length=64)
 
 
-class RuntimeCompanionRow(ConsumedModel):
-    """One Companion this Host currently has a live runtime for."""
+class CompanionActivityRow(ConsumedModel):
+    """One Companion, and when this Owner last spoke to it."""
 
     companion_id: str = Field(min_length=1, max_length=64)
-    genome_id: str = Field(default="", max_length=64)
-    started_at: str = Field(default="", max_length=64)
-    #: When anything last addressed it. Carried because "started" alone cannot
-    #: tell a Companion used a minute ago from one resolved at boot and left.
-    last_active_at: str = Field(default="", max_length=64)
+    #: ISO 8601, from the runtime's conversation store. Present because there
+    #: has been a conversation; never-spoken-to Companions are simply absent.
+    last_conversation_at: str = Field(default="", max_length=64)
 
 
-class OwnerRuntimeCompanions(ConsumedModel):
-    """Which of this Owner's Companions are live, as the runtime says.
+class OwnerCompanionActivity(ConsumedModel):
+    """When this Owner last spoke to each of their Companions.
 
-    Several at once is the ordinary case (plan §4.6). Consumers used to infer
-    "which one is running" from whether the Owner had a default — a routing
-    fallback — which made the answer both wrong and singular.
+    What a roster needs, and what the live runtime registry could not give it.
+    That registry was read here until ``eidolon_agent@7405027`` and projected to
+    the Owner as 「运行中 / 未运行」 — which is a fact about a lazily-filled
+    process cache, so every Eidolon looked idle after a restart and none of it
+    meant anything a person could act on.
 
-    Not presence. A Companion here is one this Host can run, not one anybody can
-    currently reach; nothing on this Host tracks whether a body is connected.
+    Absence means never spoken to, not "not right now". That is what makes the
+    difference between 「还没有聊过」 and a time renderable at all.
     """
 
     owner_id: str = Field(min_length=1, max_length=64)
-    companions: tuple[RuntimeCompanionRow, ...] = ()
+    companions: tuple[CompanionActivityRow, ...] = ()
 
 
 class ConversationRow(ConsumedModel):

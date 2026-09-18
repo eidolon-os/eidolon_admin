@@ -66,6 +66,7 @@ class _Backend:
         self.fails = set(fails)
         self.default = default
         self.memory_requests: list[tuple[str, str | None]] = []
+        self.conversation_requests: list[tuple[str, int | None]] = []
 
     def _guard(self, name: str) -> None:
         if name in self.fails:
@@ -94,8 +95,7 @@ class _Backend:
                     "revision": 4,
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "updated_at": "2026-08-01T00:00:00+00:00",
-                    "running": True,
-                    "last_active_at": "2026-08-26T09:30:00+00:00",
+                    "last_active_at": "2026-09-18T09:30:00+00:00",
                 },
                 {
                     "companion_id": "c_02",
@@ -105,8 +105,7 @@ class _Backend:
                     "revision": 2,
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "updated_at": "2026-08-01T00:00:00+00:00",
-                    "running": True,
-                    "last_active_at": "2026-08-26T09:20:00+00:00",
+                    "last_active_at": "2026-09-15T20:00:00+00:00",
                 },
                 {
                     "companion_id": "c_03",
@@ -116,12 +115,11 @@ class _Backend:
                     "revision": 2,
                     "created_at": "2026-08-01T00:00:00+00:00",
                     "updated_at": "2026-08-01T00:00:00+00:00",
-                    "running": False,
                     "last_active_at": "",
                 },
             ],
             "next_cursor": None,
-            "runtime_unavailable": "",
+            "activity_unavailable": "",
         }
 
     async def companion_face_state(self, *, owner_id: str, companion_id: str) -> dict:
@@ -158,6 +156,29 @@ class _Backend:
             "lifecycle_state": "active",
             "revision": 4,
             "is_default": True,
+        }
+
+    async def conversations(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str,
+        limit: int | None,
+        cursor: str | None,
+    ) -> dict:
+        self._guard("conversations")
+        self.conversation_requests.append((companion_id, limit))
+        return {
+            "companion_id": companion_id,
+            "conversations": [
+                {
+                    "conversation_id": "conv_09",
+                    "started_at": "2026-06-01T08:00:00+00:00",
+                    "updated_at": "2026-09-18T09:30:00+00:00",
+                    "ended_at": None,
+                }
+            ],
+            "next_cursor": None,
         }
 
     def __getattr__(self, name):
@@ -327,10 +348,15 @@ async def test_one_read_says_who_i_am_who_answers_and_what_is_waiting(
     # made a routing fallback the thing an Owner's own home was about.
     assert [row["display_name"] for row in home["companions"]] == ["小忆", "阿力", "小南"]
 
-    # **Two are running at once**, which is the ordinary case a promoted single
-    # Companion could not represent. The third is not, and says so.
-    assert [row["running"] for row in home["companions"]] == [True, True, False]
-    assert home["runtime_unavailable"] == ""
+    # When each was last spoken to — the fact that tells a used Eidolon from a
+    # forgotten one. The third has never been talked to, and with
+    # `activity_unavailable` empty that blank means exactly that.
+    assert [row["last_active_at"] for row in home["companions"]] == [
+        "2026-09-18T09:30:00+00:00",
+        "2026-09-15T20:00:00+00:00",
+        "",
+    ]
+    assert home["activity_unavailable"] == ""
 
     # Who answers when nobody was named is a setting, named once, and carried
     # without being the subject.
@@ -456,3 +482,85 @@ async def test_a_reading_the_host_could_not_take_is_not_silence(
         home = (await client.get(_HOME, headers=headers)).json()
 
     assert home["machine_attention"] == ["内存：读不到"]
+
+
+async def test_a_companion_is_dated_by_its_own_conversations(tmp_path, monkeypatch) -> None:
+    """Opening one Eidolon asks about that Eidolon.
+
+    This cell used to be computed from a page of the roster: the route pulled
+    the whole first page and looked its own Companion up in it. That was a large
+    read for one value, and past the first page it was simply wrong — a
+    Companion further down the list is absent from the page, so it was reported
+    as having no activity no matter how much somebody talked to it. ``c_77`` is
+    not in this backend's roster, which is what makes that failure visible here.
+
+    ``limit=1`` because the newest row is the answer; asking for a page of
+    twenty to read one field is the same mistake one size smaller.
+    """
+
+    _stub_controller(monkeypatch)
+    backend = _Backend()
+    app = _app(tmp_path, backend=backend)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        detail = (
+            await client.get("/api/management/v1/companions/c_77", headers=headers)
+        ).json()
+
+    assert backend.conversation_requests == [("c_77", 1)]
+    # ``updated_at``, not ``started_at``: a conversation somebody returns to
+    # every evening began in June and is current.
+    assert detail["last_active_at"] == "2026-09-18T09:30:00+00:00"
+
+
+async def test_a_companion_nobody_has_talked_to_carries_no_time(tmp_path, monkeypatch) -> None:
+    """Empty rather than invented, and the screen says 「还没有聊过」.
+
+    The field it replaces answered a different question — whether the Agent
+    process happened to hold a live object — and rendered as 「未运行」 on an
+    Eidolon that was perfectly fine and simply new.
+    """
+
+    _stub_controller(monkeypatch)
+
+    class _Fresh(_Backend):
+        async def conversations(self, **kwargs) -> dict:
+            self.conversation_requests.append((kwargs["companion_id"], kwargs["limit"]))
+            return {"companion_id": kwargs["companion_id"], "conversations": [], "next_cursor": None}
+
+    backend = _Fresh()
+    app = _app(tmp_path, backend=backend)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        detail = (
+            await client.get("/api/management/v1/companions/c_01", headers=headers)
+        ).json()
+
+    assert detail["last_active_at"] == ""
+    assert detail["companion_id"] == "c_01", "the rest of the page still arrived"
+
+
+async def test_conversations_it_could_not_read_do_not_fail_the_companion(
+    tmp_path, monkeypatch
+) -> None:
+    """One cell, not the page.
+
+    Who this Eidolon is, what chapter it is on, and whether it answers by default
+    do not depend on the runtime being reachable. A person opening it while the
+    Agent restarts should still get the Eidolon.
+    """
+
+    _stub_controller(monkeypatch)
+    backend = _Backend(fails={"conversations"})
+    app = _app(tmp_path, backend=backend)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        response = await client.get("/api/management/v1/companions/c_01", headers=headers)
+
+    assert response.status_code == 200, response.text
+    detail = response.json()
+    assert detail["last_active_at"] == ""
+    assert detail["persona_chapter"] == "第 3 章 · 我发现你不喜欢被打断"

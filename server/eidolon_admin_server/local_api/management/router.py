@@ -182,6 +182,28 @@ def _persona_chapter(persona) -> str:
     return f"第 {ordinal} 章 · {summary}" if summary else f"第 {ordinal} 章"
 
 
+def _last_spoken_at(conversations) -> str:
+    """When the newest conversation was last added to.
+
+    ``updated_at`` rather than ``started_at``: a conversation somebody returns to
+    every evening began once and is current, and dating it by its first turn
+    would age the Eidolon they use most.
+
+    Empty for a Companion nobody has spoken to yet, and equally empty when this
+    Host could not read its conversations. The caller that must tell those apart
+    is the roster, which asks about every Companion at once and names the reason
+    for the whole page; a single Companion's answer has no such page to name it
+    on, and guessing a second vocabulary here is worse than saying nothing.
+    """
+
+    if not conversations:
+        return ""
+    rows = list(conversations.get("conversations", ()))
+    if not rows:
+        return ""
+    return str(rows[0].get("updated_at") or "")
+
+
 def _current_chapter_id(persona) -> str:
     if not persona:
         return ""
@@ -531,24 +553,18 @@ class CompanionSummaryView(BaseModel):
     updated_at: str = Field(min_length=1, max_length=64)
     genome_id: str | None = Field(default=None, max_length=64)
     memory_realm_id: str | None = Field(default=None, max_length=64)
-    #: Whether this Host is running it at this moment.
+    #: When this Owner last spoke to it. Empty means never — a real state, and
+    #: the one a new Eidolon is in — unless ``activity_unavailable`` on the page
+    #: is set, which is the only other reason a row can have no time.
     #:
-    #: Three states, and the third is why this is not a boolean: **null is
-    #: "nobody could say"**. A client must show that as unknown rather than as
-    #: "not running" — which is the mistake this field was added to end, in the
-    #: other direction. Screens used to render 运行中 whenever the Owner had a
-    #: default Companion, so a routing fallback was being read as runtime state
-    #: and only one Eidolon could ever appear to be running.
-    #:
-    #: **Several rows being true at once is ordinary.** A Host runs one set of
-    #: services and keeps runtime context per Companion (§4.6).
-    #:
-    #: It is not presence: true means this Host is holding a runtime, not that
-    #: any body is reachable. Nothing on this Host tracks device presence, which
-    #: is why devices still report ``online`` as unknown.
-    running: bool | None = None
-    #: When anything last addressed it — being spoken to counts as much as
-    #: speaking. Empty when unknown, or when nothing has since this Host started.
+    #: This replaced a ``running`` flag: whether the Agent process happened to
+    #: hold a live object for this Companion. Two guesses preceded it and both
+    #: showed on a phone. First 运行中 whenever the Owner had a default Companion
+    #: — a routing fallback read as runtime state, so only ever one Eidolon could
+    #: look alive. Then the registry itself, which was true and meaningless: it
+    #: fills on the first thing said and empties on restart, so 「未运行」 meant
+    #: "nobody has spoken to it since the last deploy" and pointed at no action.
+    #: What a person is asking is this — 我上次跟它说话是什么时候.
     last_active_at: str = Field(default="", max_length=64)
 
 
@@ -566,11 +582,12 @@ class CompanionRosterView(BaseModel):
     #: Opaque. A client stores it and sends it back to get the next page;
     #: parsing it would make the Host's page boundary part of the client.
     next_cursor: str | None = Field(default=None, max_length=256)
-    #: Why every row's ``running`` is unknown, when it is. Empty means the
-    #: runtime answered, so each row carries a real answer. Named rather than
-    #: implied by the nulls: "the Agent is restarting" and "this Host has no
-    #: Agent" send a person to different places.
-    runtime_unavailable: str = Field(default="", max_length=64)
+    #: Why no row carries a time, when none does. Empty means the runtime
+    #: answered, so an empty ``last_active_at`` means never spoken to. Named
+    #: rather than implied by the blanks: "the Agent is restarting" and "this
+    #: Host has no Agent" send a person to different places, and neither is
+    #: the same as an Eidolon somebody has simply never talked to.
+    activity_unavailable: str = Field(default="", max_length=64)
 
 
 class CompanionDetailView(BaseModel):
@@ -604,9 +621,10 @@ class CompanionDetailView(BaseModel):
     #: Empty when this Host could not read the history, which is not the same as
     #: an Eidolon that has never changed.
     persona_chapter: str = Field(default="", max_length=256)
-    #: Whether the runtime is holding it right now. Null is unknown, as on a
-    #: roster row — and for the same reason.
-    running: bool | None = None
+    #: When this Owner last spoke to it, as on a roster row. Empty means never,
+    #: or that this Host could not read its conversation store — the two are
+    #: told apart on a roster page and deliberately not here, because this
+    #: answer already names its own gaps field by field.
     last_active_at: str = Field(default="", max_length=64)
 
 
@@ -1282,8 +1300,8 @@ class HomeView(BaseModel):
     #: Null is a real state (every Eidolon put away, or none created yet) and no
     #: client may resolve it by picking one.
     default_companion_id: str | None = Field(default=None, max_length=64)
-    #: Why every row's ``running`` is unknown, when it is.
-    runtime_unavailable: str = Field(default="", max_length=64)
+    #: Why no row carries a 「上次对话」 time, when none does.
+    activity_unavailable: str = Field(default="", max_length=64)
     #: What this Owner's memory holds, in words. **Theirs, not any one
     #: Eidolon's**: an Owner has one Realm and every Companion reads and writes
     #: it through an audience (§4.4). This used to hang off the promoted
@@ -2073,7 +2091,7 @@ def register_management_routes(
                 if context.get("default_companion_id")
                 else None
             ),
-            runtime_unavailable=str((roster or {}).get("runtime_unavailable") or ""),
+            activity_unavailable=str((roster or {}).get("activity_unavailable") or ""),
             memory=_memory_sentence(memory),
             companion_counts=_companion_counts(roster),
             devices=_device_counts(inventory),
@@ -2400,7 +2418,7 @@ def register_management_routes(
             default_companion_id=answer["default_companion_id"],
             companions=[CompanionSummaryView(**row) for row in answer["companions"]],
             next_cursor=answer["next_cursor"],
-            runtime_unavailable=answer.get("runtime_unavailable", ""),
+            activity_unavailable=answer.get("activity_unavailable", ""),
         )
 
     @router.get("/companions/{companion_id}", response_model=CompanionDetailView)
@@ -2424,27 +2442,29 @@ def register_management_routes(
             raise _refused(exc) from exc
 
         # Best-effort, and separately: the Companion itself is what this route
-        # promises, so a history or a runtime that could not be read leaves its
-        # own field empty rather than failing the page. Unlike ``/home`` this
-        # answer has no ``unavailable`` map — the two fields are self-describing
-        # (empty chapter, null running) and inventing one here would be a second
-        # vocabulary for the same idea.
+        # promises, so a history that could not be read leaves its own field
+        # empty rather than failing the page. Unlike ``/home`` this answer has no
+        # ``unavailable`` map — the fields are self-describing (empty chapter,
+        # empty time) and inventing one here would be a second vocabulary for
+        # the same idea.
+        #
+        # The newest conversation, asked for about *this* Companion. It used to
+        # be computed from a whole roster page, which was both a large read for
+        # one cell and wrong past the first page: a Companion further down the
+        # list was absent from the page and therefore reported as idle.
         aside: dict[str, str] = {}
         persona = await _try(
             aside,
             "persona",
             backend.persona_history(owner_id=owner_id, companion_id=companion_id),
         )
-        runtime = await _try(
-            aside, "runtime", backend.roster(owner_id=owner_id, cursor=None)
+        latest = await _try(
+            aside,
+            "conversations",
+            backend.conversations(
+                owner_id=owner_id, companion_id=companion_id, limit=1, cursor=None
+            ),
         )
-        live = None
-        if runtime is not None and not runtime.get("runtime_unavailable"):
-            live = {
-                row["companion_id"]: row.get("last_active_at") or ""
-                for row in runtime.get("companions", ())
-                if row.get("running")
-            }
 
         return CompanionDetailView(
             companion_id=answer["companion_id"],
@@ -2454,8 +2474,7 @@ def register_management_routes(
             revision=answer["revision"],
             is_default=answer["is_default"],
             persona_chapter=_persona_chapter(persona),
-            running=None if live is None else companion_id in live,
-            last_active_at=(live or {}).get(companion_id, ""),
+            last_active_at=_last_spoken_at(latest),
         )
 
     @router.put("/owner/default-companion", response_model=DefaultCompanionView)

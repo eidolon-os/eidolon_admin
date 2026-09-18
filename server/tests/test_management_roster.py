@@ -23,8 +23,8 @@ import pytest
 from eidolon_admin_server.app.control_plane.contracts import (
     CompanionRosterPage,
     CompanionSummary,
-    OwnerRuntimeCompanions,
-    RuntimeCompanionRow,
+    CompanionActivityRow,
+    OwnerCompanionActivity,
 )
 from eidolon_admin_server.app.management.roster import read_roster
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
@@ -79,28 +79,30 @@ class _Companions:
         return self.page
 
 
-class _Runtime:
-    """The Agent, saying which Companions it is holding."""
+class _Activity:
+    """The Agent, saying when each Companion was last spoken to.
 
-    def __init__(self, *live: str, fails: Exception | None = None) -> None:
-        self.live = live
+    Takes ``companion_id: when`` pairs. A Companion the Owner has never spoken
+    to is simply not passed — which is how the real answer says it too.
+    """
+
+    def __init__(self, fails: Exception | None = None, **spoken: str) -> None:
+        self.spoken = spoken
         self.fails = fails
         self.asked: list[str] = []
 
-    async def runtime_companions(self, *, owner_id: str) -> OwnerRuntimeCompanions:
+    async def companion_activity(self, *, owner_id: str) -> OwnerCompanionActivity:
         self.asked.append(owner_id)
         if self.fails is not None:
             raise self.fails
-        return OwnerRuntimeCompanions(
+        return OwnerCompanionActivity(
             owner_id=owner_id,
             companions=tuple(
-                RuntimeCompanionRow(
-                    companion_id=companion_id,
-                    genome_id=f"g-{companion_id}",
-                    started_at="2026-08-26T09:00:00+00:00",
-                    last_active_at="2026-08-26T09:30:00+00:00",
+                CompanionActivityRow(
+                    companion_id=companion_id.replace("_", "-"),
+                    last_conversation_at=when,
                 )
-                for companion_id in self.live
+                for companion_id, when in self.spoken.items()
             ),
         )
 
@@ -121,29 +123,36 @@ def _page(**overrides) -> CompanionRosterPage:
 # --- the application read -------------------------------------------------
 
 
-async def test_several_eidolons_can_be_running_at_once() -> None:
-    """The answer the old screens could not represent.
+async def test_every_row_carries_when_it_was_last_spoken_to() -> None:
+    """What the list is actually for: telling used from forgotten.
 
-    A Host keeps runtime context per Companion, so more than one being live is
-    ordinary. Screens showed 运行中 whenever the Owner had a default — a routing
-    fallback read as runtime state — which made exactly one row able to claim it.
+    Two screens guessed at this before. First 运行中 whenever the Owner had a
+    default — a routing fallback read as runtime state, so exactly one row could
+    ever claim it. Then the Agent's live registry, which was true and said
+    nothing: it fills on the first word and empties on restart.
     """
 
     roster = await read_roster(
         owner_id="owner-1",
         companions=_Companions(_page()),
-        runtime=_Runtime("companion-a", "companion-b"),
+        activity=_Activity(
+            companion_a="2026-09-18T09:30:00+00:00",
+            companion_b="2026-09-15T20:00:00+00:00",
+        ),
     )
 
-    assert [row.running for row in roster.companions] == [True, True]
-    assert roster.runtime_unavailable == ""
+    assert [row.last_active_at for row in roster.companions] == [
+        "2026-09-18T09:30:00+00:00",
+        "2026-09-15T20:00:00+00:00",
+    ]
+    assert roster.activity_unavailable == ""
 
 
 async def test_roster_carries_the_authoritys_genome_and_owner_realm() -> None:
     roster = await read_roster(
         owner_id="owner-1",
         companions=_Companions(_page()),
-        runtime=_Runtime(),
+        activity=_Activity(),
     )
 
     assert [row.genome_id for row in roster.companions] == [
@@ -156,41 +165,42 @@ async def test_roster_carries_the_authoritys_genome_and_owner_realm() -> None:
     ]
 
 
-async def test_the_default_one_is_not_assumed_to_be_the_running_one() -> None:
+async def test_the_default_one_is_not_assumed_to_be_the_used_one() -> None:
     """The specific guess this read replaces.
 
-    ``companion-a`` is the default and is *not* running; ``companion-b`` is
-    running and is not the default. Anything that conflated the two would get
-    both rows backwards, which is what a person was being shown.
+    ``companion-a`` is the default and has never been spoken to; ``companion-b``
+    is the one this person actually talks to. Anything that inferred use from
+    the routing pointer would get both rows backwards, which is what a person
+    was being shown.
     """
 
     roster = await read_roster(
         owner_id="owner-1",
         companions=_Companions(_page(default_companion_id="companion-a")),
-        runtime=_Runtime("companion-b"),
+        activity=_Activity(companion_b="2026-09-18T09:30:00+00:00"),
     )
 
     by_id = {row.companion_id: row for row in roster.companions}
-    assert by_id["companion-a"].running is False
-    assert by_id["companion-b"].running is True
+    assert by_id["companion-a"].last_active_at == ""
+    assert by_id["companion-b"].last_active_at == "2026-09-18T09:30:00+00:00"
 
 
-async def test_a_runtime_that_cannot_be_asked_is_unknown_not_stopped() -> None:
-    """Unknown and none are different answers, and only one of them is a lie.
+async def test_a_runtime_that_cannot_be_asked_says_so_for_the_page() -> None:
+    """An empty time and an unreadable one look alike, so the page says which.
 
-    A person opening this list while the Agent restarts must not be told their
-    Eidolons are all stopped. The roster still arrives — what exists comes from
-    an authority, and only the running column depends on the process.
+    A person opening this list while the Agent restarts must not be told they
+    have never spoken to any of their Eidolons. The roster still arrives — what
+    exists comes from an authority, and only the times depend on the process.
     """
 
     roster = await read_roster(
         owner_id="owner-1",
         companions=_Companions(_page()),
-        runtime=_Runtime(fails=RuntimeError("connection refused")),
+        activity=_Activity(fails=RuntimeError("connection refused")),
     )
 
-    assert [row.running for row in roster.companions] == [None, None]
-    assert roster.runtime_unavailable == "runtime_unreachable"
+    assert [row.last_active_at for row in roster.companions] == ["", ""]
+    assert roster.activity_unavailable == "runtime_unreachable"
     assert len(roster.companions) == 2, "the roster itself survived"
 
 
@@ -208,49 +218,50 @@ async def test_a_starting_runtime_says_so_rather_than_unreachable() -> None:
     roster = await read_roster(
         owner_id="owner-1",
         companions=_Companions(_page()),
-        runtime=_Runtime(fails=_Starting("agent registry not configured")),
+        activity=_Activity(fails=_Starting("agent is still coming up")),
     )
 
-    assert roster.runtime_unavailable == "runtime_starting"
+    assert roster.activity_unavailable == "runtime_starting"
 
 
 async def test_no_runtime_wired_at_all_is_also_unknown() -> None:
-    """A Host composed without an Agent client cannot claim nothing is running."""
+    """A Host with no Agent client cannot claim nobody has ever talked to these."""
 
     roster = await read_roster(owner_id="owner-1", companions=_Companions(_page()))
 
-    assert [row.running for row in roster.companions] == [None, None]
-    assert roster.runtime_unavailable == "runtime_not_configured"
+    assert [row.last_active_at for row in roster.companions] == ["", ""]
+    assert roster.activity_unavailable == "runtime_not_configured"
 
 
 async def test_the_runtime_is_asked_about_this_owner_only() -> None:
     """The Owner is not a parameter a caller varies, here either."""
 
-    runtime = _Runtime("companion-a")
+    activity = _Activity(companion_a="2026-09-18T09:30:00+00:00")
     await read_roster(
-        owner_id="owner-1", companions=_Companions(_page()), runtime=runtime
+        owner_id="owner-1", companions=_Companions(_page()), activity=activity
     )
 
-    assert runtime.asked == ["owner-1"]
+    assert activity.asked == ["owner-1"]
 
 
-async def test_when_it_was_last_addressed_travels_with_the_row() -> None:
-    """A list has to be able to say something truthful about recency.
+async def test_a_companion_never_spoken_to_is_blank_rather_than_dated() -> None:
+    """Never and unknown are both empty here, and the page tells them apart.
 
-    Running alone cannot tell a Companion in use from one resolved at boot and
-    left, and a screen that said 在跑 for both would be technically true and
-    practically a lie.
+    With ``activity_unavailable`` empty, a blank row means exactly one thing: the
+    Owner has not talked to that Eidolon yet. That is a state worth showing —
+    「还没有聊过」 leads somewhere, which is more than 「未运行」 ever did.
     """
 
     roster = await read_roster(
         owner_id="owner-1",
         companions=_Companions(_page()),
-        runtime=_Runtime("companion-a"),
+        activity=_Activity(companion_a="2026-09-18T09:30:00+00:00"),
     )
 
     by_id = {row.companion_id: row for row in roster.companions}
-    assert by_id["companion-a"].last_active_at == "2026-08-26T09:30:00+00:00"
-    assert by_id["companion-b"].last_active_at == "", "not running, nothing to say"
+    assert by_id["companion-a"].last_active_at == "2026-09-18T09:30:00+00:00"
+    assert by_id["companion-b"].last_active_at == ""
+    assert roster.activity_unavailable == "", "so the blank above means never"
 
 
 async def test_the_default_is_named_once_for_the_page() -> None:

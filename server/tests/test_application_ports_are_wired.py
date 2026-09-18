@@ -55,9 +55,9 @@ from eidolon_admin_server.app.management.persona import PersonaHistorian
 from eidolon_admin_server.app.management.recollecting import MemoryRecollector
 from eidolon_admin_server.app.management.sessions import RuntimeSessionRevoker
 from eidolon_admin_server.app.management.roster import (
+    ActivityReader,
     DefaultCompanionWriter,
     RosterReader,
-    RuntimeReader,
 )
 from eidolon_admin_server.app.settings import Settings
 
@@ -74,9 +74,9 @@ SERVICE_ITSELF = "__self__"
 PORTS: dict[str, tuple[object | None, str | None]] = {
     "OwnerReader": (OwnerReader, "workspace"),
     "RosterReader": (RosterReader, "data"),
-    # Which Companions are live is the process's fact, not the authority's: Data
-    # knows what exists, only the runtime knows what it is holding.
-    "RuntimeReader": (RuntimeReader, "activity"),
+    # When each Companion was last spoken to is the runtime's fact, not the
+    # authority's: Data knows what exists, only the runtime keeps conversations.
+    "ActivityReader": (ActivityReader, "activity"),
     "DefaultCompanionWriter": (DefaultCompanionWriter, "workspace"),
     "CompanionProvisioner": (CompanionProvisioner, "workspace"),
     # Putting an Eidolon away and bringing it back: the same authority that owns

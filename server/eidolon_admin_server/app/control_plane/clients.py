@@ -57,7 +57,7 @@ from .contracts import (
     MemoryStatus,
     OwnerGovernanceEvents,
     OwnerIdentity,
-    OwnerRuntimeCompanions,
+    OwnerCompanionActivity,
     PersonaChapter,
     PersonaTimeline,
     RuntimeSessionRevocation,
@@ -1535,19 +1535,24 @@ class AgentActivityClient:
         )
         return _parse("agent", response, TaskRow)
 
-    async def runtime_companions(self, *, owner_id: str) -> OwnerRuntimeCompanions:
-        """Which of this Owner's Companions the runtime is holding right now.
+    async def companion_activity(self, *, owner_id: str) -> OwnerCompanionActivity:
+        """When this Owner last spoke to each of their Companions.
 
-        Read every time, never cached: the question is about this instant, and a
-        cached answer is a record of something that may have since stopped.
+        One aggregate over the runtime's conversation store rather than a read
+        per Companion, because a roster page asks about all of them at once.
+
+        This used to read the live agent registry and answer "which ones are
+        running". The registry is a process cache, so the answer changed on every
+        restart while nothing about anybody's Eidolons had changed — see
+        ``OwnerCompanionActivity``.
         """
 
         response = await self._call(
             "GET",
-            f"/owners/{quote(owner_id, safe='')}/runtime-companions",
+            f"/owners/{quote(owner_id, safe='')}/companion-activity",
             params=None,
         )
-        return _parse("agent", response, OwnerRuntimeCompanions)
+        return _parse("agent", response, OwnerCompanionActivity)
 
     async def revoke_runtime_sessions(
         self, *, owner_id: str

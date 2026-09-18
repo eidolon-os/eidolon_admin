@@ -291,17 +291,6 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
-          },
-          "running": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Running"
           }
         },
         "required": [
@@ -504,6 +493,12 @@
         "additionalProperties": false,
         "description": "One page of this Owner's Eidolons, oldest first.",
         "properties": {
+          "activity_unavailable": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Activity Unavailable",
+            "type": "string"
+          },
           "companions": {
             "items": {
               "$ref": "#/components/schemas/CompanionSummaryView"
@@ -540,12 +535,6 @@
               }
             ],
             "title": "Next Cursor"
-          },
-          "runtime_unavailable": {
-            "default": "",
-            "maxLength": 64,
-            "title": "Runtime Unavailable",
-            "type": "string"
           }
         },
         "required": [
@@ -622,17 +611,6 @@
             "minimum": 1.0,
             "title": "Revision",
             "type": "integer"
-          },
-          "running": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Running"
           },
           "updated_at": {
             "maxLength": 64,
@@ -1547,6 +1525,12 @@
         "additionalProperties": false,
         "description": "What is mine, right now, in one read.\n\nThe one call a client makes when it opens. It exists because the alternative\nis four round trips and a screen that renders in pieces — and because the\ncomposition needs facts from five places, which is exactly the kind of thing\na Host should do once rather than a phone doing badly.\n\n**Nothing here is invented, and nothing missing is hidden.** Every part is\nbest-effort: a source this Host could not read leaves its field empty and\nnames itself in ``unavailable``, so a client can say \"the rest of this is\ntrue, and I could not read that one\" instead of drawing a confident blank.",
         "properties": {
+          "activity_unavailable": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Activity Unavailable",
+            "type": "string"
+          },
           "companion_counts": {
             "$ref": "#/components/schemas/HomeCountsView"
           },
@@ -1601,12 +1585,6 @@
             "minimum": 1.0,
             "title": "Owner Revision",
             "type": "integer"
-          },
-          "runtime_unavailable": {
-            "default": "",
-            "maxLength": 64,
-            "title": "Runtime Unavailable",
-            "type": "string"
           },
           "unavailable": {
             "additionalProperties": {

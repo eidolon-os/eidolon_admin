@@ -24,7 +24,7 @@ from eidolon_admin_server.app.management.creation import (
 from eidolon_admin_server.app.management.roster import (
     DefaultCompanionWriter,
     RosterReader,
-    RuntimeReader,
+    ActivityReader,
 )
 from eidolon_admin_server.app.settings import Settings
 
@@ -105,16 +105,16 @@ async def test_the_two_authorities_are_not_interchangeable() -> None:
         await service.close()
 
 
-async def test_the_runtime_reader_the_roster_reaches_for_can_say_what_is_live() -> None:
-    """Which Companions are running is the Agent's fact, not the authority's.
+async def test_the_reader_the_roster_reaches_for_can_say_when_it_was_used() -> None:
+    """When each Companion was last spoken to is the Agent's fact, not Data's.
 
-    Data knows what exists and what state its life is in; only the process
-    holding the runtimes knows which ones it is holding. Asking the wrong one
-    is how a screen ends up inferring "running" from "is the default".
+    Data knows what exists and what state its life is in; only the process that
+    keeps the conversations knows when anybody last had one. Asking the wrong
+    one is how a screen ends up inferring use from "is the default".
     """
     service = _service()
     try:
-        assert isinstance(service.activity, RuntimeReader)
-        assert not isinstance(service.data, RuntimeReader)
+        assert isinstance(service.activity, ActivityReader)
+        assert not isinstance(service.data, ActivityReader)
     finally:
         await service.close()
