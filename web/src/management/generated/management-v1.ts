@@ -45,6 +45,7 @@ export interface CompanionCreatedView {
 }
 
 export interface CompanionDetailView {
+  activity_unavailable?: string
   companion_id: string
   contract_version?: "1"
   display_name?: string

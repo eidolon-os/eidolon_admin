@@ -241,6 +241,12 @@
         "additionalProperties": false,
         "description": "One Eidolon, opened.\n\n``is_default`` is here and *not* on a roster row on purpose. A single answer\nabout a single Companion is a comparison the Host just made against the\nOwner's one pointer; a flag repeated across a list would let two rows claim\nit. Same fact, and only one shape of it can be self-contradictory.",
         "properties": {
+          "activity_unavailable": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Activity Unavailable",
+            "type": "string"
+          },
           "companion_id": {
             "maxLength": 64,
             "minLength": 1,

@@ -539,6 +539,7 @@ async def test_a_companion_nobody_has_talked_to_carries_no_time(tmp_path, monkey
         ).json()
 
     assert detail["last_active_at"] == ""
+    assert detail["activity_unavailable"] == "", "so the blank above means never"
     assert detail["companion_id"] == "c_01", "the rest of the page still arrived"
 
 
@@ -562,5 +563,8 @@ async def test_conversations_it_could_not_read_do_not_fail_the_companion(
 
     assert response.status_code == 200, response.text
     detail = response.json()
-    assert detail["last_active_at"] == ""
     assert detail["persona_chapter"] == "第 3 章 · 我发现你不喜欢被打断"
+    # The blank time is named, so the screen leads with silence rather than with
+    # 「还没有聊过」 about an Eidolon this person may talk to every day.
+    assert detail["last_active_at"] == ""
+    assert detail["activity_unavailable"] == "runtime_unreachable"

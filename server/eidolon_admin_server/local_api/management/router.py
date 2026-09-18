@@ -190,10 +190,9 @@ def _last_spoken_at(conversations) -> str:
     would age the Eidolon they use most.
 
     Empty for a Companion nobody has spoken to yet, and equally empty when this
-    Host could not read its conversations. The caller that must tell those apart
-    is the roster, which asks about every Companion at once and names the reason
-    for the whole page; a single Companion's answer has no such page to name it
-    on, and guessing a second vocabulary here is worse than saying nothing.
+    Host could not read its conversations — which is why the caller sets
+    ``activity_unavailable`` beside it. The two look the same in this field on
+    purpose: the reason belongs in one place, not encoded into a timestamp.
     """
 
     if not conversations:
@@ -621,11 +620,14 @@ class CompanionDetailView(BaseModel):
     #: Empty when this Host could not read the history, which is not the same as
     #: an Eidolon that has never changed.
     persona_chapter: str = Field(default="", max_length=256)
-    #: When this Owner last spoke to it, as on a roster row. Empty means never,
-    #: or that this Host could not read its conversation store — the two are
-    #: told apart on a roster page and deliberately not here, because this
-    #: answer already names its own gaps field by field.
+    #: When this Owner last spoke to it, as on a roster row. Empty means never.
     last_active_at: str = Field(default="", max_length=64)
+    #: Why the time above is missing, when it is missing for that reason. Empty
+    #: means the Host asked and got an answer — so a blank time means never
+    #: spoken to. Carried here as well as on the roster because this is the page
+    #: that leads with the sentence, and 「还没有聊过」 about an Eidolon somebody
+    #: talks to daily is a worse thing to print than saying nothing.
+    activity_unavailable: str = Field(default="", max_length=64)
 
 
 class DefaultCompanionRequest(BaseModel):
@@ -2444,9 +2446,9 @@ def register_management_routes(
         # Best-effort, and separately: the Companion itself is what this route
         # promises, so a history that could not be read leaves its own field
         # empty rather than failing the page. Unlike ``/home`` this answer has no
-        # ``unavailable`` map — the fields are self-describing (empty chapter,
-        # empty time) and inventing one here would be a second vocabulary for
-        # the same idea.
+        # ``unavailable`` map — a chapter nobody can read simply does not show,
+        # and the one gap a screen would otherwise state wrongly is named by its
+        # own field.
         #
         # The newest conversation, asked for about *this* Companion. It used to
         # be computed from a whole roster page, which was both a large read for
@@ -2475,6 +2477,11 @@ def register_management_routes(
             is_default=answer["is_default"],
             persona_chapter=_persona_chapter(persona),
             last_active_at=_last_spoken_at(latest),
+            # A code rather than the caught message: a client renders this and
+            # a backend sentence is not something anybody wants to read.
+            activity_unavailable=(
+                "runtime_unreachable" if "conversations" in aside else ""
+            ),
         )
 
     @router.put("/owner/default-companion", response_model=DefaultCompanionView)
