@@ -366,7 +366,7 @@ def _device_state(claim_state: str, answering: str | None, outputs) -> str:
         return "access_revoked"
     if not answering:
         return "awaiting_companion"
-    if outputs.policy is None and output_policy_required(outputs.capabilities):
+    if outputs.policy is None and output_policy_required(outputs.capabilities, requirement=outputs.policy_required):
         return "awaiting_outputs"
     return "ready"
 

@@ -58,6 +58,7 @@ def _device(
     state: str = "active",
     capabilities: OutputSelection | None = None,
     policy: DeviceOutputPolicy | None = None,
+    policy_required: bool | None = None,
 ):
     return SimpleNamespace(
         device_id=device_id,
@@ -84,6 +85,7 @@ def _device(
         outputs=SimpleNamespace(
             capabilities=capabilities or OutputSelection(speech=True, dialogue_text=True),
             policy=policy,
+            policy_required=policy_required,
         ),
     )
 
@@ -566,3 +568,12 @@ async def test_deciding_what_a_device_may_present_carries_the_revision_it_saw(
     # Absent rather than forbidden, so an identifier cannot be probed.
     assert elsewhere.status_code == 404
     assert [call["expected_revision"] for call in devices.decided] == [0, 0]
+
+
+async def test_explicit_non_face_device_waits_for_owner_outputs():
+    from eidolon_admin_server.local_api.management.router import _device_state
+
+    device = _device(policy_required=True)
+    assert _device_state("active", "companion-a", device.outputs) == "awaiting_outputs"
+    assert _device_state("active", "companion-a", _device().outputs) == "ready"
+    assert _device_state("revoked", "companion-a", device.outputs) == "access_revoked"
