@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -1150,3 +1151,56 @@ async def test_agent_transcript_sends_and_consumes_both_scopes() -> None:
 
     assert seen == {"owner_id": "owner-1", "companion_id": "companion-1"}
     assert transcript.companion_id == "companion-1"
+
+
+async def test_the_client_that_reaches_the_authority_carries_the_source_preset() -> None:
+    """The seam a fake provisioner cannot cover.
+
+    Every layer above this one is typed against a Protocol, and the tests for
+    those layers supply their own double — so a field can be threaded all the
+    way down, pass every suite, and still raise ``unexpected keyword argument``
+    the first time a real Host is asked. That is exactly what happened. This
+    asks the implementation that actually speaks to the authority.
+    """
+
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        # What comes back is not what this test is about; the request is.
+        return httpx.Response(200, json={})
+
+    http_client = client(handler)
+    try:
+        subject = DataWorkspaceAuthorityClient(
+            directory=directory(),  # type: ignore[arg-type]
+            client=http_client,
+            service_token="workspace-token",
+            timeout_seconds=1,
+        )
+        with suppress(AuthorityFailure):
+            await subject.provision_companion(
+                "owner-1",
+                operation_id="op",
+                companion_display_name="星野",
+                kind="conversational",
+                persona=None,
+                source_preset_id="curious",
+                source_preset_revision="2",
+            )
+        with suppress(AuthorityFailure):
+            await subject.provision_companion(
+                "owner-1",
+                operation_id="op2",
+                companion_display_name="自己写的",
+                kind="conversational",
+                persona=None,
+            )
+    finally:
+        await http_client.aclose()
+
+    assert sent[0]["source_preset_id"] == "curious"
+    assert sent[0]["source_preset_revision"] == "2"
+    # Omitted rather than null, so a create that claims no preset is the same
+    # bytes an older client sends and its retry stays a replay.
+    assert "source_preset_id" not in sent[1]

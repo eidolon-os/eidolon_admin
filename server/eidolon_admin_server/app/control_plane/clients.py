@@ -742,6 +742,8 @@ class DataWorkspaceAuthorityClient:
         kind: str,
         persona: PersonaAuthoring | None = None,
         preferences: ConversationPreferences | None = None,
+        source_preset_id: str | None = None,
+        source_preset_revision: str | None = None,
     ) -> CompanionProvision:
         """Add a Companion to this Owner, exactly once per operation id.
 
@@ -772,6 +774,14 @@ class DataWorkspaceAuthorityClient:
                     {}
                     if preferences is None
                     else {"preferences": preferences.model_dump(mode="json")}
+                ),
+                **(
+                    {}
+                    if source_preset_id is None
+                    else {
+                        "source_preset_id": source_preset_id,
+                        "source_preset_revision": source_preset_revision,
+                    }
                 ),
                 **(
                     {}

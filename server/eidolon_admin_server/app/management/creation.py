@@ -40,6 +40,8 @@ class CompanionProvisioner(Protocol):
         kind: str,
         persona: PersonaAuthoring | None,
         preferences: ConversationPreferences | None = None,
+        source_preset_id: str | None = None,
+        source_preset_revision: str | None = None,
     ) -> CompanionProvision: ...
 
 
