@@ -187,6 +187,14 @@ class CompanionCreateRequestInternal(BaseModel):
     #: The SDK's shape, used rather than restated. Every hand-written copy of
     #: this is a place a field can be dropped in transit, and a dropped field
     #: here is a sentence somebody wrote about their Eidolon that never arrived.
+    #: Which published preset this came from, when the caller took one and left
+    #: it alone. The client declares it because the client is what knows — it
+    #: held the draft and saw whether anybody edited it. A record of where this
+    #: Eidolon began, read by nothing afterwards.
+    source_preset_id: str | None = Field(default=None, min_length=1, max_length=64)
+    source_preset_revision: str | None = Field(
+        default=None, min_length=1, max_length=32
+    )
     persona: PersonaAuthoring | None = None
     preferences: ConversationPreferences | None = None
 
@@ -795,6 +803,14 @@ async def put_companion_provision(
         kind=payload.kind,
         persona=payload.persona,
         preferences=payload.preferences,
+        **(
+            {}
+            if payload.source_preset_id is None
+            else {
+                "source_preset_id": payload.source_preset_id,
+                "source_preset_revision": payload.source_preset_revision,
+            }
+        ),
         companions=control_plane.workspace,
         memory=getattr(control_plane, "memory_supervisor", None),
     )

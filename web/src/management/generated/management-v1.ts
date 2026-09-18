@@ -29,6 +29,8 @@ export interface CompanionCreateRequest {
   operation_id: string
   persona?: PersonaAuthoring | null
   preferences?: ConversationPreferences | null
+  source_preset_id?: string | null
+  source_preset_revision?: string | null
 }
 
 export interface CompanionCreatedView {

@@ -168,6 +168,8 @@ class AdminManagementClient:
         kind: str,
         persona: dict | None = None,
         preferences: dict | None = None,
+        source_preset_id: str | None = None,
+        source_preset_revision: str | None = None,
     ) -> dict:
         return await self._put(
             "/api/internal/v1/management/companion-provisions/"
@@ -182,6 +184,14 @@ class AdminManagementClient:
                 # upgrade a replay instead of a conflict.
                 **({} if persona is None else {"persona": persona}),
                 **({} if preferences is None else {"preferences": preferences}),
+                **(
+                    {}
+                    if source_preset_id is None
+                    else {
+                        "source_preset_id": source_preset_id,
+                        "source_preset_revision": source_preset_revision,
+                    }
+                ),
             },
         )
 

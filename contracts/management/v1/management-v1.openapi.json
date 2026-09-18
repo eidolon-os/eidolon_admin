@@ -143,6 +143,32 @@
                 "type": "null"
               }
             ]
+          },
+          "source_preset_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Preset Id"
+          },
+          "source_preset_revision": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Preset Revision"
           }
         },
         "required": [

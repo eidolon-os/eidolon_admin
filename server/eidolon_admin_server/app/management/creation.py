@@ -78,6 +78,8 @@ async def create_companion(
     kind: str,
     persona: PersonaAuthoring | None = None,
     preferences: ConversationPreferences | None = None,
+    source_preset_id: str | None = None,
+    source_preset_revision: str | None = None,
     companions: CompanionProvisioner,
     memory: MemoryReconciler | None,
 ) -> CreatedCompanion:
@@ -92,6 +94,17 @@ async def create_companion(
         kind=kind,
         persona=persona,
         **({} if preferences is None else {"preferences": preferences}),
+        # Omitted rather than null, like the two above: the authority
+        # fingerprints the request, and a retry from a client that says nothing
+        # about presets has to stay byte-identical to the attempt before it.
+        **(
+            {}
+            if source_preset_id is None
+            else {
+                "source_preset_id": source_preset_id,
+                "source_preset_revision": source_preset_revision,
+            }
+        ),
     )
 
     memory_ready = True

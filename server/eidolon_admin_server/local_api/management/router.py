@@ -782,6 +782,14 @@ class CompanionCreateRequest(BaseModel):
     #: it sends and the genome the authority builds are one thing. Each restated
     #: copy would be a place a field goes missing, and a field missing here is a
     #: sentence about somebody's Eidolon that never arrived.
+    #: Which published preset this came from, when the caller took one and left
+    #: it alone. The client declares it because the client is what knows — it
+    #: held the draft and saw whether anybody edited it. A record of where this
+    #: Eidolon began, read by nothing afterwards.
+    source_preset_id: str | None = Field(default=None, min_length=1, max_length=64)
+    source_preset_revision: str | None = Field(
+        default=None, min_length=1, max_length=32
+    )
     persona: PersonaAuthoring | None = None
     preferences: ConversationPreferences | None = None
     #: Absent means an ordinary conversational Eidolon. A client should not have
@@ -2565,6 +2573,14 @@ def register_management_routes(
                 operation_id=payload.operation_id,
                 display_name=payload.display_name,
                 kind=payload.kind,
+                **(
+                    {}
+                    if payload.source_preset_id is None
+                    else {
+                        "source_preset_id": payload.source_preset_id,
+                        "source_preset_revision": payload.source_preset_revision,
+                    }
+                ),
                 **(
                     {}
                     if payload.preferences is None
