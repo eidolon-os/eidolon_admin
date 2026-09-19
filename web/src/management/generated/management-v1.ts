@@ -210,8 +210,6 @@ export interface DeviceView {
   manifest_id?: string
   manifest_revision?: number | null
   mount_revision: number
-  online?: "unknown" | "online" | "offline"
-  online_reason?: string
   outputs: DeviceOutputsView
   owner_domain_generation: number
   quiet_because?: string

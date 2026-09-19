@@ -11,8 +11,9 @@ What the tests hold:
 - **a name is never invented.** Nobody has named devices yet, so a row shows
   what the Manifest calls this kind of thing, and failing that the tail of the
   identifier — something a person can read out when asking for help;
-- **online is never inferred.** An active Claim and a live mount both say the
-  device is *known*; neither says it is switched on;
+- **presence is not on this row at all.** An active Claim and a live mount both
+  say the device is *known*; neither says it is switched on, and the one
+  presence this Host does keep answers a different question;
 - **the names of Eidolons are a nicety, the devices are not.** A roster this
   read cannot get costs the names and nothing else;
 - **a device this Owner does not hold is absent**, and checked before any
@@ -263,21 +264,32 @@ async def test_a_device_reads_as_what_it_is_and_who_answers_through_it(
     assert "还在等你确认" in answered.json()["coverage"]
 
 
-async def test_online_is_never_inferred_from_a_claim_or_a_mount(
+async def test_a_row_makes_no_claim_about_presence_at_all(
     tmp_path, monkeypatch
 ) -> None:
-    """Both say the device is *known*. Neither says it is switched on, and a
-    screen that read one as the other would tell someone their unplugged
-    speaker is fine."""
+    """Both an active Claim and a live mount say the device is *known*, and a
+    screen that read either as "switched on" would tell someone their unplugged
+    speaker is fine.
+
+    This used to be a field typed for three values and only ever set to
+    ``unknown``. Absence is the stronger guarantee: there is no longer a place
+    for an inference to be written into. The one presence this Host does keep —
+    whether a body is on its channel, which is to say in a call — is a different
+    question and lives on the runtime map, not on an inventory row.
+    """
 
     _stub_controller(monkeypatch)
     transport = httpx.ASGITransport(app=_app(tmp_path, _Devices(_device())))
     async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
         headers = await _authenticate(client)
-        row = (await client.get(_DEVICES, headers=headers)).json()["devices"][0]
+        answered = (await client.get(_DEVICES, headers=headers)).json()
+        row = answered["devices"][0]
 
-    assert row["online"] == "unknown"
-    assert row["online_reason"]
+    assert "online" not in row
+    assert "online_reason" not in row
+    # And the list says which of the two facts it cannot give, rather than
+    # claiming nothing on this Host observes anything.
+    assert "正在通话" in answered["coverage"]
 
 
 async def test_a_device_nobody_named_falls_back_to_its_identifier(

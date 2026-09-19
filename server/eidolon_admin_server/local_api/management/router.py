@@ -284,9 +284,17 @@ def _machine_attention(vitals) -> list[str]:
 
 
 #: What this list does not know, said rather than implied by a short list.
+#:
+#: The second sentence used to say nothing on this Host observes whether a
+#: device is switched on. That stopped being exactly true: the channel provider
+#: knows which bodies are on a channel, and the runtime map reads it. It is a
+#: narrower fact than it sounds — on a channel means in a call — so this list
+#: still cannot say whether anything is powered on, and now says which of the
+#: two it means.
 _DEVICE_COVERAGE = (
     "只包含已经属于你的设备。还在等你确认的设备是另一份清单。"
-    "这台主机不观测设备是否开着，所以每一行的在线状态都是「不知道」。"
+    "这里不说设备是否开着：这台主机只在一台设备正在通话时才看得见它，"
+    "平时没有任何东西在观测它有没有通电。"
 )
 
 
@@ -333,11 +341,6 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         revision=device.body.assignment_revision,
         mount_revision=device.body.mount_revision,
         updated_at=claim.updated_at.isoformat(),
-        # Never inferred. An active Claim and a Kernel mount both say this device
-        # is *known*, and neither says it is switched on; a screen that read one
-        # as the other would tell someone their unplugged speaker is fine.
-        online="unknown",
-        online_reason="这台主机没有任何东西在观测设备是否开着",
         claim_state=claim_state,
         claim_generation=reference.claim_generation,
         trust_epoch=reference.trust_epoch,
@@ -1373,12 +1376,18 @@ class DeviceView(BaseModel):
     #: When the Claim last moved. The nearest thing to "since when is this mine"
     #: that any authority actually knows.
     updated_at: str = Field(min_length=1, max_length=64)
-    #: Always ``unknown`` today, and it must stay that way until something
-    #: actually observes presence: neither an active Claim nor a Kernel mount is
-    #: evidence that a device is switched on, and a screen that inferred it
-    #: would be telling people their speaker is fine while it sits unplugged.
-    online: Literal["unknown", "online", "offline"] = "unknown"
-    online_reason: str = Field(default="", max_length=256)
+    #: There is deliberately no presence field here. One existed, typed for
+    #: three values and only ever set to ``unknown`` with a sentence saying
+    #: nothing observed presence — which no client rendered, and which stopped
+    #: being true when ``channel.presence`` started reading the channel
+    #: provider. That read answers a *different* question: whether a body is on
+    #: its channel, which is to say in a call. A device sitting powered on and
+    #: idle is not on a channel and is not off, and putting that value on an
+    #: inventory row would have people read 在线 as "working" when it means
+    #: "talking right now". It belongs on the runtime map, where it is.
+    #:
+    #: Neither an active Claim nor a Kernel mount is evidence a device is
+    #: switched on. Nothing here is, so nothing here says so.
     #: The canonical state word from the Claim, kept beside the readable one.
     claim_state: str = Field(min_length=1, max_length=32)
     #: The generations that make an identifier mean one physical device rather

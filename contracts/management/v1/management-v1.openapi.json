@@ -1193,22 +1193,6 @@
             "title": "Mount Revision",
             "type": "integer"
           },
-          "online": {
-            "default": "unknown",
-            "enum": [
-              "unknown",
-              "online",
-              "offline"
-            ],
-            "title": "Online",
-            "type": "string"
-          },
-          "online_reason": {
-            "default": "",
-            "maxLength": 256,
-            "title": "Online Reason",
-            "type": "string"
-          },
           "outputs": {
             "$ref": "#/components/schemas/DeviceOutputsView"
           },
