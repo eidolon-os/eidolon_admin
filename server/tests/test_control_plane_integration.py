@@ -40,6 +40,9 @@ class ProducerState:
         self.approval_requests: set[str] = set()
         self.workspace_operations: dict[str, dict] = {}
         self.fail_mounts = 0
+        #: What the Companion authority hands back as its page boundary. ``None``
+        #: is "this page is all of them"; a value means there are more.
+        self.roster_next_cursor: str | None = None
 
     @staticmethod
     def hub_device() -> dict:
@@ -299,7 +302,7 @@ def producer_app(state: ProducerState) -> FastAPI:
                     "updated_at": "2026-08-24T09:30:00+00:00",
                 }
             ],
-            "next_cursor": None,
+            "next_cursor": state.roster_next_cursor,
         }
 
     @app.get("/api/companion-authority/v1/owners/{owner_id}/companions/{companion_id}")
@@ -665,3 +668,49 @@ async def test_adding_a_companion_over_http_creates_no_second_realm(
     assert again.status_code == 200, again.text
     assert again.json()["companion_id"] == first.json()["companion_id"]
     assert again.json()["created"] is False
+
+
+async def test_a_paged_roster_carries_its_boundary_through_the_real_clients(
+    tmp_path: Path,
+) -> None:
+    """Whether there are more Eidolons than this page, end to end.
+
+    The home screen counts the rows it was given and calls the number a total,
+    so it needs to know when the page is not all of them. It learns that from
+    one key in this response, and everything above reads that key by name: a
+    field the authority stopped sending, or one this side renamed, would leave
+    `more_companions` false forever and the count would silently stop growing.
+
+    Injected readers cannot catch that — they *are* the shape under test. This
+    goes through the real Data client, the real roster read and the real route,
+    so the only thing left faked is the authority itself.
+    """
+
+    state = ProducerState()
+    state.roster_next_cursor = "opaque-page-2"
+    app, producer_client = await admin_app(tmp_path, producer_app(state))
+    headers = {"Authorization": "Bearer local-api-token"}
+    try:
+        paged = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/companions?owner_id=owner-1",
+            headers=headers,
+        )
+        state.roster_next_cursor = None
+        complete = await call_admin(
+            app,
+            "GET",
+            "/api/internal/v1/management/companions?owner_id=owner-1",
+            headers=headers,
+        )
+    finally:
+        await app.state.control_plane.close()
+        await producer_client.aclose()
+
+    assert paged.status_code == 200, paged.text
+    # Relayed untouched: what it means is the authority's business, and reading
+    # it here would make their page boundary part of this contract.
+    assert paged.json()["next_cursor"] == "opaque-page-2"
+    # And the other half, or a screen could never stop saying "there are more".
+    assert complete.json()["next_cursor"] is None
