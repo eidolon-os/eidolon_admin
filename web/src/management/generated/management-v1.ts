@@ -53,7 +53,6 @@ export interface CompanionDetailView {
   kind: string
   last_active_at?: string
   lifecycle_state: string
-  persona_chapter?: string
   revision: number
 }
 
@@ -276,6 +275,7 @@ export interface HomeView {
   devices: HomeCountsView
   machine_attention?: Array<string>
   memory?: string
+  more_companions?: boolean
   owner_display_name?: string
   owner_revision: number
   unavailable?: Record<string, string>

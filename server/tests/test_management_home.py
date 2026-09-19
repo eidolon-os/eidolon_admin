@@ -563,8 +563,49 @@ async def test_conversations_it_could_not_read_do_not_fail_the_companion(
 
     assert response.status_code == 200, response.text
     detail = response.json()
-    assert detail["persona_chapter"] == "第 3 章 · 我发现你不喜欢被打断"
+    assert detail["display_name"] == "小忆", "the Eidolon itself still arrived"
     # The blank time is named, so the screen leads with silence rather than with
     # 「还没有聊过」 about an Eidolon this person may talk to every day.
     assert detail["last_active_at"] == ""
     assert detail["activity_unavailable"] == "runtime_unreachable"
+
+
+async def test_a_roster_with_another_page_does_not_report_a_page_as_the_total(
+    tmp_path, monkeypatch
+) -> None:
+    """The home carries one page and counts what it carries.
+
+    Without saying so, an Owner past the page boundary was shown the page size
+    as how many Eidolons they have — a number that stops growing and never says
+    it stopped. The home cannot page, so what it gets is "there are more" rather
+    than a cursor it could not follow anyway.
+    """
+
+    _stub_controller(monkeypatch)
+
+    class _Paged(_Backend):
+        async def roster(self, *, owner_id: str, cursor: str | None) -> dict:
+            page = await super().roster(owner_id=owner_id, cursor=cursor)
+            return {**page, "next_cursor": "opaque"}
+
+    app = _app(tmp_path, backend=_Paged())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        home = (await client.get(_HOME, headers=headers)).json()
+
+    assert home["more_companions"] is True
+    assert home["companion_counts"]["total"] == 3, "still what this answer carries"
+
+
+async def test_a_roster_that_fits_says_there_are_no_more(tmp_path, monkeypatch) -> None:
+    """The other half: a complete list must not look truncated either."""
+
+    _stub_controller(monkeypatch)
+    app = _app(tmp_path, backend=_Backend())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        headers = await _authenticate(client)
+        home = (await client.get(_HOME, headers=headers)).json()
+
+    assert home["more_companions"] is False

@@ -164,24 +164,6 @@ async def _try(unavailable: dict[str, str], part: str, awaitable):
         return None
 
 
-def _persona_chapter(persona) -> str:
-    """Which chapter it is on, and what changed — not a hash.
-
-    A genome id means nothing to a person. "第 3 章 · 我发现你不喜欢被打断" is the
-    same fact in the form they can act on.
-    """
-
-    if not persona:
-        return ""
-    chapters = list(persona.get("chapters", ()))
-    if not chapters:
-        return ""
-    current = next((row for row in chapters if row.get("is_current")), chapters[0])
-    ordinal = len(chapters)
-    summary = str(current.get("what_changed") or "").strip()
-    return f"第 {ordinal} 章 · {summary}" if summary else f"第 {ordinal} 章"
-
-
 def _last_spoken_at(conversations) -> str:
     """When the newest conversation was last added to.
 
@@ -201,15 +183,6 @@ def _last_spoken_at(conversations) -> str:
     if not rows:
         return ""
     return str(rows[0].get("updated_at") or "")
-
-
-def _current_chapter_id(persona) -> str:
-    if not persona:
-        return ""
-    for row in persona.get("chapters", ()):
-        if row.get("is_current"):
-            return str(row.get("chapter_id") or "")
-    return ""
 
 
 def _memory_sentence(library) -> str:
@@ -612,17 +585,13 @@ class CompanionDetailView(BaseModel):
     #: about to rename or archive is not made to fetch again first.
     revision: int = Field(ge=1)
     is_default: bool
-    #: How many times this Eidolon has been something different, and what
-    #: changed most recently: 「第 2 章 · 你改了它是谁」. Composed here rather
-    #: than shown as a genome hash, which means nothing to a person.
-    #:
-    #: On the Companion rather than on the home screen, which is where it used
-    #: to be. It is a fact about *this* Eidolon, and putting it on the home
-    #: screen meant only the one that happened to answer had a past.
-    #:
-    #: Empty when this Host could not read the history, which is not the same as
-    #: an Eidolon that has never changed.
-    persona_chapter: str = Field(default="", max_length=256)
+    #: There is deliberately no persona chapter here. 「第 2 章 · 你改了它是
+    #: 谁」 was composed on this route from a second side-read, and no client has
+    #: ever rendered it — the screen it was built for was taken off Mobile on
+    #: purpose, to come back when genomes start changing on their own rather
+    #: than only when a person edits them. Until then it is a sentence derivable
+    #: from the persona history a client already reads, and paying for a read
+    #: per companion to precompute it bought nobody anything.
     #: When this Owner last spoke to it, as on a roster row. Empty means never.
     last_active_at: str = Field(default="", max_length=64)
     #: Why the time above is missing, when it is missing for that reason. Empty
@@ -1307,6 +1276,14 @@ class HomeView(BaseModel):
     default_companion_id: str | None = Field(default=None, max_length=64)
     #: Why no row carries a 「上次对话」 time, when none does.
     activity_unavailable: str = Field(default="", max_length=64)
+    #: True when this Owner has more Eidolons than the rows above.
+    #:
+    #: The home carries one page of the roster, and ``companion_counts`` counts
+    #: what it carries — so without this a person with more than a page was
+    #: shown the page size as their total. A boolean rather than the roster's
+    #: cursor: this answer is not pageable, and handing a screen a cursor it has
+    #: no way to follow would be offering a capability that does not exist here.
+    more_companions: bool = False
     #: What this Owner's memory holds, in words. **Theirs, not any one
     #: Eidolon's**: an Owner has one Realm and every Companion reads and writes
     #: it through an audience (§4.4). This used to hang off the promoted
@@ -2103,6 +2080,7 @@ def register_management_routes(
                 else None
             ),
             activity_unavailable=str((roster or {}).get("activity_unavailable") or ""),
+            more_companions=bool((roster or {}).get("next_cursor")),
             memory=_memory_sentence(memory),
             companion_counts=_companion_counts(roster),
             devices=_device_counts(inventory),
@@ -2453,22 +2431,18 @@ def register_management_routes(
             raise _refused(exc) from exc
 
         # Best-effort, and separately: the Companion itself is what this route
-        # promises, so a history that could not be read leaves its own field
-        # empty rather than failing the page. Unlike ``/home`` this answer has no
-        # ``unavailable`` map — a chapter nobody can read simply does not show,
-        # and the one gap a screen would otherwise state wrongly is named by its
-        # own field.
+        # promises, so a read that did not come back leaves its own field empty
+        # rather than failing the page.
         #
         # The newest conversation, asked for about *this* Companion. It used to
         # be computed from a whole roster page, which was both a large read for
         # one cell and wrong past the first page: a Companion further down the
         # list was absent from the page and therefore reported as idle.
+        #
+        # A persona chapter was composed here too, from a second side-read. It
+        # is gone: no client ever rendered it, and the one that might compose
+        # the same sentence from the persona history it already fetches.
         aside: dict[str, str] = {}
-        persona = await _try(
-            aside,
-            "persona",
-            backend.persona_history(owner_id=owner_id, companion_id=companion_id),
-        )
         latest = await _try(
             aside,
             "conversations",
@@ -2484,7 +2458,6 @@ def register_management_routes(
             lifecycle_state=answer["lifecycle_state"],
             revision=answer["revision"],
             is_default=answer["is_default"],
-            persona_chapter=_persona_chapter(persona),
             last_active_at=_last_spoken_at(latest),
             # A code rather than the caught message: a client renders this and
             # a backend sentence is not something anybody wants to read.

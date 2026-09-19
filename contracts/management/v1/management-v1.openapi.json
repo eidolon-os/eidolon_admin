@@ -287,12 +287,6 @@
             "title": "Lifecycle State",
             "type": "string"
           },
-          "persona_chapter": {
-            "default": "",
-            "maxLength": 256,
-            "title": "Persona Chapter",
-            "type": "string"
-          },
           "revision": {
             "minimum": 1.0,
             "title": "Revision",
@@ -1564,6 +1558,11 @@
             "maxLength": 256,
             "title": "Memory",
             "type": "string"
+          },
+          "more_companions": {
+            "default": false,
+            "title": "More Companions",
+            "type": "boolean"
           },
           "owner_display_name": {
             "default": "",
