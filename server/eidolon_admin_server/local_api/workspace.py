@@ -6,6 +6,7 @@ from typing import Protocol
 from uuid import UUID, uuid5
 
 import httpx
+from eidolon_sdk.biz.persona import ConversationPreferences, PersonaAuthoring
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..app.control_plane.contracts import (
@@ -19,21 +20,12 @@ _HOST_WORKSPACE_NAMESPACE = UUID("bb5f68d3-192f-55b8-86d4-235887c426e8")
 
 
 def changed_setup_input_reason(owner_display_name: str | None = None) -> str:
-    """Why the input was refused, and — when the Host knows it — what to type.
-
-    A person reaches this by being shown a setup form for a Workspace that
-    already exists, which happens when their phone has not read this Host
-    before. Refusing without naming the Owner the Workspace is under leaves
-    them guessing a string they were never shown, on a screen whose only other
-    control is the one that just failed. The Host has the name, and whoever is
-    holding the phone already holds this Host.
-    """
-
+    """A different initial snapshot cannot overwrite a completed workspace."""
     if owner_display_name is None:
-        return "这台主机的 Workspace 已经用另一份设置信息创建过了，不能用新的名字覆盖它。"
+        return "这台主机已经完成过首次设置。请返回主机页面检查已有进度，进入后再调整名字和伙伴设定。"
     return (
-        f"这台主机上已经有一个 Workspace，Owner 的名字是「{owner_display_name}」。"
-        "填这个名字就能接着用它；想换一个名字，要先在主机上重置。"
+        f"这台主机上已有「{owner_display_name}」的工作空间。"
+        "请返回主机页面检查已有进度，进入后再调整名字和伙伴设定。"
     )
 
 
@@ -69,6 +61,10 @@ class WorkspaceSetupRequest(BaseModel):
 
     owner_display_name: str = Field(min_length=1, max_length=128)
     companion_display_name: str = Field(default="Eidolon", min_length=1, max_length=128)
+    persona: PersonaAuthoring | None = None
+    preferences: ConversationPreferences | None = None
+    source_preset_id: str | None = Field(default=None, min_length=1, max_length=64)
+    source_preset_revision: str | None = Field(default=None, min_length=1, max_length=32)
 
     def to_admin(self) -> WorkspaceInitializeRequest:
         return WorkspaceInitializeRequest.model_validate(self.model_dump())
@@ -173,7 +169,7 @@ class AdminWorkspaceClient:
         return await self._request(
             "PUT",
             operation_id,
-            json=payload.model_dump(mode="json"),
+            json=payload.model_dump(mode="json", exclude_none=True),
         )
 
     async def get(self, operation_id: str) -> WorkspaceOperation:
@@ -212,7 +208,7 @@ class AdminWorkspaceClient:
             raise WorkspaceSetupError(
                 "Workspace setup input was rejected",
                 status_code=422,
-                reason="Workspace 名称未被主机接受，请检查后重试。",
+                reason="名字或伙伴设定未被主机接受，请检查后重试。",
             )
         if response.status_code == 404:
             raise WorkspaceSetupError(

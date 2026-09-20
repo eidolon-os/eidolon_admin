@@ -330,3 +330,28 @@ def test_only_a_tagged_refusal_reaches_a_person() -> None:
         WorkspaceSetupError("Admin workspace control plane is unavailable")
     )
     assert diagnostic == "Admin workspace control plane is unavailable"
+
+
+def test_workspace_authoring_is_forwarded_and_legacy_fingerprints_survive():
+    import hashlib
+    from eidolon_sdk.biz.persona import PersonaAuthoring, ConversationPreferences
+    from eidolon_admin_server.local_api.workspace import WorkspaceSetupRequest
+
+    legacy = {"owner_display_name": "Owner", "companion_display_name": "Eidolon"}
+    expected = "sha256:" + hashlib.sha256(
+        json.dumps(legacy, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert workspace_request_fingerprint(WorkspaceInitializeRequest(**legacy)) == expected
+    setup = WorkspaceSetupRequest(
+        **legacy,
+        persona=PersonaAuthoring(character_portrait="第一位就是自己选的伙伴"),
+        preferences=ConversationPreferences(response_length="brief"),
+        source_preset_id="water", source_preset_revision="1",
+    )
+    payload = setup.to_admin()
+    assert payload.persona == setup.persona
+    assert payload.preferences == setup.preferences
+    assert payload.source_preset_id == "water"
+    assert workspace_request_fingerprint(payload) != expected
+    changed = payload.model_copy(update={"preferences": ConversationPreferences(response_length="detailed")})
+    assert workspace_request_fingerprint(changed) != workspace_request_fingerprint(payload)

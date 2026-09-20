@@ -2416,3 +2416,32 @@ async def test_draft_preview_uses_session_owner_and_requires_auth(
     assert result.status_code == 200, result.text
     assert backend.asked[0][0] == "owner-1"
     assert backend.asked[0][1]["persona"]["voice_portrait"] == "简短"
+
+
+async def test_first_companion_catalogue_requires_controller_but_not_owner(tmp_path, monkeypatch):
+    """Choosing the first persona grants no access to Owner-scoped routes."""
+    _stub_controller(monkeypatch, owner_id=None)
+
+    class CatalogueBackend(_Backend):
+        async def persona_presets(self):
+            return {"presets": [{
+                "preset_id": "water", "revision": "1", "default_name": "澄澄",
+                "title": "水 · 温柔倾听", "description": "愿意听你说完",
+                "persona": {}, "preferences": {}, "examples": ["你：你好。\nTA：你好。"],
+            }]}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(tmp_path, CatalogueBackend())),
+        base_url="https://local.test",
+    ) as client:
+        paths = ["/api/management/v1/persona-presets", "/api/management/v1/persona-authoring-template"]
+        for path in paths:
+            assert (await client.get(path)).status_code == 401
+        headers = await _authenticate(client)
+        for path in paths:
+            response = await client.get(path, headers=headers)
+            assert response.status_code == 200, response.text
+        assert (await client.get(_COMPANIONS, headers=headers)).status_code == 409
+        response = await client.put(_COMPANIONS_WRITE, headers=headers,
+            json={"operation_id": _OPERATION, "display_name": "不能在初始化前另建"})
+        assert response.status_code == 409

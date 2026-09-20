@@ -2511,7 +2511,9 @@ def register_management_routes(
         with a Companion whose id happens to be a word.
         """
 
-        await authenticated_owner(authorization)
+        # Authenticated Host holder may choose their first companion before an
+        # Owner exists. These are public product defaults, never Owner data.
+        await authenticated_controller_id(authorization)
         try:
             answer = await backend.persona_authoring_template()
         except ManagementBackendError as exc:
@@ -2554,7 +2556,9 @@ def register_management_routes(
         with a Companion whose id happens to be a word.
         """
 
-        await authenticated_owner(authorization)
+        # Authenticated Host holder may choose their first companion before an
+        # Owner exists. These are public product defaults, never Owner data.
+        await authenticated_controller_id(authorization)
         try:
             answer = await backend.persona_presets()
         except ManagementBackendError as exc:

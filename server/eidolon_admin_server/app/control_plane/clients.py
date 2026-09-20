@@ -705,7 +705,7 @@ class DataWorkspaceAuthorityClient:
             f"{quote(operation_id, safe='')}",
             timeout=self._timeout,
             headers=self._headers,
-            json=payload.model_dump(mode="json"),
+            json=payload.model_dump(mode="json", exclude_none=True),
         )
         result = _parse("data", response, WorkspaceOperation)
         if result.operation_id != operation_id:

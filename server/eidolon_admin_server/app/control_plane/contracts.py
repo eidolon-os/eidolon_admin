@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from eidolon_sdk.biz.persona import ConversationPreferences, PersonaAuthoring
+
 from datetime import datetime
 from typing import Any, ClassVar, Literal
 
@@ -627,6 +629,10 @@ class OwnerRenameRequest(StrictModel):
 class WorkspaceInitializeRequest(StrictModel):
     owner_display_name: str = Field(min_length=1, max_length=128)
     companion_display_name: str = Field(default="Eidolon", min_length=1, max_length=128)
+    persona: PersonaAuthoring | None = None
+    preferences: ConversationPreferences | None = None
+    source_preset_id: str | None = Field(default=None, min_length=1, max_length=64)
+    source_preset_revision: str | None = Field(default=None, min_length=1, max_length=32)
 
 
 class WorkspaceOwner(StrictModel):
