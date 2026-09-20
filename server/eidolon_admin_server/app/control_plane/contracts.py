@@ -96,6 +96,7 @@ class CompanionSummary(StrictModel):
     the pointer once and a reader compares.
     """
 
+    artwork_id: str | None = Field(default=None, max_length=128)
     companion_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     #: Plain string for the same reason as ``CompanionIdentity.kind``: the set

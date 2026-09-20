@@ -511,6 +511,7 @@ class CompanionSummaryView(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    artwork_id: str | None = Field(default=None, max_length=128)
     companion_id: str = Field(min_length=1, max_length=64)
     #: What the Owner named it. May be empty on a Host whose Data predates the
     #: name; a client shows its own placeholder rather than the identifier.

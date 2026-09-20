@@ -108,6 +108,7 @@ class CompanionSummaryInternal(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    artwork_id: str | None = Field(default=None, max_length=128)
     companion_id: str = Field(min_length=1, max_length=64)
     display_name: str = Field(default="", max_length=128)
     kind: str = Field(min_length=1, max_length=32)
@@ -672,6 +673,7 @@ async def list_companions(
                 revision=row.revision,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
+                artwork_id=row.artwork_id,
                 genome_id=row.genome_id,
                 memory_realm_id=row.memory_realm_id,
                 last_active_at=row.last_active_at,

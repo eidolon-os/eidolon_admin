@@ -547,6 +547,18 @@
         "additionalProperties": false,
         "description": "One Eidolon, as a list shows it.\n\nNo \"is the default\" flag. The page says which one is default exactly once,\nso a client cannot render two rows both claiming it, and cannot disagree\nwith the Owner record about which one it is.",
         "properties": {
+          "artwork_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artwork Id"
+          },
           "companion_id": {
             "maxLength": 64,
             "minLength": 1,

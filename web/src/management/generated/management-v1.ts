@@ -95,6 +95,7 @@ export interface CompanionRosterView {
 }
 
 export interface CompanionSummaryView {
+  artwork_id?: string | null
   companion_id: string
   created_at: string
   display_name?: string

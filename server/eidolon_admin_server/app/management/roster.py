@@ -63,6 +63,7 @@ class CompanionRow:
     revision: int
     created_at: str
     updated_at: str
+    artwork_id: str | None = None
     genome_id: str | None = None
     memory_realm_id: str | None = None
     #: When this Owner last spoke to it. Empty means one of two things, and the
@@ -146,6 +147,7 @@ async def read_roster(
                 # is handed a formatted local time cannot recover the instant.
                 created_at=row.created_at.isoformat(),
                 updated_at=row.updated_at.isoformat(),
+                artwork_id=row.artwork_id,
                 genome_id=row.current_genome_id,
                 memory_realm_id=row.memory_realm_id,
                 last_active_at=(last_spoken or {}).get(row.companion_id, ""),
