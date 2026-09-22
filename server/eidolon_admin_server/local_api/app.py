@@ -1216,6 +1216,7 @@ def create_app(
             device_id: str,
             allowed,
             expected_revision: int,
+            inputs=None,
         ):
             """Carry the Owner's decision about one device's outputs.
 
@@ -1246,6 +1247,7 @@ def create_app(
                         device_ref=held.claim.device_ref,
                         expected_revision=expected_revision,
                         allowed=allowed,
+                        inputs=inputs,
                     )
                 )
             except DeviceInventoryError as exc:

@@ -13,6 +13,8 @@ authenticates, and is passed down as an argument.
 
 from __future__ import annotations
 
+from eidolon_sdk.biz.presentation import InputSelection
+
 from typing import Literal, Protocol, runtime_checkable
 
 from eidolon_sdk.biz.contracts.refusal import Refusal
@@ -322,6 +324,8 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         manifest_revision=getattr(manifest, "revision", None),
         outputs=DeviceOutputsView(
             capabilities=device.outputs.capabilities,
+            input_capabilities=device.outputs.input_capabilities,
+            inputs=(device.outputs.policy.inputs if device.outputs.policy is not None else None),
             allowed=None if device.outputs.policy is None else device.outputs.policy.allowed,
             revision=0 if device.outputs.policy is None else device.outputs.policy.revision,
         ),
@@ -1394,6 +1398,8 @@ class DeviceOutputsView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     capabilities: OutputSelection
+    input_capabilities: InputSelection | None = None
+    inputs: InputSelection | None = None
     allowed: OutputSelection | None = None
     #: What a change has to carry, so two phones cannot both win. Zero before
     #: the first decision, which is the value that first decision carries.
@@ -1412,6 +1418,7 @@ class DeviceOutputsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     allowed: OutputSelection
+    inputs: InputSelection | None = None
     expected_revision: int = Field(ge=0)
 
 
@@ -1635,6 +1642,7 @@ class OwnerDevicePort(Protocol):
         device_id: str,
         allowed,
         expected_revision: int,
+        inputs=None,
     ): ...
 
 
@@ -2166,6 +2174,7 @@ def register_management_routes(
                 session=session,
                 device_id=device_id,
                 allowed=payload.allowed,
+                **({"inputs": payload.inputs} if payload.inputs is not None else {}),
                 expected_revision=payload.expected_revision,
             )
         except ManagementBackendError as exc:

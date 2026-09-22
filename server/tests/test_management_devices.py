@@ -84,6 +84,7 @@ def _device(
         # A device from before the vocabulary: it declares speech and nothing
         # else, so it runs on the legacy outputs and needs no decision.
         outputs=SimpleNamespace(
+            input_capabilities=None,
             capabilities=capabilities or OutputSelection(speech=True, dialogue_text=True),
             policy=policy,
             policy_required=policy_required,
@@ -133,7 +134,7 @@ class _Devices:
         return _device(companion_id=companion_id)
 
     async def set_device_outputs(
-        self, *, session, device_id: str, allowed, expected_revision: int
+        self, *, session, device_id: str, allowed, expected_revision: int, inputs=None
     ):
         self.decided.append(
             {
@@ -150,7 +151,7 @@ class _Devices:
             )
         return _device(
             capabilities=OutputSelection(speech=True, dialogue_text=True, expression=True),
-            policy=DeviceOutputPolicy(revision=expected_revision + 1, allowed=allowed),
+            policy=DeviceOutputPolicy(revision=expected_revision + 1, allowed=allowed, inputs=inputs),
         )
 
 
@@ -589,3 +590,17 @@ async def test_explicit_non_face_device_waits_for_owner_outputs():
     assert _device_state("active", "companion-a", device.outputs) == "awaiting_outputs"
     assert _device_state("active", "companion-a", _device().outputs) == "ready"
     assert _device_state("revoked", "companion-a", device.outputs) == "access_revoked"
+
+
+async def test_microphone_choice_travels_with_output_revision(tmp_path, monkeypatch):
+    _stub_controller(monkeypatch)
+    devices = _Devices(_device())
+    transport = httpx.ASGITransport(app=_app(tmp_path, devices))
+    async with httpx.AsyncClient(transport=transport, base_url='https://local.test') as client:
+        headers = await _authenticate(client)
+        result = await client.put(f'{_DEVICES}/{_KNOWN}/outputs', headers=headers,
+            json={'allowed': {'speech': True}, 'inputs': {'microphone': False}, 'expected_revision': 0})
+    assert result.status_code == 200
+    assert result.json()['outputs']['inputs'] == {'microphone': False}
+    assert result.json()['outputs']['allowed']['speech'] is True
+    assert result.json()['outputs']['revision'] == 1

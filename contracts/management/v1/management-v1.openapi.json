@@ -986,6 +986,16 @@
             "minimum": 0.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1011,6 +1021,26 @@
           },
           "capabilities": {
             "$ref": "#/components/schemas/OutputSelection"
+          },
+          "input_capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "revision": {
             "minimum": 0.0,
@@ -1948,6 +1978,19 @@
           "observed_at"
         ],
         "title": "HostVitalsView",
+        "type": "object"
+      },
+      "InputSelection": {
+        "additionalProperties": false,
+        "description": "Owner permission to send microphone audio, independent of response outputs.",
+        "properties": {
+          "microphone": {
+            "default": false,
+            "title": "Microphone",
+            "type": "boolean"
+          }
+        },
+        "title": "InputSelection",
         "type": "object"
       },
       "ManagementContextView": {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from eidolon_sdk.biz.presentation import InputSelection
+
 from datetime import datetime
 from collections.abc import Mapping
 from typing import Literal, Protocol
@@ -78,6 +80,7 @@ def output_policy_decision(
     device_ref: DeviceRef,
     expected_revision: int,
     allowed: OutputSelection,
+    inputs: InputSelection | None = None,
 ) -> ControllerDeviceOutputPolicyUpdate:
     return ControllerDeviceOutputPolicyUpdate(
         contract_version="1",
@@ -89,6 +92,7 @@ def output_policy_decision(
             device_ref=device_ref,
             expected_revision=expected_revision,
             allowed=allowed,
+            inputs=inputs,
         ),
     )
 

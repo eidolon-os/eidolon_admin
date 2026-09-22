@@ -172,11 +172,14 @@ export interface DeviceCompanionRequest {
 export interface DeviceOutputsRequest {
   allowed: OutputSelection
   expected_revision: number
+  inputs?: InputSelection | null
 }
 
 export interface DeviceOutputsView {
   allowed?: OutputSelection | null
   capabilities: OutputSelection
+  input_capabilities?: InputSelection | null
+  inputs?: InputSelection | null
   revision: number
 }
 
@@ -343,6 +346,10 @@ export interface HostVitalsView {
   observed_at: string
   operation?: "host.vitals"
   vitals?: Array<VitalView>
+}
+
+export interface InputSelection {
+  microphone?: boolean
 }
 
 export interface ManagementContextView {
