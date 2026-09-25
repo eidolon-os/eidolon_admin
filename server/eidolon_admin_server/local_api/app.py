@@ -20,6 +20,9 @@ from typing import Annotated, Any, Literal
 import httpx
 from eidolon_sdk.biz.control.shared_session import SharedSessionSelection
 from .shared_sessions import register_shared_session_routes
+from .device_conversations import register_device_conversation_routes
+from ..app.control_plane.device_conversations import ControllerConversationStart, ControllerConversationQuery
+from eidolon_sdk.biz.control.device_conversation import DeviceConversationSelection
 from .device_admissions import admission_actor
 from ..app.control_plane.shared_sessions import ControllerSharedStart, ControllerSharedClose
 from eidolon_sdk.device_foundation.v1 import (
@@ -1162,6 +1165,29 @@ def create_app(
         the management router phrases it and does not merge it.
         """
 
+        async def device_conversation(self, *, session, action, payload):
+            domain, owner = _admission_scope(session.owner_id)
+            authority = dict(contract_version="1", business_owner_id=owner,
+                actor=admission_actor(controller_id=session.controller_id, owner_domain_id=domain))
+            if action == "open":
+                inventory = await self.list_devices(session=session)
+                held = {item.device_id: item for item in inventory.devices}
+                if any(d not in held for d in (payload.input_device_id, payload.output_device_id)):
+                    raise ManagementBackendError("Selected device is not owned and mounted", status_code=403,
+                        refusal=refusal_for_status(403, "Selected device is not owned and mounted"))
+                selection = DeviceConversationSelection(session_id=payload.session_id,
+                    input_device=held[payload.input_device_id].claim.device_ref,
+                    output_device=held[payload.output_device_id].claim.device_ref,
+                    target_companion_id=payload.target_companion_id)
+                command = ControllerConversationStart(**authority, selection=selection)
+            else:
+                command = ControllerConversationQuery(**authority, session_id=payload.session_id)
+            try:
+                return await devices.device_conversation(payload=command, action=action)
+            except DeviceInventoryError as exc:
+                raise ManagementBackendError(str(exc), status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc))) from exc
+
         async def _shared_command(self, *, session, action, selection=None, session_id=None):
             domain, owner = _admission_scope(session.owner_id)
             authority = dict(contract_version="1", business_owner_id=owner,
@@ -1364,6 +1390,9 @@ def create_app(
         host=host_services,
         devices=owner_device_port or _Devices(),
         authenticated_controller_session=management_device_session,
+    )
+    register_device_conversation_routes(
+        app, authenticate=management_device_session, devices=owner_device_port or _Devices(),
     )
     register_shared_session_routes(
         app, authenticate=management_device_session, devices=owner_device_port or _Devices(),

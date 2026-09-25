@@ -227,6 +227,33 @@ class AdminOwnerDevicesClient:
             )
         return endpoint
 
+    async def device_conversation(self, *, payload, action: str) -> dict:
+        if action not in {"open", "status", "close"}:
+            raise ValueError("invalid device conversation action")
+        if not self._token:
+            raise DeviceInventoryError("Local API Admin service credential is not configured")
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/api/control-plane/v1/owners/"
+                f"{quote(str(payload.business_owner_id), safe='')}/device-conversations/{action}",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=payload.model_dump(mode="json"), timeout=40.0,
+            )
+        except httpx.HTTPError as exc:
+            raise DeviceInventoryError("Device conversation unavailable") from exc
+        if not response.is_success:
+            raise DeviceInventoryError("Device conversation refused", status_code=response.status_code)
+        try:
+            result = response.json()
+            session_id = payload.selection.session_id if action == "open" else payload.session_id
+            from eidolon_sdk.biz.control.device_conversation import DeviceConversationStatus
+            result = DeviceConversationStatus.model_validate(result).model_dump(mode="json")
+            if result["session_id"] != session_id:
+                raise ValueError("unexpected device conversation response")
+            return result
+        except ValueError as exc:
+            raise DeviceInventoryError("Invalid device conversation response") from exc
+
     async def shared_session(self, *, payload, action: str) -> dict:
         if action not in {"open", "close"}:
             raise ValueError("invalid shared session action")

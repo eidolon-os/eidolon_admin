@@ -1682,6 +1682,30 @@ class HubManagementClient:
             )
         return result
 
+    async def device_conversation(self, *, action: str, command: dict, authorization: str) -> dict:
+        if action not in {"open", "status", "close"}:
+            raise ValueError("invalid device conversation action")
+        base_url = await self._base_url()
+        response = await _request(
+            "hub", self._client, "POST",
+            f"{base_url}/api/device-control/v1/device-conversations/{action}",
+            timeout=35.0, headers=self._headers(authorization), json=command,
+        )
+        if not response.is_success:
+            _raise_status("hub", response)
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise _contract_violation("hub", "invalid device conversation response") from exc
+        from eidolon_sdk.biz.control.device_conversation import DeviceConversationStatus
+        try:
+            result = DeviceConversationStatus.model_validate(result).model_dump(mode="json")
+            if result["session_id"] != command["session_id"]:
+                raise ValueError("unexpected session")
+        except ValueError as exc:
+            raise _contract_violation("hub", "invalid device conversation response") from exc
+        return result
+
     async def shared_session(self, *, action: str, command: dict, authorization: str) -> dict:
         if action not in {"open", "close"}:
             raise ValueError("invalid shared session action")

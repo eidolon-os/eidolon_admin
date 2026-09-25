@@ -146,6 +146,13 @@ export interface ConversationPreferences {
   response_length?: "brief" | "balanced" | "detailed"
 }
 
+export interface ConversationStart {
+  input_device_id: string
+  output_device_id: string
+  session_id: string
+  target_companion_id: string
+}
+
 export interface ConversationView {
   conversation_id: string
   ended_at?: string | null
@@ -167,6 +174,12 @@ export interface DeviceCompanionRequest {
   companion_id?: string | null
   expected_revision: number
   request_id: string
+}
+
+export interface DeviceConversationStatus {
+  error?: string
+  session_id: string
+  state: "preparing" | "ready" | "closing" | "closed" | "failed"
 }
 
 export interface DeviceOutputsRequest {
@@ -758,6 +771,9 @@ export interface ManagementResponses {
   'GET /api/management/v1/controllers': ControllersView
   'POST /api/management/v1/controllers/invitations': ControllerInvitationView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
+  'POST /api/management/v1/device-conversations/close': DeviceConversationStatus
+  'POST /api/management/v1/device-conversations/open': DeviceConversationStatus
+  'POST /api/management/v1/device-conversations/status': DeviceConversationStatus
   'GET /api/management/v1/devices': DevicesView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView

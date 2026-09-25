@@ -848,6 +848,47 @@
         "title": "ConversationPreferences",
         "type": "object"
       },
+      "ConversationStart": {
+        "additionalProperties": false,
+        "properties": {
+          "input_device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Input Device Id",
+            "type": "string"
+          },
+          "output_device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Output Device Id",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "target_companion_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Target Companion Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "input_device_id",
+          "output_device_id",
+          "target_companion_id"
+        ],
+        "title": "ConversationStart",
+        "type": "object"
+      },
       "ConversationView": {
         "additionalProperties": false,
         "description": "One time we talked.",
@@ -973,6 +1014,40 @@
           "request_id"
         ],
         "title": "DeviceCompanionRequest",
+        "type": "object"
+      },
+      "DeviceConversationStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "preparing",
+              "ready",
+              "closing",
+              "closed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "state"
+        ],
+        "title": "DeviceConversationStatus",
         "type": "object"
       },
       "DeviceOutputsRequest": {
@@ -5846,6 +5921,183 @@
           }
         },
         "summary": "Revoke Controller",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/device-conversations/close": {
+      "post": {
+        "operationId": "close_api_management_v1_device_conversations_close_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConversationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/device-conversations/open": {
+      "post": {
+        "operationId": "start_api_management_v1_device_conversations_open_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConversationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/device-conversations/status": {
+      "post": {
+        "operationId": "status_api_management_v1_device_conversations_status_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConversationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Status",
         "tags": [
           "management"
         ]

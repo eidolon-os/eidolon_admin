@@ -255,6 +255,7 @@ def admission_actor(
             # still authorizes it on its own terms.
             "device.output-policy.write",
             "device.shared-session.control",
+            "device.conversation.control",
         ),
         authentication_strength="software",
     )
