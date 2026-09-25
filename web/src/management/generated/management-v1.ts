@@ -263,6 +263,10 @@ export interface ForgetTargetRequest {
   target: string
 }
 
+export interface HTTPValidationError {
+  detail?: Array<ValidationError>
+}
+
 export interface HomeCountsView {
   put_away: number
   ready: number
@@ -660,6 +664,16 @@ export interface RevokedSessionsView {
   revoked_at: string
 }
 
+export interface SharedClose {
+  session_id: string
+}
+
+export interface SharedStart {
+  device_ids: Array<string>
+  input_device_id: string
+  session_id: string
+}
+
 export interface SpokenMessageView {
   role: string
   text?: string
@@ -701,6 +715,14 @@ export interface TranscriptView {
   conversation_id: string
   next_cursor?: string | null
   turns: Array<TranscriptTurnView>
+}
+
+export interface ValidationError {
+  ctx?: Record<string, unknown>
+  input?: unknown
+  loc: Array<string | number>
+  msg: string
+  type: string
 }
 
 export interface VitalView {
@@ -764,4 +786,6 @@ export interface ManagementResponses {
   'POST /api/management/v1/persona-preview': PersonaPreviewResponse
   'GET /api/management/v1/session-traces': unknown
   'GET /api/management/v1/session-traces/{session_id}': unknown
+  'POST /api/management/v1/shared-sessions/close': unknown
+  'POST /api/management/v1/shared-sessions/open': unknown
 }
