@@ -47,6 +47,7 @@ from .contracts import (
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
 from .service import ControlPlaneService
+from .shared_sessions import ControllerSharedStart, ControllerSharedClose
 
 #: Every route mounted here requires the Local API service credential, and it
 #: is required *by the router* rather than by each handler. The reason is
@@ -311,6 +312,20 @@ async def set_device_output_policy(
     ):
         raise HTTPException(409, "Output policy path and decision do not match")
     return await _service(request).set_device_output_policy(payload=payload)
+
+
+@router.post("/owners/{owner_id}/shared-sessions/open")
+async def open_shared_session(owner_id: str, payload: ControllerSharedStart, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).shared_session(payload=payload, action="open")
+
+
+@router.post("/owners/{owner_id}/shared-sessions/close")
+async def close_shared_session(owner_id: str, payload: ControllerSharedClose, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).shared_session(payload=payload, action="close")
 
 
 @router.post("/admission/enrollment-queries", response_model=EnrollmentProposalPage)

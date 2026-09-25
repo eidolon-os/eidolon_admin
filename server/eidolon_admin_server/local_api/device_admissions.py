@@ -254,6 +254,7 @@ def admission_actor(
             # made on the same Host, through the same Controller. The Authority
             # still authorizes it on its own terms.
             "device.output-policy.write",
+            "device.shared-session.control",
         ),
         authentication_strength="software",
     )

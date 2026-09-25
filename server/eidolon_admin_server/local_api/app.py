@@ -18,6 +18,10 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import httpx
+from eidolon_sdk.biz.control.shared_session import SharedSessionSelection
+from .shared_sessions import register_shared_session_routes
+from .device_admissions import admission_actor
+from ..app.control_plane.shared_sessions import ControllerSharedStart, ControllerSharedClose
 from eidolon_sdk.device_foundation.v1 import (
     BusinessOwnerId,
     ClaimPage,
@@ -1149,6 +1153,33 @@ def create_app(
         )
 
     class _Devices:
+        async def _shared_command(self, *, session, action, selection=None, session_id=None):
+            domain, owner = _admission_scope(session.owner_id)
+            authority = dict(contract_version="1", business_owner_id=owner,
+                             actor=admission_actor(controller_id=session.controller_id, owner_domain_id=domain))
+            command = (ControllerSharedStart(**authority, selection=selection) if action == "open"
+                       else ControllerSharedClose(**authority, session_id=session_id))
+            try:
+                return await devices.shared_session(payload=command, action=action)
+            except DeviceInventoryError as exc:
+                raise ManagementBackendError(str(exc), status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc))) from exc
+
+        async def open_shared_session(self, *, session, payload):
+            inventory = await self.list_devices(session=session)
+            held = {item.device_id: item for item in inventory.devices}
+            if any(device_id not in held for device_id in payload.device_ids):
+                raise ManagementBackendError("Selected device is not owned and mounted", status_code=403,
+                    refusal=refusal_for_status(403, "Selected device is not owned and mounted"))
+            selection = SharedSessionSelection(
+                session_id=payload.session_id, input_device_id=payload.input_device_id,
+                devices=tuple(held[d].claim.device_ref for d in payload.device_ids),
+            )
+            return await self._shared_command(session=session, action="open", selection=selection)
+
+        async def close_shared_session(self, *, session, session_id):
+            return await self._shared_command(session=session, action="close", session_id=session_id)
+
         """The composed device read, from the two clients this process holds.
 
         It lives here for the same reason the controller list does: the
@@ -1333,6 +1364,9 @@ def create_app(
         host=host_services,
         devices=owner_device_port or _Devices(),
         authenticated_controller_session=management_device_session,
+    )
+    register_shared_session_routes(
+        app, authenticate=management_device_session, devices=owner_device_port or _Devices(),
     )
 
     return app

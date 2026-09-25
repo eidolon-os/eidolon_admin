@@ -227,6 +227,32 @@ class AdminOwnerDevicesClient:
             )
         return endpoint
 
+    async def shared_session(self, *, payload, action: str) -> dict:
+        if action not in {"open", "close"}:
+            raise ValueError("invalid shared session action")
+        if not self._token:
+            raise DeviceInventoryError("Local API Admin service credential is not configured")
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/api/control-plane/v1/owners/"
+                f"{quote(str(payload.business_owner_id), safe='')}/shared-sessions/{action}",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=payload.model_dump(mode="json"), timeout=40.0,
+            )
+        except httpx.HTTPError as exc:
+            raise DeviceInventoryError("Shared device transport unavailable") from exc
+        if not response.is_success:
+            raise DeviceInventoryError("Shared device transport refused", status_code=response.status_code)
+        try:
+            result = response.json()
+            session_id = payload.selection.session_id if action == "open" else payload.session_id
+            if (not isinstance(result, dict) or result.get("session_id") != session_id
+                    or result.get("state") != ("transport_ready" if action == "open" else "closed")):
+                raise ValueError("unexpected shared session response")
+            return result
+        except ValueError as exc:
+            raise DeviceInventoryError("Invalid shared device transport response") from exc
+
     async def _device_scoped(self, *, verb: str, suffix: str, owner_id: str,
                             device_id: str, payload, model, operation: str):
         """One device-scoped call to the Admin control plane, and its refusals.

@@ -613,6 +613,17 @@ class ControlPlaneService:
             ),
         )
 
+    async def shared_session(self, *, payload, action: str) -> dict:
+        issuer = self._admission_issuer()
+        command = (payload.selection.model_dump(mode="json") if action == "open"
+                   else {"session_id": payload.session_id})
+        return await self.hub.shared_session(
+            action=action, command=command,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor, business_owner_id=payload.business_owner_id,
+            ),
+        )
+
     async def read_device_output_configuration(
         self, *, payload: ControllerDeviceOutputPolicyQuery
     ) -> DeviceOutputConfiguration:

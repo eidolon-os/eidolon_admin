@@ -1682,6 +1682,27 @@ class HubManagementClient:
             )
         return result
 
+    async def shared_session(self, *, action: str, command: dict, authorization: str) -> dict:
+        if action not in {"open", "close"}:
+            raise ValueError("invalid shared session action")
+        base_url = await self._base_url()
+        response = await _request(
+            "hub", self._client, "POST",
+            f"{base_url}/api/device-control/v1/shared-sessions/{action}",
+            timeout=35.0, headers=self._headers(authorization), json=command,
+        )
+        if not response.is_success:
+            _raise_status("hub", response)
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise _contract_violation("hub", "invalid shared session response") from exc
+        expected_id = command["session_id"]
+        if (not isinstance(result, dict) or result.get("session_id") != expected_id
+                or result.get("state") != ("transport_ready" if action == "open" else "closed")):
+            raise _contract_violation("hub", "invalid shared session response")
+        return result
+
     async def read_device_output_configuration(
         self, *, query: ReadDeviceOutputPolicy, authorization: str
     ) -> DeviceOutputConfiguration:
