@@ -1153,6 +1153,15 @@ def create_app(
         )
 
     class _Devices:
+        """The composed device read, from the two clients this process holds.
+
+        It lives here for the same reason the controller list does: the
+        admission authority authorises by *actor*, and the authenticated
+        Controller only exists at this boundary. What it hands upward is already
+        composed — Hub's Claim and Kernel's mount agreeing about one device — so
+        the management router phrases it and does not merge it.
+        """
+
         async def _shared_command(self, *, session, action, selection=None, session_id=None):
             domain, owner = _admission_scope(session.owner_id)
             authority = dict(contract_version="1", business_owner_id=owner,
@@ -1179,15 +1188,6 @@ def create_app(
 
         async def close_shared_session(self, *, session, session_id):
             return await self._shared_command(session=session, action="close", session_id=session_id)
-
-        """The composed device read, from the two clients this process holds.
-
-        It lives here for the same reason the controller list does: the
-        admission authority authorises by *actor*, and the authenticated
-        Controller only exists at this boundary. What it hands upward is already
-        composed — Hub's Claim and Kernel's mount agreeing about one device — so
-        the management router phrases it and does not merge it.
-        """
 
         async def list_devices(self, *, session):
             try:
