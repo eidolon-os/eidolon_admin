@@ -48,6 +48,7 @@ from eidolon_admin_server.app.service_auth import require_local_api_credential
 
 from .service import ControlPlaneService
 from .shared_sessions import ControllerSharedStart, ControllerSharedClose
+from .role_groups import ControllerRoleGroupStart, ControllerRoleGroupQuery
 from .device_conversations import ControllerConversationStart, ControllerConversationQuery
 
 #: Every route mounted here requires the Local API service credential, and it
@@ -313,6 +314,27 @@ async def set_device_output_policy(
     ):
         raise HTTPException(409, "Output policy path and decision do not match")
     return await _service(request).set_device_output_policy(payload=payload)
+
+
+@router.post("/owners/{owner_id}/role-groups/open")
+async def open_role_group(owner_id: str, payload: ControllerRoleGroupStart, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).role_group(payload=payload, action="open")
+
+
+@router.post("/owners/{owner_id}/role-groups/close")
+async def close_role_group(owner_id: str, payload: ControllerRoleGroupQuery, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).role_group(payload=payload, action="close")
+
+
+@router.post("/owners/{owner_id}/role-groups/status")
+async def status_role_group(owner_id: str, payload: ControllerRoleGroupQuery, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).role_group(payload=payload, action="status")
 
 
 @router.post("/owners/{owner_id}/device-conversations/open")

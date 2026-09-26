@@ -228,6 +228,16 @@ class AdminOwnerDevicesClient:
         return endpoint
 
     async def device_conversation(self, *, payload, action: str) -> dict:
+        from eidolon_sdk.biz.control.device_conversation import DeviceConversationStatus
+        return await self._conversation_command(payload=payload, action=action,
+            resource="device-conversations", status_model=DeviceConversationStatus)
+
+    async def role_group(self, *, payload, action: str) -> dict:
+        from eidolon_sdk.biz.control.coordination import RoleGroupStatus
+        return await self._conversation_command(payload=payload, action=action,
+            resource="role-groups", status_model=RoleGroupStatus)
+
+    async def _conversation_command(self, *, payload, action: str, resource: str, status_model) -> dict:
         if action not in {"open", "status", "close"}:
             raise ValueError("invalid device conversation action")
         if not self._token:
@@ -235,7 +245,7 @@ class AdminOwnerDevicesClient:
         try:
             response = await self._client.post(
                 f"{self._base_url}/api/control-plane/v1/owners/"
-                f"{quote(str(payload.business_owner_id), safe='')}/device-conversations/{action}",
+                f"{quote(str(payload.business_owner_id), safe='')}/{resource}/{action}",
                 headers={"Authorization": f"Bearer {self._token}"},
                 json=payload.model_dump(mode="json"), timeout=40.0,
             )
@@ -246,8 +256,7 @@ class AdminOwnerDevicesClient:
         try:
             result = response.json()
             session_id = payload.selection.session_id if action == "open" else payload.session_id
-            from eidolon_sdk.biz.control.device_conversation import DeviceConversationStatus
-            result = DeviceConversationStatus.model_validate(result).model_dump(mode="json")
+            result = status_model.model_validate(result).model_dump(mode="json")
             if result["session_id"] != session_id:
                 raise ValueError("unexpected device conversation response")
             return result

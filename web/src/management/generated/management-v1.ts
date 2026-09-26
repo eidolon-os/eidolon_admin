@@ -677,6 +677,22 @@ export interface RevokedSessionsView {
   revoked_at: string
 }
 
+export interface RoleGroupStart {
+  discussion?: boolean
+  input_device_id: string
+  output_device_ids: Array<string>
+  reply_budget?: number
+  session_id: string
+}
+
+export interface RoleGroupStatus {
+  completion_basis: "native_playout"
+  error?: string
+  scenario: "ip_role_group"
+  session_id: string
+  state: "preparing" | "ready" | "closing" | "closed" | "failed"
+}
+
 export interface SharedClose {
   session_id: string
 }
@@ -800,6 +816,9 @@ export interface ManagementResponses {
   'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
   'GET /api/management/v1/persona-presets': PersonaPresetCatalog
   'POST /api/management/v1/persona-preview': PersonaPreviewResponse
+  'POST /api/management/v1/role-groups/close': RoleGroupStatus
+  'POST /api/management/v1/role-groups/open': RoleGroupStatus
+  'POST /api/management/v1/role-groups/status': RoleGroupStatus
   'GET /api/management/v1/session-traces': unknown
   'GET /api/management/v1/session-traces/{session_id}': unknown
   'POST /api/management/v1/shared-sessions/close': unknown

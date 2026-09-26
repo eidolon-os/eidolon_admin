@@ -3893,6 +3893,102 @@
         "title": "RevokedSessionsView",
         "type": "object"
       },
+      "RoleGroupStart": {
+        "additionalProperties": false,
+        "properties": {
+          "discussion": {
+            "default": false,
+            "title": "Discussion",
+            "type": "boolean"
+          },
+          "input_device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Input Device Id",
+            "type": "string"
+          },
+          "output_device_ids": {
+            "items": {
+              "maxLength": 80,
+              "minLength": 80,
+              "pattern": "^device-instance-[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Output Device Ids",
+            "type": "array"
+          },
+          "reply_budget": {
+            "default": 8,
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Reply Budget",
+            "type": "integer"
+          },
+          "session_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "input_device_id",
+          "output_device_ids"
+        ],
+        "title": "RoleGroupStart",
+        "type": "object"
+      },
+      "RoleGroupStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "completion_basis": {
+            "const": "native_playout",
+            "title": "Completion Basis",
+            "type": "string"
+          },
+          "error": {
+            "default": "",
+            "title": "Error",
+            "type": "string"
+          },
+          "scenario": {
+            "const": "ip_role_group",
+            "title": "Scenario",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "preparing",
+              "ready",
+              "closing",
+              "closed",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "state",
+          "scenario",
+          "completion_basis"
+        ],
+        "title": "RoleGroupStatus",
+        "type": "object"
+      },
       "SharedClose": {
         "additionalProperties": false,
         "properties": {
@@ -7683,6 +7779,183 @@
           }
         },
         "summary": "Preview Persona",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/role-groups/close": {
+      "post": {
+        "operationId": "close_api_management_v1_role_groups_close_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGroupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/role-groups/open": {
+      "post": {
+        "operationId": "start_api_management_v1_role_groups_open_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleGroupStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGroupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/role-groups/status": {
+      "post": {
+        "operationId": "status_api_management_v1_role_groups_status_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGroupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Status",
         "tags": [
           "management"
         ]

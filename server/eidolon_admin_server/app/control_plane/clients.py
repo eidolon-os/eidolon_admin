@@ -1683,12 +1683,22 @@ class HubManagementClient:
         return result
 
     async def device_conversation(self, *, action: str, command: dict, authorization: str) -> dict:
+        from eidolon_sdk.biz.control.device_conversation import DeviceConversationStatus
+        return await self._conversation_command(action=action, command=command, authorization=authorization,
+            resource="device-conversations", status_model=DeviceConversationStatus)
+
+    async def role_group(self, *, action: str, command: dict, authorization: str) -> dict:
+        from eidolon_sdk.biz.control.coordination import RoleGroupStatus
+        return await self._conversation_command(action=action, command=command, authorization=authorization,
+            resource="role-groups", status_model=RoleGroupStatus)
+
+    async def _conversation_command(self, *, action: str, command: dict, authorization: str, resource: str, status_model) -> dict:
         if action not in {"open", "status", "close"}:
             raise ValueError("invalid device conversation action")
         base_url = await self._base_url()
         response = await _request(
             "hub", self._client, "POST",
-            f"{base_url}/api/device-control/v1/device-conversations/{action}",
+            f"{base_url}/api/device-control/v1/{resource}/{action}",
             timeout=35.0, headers=self._headers(authorization), json=command,
         )
         if not response.is_success:
@@ -1697,9 +1707,8 @@ class HubManagementClient:
             result = response.json()
         except ValueError as exc:
             raise _contract_violation("hub", "invalid device conversation response") from exc
-        from eidolon_sdk.biz.control.device_conversation import DeviceConversationStatus
         try:
-            result = DeviceConversationStatus.model_validate(result).model_dump(mode="json")
+            result = status_model.model_validate(result).model_dump(mode="json")
             if result["session_id"] != command["session_id"]:
                 raise ValueError("unexpected session")
         except ValueError as exc:

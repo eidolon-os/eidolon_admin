@@ -613,6 +613,14 @@ class ControlPlaneService:
             ),
         )
 
+    async def role_group(self, *, payload, action: str) -> dict:
+        issuer = self._admission_issuer()
+        command = (payload.selection.model_dump(mode="json") if action == "open"
+                   else {"session_id": payload.session_id})
+        return await self.hub.role_group(action=action, command=command,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor, business_owner_id=payload.business_owner_id))
+
     async def device_conversation(self, *, payload, action: str) -> dict:
         issuer = self._admission_issuer()
         command = (payload.selection.model_dump(mode="json") if action == "open"
