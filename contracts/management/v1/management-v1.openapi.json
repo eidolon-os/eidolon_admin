@@ -3893,6 +3893,27 @@
         "title": "RevokedSessionsView",
         "type": "object"
       },
+      "RoleGroupAssignment": {
+        "additionalProperties": false,
+        "properties": {
+          "output_device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Output Device Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/SceneRole"
+          }
+        },
+        "required": [
+          "output_device_id",
+          "role"
+        ],
+        "title": "RoleGroupAssignment",
+        "type": "object"
+      },
       "RoleGroupStart": {
         "additionalProperties": false,
         "properties": {
@@ -3926,6 +3947,14 @@
             "minimum": 1.0,
             "title": "Reply Budget",
             "type": "integer"
+          },
+          "roles": {
+            "items": {
+              "$ref": "#/components/schemas/RoleGroupAssignment"
+            },
+            "maxItems": 16,
+            "title": "Roles",
+            "type": "array"
           },
           "session_id": {
             "maxLength": 64,
@@ -3987,6 +4016,29 @@
           "completion_basis"
         ],
         "title": "RoleGroupStatus",
+        "type": "object"
+      },
+      "SceneRole": {
+        "additionalProperties": false,
+        "description": "Temporary performance data; never a Companion binding or tool grant.",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "SceneRole",
         "type": "object"
       },
       "SharedClose": {

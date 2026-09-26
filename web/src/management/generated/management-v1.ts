@@ -677,11 +677,17 @@ export interface RevokedSessionsView {
   revoked_at: string
 }
 
+export interface RoleGroupAssignment {
+  output_device_id: string
+  role: SceneRole
+}
+
 export interface RoleGroupStart {
   discussion?: boolean
   input_device_id: string
   output_device_ids: Array<string>
   reply_budget?: number
+  roles?: Array<RoleGroupAssignment>
   session_id: string
 }
 
@@ -691,6 +697,11 @@ export interface RoleGroupStatus {
   scenario: "ip_role_group"
   session_id: string
   state: "preparing" | "ready" | "closing" | "closed" | "failed"
+}
+
+export interface SceneRole {
+  description?: string
+  name: string
 }
 
 export interface SharedClose {

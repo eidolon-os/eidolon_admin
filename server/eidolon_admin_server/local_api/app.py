@@ -1180,10 +1180,11 @@ def create_app(
                     raise ManagementBackendError("Selected device is not owned and mounted", status_code=403,
                         refusal=refusal_for_status(403, "Selected device is not owned and mounted"))
                 try:
+                    roles = {item.output_device_id: item.role for item in payload.roles}
                     selection = CoordinationSelection(scenario="ip_role_group", session_id=payload.session_id,
                         input_device=held[payload.input_device_id].claim.device_ref,
                         members=tuple(CoordinationMember(companion_id=held[d].body.answering_companion_id,
-                            output_device=held[d].claim.device_ref) for d in payload.output_device_ids),
+                            output_device=held[d].claim.device_ref, role=roles.get(d)) for d in payload.output_device_ids),
                         discussion=payload.discussion, reply_budget=payload.reply_budget)
                 except (ValueError, AttributeError) as exc:
                     raise ManagementBackendError("Selected outputs require distinct attached Companions", status_code=409,
