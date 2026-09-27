@@ -1185,7 +1185,7 @@ def create_app(
                         input_device=held[payload.input_device_id].claim.device_ref,
                         members=tuple(CoordinationMember(companion_id=held[d].body.answering_companion_id,
                             output_device=held[d].claim.device_ref, role=roles.get(d)) for d in payload.output_device_ids),
-                        discussion=payload.discussion, reply_budget=payload.reply_budget)
+                        goal=payload.goal, reply_budget=payload.reply_budget)
                 except (ValueError, AttributeError) as exc:
                     raise ManagementBackendError("Selected outputs require distinct attached Companions", status_code=409,
                         refusal=refusal_for_status(409, "Selected outputs require distinct attached Companions")) from exc

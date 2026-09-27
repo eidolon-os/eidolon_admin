@@ -683,7 +683,7 @@ export interface RoleGroupAssignment {
 }
 
 export interface RoleGroupStart {
-  discussion?: boolean
+  goal?: string
   input_device_id: string
   output_device_ids: Array<string>
   reply_budget?: number

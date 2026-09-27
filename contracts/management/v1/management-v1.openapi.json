@@ -3917,10 +3917,11 @@
       "RoleGroupStart": {
         "additionalProperties": false,
         "properties": {
-          "discussion": {
-            "default": false,
-            "title": "Discussion",
-            "type": "boolean"
+          "goal": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Goal",
+            "type": "string"
           },
           "input_device_id": {
             "maxLength": 80,

@@ -17,7 +17,7 @@ class RoleGroupStart(BaseModel):
     session_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
     input_device_id: DeviceInstanceId
     output_device_ids: list[DeviceInstanceId] = Field(min_length=1, max_length=16)
-    discussion: bool = Field(default=False, strict=True)
+    goal: str = Field(default="", max_length=2000, strict=True)
     reply_budget: int = Field(default=8, ge=1, le=32, strict=True)
     roles: list[RoleGroupAssignment] = Field(default_factory=list, max_length=16)
 
