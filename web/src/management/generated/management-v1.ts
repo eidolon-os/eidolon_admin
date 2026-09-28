@@ -23,6 +23,24 @@ export interface ActivityView {
   next_cursor?: string | null
 }
 
+export interface Area {
+  area_id: string
+  name: string
+  order?: number
+}
+
+export interface AreaWrite {
+  area: Area
+  expected_revision: number
+}
+
+export interface Command {
+  command: string
+  device_id: string
+  params?: Record<string, boolean | number | number | string>
+  trait: "on_off" | "level" | "thermostat" | "fan_speed" | "position" | "lock" | "operational" | "volume" | "measure"
+}
+
 export interface CompanionCreateRequest {
   display_name: string
   kind?: string
@@ -170,6 +188,16 @@ export interface DefaultCompanionView {
   default_companion_id?: string | null
 }
 
+export interface Device {
+  aliases?: Array<string>
+  area_id?: string | null
+  device_id: string
+  name: string
+  provider?: string
+  provider_ref?: string | null
+  type: "light" | "switch" | "climate" | "water_heater" | "cover" | "fan" | "media" | "appliance" | "lock" | "camera" | "sensor"
+}
+
 export interface DeviceCompanionRequest {
   companion_id?: string | null
   expected_revision: number
@@ -233,6 +261,11 @@ export interface DeviceView {
   state: string
   trust_epoch: number
   updated_at: string
+}
+
+export interface DeviceWrite {
+  device: Device
+  expected_revision: number
 }
 
 export interface DevicesView {
@@ -650,6 +683,16 @@ export interface PersonaTraitState {
   value?: number
 }
 
+export interface Placement {
+  area_id: string
+  device_ref: string
+}
+
+export interface PlacementWrite {
+  area_id: string
+  expected_revision: number
+}
+
 export interface RecollectionView {
   remembered_at?: string | null
   text?: string
@@ -666,6 +709,19 @@ export interface Refusal {
   kind: "denied" | "not_found" | "conflict" | "invalid" | "not_configured" | "not_running" | "upstream"
   reason?: string
   retryable?: boolean
+}
+
+export interface Registry {
+  areas?: Array<Area>
+  devices?: Array<Device>
+  placements?: Array<Placement>
+  revision: number
+  scenes?: Array<Scene>
+  schema_version?: 1
+}
+
+export interface RegistryWrite {
+  expected_revision: number
 }
 
 export interface RenameRequest {
@@ -699,9 +755,20 @@ export interface RoleGroupStatus {
   state: "preparing" | "ready" | "closing" | "closed" | "failed"
 }
 
+export interface Scene {
+  actions: Array<Command>
+  name: string
+  scene_id: string
+}
+
 export interface SceneRole {
   description?: string
   name: string
+}
+
+export interface SceneWrite {
+  expected_revision: number
+  scene: Scene
 }
 
 export interface SharedClose {
@@ -834,4 +901,17 @@ export interface ManagementResponses {
   'GET /api/management/v1/session-traces/{session_id}': unknown
   'POST /api/management/v1/shared-sessions/close': unknown
   'POST /api/management/v1/shared-sessions/open': unknown
+  'POST /api/management/v1/smarthome/areas': Registry
+  'DELETE /api/management/v1/smarthome/areas/{area_id}': Registry
+  'PUT /api/management/v1/smarthome/areas/{area_id}': Registry
+  'POST /api/management/v1/smarthome/devices': Registry
+  'DELETE /api/management/v1/smarthome/devices/{device_id}': Registry
+  'PUT /api/management/v1/smarthome/devices/{device_id}': Registry
+  'DELETE /api/management/v1/smarthome/placements/{device_ref}': Registry
+  'PUT /api/management/v1/smarthome/placements/{device_ref}': Registry
+  'GET /api/management/v1/smarthome/registry': Registry
+  'POST /api/management/v1/smarthome/samples/apartment': Registry
+  'POST /api/management/v1/smarthome/scenes': Registry
+  'DELETE /api/management/v1/smarthome/scenes/{scene_id}': Registry
+  'PUT /api/management/v1/smarthome/scenes/{scene_id}': Registry
 }

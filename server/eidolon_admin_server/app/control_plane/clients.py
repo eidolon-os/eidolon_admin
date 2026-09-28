@@ -16,6 +16,7 @@ from eidolon_sdk.biz.persona import (
     PersonaPreviewResponse,
 )
 from eidolon_sdk.biz.presentation import DeviceOutputPolicy
+from eidolon_sdk.biz.smarthome import Registry
 from eidolon_sdk.biz.presentation.device import (
     DeviceOutputConfiguration,
     ReadDeviceOutputPolicy,
@@ -690,6 +691,32 @@ class DataWorkspaceAuthorityClient:
     @property
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
+
+    async def smarthome_registry(
+        self,
+        owner_id: str,
+        *,
+        method: str = "GET",
+        resource: str = "registry",
+        payload: dict | None = None,
+        expected_revision: int | None = None,
+    ) -> Registry:
+        params = (
+            {"expected_revision": str(expected_revision)}
+            if expected_revision is not None else None
+        )
+        response = await _request(
+            "data",
+            self._client,
+            method,
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/smarthome/{resource}",
+            timeout=self._timeout,
+            headers=self._headers,
+            json=payload,
+            params=params,
+        )
+        return _parse("data", response, Registry)
 
     async def initialize(
         self,

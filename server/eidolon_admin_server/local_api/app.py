@@ -57,6 +57,7 @@ from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
 from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
+from .management.smarthome import register_smarthome_routes
 from .management.router import (
     ControllerDirectoryPort,
     ManagementBackendError,
@@ -1423,6 +1424,9 @@ def create_app(
         host=host_services,
         devices=owner_device_port or _Devices(),
         authenticated_controller_session=management_device_session,
+    )
+    register_smarthome_routes(
+        app, backend=management, authenticated_owner=management_owner
     )
     register_role_group_routes(
         app, authenticate=management_device_session, devices=owner_device_port or _Devices(),

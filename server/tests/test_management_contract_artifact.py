@@ -130,6 +130,8 @@ ALLOWED_QUERY_PARAMETERS = {
     # another Owner's space — the space is resolved from the session before this
     # is ever used.
     "q",
+    # A registry mutation must use the revision the Controller last read.
+    "expected_revision",
 }
 
 

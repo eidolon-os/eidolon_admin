@@ -90,6 +90,25 @@ class AdminManagementClient:
         self._client = client
         self._timeout = timeout_seconds
 
+    async def smarthome_registry(
+        self,
+        *,
+        owner_id: str,
+        method: str = "GET",
+        resource: str = "registry",
+        payload: dict | None = None,
+        expected_revision: int | None = None,
+    ) -> dict:
+        params = {"owner_id": owner_id}
+        if expected_revision is not None:
+            params["expected_revision"] = str(expected_revision)
+        return await self._call(
+            method,
+            f"/api/internal/v1/management/smarthome/{resource}",
+            params,
+            payload,
+        )
+
     async def context(self, *, owner_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/context", {"owner_id": owner_id}
