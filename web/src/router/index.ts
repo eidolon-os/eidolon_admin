@@ -17,11 +17,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/modules/host/Services.vue'),
       },
       {
-        path: 'supervisor',
-        name: 'supervisor',
-        component: () => import('@/modules/supervisor/Overview.vue'),
-      },
-      {
         path: 'configs',
         name: 'configs',
         component: () => import('@/modules/configs/Overview.vue'),

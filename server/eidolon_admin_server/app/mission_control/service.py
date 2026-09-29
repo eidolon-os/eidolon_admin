@@ -770,8 +770,7 @@ async def _services(request: Request, ledger: LaneLedger) -> list[RuntimeService
     the Pi has no supervisord at all. It was also a second opinion: the Host
     already publishes per-service runtime state through `eidolond`, which
     "drives supervisord on macOS or systemd on the Pi"
-    (`app/host_services/client.py`), and `app/host_services/router.py` says in as
-    many words that the older supervisor route "only speaks supervisord".
+    (`app/host_services/client.py`).
 
     So this reads that authority instead of re-deriving it. One consequence is
     the point: 底座 on the Owner's map and 底座 on 主机运行状态 are now the same

@@ -42,11 +42,39 @@ export interface OverviewResponse {
 }
 
 export async function getOverview(): Promise<OverviewResponse> {
-  // Polled by Supervisor + per-service Overview pages; component-level
-  // error UI handles failure. Suppress the global toast to avoid 12
-  // toasts/minute when the backend hiccups.
+  // Polled by the per-service Overview pages; component-level error UI
+  // handles failure. Suppress the global toast to avoid 12 toasts/minute
+  // when the backend hiccups.
   const { data } = await client.get<OverviewResponse>('/overview/services', {
     suppressToast: true,
   })
   return data
+}
+
+export function formatUptime(seconds: number): string {
+  if (!seconds) return '-'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (days) return `${days}d ${hours}h`
+  if (hours) return `${hours}h ${mins}m`
+  if (mins) return `${mins}m ${s}s`
+  return `${s}s`
+}
+
+export function stateTagType(statename: string): 'success' | 'warning' | 'danger' | 'info' {
+  switch (statename) {
+    case 'RUNNING':
+      return 'success'
+    case 'STARTING':
+    case 'STOPPING':
+    case 'BACKOFF':
+      return 'warning'
+    case 'FATAL':
+    case 'EXITED':
+      return 'danger'
+    default:
+      return 'info'
+  }
 }

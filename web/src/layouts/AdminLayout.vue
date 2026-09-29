@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { useServicesStore } from '@/stores/services'
 import { navigation, type NavGroup, type NavItem, type RouteTarget } from './navigation'
 import { getHostCapabilities } from '@/api/hostServices'
 
-const servicesStore = useServicesStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -63,7 +61,6 @@ type MenuSection = {
 
 onMounted(() => {
   updateCompactLayout()
-  servicesStore.load()
   loadCapabilities()
   window.addEventListener('resize', updateCompactLayout)
   window.addEventListener('keydown', handleGlobalKeydown)
@@ -74,17 +71,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 
-// Data-driven nav: services curated by the entity IA are "covered"; any other
-// service in the backend registry (e.g. a newly added mementos/nats/livekit)
-// is auto-surfaced under System · Infra as a managed-process entry — adding a
-// service to services.yaml then needs zero frontend edits.
-const coveredServiceIds = computed(() => {
-  const ids = new Set<string>(['admin', 'client-web'])
-  for (const group of navigation)
-    for (const item of group.items)
-      if (item.route.name === 'feature' && item.route.params?.serviceId) ids.add(item.route.params.serviceId)
-  return ids
-})
 // Workstation tools only exist on a developer machine. Offering a firmware page
 // on a product Host would send the operator to a route that cannot work there.
 const unavailableTools = ref<Set<string>>(new Set())
@@ -108,27 +94,12 @@ async function loadCapabilities() {
   }
 }
 
-const effectiveNav = computed<NavGroup[]>(() => {
-  const generated: NavItem[] = servicesStore.services
-    .filter((s) => !coveredServiceIds.value.has(s.id))
-    .map((s) => ({
-      id: `svc-${s.id}`,
-      label: s.name,
-      hint: '托管进程',
-      icon: 'Cpu',
-      section: 'Runtime',
-      route: { name: 'supervisor' },
-      activeMatch: false,
-    }))
-  const visible = navigation.map((group) => ({
+const effectiveNav = computed<NavGroup[]>(() =>
+  navigation.map((group) => ({
     ...group,
     items: group.items.filter((item) => !unavailableTools.value.has(item.id)),
-  }))
-  if (!generated.length) return visible
-  return visible.map((group) =>
-    group.id === 'system' ? { ...group, items: [...group.items, ...generated] } : group,
-  )
-})
+  })),
+)
 
 const menuGroups = computed<MenuGroup[]>(() =>
   effectiveNav.value.map((group) => ({

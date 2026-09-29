@@ -15,7 +15,7 @@ import { ElMessage } from 'element-plus'
  *     await client.get('/some/path', { suppressToast: true })
  *     // ↑ caller handles error UI; no interceptor toast
  *
- * Polling code (Overview pages, SystemHealthPanel) should use this so
+ * Polling code (e.g. the Overview pages) should use this so
  * a backend hiccup during periodic refresh doesn't spam the user with
  * a toast every 5s.
  */

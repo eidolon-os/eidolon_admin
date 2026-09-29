@@ -35,8 +35,6 @@ services:
         label: "services.yaml"
         path: $EIDOLON_ADMIN_ROOT/config/services.yaml
         format: yaml
-        reload: restart_program
-        reload_target: admin:admin-api
 
   - id: nats
     name: NATS
@@ -143,15 +141,11 @@ services:
         label: "agent settings.yaml"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/settings.yaml
         format: yaml
-        reload: restart_program
-        reload_target: agent:agent
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/settings.example.yaml
       - id: env
         label: "agent .env"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/.env
         format: dotenv
-        reload: restart_program
-        reload_target: agent:agent
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_agent/config/.env.example
 
   - id: hub
@@ -177,15 +171,11 @@ services:
         label: "hub settings.yaml"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/settings.yaml
         format: yaml
-        reload: restart_program
-        reload_target: hub:hub-api
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/settings.example.yaml
       - id: env
         label: "hub .env"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/.env
         format: dotenv
-        reload: restart_program
-        reload_target: hub:hub-api
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_hub/config/.env.example
 
   - id: memory
@@ -210,15 +200,11 @@ services:
         label: "memory settings.yaml"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/settings.yaml
         format: yaml
-        reload: restart_group
-        reload_target: memory
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/settings.example.yaml
       - id: env
         label: "memory .env"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/.env
         format: dotenv
-        reload: restart_group
-        reload_target: memory
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_memory/config/.env.example
   # The Channel Provider: a separate process from the worker, and the only
   # thing on this Host that can say whether a body is on its channel. Presence
@@ -259,23 +245,17 @@ services:
         label: "channel settings.yaml"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/settings.yaml
         format: yaml
-        reload: restart_program
-        reload_target: channel:channel-worker
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/settings.example.yaml
       - id: env
         label: "channel .env"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/.env
         format: dotenv
-        reload: restart_program
-        reload_target: channel:channel-worker
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_channel/config/.env.example
 
-  # Phase 31.A: Mementos (Electron-vite dev). Supervised by admin so
-  # operators can start/stop it from the Supervisor UI like the rest
-  # of the stack. Marked ``integration: process`` (same as channel) —
-  # admin does NOT proxy the Mementos sidecar at :18765; talk to it
-  # directly. health URL is informational so Supervisor's status
-  # column has something to render.
+  # Phase 31.A: Mementos (Electron-vite dev), run under supervisord.
+  # Marked ``integration: process`` (same as channel) — admin does NOT
+  # proxy the Mementos sidecar at :18765; talk to it directly. health
+  # URL is informational so the status overview has something to render.
   #
   # ``optional: true`` (Phase 32+) — mementos is a side project that
   # operators sometimes run as a standalone Electron app outside the
@@ -321,6 +301,4 @@ services:
         label: ".env.local"
         path: $EIDOLON_WORKSPACE_ROOT/eidolon_client_web/.env.local
         format: dotenv
-        reload: restart_program
-        reload_target: client-web:client-web
         template: $EIDOLON_WORKSPACE_ROOT/eidolon_client_web/.env.local.example

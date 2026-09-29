@@ -7,7 +7,7 @@ import { getChannelConfig } from '@/api/channel'
   <div class="page">
     <ServiceConfig title="Channel Config" :loader="getChannelConfig">
       <template #note>
-        只读视图 — channel 的 .env 由 channel 项目自己维护。如需修改，编辑该文件后在 Supervisor 页 restart channel-worker。
+        只读视图 — channel 的 .env 由 channel 项目自己维护。如需修改，编辑该文件后在「主机服务」(Host Services) 页重启 channel。
       </template>
     </ServiceConfig>
   </div>

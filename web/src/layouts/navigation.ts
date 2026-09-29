@@ -60,7 +60,6 @@ export const navigation: NavGroup[] = [
     collapsible: true,
     items: [
       { id: 'host-services', label: 'Host Services', hint: 'eidolond: Mac and Pi', icon: 'Cpu', route: { name: 'host-services' } },
-      { id: 'supervisor', label: 'Supervisor', hint: 'macOS supervisord only', icon: 'Monitor', route: { name: 'supervisor' } },
       { id: 'configs', label: 'Service Configs', hint: 'Declared config files', icon: 'Document', route: { name: 'configs' } },
       { id: 'benchmark-agent', label: 'Benchmarks', hint: 'Diagnostic artifacts', icon: 'DataAnalysis', route: { name: 'benchmarks', params: { project: 'agent' } } },
       { id: 'firmware', label: 'Firmware & Serial', hint: 'Isolated system tool', icon: 'Tools', route: { name: 'system-firmware' } },

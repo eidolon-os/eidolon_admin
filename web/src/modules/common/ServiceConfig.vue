@@ -50,7 +50,7 @@ function visible() {
 
     <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px">
       <template #title>
-        <slot name="note">只读视图 — .env 由子项目自身维护。修改后在 Supervisor 页重启对应进程生效。</slot>
+        <slot name="note">只读视图 — .env 由子项目自身维护。修改后在「主机服务」(Host Services) 页重启对应服务生效。</slot>
       </template>
     </el-alert>
 

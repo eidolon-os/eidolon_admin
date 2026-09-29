@@ -39,15 +39,6 @@ reports/memory_quality_*/
 reports/memory_multi_device_*/
 reports/e2e_*/
 
-# Supervisord enabled/ is RUNTIME STATE, not source: the Admin UI's
-# Enable/Disable buttons mutate this directory, and any git operation
-# that touched these symlinks would silently override the user's
-# choices. The set of "default-enabled" services lives in
-# ``config/default-enabled.txt``; run_all.sh's seed_enabled_symlinks
-# materializes the directory on first start (sentinel: ``enabled/.seeded``).
-deploy/supervisor/enabled/*
-!deploy/supervisor/enabled/.gitkeep
-
 # Local override for service registry (if you ever do per-machine tweaks)
 config/services.local.yaml
 config/esp32_tools.local.yaml

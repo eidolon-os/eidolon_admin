@@ -5,8 +5,8 @@ NOT modify the channel project. All we expose here is:
 
   GET /api/channel/config     parsed deploy/.livekit-channel.env (secrets masked)
 
-Process status and logs are reached through the existing supervisor endpoints
-(/api/supervisor/programs/channel:channel-worker, /api/supervisor/.../logs).
+Process status is part of /api/overview/services; restarting the worker goes
+through Host services (/api/host/services/channel/restart → eidolond).
 """
 from __future__ import annotations
 

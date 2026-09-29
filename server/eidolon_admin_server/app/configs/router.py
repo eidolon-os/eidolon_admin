@@ -3,9 +3,11 @@
   GET    /api/configs                                  list every declared file
   GET    /api/configs/{svc}/{cfg}                      raw text + parsed (masked) view
   PUT    /api/configs/{svc}/{cfg}                      write with backup + validation
-  POST   /api/configs/{svc}/{cfg}/reload                trigger declared reload action
   GET    /api/configs/{svc}/{cfg}/backups              list snapshots
   POST   /api/configs/{svc}/{cfg}/restore?ts=<int>     restore from a snapshot
+
+Saving only writes the file. Nothing here restarts a service: an operator
+does that from Host services, which asks eidolond (app/host_services).
 
 Path safety:
 - Only files explicitly declared in services.yaml are reachable; the registry
@@ -21,7 +23,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from . import backups, reload as reload_module
+from . import backups
 from .formats import ConfigFormatError, parsed_view, validate
 from .registry import ResolvedConfig, by_service, find
 
@@ -43,8 +45,6 @@ def _entry_payload(e: ResolvedConfig) -> dict:
         "label": e.label,
         "path": str(e.path),
         "format": e.format,
-        "reload": e.reload,
-        "reload_target": e.reload_target,
         "template": str(e.template) if e.template else None,
         "template_exists": bool(e.template and e.template.exists()),
         "exists": e.exists,
@@ -143,16 +143,6 @@ def _atomic_write(target: Path, content: str) -> None:
         except FileNotFoundError:
             pass
         raise
-
-
-# ---- reload -----------------------------------------------------------------
-
-
-@router.post("/{svc}/{cfg}/reload")
-async def reload_config(svc: str, cfg: str, request: Request) -> dict:
-    entry = _registry_lookup(request, svc, cfg)
-    sv = request.app.state.supervisor_client
-    return await reload_module.trigger(sv, entry.reload, entry.reload_target)
 
 
 # ---- backups ----------------------------------------------------------------

@@ -14,7 +14,6 @@ const clientWebUrl = clientWebBase()
     show-http-probe
     :config-loader="getClientWebConfig"
   >
-    <template #log-note>Next.js dev 把所有输出都打到 stdout（不区分 info/error）。stderr 通常只在崩溃栈时有内容。</template>
     <template #extra>
       <el-card style="margin-top: 16px">
         <template #header>访问</template>
@@ -23,7 +22,7 @@ const clientWebUrl = clientWebBase()
       </el-card>
     </template>
     <template #config-note>
-      只读视图。修改 client-web 的 .env 后在 Supervisor 页 restart client-web 才会生效。
+      只读视图。修改 client-web 的 .env 后需重启 client-web 才会生效（它不由 eidolond 管理，不在「主机服务」页）。
       <code>NEXT_PUBLIC_*</code> 变量会被 Next 嵌入到 JS bundle，重启后刷新浏览器才能拿到新值。
     </template>
   </ServiceOverview>

@@ -4,7 +4,10 @@
  * selection, lets the user edit raw text, and exposes:
  *   - parsed view (with secrets masked)
  *   - backups list (with restore)
- *   - save (atomic) + optional reload prompt
+ *   - save (atomic)
+ *
+ * Saving never restarts anything. The operator restarts the service from
+ * Host Services, the one path that goes through eidolond.
  *
  * Validation happens server-side on save; we mirror the parsed view in real
  * time as a soft lint by re-reading the same file after a successful save.
@@ -12,11 +15,9 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  describeReload,
   formatTimestamp,
   listBackups,
   readConfig,
-  reloadConfig,
   restoreBackup,
   writeConfig,
   type BackupRef,
@@ -39,8 +40,6 @@ const dirty = computed(() => {
   if (!detail.value) return false
   return editorText.value !== detail.value.text
 })
-
-const canReload = computed(() => props.entry.reload !== 'none')
 
 watch(
   () => props.entry,
@@ -102,46 +101,12 @@ async function save() {
     // baseline; the tree refresh in the parent picks up "exists" changes.
     await load()
     emit('saved')
-
-    // Offer reload immediately so the user doesn't have to switch tabs.
-    if (canReload.value) {
-      promptReload()
-    }
   } catch (e: any) {
     // Format-validation errors come back as 400 with a useful message.
     const msg = e?.response?.data?.detail || e?.message || String(e)
     ElMessage.error(`保存失败: ${msg}`)
   } finally {
     saving.value = false
-  }
-}
-
-async function promptReload() {
-  const desc = describeReload(props.entry.reload, props.entry.reload_target)
-  try {
-    await ElMessageBox.confirm(
-      `配置已保存。是否立刻执行 ${desc} 让变更生效？`,
-      '需要 reload 吗？',
-      { confirmButtonText: '执行', cancelButtonText: '稍后' },
-    )
-  } catch {
-    return
-  }
-  await doReload()
-}
-
-async function doReload() {
-  try {
-    const r = await reloadConfig(props.entry.service_id, props.entry.config_id)
-    if (r.error) {
-      ElMessage.error(`reload 失败: ${r.error}`)
-    } else {
-      ElMessage.success(
-        r.duration_ms != null ? `reload 完成 (${r.duration_ms}ms)` : 'reload 完成',
-      )
-    }
-  } catch (e: any) {
-    ElMessage.error(`reload 失败: ${e?.message || e}`)
   }
 }
 
@@ -191,28 +156,17 @@ const parsedJson = computed(() => {
         <div class="meta-row">
           <code class="path">{{ entry.path }}</code>
           <el-tag size="small" effect="plain">{{ entry.format }}</el-tag>
-          <el-tag
-            size="small"
-            :type="entry.reload === 'none' ? 'info' : 'success'"
-            effect="plain"
-          >
-            {{ describeReload(entry.reload, entry.reload_target) }}
-          </el-tag>
           <span v-if="detail?.mtime" class="mtime">
             最后修改 {{ formatTimestamp(detail.mtime) }}
           </span>
           <span v-else-if="detail?.missing" class="warn">文件不存在</span>
         </div>
+        <p class="restart-hint">
+          保存只写文件，不会重启服务。要生效，请在「主机服务」(Host Services) 页重启对应服务；
+          Admin 等不在该页的服务随整机重启（./eidolon mac restart）。
+        </p>
       </div>
       <div class="meta-actions">
-        <el-button
-          v-if="canReload"
-          size="small"
-          :disabled="saving || dirty"
-          @click="doReload"
-        >
-          立即 reload
-        </el-button>
         <el-button size="small" :disabled="!dirty" @click="discard">放弃修改</el-button>
         <el-button
           type="primary"
@@ -319,6 +273,11 @@ const parsedJson = computed(() => {
 }
 .mtime {
   color: var(--eid-text-muted);
+}
+.restart-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--eid-text-secondary);
 }
 .warn {
   color: var(--eid-warning);

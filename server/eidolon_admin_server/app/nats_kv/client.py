@@ -91,9 +91,9 @@ class KVClient:
 
         Called once at admin startup. The supervisord-level ``wait-tcp``
         gate (Phase 30.A) makes NATS reachable BEFORE admin's lifespan
-        runs in the normal ``run_all.sh start/restart`` path. This retry
-        is defense-in-depth for the niche case ``sv restart admin:admin-api``
-        catches NATS itself in the middle of a restart:
+        runs when the whole Host comes up (``./eidolon mac restart``). This
+        retry is defense-in-depth for the niche case where admin starts
+        while NATS itself is in the middle of a restart:
 
           - ``max_attempts=1`` (default): single shot, fast-fail. Used by
             tests and by callers that prefer to react to the error

@@ -63,10 +63,6 @@ class ConfigEntry(BaseModel):
     label: str | None = None
     path: str
     format: Literal["yaml", "dotenv", "ini"] = "yaml"
-    reload: Literal["sighup_program", "restart_program", "restart_group", "none"] = (
-        "none"
-    )
-    reload_target: str | None = None
     template: str | None = None
 
 
@@ -221,10 +217,9 @@ class Settings(BaseSettings):
     hub_management_jwt_ttl_seconds: int = Field(default=60, ge=30, le=300)
     removal_capability_socket: Path | None = None
     removal_capability_workflow_user: str = "eidolon-lifecycle"
-    # Admin consumes the executor owned and configured by Eidolon Ops.
+    # Ops' supervisord socket, read only for process state. Admin never starts,
+    # stops or restarts a service through it; that goes through eidolond.
     supervisor_socket: Path = _runtime_root() / "ops" / "supervisor.sock"
-    supervisor_available_dir: Path = _ops_root() / "deploy" / "supervisor" / "available"
-    supervisor_enabled_dir: Path = _runtime_root() / "supervisor" / "enabled"
 
     @field_validator("system_directory_uds", mode="before")
     @classmethod

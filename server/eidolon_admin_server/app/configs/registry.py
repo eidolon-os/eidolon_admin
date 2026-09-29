@@ -28,8 +28,6 @@ class ResolvedConfig:
     label: str
     path: Path  # resolved absolute path
     format: str
-    reload: str
-    reload_target: str | None
     template: Path | None
     exists: bool
 
@@ -93,8 +91,6 @@ def build_registry(cfg: GatewayConfig) -> list[ResolvedConfig]:
                     label=entry.label or entry.id,
                     path=target,
                     format=entry.format,
-                    reload=entry.reload,
-                    reload_target=entry.reload_target,
                     template=template,
                     exists=target.exists(),
                 )

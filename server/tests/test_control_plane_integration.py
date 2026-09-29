@@ -441,8 +441,6 @@ async def admin_app(
         data_workspace_authority_token="workspace-token",
         local_api_service_token="local-api-token",
         supervisor_socket=tmp_path / "supervisor.sock",
-        supervisor_available_dir=tmp_path,
-        supervisor_enabled_dir=tmp_path,
     )
     app = create_app(
         GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[]), settings

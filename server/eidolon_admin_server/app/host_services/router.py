@@ -8,8 +8,8 @@ Routes (mounted at /api/host):
     POST /services/{service_id}/disable
 
 This is the same surface on both Hosts: eidolond drives supervisord on macOS
-and systemd on the Pi. The older /api/supervisor routes only speak supervisord
-and therefore only work on a development Mac.
+and systemd on the Pi. It is Admin's only way to restart, enable or disable a
+single service; nothing else in Admin asks supervisord or systemd to do that.
 """
 
 from __future__ import annotations

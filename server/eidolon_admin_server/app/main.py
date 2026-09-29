@@ -44,8 +44,6 @@ from ..audit import (
 )
 from .settings import GatewayConfig, Settings, get_settings, load_gateway_config
 from .supervisor.client import SupervisorClient
-from .supervisor.config import ConfigStore
-from .supervisor.router import router as supervisor_router
 from .system_health import router as system_health_router
 from .tools.esp32 import Esp32ToolService, router as esp32_tools_router
 from .tools.mobile import MobileToolService, router as mobile_tools_router
@@ -217,11 +215,10 @@ def create_app(
         # The pooled client speaks TCP; a Unix socket needs its own transport.
         client=None if settings.system_directory_uds else app.state.http_client,
     )
+    # Read-only process state for the status overview and health audit.
+    # Single-service restart/enable/disable goes through eidolond
+    # (host_services above).
     app.state.supervisor_client = SupervisorClient(settings.supervisor_socket)
-    app.state.supervisor_configs = ConfigStore(
-        settings.supervisor_available_dir,
-        settings.supervisor_enabled_dir,
-    )
     # Workstation tools are optional developer conveniences. A product Host has
     # no serial port, ESP-IDF or Flutter SDK, and their absence must not take
     # the control plane down with them.
@@ -271,7 +268,6 @@ def create_app(
     app.include_router(benchmarks_router, prefix="/api")
     app.include_router(overview_router, prefix="/api")
     app.include_router(host_services_router, prefix="/api")
-    app.include_router(supervisor_router, prefix="/api")
     app.include_router(channel_router, prefix="/api")
     app.include_router(client_web_router, prefix="/api")
     app.include_router(configs_router, prefix="/api")

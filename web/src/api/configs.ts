@@ -7,11 +7,6 @@
 import client from './client'
 
 export type ConfigFormat = 'yaml' | 'dotenv' | 'ini'
-export type ReloadMode =
-  | 'sighup_program'
-  | 'restart_program'
-  | 'restart_group'
-  | 'none'
 
 export interface ConfigEntry {
   service_id: string
@@ -19,8 +14,6 @@ export interface ConfigEntry {
   label: string
   path: string
   format: ConfigFormat
-  reload: ReloadMode
-  reload_target: string | null
   template: string | null
   template_exists: boolean
   exists: boolean
@@ -70,18 +63,6 @@ export interface SaveResult extends ConfigEntry {
   backup: BackupRef | null
 }
 
-export interface ReloadResult {
-  mode: ReloadMode
-  target?: string | null
-  duration_ms?: number
-  error?: string
-  message?: string
-  signaled?: boolean
-  restarted?: boolean
-  stopped?: any
-  started?: any
-}
-
 export async function listConfigs(): Promise<ServiceGroup[]> {
   const { data } = await client.get<{ services: ServiceGroup[] }>('/configs')
   return data.services
@@ -105,16 +86,6 @@ export async function writeConfig(
   const { data } = await client.put<SaveResult>(
     `/configs/${encodeURIComponent(serviceId)}/${encodeURIComponent(configId)}`,
     { text },
-  )
-  return data
-}
-
-export async function reloadConfig(
-  serviceId: string,
-  configId: string,
-): Promise<ReloadResult> {
-  const { data } = await client.post<ReloadResult>(
-    `/configs/${encodeURIComponent(serviceId)}/${encodeURIComponent(configId)}/reload`,
   )
   return data
 }
@@ -151,19 +122,4 @@ export function formatTimestamp(ts: number | null | undefined): string {
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
     `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
   )
-}
-
-/** Human-friendly description of a reload mode. */
-export function describeReload(mode: ReloadMode, target: string | null): string {
-  switch (mode) {
-    case 'sighup_program':
-      return `SIGHUP ${target ?? '(no target)'}`
-    case 'restart_program':
-      return `Restart ${target ?? '(no target)'}`
-    case 'restart_group':
-      return `Restart group ${target ?? '(no target)'}`
-    case 'none':
-    default:
-      return 'Manual reload required'
-  }
 }

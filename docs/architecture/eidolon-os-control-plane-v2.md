@@ -72,6 +72,7 @@ reconstruct those APIs by importing `DataStore` or opening
 | `/api/resolve` reads Data Device/Persona/Realm repositories | external DTOs and deleted tables leak into an Admin resolver | removed; runtime resolution belongs to Kernel/Agent public read models |
 | Hub discovery/commands/presence/metrics legacy UI | current Hub has no such `/api/admin` contract and admission is not presence | removed; high-frequency presence/telemetry needs its owning projection/API |
 | direct Supervisor ownership of Data/Kernel | conflicts with eidolond desired-state authority | Admin discovers Data/Hub/Kernel through eidolond; it does not start formal services |
+| `/api/supervisor/*` (program/group start/stop/restart, config enable/disable) and its Supervisor page; the config editor's `POST /api/configs/{svc}/{cfg}/reload` (`configs/reload.py`, `restart_helper.py`) | a second single-service writer beside eidolond: supervisord-only so Mac-only, stops were undone by eidolond's reconcile, and the reload used a hard-coded `deploy/dev/supervisord.conf` and discarded failures | deleted (2026-09-29); single-service restart/enable/disable goes only through `/api/host/services/{id}/{op}` → eidolond; Admin reads supervisord only for status |
 
 The explicit `os-control-plane` development profile is not a counterexample:
 its child supervisor programs have `autostart=false`; eidolond is the only

@@ -35,8 +35,14 @@ describe('Data V2 / Kernel control-plane routes', () => {
     const items = navigation.flatMap((group) => group.items)
     const hostServices = items.find((item) => item.id === 'host-services')
     expect(hostServices?.route.name).toBe('host-services')
-    // The supervisord console stays, but must not claim to cover every Host.
-    expect(items.find((item) => item.id === 'supervisor')?.hint).toMatch(/macOS/)
+  })
+
+  it('has no second single-service control page beside Host services', () => {
+    // The supervisord console bypassed eidolond and only worked on a Mac.
+    const names = new Set(router.getRoutes().map((route) => route.name))
+    expect(names.has('supervisor')).toBe(false)
+    const routed = navigation.flatMap((group) => group.items.map((item) => item.route?.name))
+    expect(routed).not.toContain('supervisor')
   })
 
   it('links bounded contexts through public API consoles', () => {

@@ -29,13 +29,11 @@ from eidolon_admin_server.app.settings import (
 pytestmark = pytest.mark.asyncio
 
 
-def _settings(tmp_path: Path, socket_path: Path, available: Path, enabled: Path) -> Settings:
+def _settings(tmp_path: Path, socket_path: Path) -> Settings:
     (tmp_path / "svc.yaml").write_text("services: []\n")
     return Settings(
         services_file=tmp_path / "svc.yaml",
         supervisor_socket=socket_path,
-        supervisor_available_dir=available,
-        supervisor_enabled_dir=enabled,
     )
 
 
@@ -67,7 +65,7 @@ async def test_overview_http_only_service_online(tmp_path):
         admin=AdminBindConfig(cors_origins=[]),
         services=_services_without_supervisor(),
     )
-    settings = _settings(tmp_path, tmp_path / "missing.sock", tmp_path, tmp_path)
+    settings = _settings(tmp_path, tmp_path / "missing.sock")
     app = create_app(cfg, settings=settings)
     async with await _http(app) as ac:
         resp = await ac.get("/api/overview/services")
@@ -90,7 +88,7 @@ async def test_overview_http_only_service_offline(tmp_path):
         admin=AdminBindConfig(cors_origins=[]),
         services=_services_without_supervisor(),
     )
-    settings = _settings(tmp_path, tmp_path / "missing.sock", tmp_path, tmp_path)
+    settings = _settings(tmp_path, tmp_path / "missing.sock")
     app = create_app(cfg, settings=settings)
     async with await _http(app) as ac:
         resp = await ac.get("/api/overview/services")
@@ -115,7 +113,7 @@ async def test_overview_health_accepts_absolute_url(tmp_path):
         features=[],
     )
     cfg = GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[svc])
-    settings = _settings(tmp_path, tmp_path / "missing.sock", tmp_path, tmp_path)
+    settings = _settings(tmp_path, tmp_path / "missing.sock")
     app = create_app(cfg, settings=settings)
     async with await _http(app) as ac:
         resp = await ac.get("/api/overview/services")
@@ -235,7 +233,7 @@ async def test_overview_supervised_service_with_http_probe(supervisord_stack):
         features=[],
     )
     cfg = GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[svc])
-    settings = _settings(tmp_path, sock, available, enabled)
+    settings = _settings(tmp_path, sock)
     app = create_app(cfg, settings=settings)
     async with await _http(app) as ac:
         resp = await ac.get("/api/overview/services")
@@ -270,7 +268,7 @@ async def test_supervised_service_offline_when_http_fails(supervisord_stack):
         features=[],
     )
     cfg = GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[svc])
-    settings = _settings(tmp_path, sock, available, enabled)
+    settings = _settings(tmp_path, sock)
     app = create_app(cfg, settings=settings)
     async with await _http(app) as ac:
         resp = await ac.get("/api/overview/services")
@@ -294,7 +292,7 @@ async def test_supervised_service_online_without_http_when_no_probe(supervisord_
         features=[],
     )
     cfg = GatewayConfig(admin=AdminBindConfig(cors_origins=[]), services=[svc])
-    settings = _settings(tmp_path, sock, available, enabled)
+    settings = _settings(tmp_path, sock)
     app = create_app(cfg, settings=settings)
     async with await _http(app) as ac:
         resp = await ac.get("/api/overview/services")
