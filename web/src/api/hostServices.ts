@@ -44,8 +44,12 @@ export interface HostServiceMutationResult {
   replayed: boolean
 }
 
-export function listHostServices(): Promise<HostServicePage> {
-  return client.get('/host/services')
+// The shared client hands back the whole response (its interceptor passes
+// `resp` through), so the page is `.data`. Returning the response itself left
+// the Host Services table empty since the page was added.
+export async function listHostServices(): Promise<HostServicePage> {
+  const { data } = await client.get<HostServicePage>('/host/services')
+  return data
 }
 
 /**
@@ -53,14 +57,16 @@ export function listHostServices(): Promise<HostServicePage> {
  * displayed, so an operator acting on a stale table is rejected rather than
  * silently overwriting someone else's change.
  */
-export function changeHostService(
+export async function changeHostService(
   serviceId: string,
   operation: HostServiceOperation,
   expectedRevision: number,
 ): Promise<HostServiceMutationResult> {
-  return client.post(`/host/services/${encodeURIComponent(serviceId)}/${operation}`, {
-    expected_revision: expectedRevision,
-  })
+  const { data } = await client.post<HostServiceMutationResult>(
+    `/host/services/${encodeURIComponent(serviceId)}/${operation}`,
+    { expected_revision: expectedRevision },
+  )
+  return data
 }
 
 export function hostServiceTagType(
