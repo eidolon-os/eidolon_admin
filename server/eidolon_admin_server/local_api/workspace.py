@@ -6,6 +6,7 @@ from typing import Protocol
 from uuid import UUID, uuid5
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.biz.persona import ConversationPreferences, PersonaAuthoring
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -144,7 +145,7 @@ class AdminWorkspaceClient:
         self._base_url = base_url.rstrip("/")
         self._token = service_token.strip()
         self._timeout = timeout_seconds
-        self._client = client or httpx.AsyncClient(trust_env=False)
+        self._client = client or create_async_client(timeout=5.0, trust_env=False)
         self._owns_client = client is None
 
     def _headers(self) -> dict[str, str]:

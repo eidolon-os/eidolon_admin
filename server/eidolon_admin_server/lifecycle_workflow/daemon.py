@@ -11,6 +11,7 @@ from contextlib import suppress
 from pathlib import Path
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from pydantic import ValidationError
 
 from ..app.control_plane.clients import KernelMountClient
@@ -294,7 +295,7 @@ class _UnreachableAuthority:
 def _build_service(settings: LifecycleWorkflowSettings) -> ControlPlaneService:
     from .capability import BrokeredRemovalHubClient, BrokerMarkerIssuer
 
-    http_client = httpx.AsyncClient(
+    http_client = create_async_client(
         timeout=httpx.Timeout(settings.authority_timeout_seconds), trust_env=False
     )
     directory = SystemDirectoryClient(

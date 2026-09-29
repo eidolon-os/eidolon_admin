@@ -31,7 +31,7 @@ import sys
 import time
 from collections.abc import Iterable
 
-import httpx
+from eidolon_sdk.core.http import create_async_client
 
 from ..settings import GatewayConfig, load_gateway_config
 from ..supervisor.client import SupervisorClient
@@ -457,7 +457,7 @@ async def wait(
             http_probe=http_probe,
         )
     else:
-        async with httpx.AsyncClient(trust_env=False) as client:
+        async with create_async_client(timeout=5.0, trust_env=False) as client:
             async def _http_probe(spec):
                 return await probe_http(client, spec)
 

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager, suppress
 import logging
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -201,7 +202,7 @@ def create_app(
     app.state.registry = ServiceRegistry(cfg)
     app.state.gateway_config = cfg
     app.state.settings = settings
-    app.state.http_client = httpx.AsyncClient(
+    app.state.http_client = create_async_client(
         timeout=httpx.Timeout(settings.authority_timeout_seconds),
         trust_env=False,
     )

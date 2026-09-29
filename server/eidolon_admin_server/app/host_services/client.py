@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.system.v1 import (
     HostMonitorWire,
     HostPowerOffAccepted,
@@ -58,7 +59,7 @@ class HostServiceClient:
             transport = (
                 httpx.AsyncHTTPTransport(uds=str(uds_path)) if uds_path else None
             )
-            self._client = httpx.AsyncClient(transport=transport, trust_env=False)
+            self._client = create_async_client(timeout=5.0, transport=transport, trust_env=False)
 
     async def read_power(self) -> HostPowerStatusWire:
         document = await self._request("GET", "/api/system/v1/power")

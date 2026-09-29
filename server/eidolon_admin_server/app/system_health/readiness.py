@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 
 from ..settings import GatewayConfig, ServiceConfig
 from ..supervisor.client import (
@@ -419,7 +420,7 @@ def _compose_probe_url(base_url: str, health: str | None) -> str | None:
 
 
 async def _default_http_probe(spec: HttpProbeSpec) -> HttpProbeResult:
-    async with httpx.AsyncClient(trust_env=False) as client:
+    async with create_async_client(timeout=5.0, trust_env=False) as client:
         return await probe_http(client, spec)
 
 

@@ -6,6 +6,7 @@ from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -92,7 +93,7 @@ class AdminOwnerRuntimeClient:
         self._base_url = base_url.rstrip("/")
         self._token = service_token.strip()
         self._timeout = timeout_seconds
-        self._client = client or httpx.AsyncClient(trust_env=False)
+        self._client = client or create_async_client(timeout=5.0, trust_env=False)
         self._owns_client = client is None
 
     async def get_owner_default_runtime(

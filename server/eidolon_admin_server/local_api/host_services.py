@@ -19,6 +19,7 @@ from typing import Literal, Protocol, runtime_checkable
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.system.v1 import (
     HostMonitorWire,
     HostPowerOffAccepted,
@@ -174,7 +175,7 @@ class AdminHostServicesClient:
         self._token = service_token
         self._timeout = timeout_seconds
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(trust_env=False)
+        self._client = client or create_async_client(timeout=5.0, trust_env=False)
 
     async def read_power(self) -> HostPowerStatusWire:
         document = await self._request("GET", "/api/host/power")

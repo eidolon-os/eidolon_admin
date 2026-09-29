@@ -10,6 +10,7 @@ from typing import Any, Literal, Protocol
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.device_foundation.v1 import (
     ActorRef,
     BusinessOwnerId,
@@ -399,7 +400,7 @@ class AdminDeviceAdmissionClient:
         self._token = service_token.strip()
         self._timeout = timeout_seconds
         self._workflow_socket_path = workflow_socket_path
-        self._client = client or httpx.AsyncClient(trust_env=False)
+        self._client = client or create_async_client(timeout=5.0, trust_env=False)
         self._owns_client = client is None
 
     def _headers(self) -> dict[str, str]:

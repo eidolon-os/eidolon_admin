@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-import httpx
+from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.biz.control.shared_session import SharedSessionSelection
 from .shared_sessions import register_shared_session_routes
 from .role_groups import register_role_group_routes
@@ -280,7 +280,7 @@ def create_app(
         service_token=resolved.admin_service_token,
         # This credential-bearing hop is loopback-only; never send it through
         # a workstation/system proxy (including macOS proxy discovery).
-        client=httpx.AsyncClient(trust_env=False),
+        client=create_async_client(timeout=5.0, trust_env=False),
         timeout_seconds=resolved.admin_timeout_seconds,
     )
     owns_management_client = management_backend is None
