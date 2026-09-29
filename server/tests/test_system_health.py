@@ -346,6 +346,61 @@ async def test_kill_orphan_with_mismatched_port_refuses() -> None:
     assert err is not None and "not the listener" in err.lower()
 
 
+@pytest.mark.asyncio
+async def test_kill_orphan_refuses_a_managed_service(listening_subprocess) -> None:
+    """A listener supervisord owns is a managed service, not an orphan.
+
+    It is restarted through eidolond from Host Services; letting this
+    endpoint signal it would be a second single-service writer (Ops 总纲 §1.5).
+    """
+    port, proc = listening_subprocess
+    cfg = _make_config(port=port)
+    stub = _StubSupervisorClient(processes=[
+        ProcessInfo(
+            name="admin-api", group="admin",
+            state=20, statename="RUNNING", pid=proc.pid, start=0, stop=0,
+            now=0, exitstatus=0, description="", spawnerr="",
+            logfile="", stderr_logfile="",
+        ),
+    ])
+
+    ok, err = await SystemHealthAuditor(cfg, stub).kill_orphan(  # type: ignore[arg-type]
+        pid=proc.pid, expected_port=port,
+    )
+
+    assert ok is False
+    assert err is not None and "not an orphan" in err
+    assert proc.poll() is None, "a managed listener must still be running"
+
+
+@pytest.mark.asyncio
+async def test_kill_orphan_signals_a_real_orphan() -> None:
+    port = _pick_free_port()
+    proc = subprocess.Popen(
+        [sys.executable, "-c",
+         f"import socket,time;s=socket.socket();s.bind(('127.0.0.1',{port}));s.listen(1);"
+         "import sys;sys.stdout.write('ready\\n');sys.stdout.flush();"
+         "time.sleep(60)"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert proc.stdout is not None
+        proc.stdout.readline()
+        cfg = _make_config(port=port)
+        stub = _StubSupervisorClient(processes=[])  # nothing supervised: it is an orphan
+
+        ok, err = await SystemHealthAuditor(cfg, stub).kill_orphan(  # type: ignore[arg-type]
+            pid=proc.pid, expected_port=port,
+        )
+
+        assert ok is True, err
+        assert proc.wait(timeout=5) is not None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
 # ---- router HTTP shape --------------------------------------------------
 
 

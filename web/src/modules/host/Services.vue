@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import SystemHealthPanel from './SystemHealthPanel.vue'
 import {
   changeHostService,
   hostServiceTagType,
@@ -92,6 +93,10 @@ onBeforeUnmount(() => {
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- Ports and orphans: processes holding a declared port that nothing
+         manages. Restarting a managed service stays in the table above. -->
+    <SystemHealthPanel class="health" />
   </div>
 </template>
 
@@ -101,6 +106,9 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 16px;
+}
+.health {
+  margin-top: 24px;
 }
 .hint {
   color: var(--el-text-color-secondary);

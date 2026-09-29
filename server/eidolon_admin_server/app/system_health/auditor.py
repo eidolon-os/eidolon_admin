@@ -150,6 +150,17 @@ class SystemHealthAuditor:
                 f"pid {pid} is not the listener for port {expected_port} "
                 "anymore — refresh the audit and try again"
             )
+        # Only an orphan by the audit's own verdict. A listener supervisord
+        # owns is a managed service, and a managed service is restarted
+        # through eidolond (Host Services), never signalled from here:
+        # killing it would be a second single-service writer beside
+        # eidolond's reconciliation (Ops 总纲 §1.5).
+        audit = await self.audit()
+        if not any(o.pid == pid and o.port == expected_port for o in audit.orphans):
+            return False, (
+                f"pid {pid} on port {expected_port} is not an orphan; restart a "
+                "managed service from Host Services, which goes through eidolond"
+            )
         # SIGTERM first; psutil + send_signal allow the process to clean
         # up. The operator can re-trigger if SIGTERM is ignored — we
         # don't auto-escalate to SIGKILL because losing data on a
