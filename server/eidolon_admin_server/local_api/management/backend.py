@@ -365,8 +365,11 @@ class AdminManagementClient:
         since: str,
         limit: int | None,
         companion_id: str | None,
+        cursor: str | None = None,
     ) -> dict:
         params = {"owner_id": owner_id, "since": since}
+        if cursor:
+            params["cursor"] = cursor
         if limit is not None:
             params["limit"] = str(limit)
         if companion_id:
@@ -513,12 +516,18 @@ class AdminManagementClient:
             "/api/internal/v1/management/memory/recollections", params
         )
 
-    async def forget_preview(self, *, owner_id: str, target: str, action: str) -> dict:
+    async def forget_preview(self, *, owner_id: str, target: str) -> dict:
         return await self._put(
             "/api/internal/v1/management/memory/forget/preview",
             {"owner_id": owner_id},
-            {"target": target, "action": action},
+            {"target": target},
             method="POST",
+        )
+
+    async def forget_status(self, *, owner_id: str, request_id: str) -> dict:
+        return await self._get(
+            "/api/internal/v1/management/memory/forget/status",
+            {"owner_id": owner_id, "request_id": request_id},
         )
 
     async def forget_confirm(self, *, owner_id: str, confirmation_token: str) -> dict:

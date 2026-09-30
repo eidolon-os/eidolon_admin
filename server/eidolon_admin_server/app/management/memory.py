@@ -9,6 +9,10 @@ What it does do is *stop carrying* what a person has no use for. The realm
 answers with a memory space id, which is an identifier for a thing nobody can
 open, act on, or name. It is dropped here rather than at the client, because the
 client should not have to know that a field it can see is one it must not show.
+(It used to be carried anyway, and the phone printed it under the library's
+title.) The same goes for projection progress: whether the realm's projections
+have caught up is an operator's question, answered by ``status`` for Mission
+Control, and a person shown it saw 「正在整理」 forever for one that had failed.
 """
 
 from __future__ import annotations
@@ -23,7 +27,6 @@ from eidolon_admin_server.app.control_plane.contracts import (
     MemoryGraph,
     MemoryGraphEdge,
     MemoryGraphNode,
-    MemoryMaterialization,
     MemoryStatus,
 )
 
@@ -53,6 +56,7 @@ class MemoryBrowser(Protocol):
         since: str,
         limit: int | None = None,
         companion_id: str | None = None,
+        cursor: str | None = None,
     ) -> MemoryEntries: ...
 
     async def graph(
@@ -89,9 +93,9 @@ class MemoryWingView:
 
 @dataclass(frozen=True, slots=True)
 class MemoryLibrary:
-    memory_realm_id: str
+    #: Which view this is — ``owner`` (their whole memory) or
+    #: ``companion:<id>`` — echoed so an answer can be matched to its question.
     audience_scope: str
-    materialization: MemoryMaterialization
     wings: tuple[MemoryWingView, ...]
     entry_count: int
     withheld_count: int
@@ -127,9 +131,7 @@ async def read_library(
 ) -> MemoryLibrary:
     page = await memory.browse(owner_id=owner_id, companion_id=companion_id)
     return MemoryLibrary(
-        memory_realm_id=page.memory_space_id,
         audience_scope=page.audience_scope,
-        materialization=page.materialization,
         wings=tuple(
             MemoryWingView(
                 wing_id=wing.wing_id,
@@ -184,6 +186,8 @@ class MemoryDay:
     entries: tuple[MemoryEntryView, ...]
     entry_count: int
     more_in_window: bool
+    #: The realm's own position for the next page, relayed unread.
+    next_cursor: str | None
     undated_count: int
     truncated: bool
 
@@ -195,6 +199,7 @@ async def read_day(
     limit: int | None,
     companion_id: str | None,
     memory: MemoryBrowser,
+    cursor: str | None = None,
 ) -> MemoryDay:
     """Recent entries, as the realm reports them.
 
@@ -204,7 +209,11 @@ async def read_day(
     """
 
     page = await memory.entries(
-        owner_id=owner_id, since=since, limit=limit, companion_id=companion_id
+        owner_id=owner_id,
+        since=since,
+        limit=limit,
+        companion_id=companion_id,
+        cursor=cursor,
     )
     return MemoryDay(
         since=page.since,
@@ -221,6 +230,7 @@ async def read_day(
         ),
         entry_count=page.entry_count,
         more_in_window=page.more_in_window,
+        next_cursor=page.next_cursor,
         undated_count=page.undated_count,
         truncated=page.truncated,
     )

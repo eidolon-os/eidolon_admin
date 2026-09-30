@@ -199,235 +199,31 @@ class OwnerGovernanceEvents(StrictModel):
     next_cursor: int | None = None
 
 
-class MemoryRoom(StrictModel):
-    room_id: str = Field(min_length=1, max_length=256)
-    drawer_count: int = Field(ge=0)
-    #: A few titles, enough to recognise the room. Not the contents — a browse
-    #: that returned everything would be an export by another name.
-    drawers_preview: tuple[dict[str, Any], ...] = ()
-    preview_truncated: bool = False
-
-
-class MemoryWing(StrictModel):
-    wing_id: str = Field(min_length=1, max_length=128)
-    is_configured: bool
-    display_name: str = Field(default="", max_length=256)
-    description: str = Field(default="", max_length=2048)
-    sort_order: int
-    room_count: int = Field(ge=0)
-    drawer_count: int = Field(ge=0)
-    rooms: tuple[MemoryRoom, ...] = ()
-
-
-class MemoryMaterialization(StrictModel):
-    ready: bool
-    data_readable: bool
-    materialization_state: Literal["ready", "materializing", "degraded", "unavailable"]
-    projection_pending: int = Field(ge=0)
-    last_materialized_at: str | None = Field(default=None, max_length=64)
-    degraded_reason: str = Field(default="", max_length=1024)
-
-
-class MemoryStatus(StrictModel):
-    contract_version: Literal["1"]
-    operation: Literal["memory.status"]
-    memory_realm_id: str = Field(min_length=1, max_length=64)
-    memory_space_id: str = Field(min_length=1, max_length=64)
-    audience_scope: str = Field(min_length=1, max_length=128)
-    ready: bool
-    data_readable: bool
-    materialization_state: Literal["ready", "materializing", "degraded", "unavailable"]
-    projection_pending: int = Field(ge=0)
-    last_materialized_at: str | None = Field(default=None, max_length=64)
-    degraded_reason: str = Field(default="", max_length=1024)
-
-    def materialization(self) -> MemoryMaterialization:
-        return MemoryMaterialization(
-            ready=self.ready,
-            data_readable=self.data_readable,
-            materialization_state=self.materialization_state,
-            projection_pending=self.projection_pending,
-            last_materialized_at=self.last_materialized_at,
-            degraded_reason=self.degraded_reason,
-        )
-
-
-class MemoryBrowse(StrictModel):
-    """What an Owner's memory holds, by wing and room."""
-
-    contract_version: Literal["1"]
-    operation: Literal["memory.browse"]
-    memory_space_id: str = Field(min_length=1, max_length=64)
-    audience_scope: str = Field(min_length=1, max_length=128)
-    materialization: MemoryMaterialization
-    wings: tuple[MemoryWing, ...] = ()
-    entry_count: int = Field(ge=0)
-    #: Present and not listed — the Owner's own privacy wing is the common case.
-    #: Carried through rather than dropped: a count that disagrees with what is
-    #: listed is worse than a count that explains itself.
-    withheld_count: int = Field(ge=0)
-    truncated: bool
-
-
-class MemoryGraphNode(StrictModel):
-    node_id: str = Field(min_length=1, max_length=256)
-    label: str = Field(min_length=1, max_length=256)
-    degree: int = Field(ge=0)
-
-
-class MemoryGraphEdge(StrictModel):
-    edge_id: str = Field(min_length=1, max_length=128)
-    subject: str = Field(min_length=1, max_length=256)
-    predicate: str = Field(min_length=1, max_length=128)
-    object: str = Field(min_length=1, max_length=256)
-    confidence: float = Field(ge=0.0, le=1.0)
-    recorded_at: str = Field(default="", max_length=64)
-
-
-class MemoryGraph(StrictModel):
-    contract_version: Literal["1"]
-    operation: Literal["memory.graph"]
-    memory_space_id: str = Field(min_length=1, max_length=64)
-    nodes: tuple[MemoryGraphNode, ...] = ()
-    edges: tuple[MemoryGraphEdge, ...] = ()
-    truncated: bool
-
-
-class MemoryEntry(StrictModel):
-    entry_id: str = Field(min_length=1, max_length=128)
-    recorded_at: str = Field(min_length=1, max_length=64)
-    #: Which field the time came from. Carried because "it filed this under
-    #: yesterday" is a real complaint and this is what makes it answerable.
-    recorded_at_source: str = Field(default="", max_length=64)
-    wing_id: str = Field(default="", max_length=128)
-    room_id: str = Field(default="", max_length=256)
-    preview: str = Field(default="", max_length=4096)
-
-
-class MemoryEntries(StrictModel):
-    """What was recorded at or after an instant the caller named."""
-
-    contract_version: Literal["1"]
-    operation: Literal["memory.entries"]
-    memory_space_id: str = Field(min_length=1, max_length=64)
-    since: str = Field(min_length=1, max_length=64)
-    entries: tuple[MemoryEntry, ...] = ()
-    entry_count: int = Field(ge=0)
-    #: The page ended inside the window. Distinct from ``truncated``, which is
-    #: the palace scan stopping — one is about this answer, the other about how
-    #: much of the memory was looked at.
-    more_in_window: bool
-    #: Visible and holding no usable time, so in no day's list. Relayed rather
-    #: than dropped: a person whose entry never appears should be able to learn
-    #: that this is why.
-    undated_count: int = Field(ge=0)
-    truncated: bool
-
-
-class MemoryExportRecord(StrictModel):
-    """One memory, whole.
-
-    ``value`` rather than ``preview``: the day list and the library shorten what
-    they show because someone is scrolling them, and this is the copy a person
-    keeps. A preview here would be data loss that looks like a working read.
-    """
-
-    entry_id: str = Field(min_length=1, max_length=128)
-    #: Empty when the record carries no derivable time. Those are in the file, at
-    #: the end, rather than omitted — leaving one out of a copy is losing it.
-    recorded_at: str = Field(default="", max_length=64)
-    recorded_at_source: str = Field(default="", max_length=64)
-    wing_id: str = Field(default="", max_length=128)
-    room_id: str = Field(default="", max_length=256)
-    memory_type: str = Field(default="", max_length=64)
-    #: Who was told. Memory added this when the physical Owner Realm replaced
-    #: per-Companion realms: an Owner export may now contain several logical
-    #: audiences, and accepting the field is required to keep that copy honest.
-    #: Defaulted for an older Memory realm whose export predates the audience
-    #: axis; those records live in the Owner layer by definition.
-    audience: str = Field(default="owner", min_length=1, max_length=192)
-    #: Required rather than defaulted, unlike every other field here: this is
-    #: what the copy is *of*. A record whose text may be absent would let a file
-    #: validate while carrying nothing a person could read.
-    value: str = Field(max_length=65536)
-
-
-class MemoryExport(StrictModel):
-    """A copy of an Owner's memory, in a form they can read and keep.
-
-    Not the Host backup. That copy is the palace — vectors, ledgers, the encoder
-    they were built under — and exists so a lost disk is survivable; it is taken
-    by the operator tool and never passes through here. This one exists so a
-    person is not locked in, and the two share nothing but the word "export".
-    """
-
-    contract_version: Literal["1"]
-    operation: Literal["memory.export"]
-    memory_space_id: str = Field(min_length=1, max_length=64)
-    #: Two exports of the same memory differ, and a file with no instant cannot
-    #: be told apart from a stale one.
-    taken_at: str = Field(min_length=1, max_length=64)
-    records: tuple[MemoryExportRecord, ...] = ()
-    record_count: int = Field(ge=0)
-    undated_count: int = Field(ge=0)
-    #: The palace scan stopped before the end. What is here is real; it is not
-    #: all of it, and a file that said nothing about that would be worse.
-    truncated: bool
-
-
-class ForgetCandidate(StrictModel):
-    drawer_id: str = Field(min_length=1, max_length=128)
-    score: float = Field(ge=0.0, le=1.0)
-    preview: str = Field(default="", max_length=4096)
-
-
-class ForgetPreview(StrictModel):
-    """What "forget this" would remove, and the token that binds it.
-
-    ``status`` is the realm's word for what it found. Carried rather than
-    flattened into success or failure: "nothing matched" and "too many matched"
-    lead a person to different next steps, and a client that saw only an empty
-    list could not tell them apart.
-    """
-
-    contract_version: Literal["1"]
-    operation: Literal["memory.forget-preview"]
-    status: Literal["preview", "not_found", "too_broad"]
-    target: str = Field(min_length=1, max_length=512)
-    action: Literal["archive", "delete"] | None = None
-    entries: tuple[ForgetCandidate, ...] = ()
-    needs_confirmation: bool = False
-    #: Opaque, and signed by the realm that minted it. Nothing above the realm
-    #: parses it: the whole point is that the confirm acts on what the preview
-    #: bound, and a layer that could read it could also build one.
-    confirmation_token: str | None = Field(default=None, max_length=4096)
-    expires_at: int | None = None
-    #: Present when the realm refused to resolve — why it was too broad.
-    detail: str = Field(default="", max_length=1024)
-
-
-class ForgetOutcome(StrictModel):
-    """What became of a confirmed forget.
-
-    ``extra="allow"`` here alone: the realm merges the command ledger's own
-    status dictionary into this answer, and that vocabulary belongs to the
-    ledger rather than to this contract. Pinning it would make every ledger
-    field an Admin release.
-    """
-
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-
-    contract_version: Literal["1"]
-    operation: Literal["memory.forget-confirm"]
-    action: Literal["archive", "delete"]
-    target: str = Field(min_length=1, max_length=512)
-    entry_count: int = Field(ge=0)
-    #: The ledger's word, relayed. Publishing is durable and applying is a
-    #: projection that may still be running, so "done" is not this layer's to
-    #: decide.
-    status: str = Field(min_length=1, max_length=64)
-
-
+# The memory realm's Owner surface is declared once, in the realm's own contracts
+# package, and parsed here with the models the realm serializes through. These
+# used to be restated in this file; the restatement drifted from the producer on
+# the day it was written (a forget candidate was ``drawer_id``/``preview`` here
+# and ``id``/``text`` there), and every preview that found anything was refused
+# as a contract violation for a month.
+from eidolon_memory_contracts.owner import (  # noqa: E402 - re-exported for this plane
+    MemoryBrowse,  # noqa: F401
+    MemoryEntries,  # noqa: F401
+    MemoryEntry,  # noqa: F401
+    MemoryExport,  # noqa: F401
+    MemoryExportRecord,  # noqa: F401
+    MemoryGraph,  # noqa: F401
+    MemoryGraphEdge,  # noqa: F401
+    MemoryGraphNode,  # noqa: F401
+    MemoryRecollection,  # noqa: F401
+    MemoryRecollections,  # noqa: F401
+    MemoryRoom,  # noqa: F401
+    MemoryStatus,  # noqa: F401
+    MemoryWing,  # noqa: F401
+    OwnerForgetEntry,  # noqa: F401
+    OwnerForgetOutcome,  # noqa: F401
+    OwnerForgetPreview,  # noqa: F401
+    OwnerForgetProgress,  # noqa: F401
+)
 
 
 class ConsumedModel(BaseModel):

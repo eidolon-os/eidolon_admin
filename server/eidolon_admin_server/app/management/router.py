@@ -35,7 +35,6 @@ from eidolon_sdk.biz.persona import (
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
 from eidolon_admin_server.app.management.activity import (
     cancel_task,
     read_conversations,
@@ -53,7 +52,11 @@ from eidolon_admin_server.app.management.faces import (
     read_face_state,
     set_face,
 )
-from eidolon_admin_server.app.management.forgetting import apply_forget, propose_forget
+from eidolon_admin_server.app.management.forgetting import (
+    apply_forget,
+    propose_forget,
+    read_forget_progress,
+)
 from eidolon_admin_server.app.management.lifecycle import bring_back, put_away
 from eidolon_admin_server.app.management.memory import (
     read_copy,
@@ -333,9 +336,7 @@ class MemoryLibraryInternal(BaseModel):
 
     contract_version: Literal["1"] = "1"
     operation: Literal["memory.library"] = "memory.library"
-    memory_realm_id: str = Field(min_length=1, max_length=64)
     audience_scope: str = Field(min_length=1, max_length=128)
-    materialization: MemoryMaterialization
     wings: list[MemoryWingInternal]
     entry_count: int = Field(ge=0)
     withheld_count: int = Field(ge=0)
@@ -385,6 +386,7 @@ class MemoryDayInternal(BaseModel):
     entries: list[MemoryEntryInternal]
     entry_count: int = Field(ge=0)
     more_in_window: bool
+    next_cursor: str | None = Field(default=None, max_length=1024)
     undated_count: int = Field(ge=0)
     truncated: bool
 
@@ -542,8 +544,9 @@ class MemoryExportRecordInternal(BaseModel):
     wing_id: str = Field(default="", max_length=128)
     room_id: str = Field(default="", max_length=256)
     memory_type: str = Field(default="", max_length=64)
-    #: Whole, and required: this is what the copy is of.
-    value: str = Field(max_length=65536)
+    #: Whole, required, and uncapped: this is what the copy is of. A cap here
+    #: turned one long memory into a failed export of all of them.
+    value: str
 
 
 class MemoryCopyInternal(BaseModel):
@@ -562,7 +565,6 @@ class ForgetTargetInternal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target: str = Field(min_length=1, max_length=512)
-    action: str = Field(default="delete", min_length=1, max_length=16)
 
 
 class ForgetConfirmInternal(BaseModel):
@@ -586,7 +588,6 @@ class ForgetProposalInternal(BaseModel):
     operation: Literal["memory.forget-proposal"] = "memory.forget-proposal"
     status: Literal["preview", "not_found", "too_broad"]
     target: str = Field(min_length=1, max_length=512)
-    action: str | None = Field(default=None, max_length=16)
     entries: list[ForgetEntryInternal]
     needs_confirmation: bool
     confirmation_token: str | None = Field(default=None, max_length=4096)
@@ -599,10 +600,19 @@ class ForgetResultInternal(BaseModel):
 
     contract_version: Literal["1"] = "1"
     operation: Literal["memory.forgotten"] = "memory.forgotten"
-    action: str = Field(min_length=1, max_length=16)
+    request_id: str = Field(min_length=1, max_length=128)
     target: str = Field(min_length=1, max_length=512)
     entry_count: int = Field(ge=0)
-    status: str = Field(min_length=1, max_length=64)
+    status: Literal["accepted", "retrying", "applied", "failed"]
+
+
+class ForgetProgressInternal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    operation: Literal["memory.forget-progress"] = "memory.forget-progress"
+    request_id: str = Field(min_length=1, max_length=128)
+    status: Literal["accepted", "retrying", "applied", "failed"]
 
 
 @router.get("/context", response_model=ManagementContextInternal)
@@ -831,10 +841,9 @@ async def get_memory_library(
 ) -> MemoryLibraryInternal:
     """What this Owner's memory holds, by wing and room.
 
-    The physical Realm belongs to the Owner. ``companion_id`` selects a logical
-    audience inside it: that Companion's private memories plus automatically
-    derived Owner facts. Naming none returns only the derived Owner layer and
-    never guesses a Companion.
+    The physical Realm belongs to the Owner. ``companion_id`` selects what that
+    Companion can recall. Naming none is the Owner reading their own memory —
+    every audience in the realm — and never guesses a Companion.
     """
     library = await read_library(
         owner_id=owner_id,
@@ -842,9 +851,7 @@ async def get_memory_library(
         memory=request.app.state.control_plane.memory,
     )
     return MemoryLibraryInternal(
-        memory_realm_id=library.memory_realm_id,
         audience_scope=library.audience_scope,
-        materialization=library.materialization,
         wings=[
             MemoryWingInternal(
                 wing_id=wing.wing_id,
@@ -897,13 +904,11 @@ async def post_forget_preview(
     proposal = await propose_forget(
         owner_id=owner_id,
         target=payload.target,
-        action=payload.action,
         memory=request.app.state.control_plane.memory,
     )
     return ForgetProposalInternal(
         status=proposal.status,
         target=proposal.target,
-        action=proposal.action,
         entries=[
             ForgetEntryInternal(
                 entry_id=entry.entry_id, preview=entry.preview, score=entry.score
@@ -930,10 +935,28 @@ async def post_forget_confirm(
         memory=request.app.state.control_plane.memory,
     )
     return ForgetResultInternal(
-        action=result.action,
+        request_id=result.request_id,
         target=result.target,
         entry_count=result.entry_count,
-        status=result.status,
+        status=result.status,  # type: ignore[arg-type]
+    )
+
+
+@router.get("/memory/forget/status", response_model=ForgetProgressInternal)
+async def get_forget_status(
+    request: Request,
+    owner_id: str,
+    request_id: str,
+) -> ForgetProgressInternal:
+    """Where a confirmed forget has got to — the answer to 「正在生效」."""
+    progress = await read_forget_progress(
+        owner_id=owner_id,
+        request_id=request_id,
+        memory=request.app.state.control_plane.memory,
+    )
+    return ForgetProgressInternal(
+        request_id=progress.request_id,
+        status=progress.status,  # type: ignore[arg-type]
     )
 
 
@@ -1562,22 +1585,25 @@ async def get_memory_entries(
     since: str,
     limit: int | None = None,
     companion_id: str | None = None,
+    cursor: str | None = None,
 ) -> MemoryDayInternal:
-    """What was recorded at or after ``since``.
+    """What was recorded at or after ``since``, a page at a time.
 
     ``since`` is required with no default, all the way down. A day depends on
     where the person is and no layer here knows; a default would answer for the
-    wrong day without saying so.
+    wrong day without saying so. ``cursor`` is the previous ``next_cursor``.
     """
     day = await read_day(
         owner_id=owner_id,
         since=since,
         limit=limit,
         companion_id=companion_id,
+        cursor=cursor,
         memory=request.app.state.control_plane.memory,
     )
     return MemoryDayInternal(
         since=day.since,
+        next_cursor=day.next_cursor,
         entries=[
             MemoryEntryInternal(
                 entry_id=entry.entry_id,

@@ -242,6 +242,7 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "cryptography" },
     { name = "dbus-next" },
+    { name = "eidolon-memory-contracts" },
     { name = "eidolon-sdk" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -271,6 +272,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
     { name = "cryptography", specifier = ">=43" },
     { name = "dbus-next", specifier = ">=0.2.3" },
+    { name = "eidolon-memory-contracts", editable = "../eidolon_memory/contracts" },
     { name = "eidolon-sdk", editable = "../eidolon_sdk" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
@@ -289,6 +291,23 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "supervisor", specifier = ">=4.2.5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+]
+provides-extras = ["dev"]
+
+[[package]]
+name = "eidolon-memory-contracts"
+version = "0.1.0"
+source = { editable = "../eidolon_memory/contracts" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.8" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
 ]
 provides-extras = ["dev"]
 

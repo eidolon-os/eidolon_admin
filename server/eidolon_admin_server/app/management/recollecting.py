@@ -18,7 +18,12 @@ see" and the two would drift.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
+
+from eidolon_admin_server.app.control_plane.contracts import (
+    MemoryRecollection,
+    MemoryRecollections,
+)
 
 
 @runtime_checkable
@@ -32,7 +37,7 @@ class MemoryRecollector(Protocol):
         query: str,
         limit: int,
         companion_id: str | None = None,
-    ) -> list[dict[str, Any]]: ...
+    ) -> MemoryRecollections: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +73,8 @@ async def recall(
     """``companion_id`` selects an audience exactly as the browse does.
 
     It is a logical scope inside the Owner's physical Realm: naming an Eidolon
-    reads that one's private memories plus derived Owner facts. It cannot reach
-    another Companion's audience.
+    reads what that one can recall, never a sibling's audience. Without it the
+    Owner asks about their own memory, every audience in the realm.
     """
 
     found = await memory.recollections(
@@ -77,32 +82,16 @@ async def recall(
     )
     return Recollections(
         query=query,
-        recollections=tuple(_view(record) for record in found),
+        recollections=tuple(_view(record) for record in found.recollections),
     )
 
 
-def _view(record: dict[str, Any]) -> RecollectionView:
+def _view(record: MemoryRecollection) -> RecollectionView:
     """One record, reduced to what was asked for.
 
-    Defensive about shape rather than strict, and deliberately: this is the one
-    read whose rows come from the realm as loose dictionaries. A row that cannot
-    be read yields an empty sentence instead of failing the whole answer, because
-    "it remembers nothing about you" is a much worse thing to say wrongly than
-    one blank line is to show.
+    Typed now: the realm serializes through the shared contract, so the loose
+    dictionary this used to defend against (and its guesses at ``metadata``
+    fields no realm sends) is gone.
     """
 
-    text = record.get("text")
-    raw_remembered_at = record.get("remembered_at")
-    metadata = record.get("metadata")
-    remembered_at = (
-        raw_remembered_at
-        if isinstance(raw_remembered_at, str) and raw_remembered_at
-        else None
-    )
-    if remembered_at is None and isinstance(metadata, dict):
-        raw = metadata.get("created_at") or metadata.get("occurred_at")
-        remembered_at = raw if isinstance(raw, str) and raw else None
-    return RecollectionView(
-        text=text if isinstance(text, str) else "",
-        remembered_at=remembered_at,
-    )
+    return RecollectionView(text=record.text, remembered_at=record.remembered_at or None)

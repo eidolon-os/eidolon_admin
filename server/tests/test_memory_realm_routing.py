@@ -20,12 +20,22 @@ import pytest
 
 from eidolon_admin_server.app.control_plane.clients import MemoryRecollectionsClient
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
+from eidolon_memory_contracts.owner import MemoryRecollection, MemoryRecollections
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.component]
 
 DISCOVERY = "http://discovery.test"
 OWNER = "o_1"
 
+
+
+def _answer(*texts: str) -> dict:
+    """A realm's search answer, built from the shared contract it serializes through."""
+    return MemoryRecollections(
+        memory_space_id="r_a",
+        query="q",
+        recollections=tuple(MemoryRecollection(text=text) for text in texts),
+    ).model_dump(mode="json")
 
 def _realm(
     realm_id: str,
@@ -92,10 +102,10 @@ async def _failure(client, **kwargs) -> AuthorityFailure:
 async def test_single_owner_realm_answers() -> None:
     client = _client(
         [_realm("r_a")],
-        recollections={"recollections": [{"text": "remembered"}]},
+        recollections=_answer("remembered"),
     )
     found = await client.recollections(owner_id=OWNER, query="q", limit=1)
-    assert found == [{"text": "remembered"}]
+    assert [item.text for item in found.recollections] == ["remembered"]
 
 
 async def test_other_owners_realms_are_not_reachable() -> None:
@@ -115,7 +125,7 @@ async def test_two_realms_for_one_owner_fail_closed() -> None:
 
     client = _client(
         [_realm("r_a"), _realm("r_b")],
-        recollections={"recollections": []},
+        recollections=_answer(),
     )
     failure = await _failure(client)
     assert failure.kind == "conflict"
@@ -187,7 +197,7 @@ async def test_the_realm_read_presents_this_hosts_credential() -> None:
     seen: list[httpx.Request] = []
     client = _client(
         [_realm("r_a")],
-        recollections={"recollections": [{"text": "他喜欢乌龙茶"}]},
+        recollections=_answer("他喜欢乌龙茶"),
         seen=seen,
     )
 

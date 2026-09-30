@@ -19,29 +19,36 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from eidolon_admin_server.app.control_plane.contracts import (
-    ForgetOutcome,
-    ForgetPreview,
+    OwnerForgetOutcome,
+    OwnerForgetPreview,
+    OwnerForgetProgress,
 )
 
 
 @runtime_checkable
 class MemoryForgetter(Protocol):
-    """The two authority calls these steps need."""
+    """The three authority calls these steps need."""
 
     async def forget_preview(
         self,
         *,
         owner_id: str,
         target: str,
-        action: str = "delete",
-    ) -> ForgetPreview: ...
+    ) -> OwnerForgetPreview: ...
 
     async def forget_confirm(
         self,
         *,
         owner_id: str,
         confirmation_token: str,
-    ) -> ForgetOutcome: ...
+    ) -> OwnerForgetOutcome: ...
+
+    async def forget_status(
+        self,
+        *,
+        owner_id: str,
+        request_id: str,
+    ) -> OwnerForgetProgress: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +65,6 @@ class ForgetEntryView:
 class ForgetProposal:
     status: str
     target: str
-    action: str | None
     entries: tuple[ForgetEntryView, ...]
     needs_confirmation: bool
     confirmation_token: str | None
@@ -68,9 +74,17 @@ class ForgetProposal:
 
 @dataclass(frozen=True, slots=True)
 class ForgetResult:
-    action: str
+    #: Names this change for :func:`read_forget_progress`. A second confirm of
+    #: the same preview names the same change.
+    request_id: str
     target: str
     entry_count: int
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class ForgetProgress:
+    request_id: str
     status: str
 
 
@@ -78,19 +92,15 @@ async def propose_forget(
     *,
     owner_id: str,
     target: str,
-    action: str,
     memory: MemoryForgetter,
 ) -> ForgetProposal:
-    preview = await memory.forget_preview(
-        owner_id=owner_id, target=target, action=action
-    )
+    preview = await memory.forget_preview(owner_id=owner_id, target=target)
     return ForgetProposal(
         status=preview.status,
         target=preview.target,
-        action=preview.action,
         entries=tuple(
             ForgetEntryView(
-                entry_id=entry.drawer_id,
+                entry_id=entry.entry_id,
                 preview=entry.preview,
                 score=entry.score,
             )
@@ -113,8 +123,24 @@ async def apply_forget(
         owner_id=owner_id, confirmation_token=confirmation_token
     )
     return ForgetResult(
-        action=outcome.action,
+        request_id=outcome.request_id,
         target=outcome.target,
         entry_count=outcome.entry_count,
         status=outcome.status,
     )
+
+
+async def read_forget_progress(
+    *,
+    owner_id: str,
+    request_id: str,
+    memory: MemoryForgetter,
+) -> ForgetProgress:
+    """Where a confirmed forget has got to.
+
+    The confirm usually answers ``accepted`` — applying runs on the realm's
+    worker — so without this a client could only say 「正在生效」 forever.
+    """
+
+    progress = await memory.forget_status(owner_id=owner_id, request_id=request_id)
+    return ForgetProgress(request_id=progress.request_id, status=progress.status)

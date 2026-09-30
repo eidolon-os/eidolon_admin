@@ -10,14 +10,32 @@ refused when the published URL is not in the family at all.
 The other thing worth pinning: this client does no filtering. The realm applies
 the same visibility policy recall uses; a second filter here would be a second
 answer to "what may this person see", and the two would drift.
+
+Every realm answer below is built from the shared Owner contract
+(``eidolon_memory_contracts.owner``) — the models the realm serializes through —
+rather than written out by hand. Hand-written replies in this file once agreed
+with this Admin and with nothing the realm ever sent, and that is how "forget"
+failed on every real match with every suite green.
 """
 
 from __future__ import annotations
+
+import logging
 
 import httpx
 import pytest
 from eidolon_admin_server.app.control_plane.clients import MemoryRecollectionsClient
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
+from eidolon_memory_contracts.owner import (
+    MemoryBrowse,
+    MemoryEntries,
+    MemoryExport,
+    MemoryRecollections,
+    MemoryStatus,
+    OwnerForgetOutcome,
+    OwnerForgetPreview,
+    OwnerForgetProgress,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -25,19 +43,9 @@ DISCOVERY = "http://memory-discovery.test"
 OWNER = "owner-1"
 TOKEN = "memory-api-token"
 
-BROWSE = {
-    "contract_version": "1",
-    "operation": "memory.browse",
+BROWSE = MemoryBrowse.model_validate({
     "memory_space_id": "r_a",
     "audience_scope": "owner",
-    "materialization": {
-        "ready": True,
-        "data_readable": True,
-        "materialization_state": "ready",
-        "projection_pending": 0,
-        "last_materialized_at": "2026-08-29T12:00:00Z",
-        "degraded_reason": "",
-    },
     "wings": [
         {
             "wing_id": "Wing_Life",
@@ -60,7 +68,7 @@ BROWSE = {
     "entry_count": 2,
     "withheld_count": 1,
     "truncated": False,
-}
+}).model_dump(mode="json")
 
 GRAPH = {
     "contract_version": "1",
@@ -242,28 +250,25 @@ async def test_a_wing_this_admin_has_never_heard_of_still_parses() -> None:
     assert page.wings[0].is_configured is False
 
 
-PREVIEW = {
-    "contract_version": "1",
-    "operation": "memory.forget-preview",
+PREVIEW = OwnerForgetPreview.model_validate({
     "status": "preview",
     "target": "上周那件事",
-    "action": "delete",
-    "entries": [{"drawer_id": "drawer_1", "score": 0.8, "preview": "上周那件事"}],
+    "entries": [{"entry_id": "drawer_1", "score": 0.8, "preview": "上周那件事的记录"}],
     "needs_confirmation": True,
     "confirmation_token": "opaque",
     "expires_at": 1900000000,
-    "detail": "",
-}
+}).model_dump(mode="json")
 
-CONFIRMED = {
-    "contract_version": "1",
-    "operation": "memory.forget-confirm",
-    "action": "delete",
-    "target": "上周那件事",
-    "entry_count": 1,
-    "status": "accepted",
-    "request_id": "r1",
-}
+CONFIRMED = OwnerForgetOutcome(
+    request_id="owner-forget-p1",
+    target="上周那件事",
+    entry_count=1,
+    status="accepted",
+).model_dump(mode="json")
+
+PROGRESS = OwnerForgetProgress(request_id="owner-forget-p1", status="applied").model_dump(
+    mode="json"
+)
 
 
 async def test_a_preview_is_a_post_to_the_realms_own_route() -> None:
@@ -279,10 +284,11 @@ async def test_a_preview_is_a_post_to_the_realms_own_route() -> None:
 
     asked = next(r for r in seen if r.url.path == "/api/memory/v1/forget/preview")
     assert asked.method == "POST"
-    assert asked.url.params["target"] == "上周那件事"
-    assert asked.url.params["action"] == "delete"
+    # Only the words: an Owner forget is a delete, and there is no action to name.
+    assert dict(asked.url.params) == {"target": "上周那件事"}
     assert asked.headers["authorization"] == f"Bearer {TOKEN}"
-    assert proposal.entries[0].drawer_id == "drawer_1"
+    assert proposal.entries[0].entry_id == "drawer_1"
+    assert proposal.entries[0].preview == "上周那件事的记录"
 
 
 async def test_the_confirm_sends_the_token_and_nothing_else() -> None:
@@ -298,17 +304,91 @@ async def test_the_confirm_sends_the_token_and_nothing_else() -> None:
     assert result.status == "accepted"
 
 
-async def test_the_ledgers_own_fields_survive_the_parse() -> None:
-    """The command ledger's vocabulary is not this contract's to pin.
+async def test_the_confirm_names_the_change_it_made() -> None:
+    """``request_id`` is part of the contract now, not an extra that survives it.
 
-    ``request_id`` here comes from the ledger. Forbidding unknown fields on this
-    one model would make every ledger addition an Admin release.
+    It is what a client asks about afterwards; carried only as an untyped extra,
+    it was dropped one layer up and the phone had nothing to ask with.
     """
     client = _client([_realm()], body=CONFIRMED)
 
     result = await client.forget_confirm(owner_id=OWNER, confirmation_token="opaque")
 
-    assert result.model_extra["request_id"] == "r1"
+    assert result.request_id == "owner-forget-p1"
+
+
+async def test_where_a_forget_got_to_is_read_from_the_realm() -> None:
+    seen: list[httpx.Request] = []
+    client = _client([_realm()], body=PROGRESS, seen=seen)
+
+    progress = await client.forget_status(owner_id=OWNER, request_id="owner-forget-p1")
+
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/forget/status")
+    assert asked.method == "GET"
+    assert dict(asked.url.params) == {"request_id": "owner-forget-p1"}
+    assert progress.status == "applied"
+
+
+async def test_a_violation_names_the_fields_and_never_their_values(caplog) -> None:
+    """The fixed sentence alone is why a month of failed previews had no cause.
+
+    The log names which field broke and how. It never carries the value: this
+    answer is what a person said.
+    """
+    drifted = {**PREVIEW, "entries": [{"id": "drawer_1", "text": "我的工资是两万", "score": 1}]}
+    client = _client([_realm()], body=drifted)
+
+    with caplog.at_level(logging.WARNING, logger="eidolon_admin.authority"):
+        with pytest.raises(AuthorityFailure) as caught:
+            await client.forget_preview(owner_id=OWNER, target="工资")
+
+    assert caught.value.kind == "contract_violation"
+    logged = caplog.text
+    assert "OwnerForgetPreview" in logged
+    assert "entries.0.entry_id:missing" in logged
+    assert "entries.0.text:extra_forbidden" in logged
+    assert "两万" not in logged
+
+
+async def test_a_rejected_credential_on_a_search_is_not_an_outage() -> None:
+    """Recollections map refusals by status like every other realm read.
+
+    It used to answer every non-200 as a retryable "memory did not answer", so a
+    rotated credential read as memory being down.
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/discovery/agent-routing":
+            return httpx.Response(200, json={"memory_realms": [_realm()]})
+        return httpx.Response(401, json={"detail": "memory service credential rejected"})
+
+    client = MemoryRecollectionsClient(
+        discovery_url=DISCOVERY,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        timeout_seconds=1.0,
+        service_token=TOKEN,
+    )
+
+    with pytest.raises(AuthorityFailure) as caught:
+        await client.recollections(owner_id=OWNER, query="茶", limit=5)
+
+    assert caught.value.kind == "unauthorized"
+    assert caught.value.retryable is False
+
+
+async def test_a_search_answer_is_the_shared_contract() -> None:
+    body = MemoryRecollections.model_validate(
+        {
+            "memory_space_id": "r_a",
+            "query": "茶",
+            "recollections": [{"text": "喜欢乌龙茶", "remembered_at": "2026-08-28T04:24:36Z"}],
+        }
+    ).model_dump(mode="json")
+    client = _client([_realm()], body=body)
+
+    found = await client.recollections(owner_id=OWNER, query="茶", limit=5)
+
+    assert [item.text for item in found.recollections] == ["喜欢乌龙茶"]
 
 
 async def test_a_host_without_the_credential_refuses_before_dialling() -> None:
@@ -320,9 +400,7 @@ async def test_a_host_without_the_credential_refuses_before_dialling() -> None:
     assert caught.value.kind == "configuration"
 
 
-DAY = {
-    "contract_version": "1",
-    "operation": "memory.entries",
+DAY = MemoryEntries.model_validate({
     "memory_space_id": "r_a",
     "since": "2026-08-24T12:00:00+00:00",
     "entries": [
@@ -339,7 +417,7 @@ DAY = {
     "more_in_window": False,
     "undated_count": 1,
     "truncated": False,
-}
+}).model_dump(mode="json")
 
 
 async def test_entries_reach_the_sibling_route_with_the_window_intact() -> None:
@@ -372,6 +450,20 @@ async def test_an_absent_limit_and_audience_send_nothing() -> None:
     assert set(asked.url.params) == {"since"}
 
 
+async def test_an_older_page_relays_the_realms_cursor_unread() -> None:
+    seen: list[httpx.Request] = []
+    body = {**DAY, "more_in_window": True, "next_cursor": "opaque-position"}
+    client = _client([_realm()], body=body, seen=seen)
+
+    first = await client.entries(owner_id=OWNER, since="2026-08-24T12:00:00+00:00")
+    await client.entries(
+        owner_id=OWNER, since="2026-08-24T12:00:00+00:00", cursor=first.next_cursor
+    )
+
+    asked = [r for r in seen if r.url.path == "/api/memory/v1/entries"][-1]
+    assert asked.url.params["cursor"] == "opaque-position"
+
+
 async def test_a_day_read_shares_the_credential_check_with_every_other_realm_read() -> None:
     """All three reads go through one helper, so one of them cannot drift open."""
     client = _client([_realm()], body=DAY, service_token="")
@@ -382,9 +474,7 @@ async def test_a_day_read_shares_the_credential_check_with_every_other_realm_rea
     assert caught.value.kind == "configuration"
 
 
-COPY = {
-    "contract_version": "1",
-    "operation": "memory.export",
+COPY = MemoryExport.model_validate({
     "memory_space_id": "r_a",
     "taken_at": "2026-08-24T12:31:00+00:00",
     "records": [
@@ -405,13 +495,16 @@ COPY = {
             "wing_id": "",
             "room_id": "",
             "memory_type": "",
-            "value": "说不清什么时候",
+            "audience": "owner",
+            # Longer than the old 65,536-character cap, which failed the whole
+            # copy over one long memory.
+            "value": "说不清什么时候" * 12000,
         },
     ],
     "record_count": 2,
     "undated_count": 1,
     "truncated": True,
-}
+}).model_dump(mode="json")
 
 
 async def test_the_copy_reaches_the_sibling_route_and_arrives_whole() -> None:
@@ -458,9 +551,7 @@ async def test_a_copy_shares_the_credential_check_with_every_other_realm_read() 
     assert caught.value.kind == "configuration"
 
 
-STATUS = {
-    "contract_version": "1",
-    "operation": "memory.status",
+STATUS = MemoryStatus.model_validate({
     "memory_realm_id": "r_a",
     "memory_space_id": "r_a",
     "audience_scope": "companion:c_mochi",
@@ -470,7 +561,7 @@ STATUS = {
     "projection_pending": 0,
     "last_materialized_at": "2026-08-29T12:00:00Z",
     "degraded_reason": "",
-}
+}).model_dump(mode="json")
 
 
 async def test_status_uses_the_realm_authority_and_forwards_scope() -> None:

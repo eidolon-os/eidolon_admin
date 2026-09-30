@@ -1655,22 +1655,44 @@
         "title": "ForgetEntryView",
         "type": "object"
       },
+      "ForgetProgressView": {
+        "additionalProperties": false,
+        "description": "Where a confirmed forget has got to.",
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "retrying",
+              "applied",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "status"
+        ],
+        "title": "ForgetProgressView",
+        "type": "object"
+      },
       "ForgetProposalView": {
         "additionalProperties": false,
         "description": "What would go, before anything goes.\n\n``status`` distinguishes three answers a client must handle differently:\n``preview`` (here is what I found), ``not_found`` (nothing matched those\nwords), ``too_broad`` (too much matched to show, so nothing is offered).\nCollapsing the last two into an empty list would leave a person unable to\ntell \"you never told me that\" from \"say which one\".",
         "properties": {
-          "action": {
-            "anyOf": [
-              {
-                "maxLength": 16,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Action"
-          },
           "confirmation_token": {
             "anyOf": [
               {
@@ -1745,12 +1767,6 @@
       "ForgetResultView": {
         "additionalProperties": false,
         "properties": {
-          "action": {
-            "maxLength": 16,
-            "minLength": 1,
-            "title": "Action",
-            "type": "string"
-          },
           "contract_version": {
             "const": "1",
             "default": "1",
@@ -1762,9 +1778,19 @@
             "title": "Entry Count",
             "type": "integer"
           },
-          "status": {
-            "maxLength": 64,
+          "request_id": {
+            "maxLength": 128,
             "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "retrying",
+              "applied",
+              "failed"
+            ],
             "title": "Status",
             "type": "string"
           },
@@ -1776,7 +1802,7 @@
           }
         },
         "required": [
-          "action",
+          "request_id",
           "target",
           "entry_count",
           "status"
@@ -1788,15 +1814,6 @@
         "additionalProperties": false,
         "description": "What to forget, in the person's own words.",
         "properties": {
-          "action": {
-            "default": "delete",
-            "enum": [
-              "delete",
-              "archive"
-            ],
-            "title": "Action",
-            "type": "string"
-          },
           "target": {
             "maxLength": 512,
             "minLength": 1,
@@ -2473,6 +2490,18 @@
             "title": "More In Window",
             "type": "boolean"
           },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
           "since": {
             "maxLength": 64,
             "minLength": 1,
@@ -2583,7 +2612,6 @@
             "type": "string"
           },
           "value": {
-            "maxLength": 65536,
             "title": "Value",
             "type": "string"
           },
@@ -2737,15 +2765,6 @@
             "title": "Entry Count",
             "type": "integer"
           },
-          "materialization": {
-            "$ref": "#/components/schemas/MemoryMaterialization"
-          },
-          "memory_realm_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Memory Realm Id",
-            "type": "string"
-          },
           "truncated": {
             "title": "Truncated",
             "type": "boolean"
@@ -2764,69 +2783,13 @@
           }
         },
         "required": [
-          "memory_realm_id",
           "audience_scope",
-          "materialization",
           "wings",
           "entry_count",
           "withheld_count",
           "truncated"
         ],
         "title": "MemoryLibraryView",
-        "type": "object"
-      },
-      "MemoryMaterialization": {
-        "additionalProperties": false,
-        "properties": {
-          "data_readable": {
-            "title": "Data Readable",
-            "type": "boolean"
-          },
-          "degraded_reason": {
-            "default": "",
-            "maxLength": 1024,
-            "title": "Degraded Reason",
-            "type": "string"
-          },
-          "last_materialized_at": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Materialized At"
-          },
-          "materialization_state": {
-            "enum": [
-              "ready",
-              "materializing",
-              "degraded",
-              "unavailable"
-            ],
-            "title": "Materialization State",
-            "type": "string"
-          },
-          "projection_pending": {
-            "minimum": 0.0,
-            "title": "Projection Pending",
-            "type": "integer"
-          },
-          "ready": {
-            "title": "Ready",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "ready",
-          "data_readable",
-          "materialization_state",
-          "projection_pending"
-        ],
-        "title": "MemoryMaterialization",
         "type": "object"
       },
       "MemoryRoomView": {
@@ -7426,6 +7389,23 @@
             }
           },
           {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
             "in": "header",
             "name": "Authorization",
             "required": false,
@@ -7656,6 +7636,67 @@
         ]
       }
     },
+    "/api/management/v1/memory/forget/status": {
+      "get": {
+        "description": "Where a confirmed forget has got to.\n\nThe confirm usually answers ``accepted``: the Host applies the change in\nthe background. A client asks here until ``applied`` or ``failed``,\nrather than saying 「正在生效」 with nothing behind it.",
+        "operationId": "forget_status_api_management_v1_memory_forget_status_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgetProgressView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Forget Status",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/memory/graph": {
       "get": {
         "operationId": "get_memory_graph_api_management_v1_memory_graph_get",
@@ -7723,7 +7764,7 @@
     },
     "/api/management/v1/memory/library": {
       "get": {
-        "description": "What my Eidolon remembers.\n\nThe Owner owns one physical Realm. ``companion_id`` selects one\nEidolon's private audience within it plus automatically derived Owner\nfacts; naming none returns only that derived shared layer.",
+        "description": "What my Eidolon remembers.\n\nThe Owner owns one physical Realm. Naming no ``companion_id`` is me\nreading my own memory — everything any of my Eidolons was told.\nNaming one shows what that Eidolon can recall.",
         "operationId": "get_memory_library_api_management_v1_memory_library_get",
         "parameters": [
           {

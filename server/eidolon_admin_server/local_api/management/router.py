@@ -47,7 +47,6 @@ from fastapi import (
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
 from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
 from eidolon_admin_server.local_api import host_release
 from eidolon_admin_server.local_api.host_release import HostReleaseView
@@ -200,12 +199,10 @@ def _memory_sentence(library) -> str:
     if library is None:
         return ""
     entries = int(library.get("entry_count") or 0)
-    if entries == 0:
-        return "还没记下什么"
-    withheld = int(library.get("withheld_count") or 0)
-    if withheld:
-        return f"记着 {entries} 条，其中 {withheld} 条只给指定的伙伴"
-    return f"记着 {entries} 条"
+    # The Owner's own library: every audience, so ``withheld_count`` here is the
+    # privacy wing and what was forgotten into the archive — not "things kept for
+    # one Companion", which is what this sentence used to claim about it.
+    return f"记着 {entries} 条" if entries else "还没记下什么"
 
 
 def _companion_counts(roster) -> "HomeCountsView":
@@ -851,15 +848,16 @@ class MemoryLibraryView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"] = "1"
-    memory_realm_id: str = Field(min_length=1, max_length=64)
+    #: ``owner`` when I asked for my own memory — everything my Eidolons were
+    #: told — or ``companion:<id>`` when I asked what one of them can recall.
+    #: Echoed so an answer can be matched to its question.
     audience_scope: str = Field(min_length=1, max_length=128)
-    materialization: MemoryMaterialization
     wings: list[MemoryWingView]
     entry_count: int = Field(ge=0)
-    #: Here and not listed — things marked "do not bring this up", and (once
-    #: anything is marked private to one Companion) another Companion's. A
-    #: number rather than a silence: a total that disagreed with what is shown
-    #: would look like a bug in the person's own memory.
+    #: Here and not listed — things marked "do not bring this up", things
+    #: forgotten into the archive, and in one Companion's view what it was not
+    #: told. A number rather than a silence: a total that disagreed with what is
+    #: shown would look like a bug in the person's own memory.
     withheld_count: int = Field(ge=0)
     #: The Host read as much as it is willing to in one go. A client must not
     #: present a truncated library as the whole of someone's memory.
@@ -927,6 +925,9 @@ class MemoryDayView(BaseModel):
     #: ``truncated``: one is about this answer, the other about how much of the
     #: memory the Host was willing to read.
     more_in_window: bool
+    #: Send back as ``cursor`` for the next, older page. Present exactly when
+    #: ``more_in_window``; a position the Host issued, never one to compute.
+    next_cursor: str | None = Field(default=None, max_length=1024)
     #: Held no usable time, so in no day's list. A number rather than a silence:
     #: someone whose entry never appears should be able to find out why.
     undated_count: int = Field(ge=0)
@@ -947,8 +948,9 @@ class MemoryExportRecordView(BaseModel):
     room_id: str = Field(default="", max_length=256)
     memory_type: str = Field(default="", max_length=64)
     #: Required, unlike the fields above it: a copy whose text may be missing is
-    #: not a copy.
-    value: str = Field(max_length=65536)
+    #: not a copy. Uncapped for the same reason — a cap made one long memory a
+    #: failed export of all of them.
+    value: str
 
 
 class MemoryCopyView(BaseModel):
@@ -1160,11 +1162,10 @@ class ForgetTargetRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: Forgetting is always a deletion. There is no ``archive`` here: nothing in
+    #: the product brings an archived memory back, so offering it would present
+    #: a permanent change as a reversible one.
     target: str = Field(min_length=1, max_length=512)
-    #: ``delete`` removes it; ``archive`` puts it beyond recall but keeps it.
-    #: Defaulted to the reversible-sounding one being *absent*: a client that
-    #: does not say is asking for what the word "forget" means to a person.
-    action: Literal["delete", "archive"] = "delete"
 
 
 class ForgetConfirmRequest(BaseModel):
@@ -1203,7 +1204,6 @@ class ForgetProposalView(BaseModel):
     contract_version: Literal["1"] = "1"
     status: Literal["preview", "not_found", "too_broad"]
     target: str = Field(min_length=1, max_length=512)
-    action: str | None = Field(default=None, max_length=16)
     entries: list[ForgetEntryView]
     #: True when the match was inexact or hit more than one thing. A client must
     #: ask again rather than treating a guess as an instruction.
@@ -1220,13 +1220,26 @@ class ForgetResultView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["1"] = "1"
-    action: str = Field(min_length=1, max_length=16)
+    #: Names this change. Ask ``/memory/forget/status`` with it until the status
+    #: is ``applied`` or ``failed``; confirming the same preview again names the
+    #: same change rather than making a second one.
+    request_id: str = Field(min_length=1, max_length=128)
     target: str = Field(min_length=1, max_length=512)
     entry_count: int = Field(ge=0)
-    #: The Host's word for where the change got to. Publishing is durable and
-    #: applying is a projection that may still be running, so a client must not
-    #: read anything other than the exact status as "done".
-    status: str = Field(min_length=1, max_length=64)
+    #: Where the change got to. Only ``applied`` means it is gone; ``accepted``
+    #: and ``retrying`` are on their way; ``failed`` stopped, and trying again is
+    #: a new preview.
+    status: Literal["accepted", "retrying", "applied", "failed"]
+
+
+class ForgetProgressView(BaseModel):
+    """Where a confirmed forget has got to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"] = "1"
+    request_id: str = Field(min_length=1, max_length=128)
+    status: Literal["accepted", "retrying", "applied", "failed"]
 
 
 class HomeCountsView(BaseModel):
@@ -1756,6 +1769,7 @@ class ManagementBackendPort(Protocol):
         since: str,
         limit: int | None,
         companion_id: str | None,
+        cursor: str | None = None,
     ) -> dict: ...
 
     async def memory_export(
@@ -1809,13 +1823,13 @@ class ManagementBackendPort(Protocol):
         self, *, owner_id: str, query: str, limit: int, companion_id: str | None
     ) -> dict: ...
 
-    async def forget_preview(
-        self, *, owner_id: str, target: str, action: str
-    ) -> dict: ...
+    async def forget_preview(self, *, owner_id: str, target: str) -> dict: ...
 
     async def forget_confirm(
         self, *, owner_id: str, confirmation_token: str
     ) -> dict: ...
+
+    async def forget_status(self, *, owner_id: str, request_id: str) -> dict: ...
 
 
 def _task_page_view(answer: dict) -> TaskPageView:
@@ -2069,9 +2083,10 @@ def register_management_routes(
         )
         vitals = await _try(unavailable, "machine", host.read_vitals())
         # The Owner's memory, asked for as the Owner: no ``companion_id``, so
-        # every audience is in scope. Asking on behalf of one Companion would
-        # return that Eidolon's view of the person's own memory and label it
-        # theirs.
+        # every audience is in scope (the realm's Owner view, 2026-09-23 — it
+        # was the Owner layer only, which read 「还没记下什么」 over a full
+        # memory). Asking on behalf of one Companion would return that Eidolon's
+        # view of the person's own memory and label it theirs.
         memory = await _try(
             unavailable,
             "memory",
@@ -2836,9 +2851,9 @@ def register_management_routes(
     ) -> MemoryLibraryView:
         """What my Eidolon remembers.
 
-        The Owner owns one physical Realm. ``companion_id`` selects one
-        Eidolon's private audience within it plus automatically derived Owner
-        facts; naming none returns only that derived shared layer.
+        The Owner owns one physical Realm. Naming no ``companion_id`` is me
+        reading my own memory — everything any of my Eidolons was told.
+        Naming one shows what that Eidolon can recall.
         """
         owner_id = await authenticated_owner(authorization)
         try:
@@ -2848,9 +2863,7 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return MemoryLibraryView(
-            memory_realm_id=answer["memory_realm_id"],
             audience_scope=answer["audience_scope"],
-            materialization=answer["materialization"],
             wings=[MemoryWingView(**wing) for wing in answer["wings"]],
             entry_count=answer["entry_count"],
             withheld_count=answer["withheld_count"],
@@ -2889,15 +2902,12 @@ def register_management_routes(
         """
         owner_id = await authenticated_owner(authorization)
         try:
-            answer = await backend.forget_preview(
-                owner_id=owner_id, target=payload.target, action=payload.action
-            )
+            answer = await backend.forget_preview(owner_id=owner_id, target=payload.target)
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return ForgetProposalView(
             status=answer["status"],
             target=answer["target"],
-            action=answer.get("action"),
             entries=[ForgetEntryView(**entry) for entry in answer["entries"]],
             needs_confirmation=answer["needs_confirmation"],
             confirmation_token=answer.get("confirmation_token"),
@@ -2924,11 +2934,29 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return ForgetResultView(
-            action=answer["action"],
+            request_id=answer["request_id"],
             target=answer["target"],
             entry_count=answer["entry_count"],
             status=answer["status"],
         )
+
+    @router.get("/memory/forget/status", response_model=ForgetProgressView)
+    async def forget_status(
+        request_id: str = Query(min_length=1, max_length=128),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> ForgetProgressView:
+        """Where a confirmed forget has got to.
+
+        The confirm usually answers ``accepted``: the Host applies the change in
+        the background. A client asks here until ``applied`` or ``failed``,
+        rather than saying 「正在生效」 with nothing behind it.
+        """
+        owner_id = await authenticated_owner(authorization)
+        try:
+            answer = await backend.forget_status(owner_id=owner_id, request_id=request_id)
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        return ForgetProgressView(request_id=answer["request_id"], status=answer["status"])
 
     @router.post(
         "/owner/actions/revoke-runtime-sessions",
@@ -3276,6 +3304,7 @@ def register_management_routes(
         since: str,
         limit: int | None = None,
         companion_id: str | None = None,
+        cursor: str | None = Query(default=None, max_length=1024),
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> MemoryDayView:
         """What it has written down since a moment I name.
@@ -3291,11 +3320,13 @@ def register_management_routes(
                 since=since,
                 limit=limit,
                 companion_id=companion_id,
+                cursor=cursor,
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return MemoryDayView(
             since=answer["since"],
+            next_cursor=answer.get("next_cursor"),
             entries=[MemoryEntryView(**entry) for entry in answer["entries"]],
             entry_count=answer["entry_count"],
             more_in_window=answer["more_in_window"],

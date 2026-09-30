@@ -108,6 +108,11 @@ ALLOWED_QUERY_PARAMETERS = {
     # A position the Host issued. Reading it would make its page boundary part
     # of the client.
     "cursor",
+    # A change the Host named when it accepted a forget, handed back to ask
+    # where that change got to. Issued like ``cursor``, and like every other
+    # parameter here it cannot reach another Owner's memory: the space is
+    # resolved from the session, and the realm answers only ids it minted.
+    "request_id",
     # An *audience*, not a subject. Memory belongs to the Owner and every one of
     # their Companions reads it, so naming one adds a layer and cannot widen
     # what the space holds — a foreign id simply matches nothing.

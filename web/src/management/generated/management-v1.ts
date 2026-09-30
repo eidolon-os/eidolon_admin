@@ -284,8 +284,13 @@ export interface ForgetEntryView {
   score: number
 }
 
+export interface ForgetProgressView {
+  contract_version?: "1"
+  request_id: string
+  status: "accepted" | "retrying" | "applied" | "failed"
+}
+
 export interface ForgetProposalView {
-  action?: string | null
   confirmation_token?: string | null
   contract_version?: "1"
   detail?: string
@@ -297,15 +302,14 @@ export interface ForgetProposalView {
 }
 
 export interface ForgetResultView {
-  action: string
   contract_version?: "1"
   entry_count: number
-  status: string
+  request_id: string
+  status: "accepted" | "retrying" | "applied" | "failed"
   target: string
 }
 
 export interface ForgetTargetRequest {
-  action?: "delete" | "archive"
   target: string
 }
 
@@ -431,6 +435,7 @@ export interface MemoryDayView {
   entries: Array<MemoryEntryView>
   entry_count: number
   more_in_window: boolean
+  next_cursor?: string | null
   since: string
   truncated: boolean
   undated_count: number
@@ -481,20 +486,9 @@ export interface MemoryLibraryView {
   audience_scope: string
   contract_version?: "1"
   entry_count: number
-  materialization: MemoryMaterialization
-  memory_realm_id: string
   truncated: boolean
   wings: Array<MemoryWingView>
   withheld_count: number
-}
-
-export interface MemoryMaterialization {
-  data_readable: boolean
-  degraded_reason?: string
-  last_materialized_at?: string | null
-  materialization_state: "ready" | "materializing" | "degraded" | "unavailable"
-  projection_pending: number
-  ready: boolean
 }
 
 export interface MemoryRoomView {
@@ -890,6 +884,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/memory/export': MemoryCopyView
   'POST /api/management/v1/memory/forget/confirm': ForgetResultView
   'POST /api/management/v1/memory/forget/preview': ForgetProposalView
+  'GET /api/management/v1/memory/forget/status': ForgetProgressView
   'GET /api/management/v1/memory/graph': MemoryGraphView
   'GET /api/management/v1/memory/library': MemoryLibraryView
   'GET /api/management/v1/memory/recollections': RecollectionsView

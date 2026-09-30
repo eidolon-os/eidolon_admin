@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, TypeVar
 from urllib.parse import quote
 
@@ -43,8 +44,6 @@ from .contracts import (
     CompanionRosterPage,
     ConversationRows,
     DeviceRef,
-    ForgetOutcome,
-    ForgetPreview,
     HubClaimRevocationResult,
     KernelBodyEndpoint,
     KernelBodyEndpointPage,
@@ -55,7 +54,11 @@ from .contracts import (
     MemoryExport,
     MemoryGraph,
     MemoryRealmRuntimePage,
+    MemoryRecollections,
     MemoryStatus,
+    OwnerForgetOutcome,
+    OwnerForgetPreview,
+    OwnerForgetProgress,
     OwnerGovernanceEvents,
     OwnerIdentity,
     OwnerCompanionActivity,
@@ -148,12 +151,34 @@ def _raise_status(authority: str, response: httpx.Response) -> None:
     )
 
 
+_LOG = logging.getLogger("eidolon_admin.authority")
+
+
+def _violations(exc: Exception) -> str:
+    """Which fields broke the contract, and how — never their values.
+
+    Values are withheld on purpose: a memory answer carries what a person said,
+    and a log line is not where that belongs. Locations and error types are
+    enough to name the drift, which the fixed sentence below never did.
+    """
+
+    if not isinstance(exc, ValidationError):
+        return type(exc).__name__
+    return "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or '<root>'}:{error['type']}"
+        for error in exc.errors()[:12]
+    )
+
+
 def _parse(authority: str, response: httpx.Response, model: type[ModelT]) -> ModelT:
     if not 200 <= response.status_code < 300:
         _raise_status(authority, response)
     try:
         return model.model_validate_json(response.content)
     except (ValueError, ValidationError) as exc:
+        _LOG.warning(
+            "%s answer violated %s: %s", authority, model.__name__, _violations(exc)
+        )
         raise AuthorityFailure(
             authority,
             "contract_violation",
@@ -1129,13 +1154,17 @@ class MemoryRecollectionsClient:
         query: str,
         limit: int,
         companion_id: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> MemoryRecollections:
         """What this Owner's memory holds about a query.
 
-        The physical space remains the Owner's. ``companion_id`` selects a
-        logical audience within it: that Companion's private statements plus
-        automatically derived Owner facts. Omitting it returns only the derived
-        Owner layer.
+        The physical space remains the Owner's. ``companion_id`` selects what
+        that Companion can recall; omitting it is the Owner asking about their
+        own memory, every audience in the realm.
+
+        Refusals map by status like every other realm read. This one used to
+        answer every non-200 as a retryable "memory did not answer", so a
+        rotated credential (401) and a malformed question (422) both read as an
+        outage.
         """
         params = {"q": query, "limit": str(limit)}
         if companion_id:
@@ -1143,25 +1172,7 @@ class MemoryRecollectionsClient:
         response = await self._realm_call(
             owner_id, "recollections", params=params, method="GET"
         )
-        if response.status_code != 200:
-            raise AuthorityFailure(
-                "memory",
-                "unavailable",
-                "memory did not answer",
-                503,
-                upstream_status=response.status_code,
-                retryable=True,
-            )
-        try:
-            payload = response.json()
-            recollections = payload["recollections"]
-        except (ValueError, KeyError, TypeError) as exc:
-            raise _contract_violation(
-                "memory", "memory answered outside its contract"
-            ) from exc
-        if not isinstance(recollections, list):
-            raise _contract_violation("memory", "memory answered outside its contract")
-        return recollections
+        return _parse("memory", response, MemoryRecollections)
 
     async def browse(
         self,
@@ -1215,15 +1226,19 @@ class MemoryRecollectionsClient:
         since: str,
         limit: int | None = None,
         companion_id: str | None = None,
+        cursor: str | None = None,
     ) -> MemoryEntries:
-        """What was recorded at or after ``since``.
+        """What was recorded at or after ``since``, a page at a time.
 
         ``since`` is passed through as the caller gave it. A day depends on
         where the person is, and neither this client nor the realm knows —
-        inventing one here would answer for the wrong day, silently.
+        inventing one here would answer for the wrong day, silently. ``cursor``
+        is the realm's own ``next_cursor``, relayed unread.
         """
 
         params: dict[str, str] = {"since": since}
+        if cursor:
+            params["cursor"] = cursor
         if limit is not None:
             params["limit"] = str(limit)
         if companion_id:
@@ -1258,23 +1273,26 @@ class MemoryRecollectionsClient:
         *,
         owner_id: str,
         target: str,
-        action: str = "delete",
-    ) -> ForgetPreview:
-        """What forgetting this would remove, without removing it."""
+    ) -> OwnerForgetPreview:
+        """What forgetting this would remove, without removing it.
+
+        Always a deletion: an Owner has no archive to choose, because nothing in
+        the product brings an archived memory back.
+        """
 
         response = await self._realm_call(
             owner_id,
             "forget/preview",
-            params={"target": target, "action": action},
+            params={"target": target},
         )
-        return _parse("memory", response, ForgetPreview)
+        return _parse("memory", response, OwnerForgetPreview)
 
     async def forget_confirm(
         self,
         *,
         owner_id: str,
         confirmation_token: str,
-    ) -> ForgetOutcome:
+    ) -> OwnerForgetOutcome:
         """Apply exactly the set a preview bound.
 
         The token is passed through untouched. This layer cannot read it and
@@ -1288,7 +1306,23 @@ class MemoryRecollectionsClient:
             params={"confirmation_token": confirmation_token},
             method="POST",
         )
-        return _parse("memory", response, ForgetOutcome)
+        return _parse("memory", response, OwnerForgetOutcome)
+
+    async def forget_status(
+        self,
+        *,
+        owner_id: str,
+        request_id: str,
+    ) -> OwnerForgetProgress:
+        """Where a confirmed forget has got to, read from the realm's ledger."""
+
+        response = await self._realm_call(
+            owner_id,
+            "forget/status",
+            params={"request_id": request_id},
+            method="GET",
+        )
+        return _parse("memory", response, OwnerForgetProgress)
 
     async def _realm_call(
         self,

@@ -365,8 +365,10 @@ async def test_one_read_says_who_i_am_who_answers_and_what_is_waiting(
     # The memory is the *Owner's*: one Realm per Owner, every Companion reading
     # it through an audience. Asked for as the Owner — no companion_id — where
     # this used to be asked on behalf of whichever Eidolon answered and labelled
-    # 它的记忆.
-    assert home["memory"] == "记着 42 条，其中 2 条只给指定的伙伴"
+    # 它的记忆. Every audience is in that view, so the withheld count is the
+    # privacy wing and the archive — never "kept for one Companion", which is
+    # what this sentence used to say about it.
+    assert home["memory"] == "记着 42 条"
     assert backend.memory_requests == [("owner-1", None)]
 
     # Counts split the way a person acts on them, alongside the list rather

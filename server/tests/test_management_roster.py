@@ -27,6 +27,12 @@ from eidolon_admin_server.app.control_plane.contracts import (
     OwnerCompanionActivity,
 )
 from eidolon_admin_server.app.management.roster import read_roster
+from eidolon_admin_server.app.management.router import (
+    ForgetProgressInternal,
+    ForgetProposalInternal,
+    ForgetResultInternal,
+    MemoryLibraryInternal,
+)
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
@@ -435,21 +441,12 @@ class _Backend:
 
     async def memory_library(self, *, owner_id: str, companion_id: str | None) -> dict:
         self.asked.append((owner_id, companion_id))
-        return {
-            "contract_version": "1",
-            "operation": "memory.library",
-            "memory_realm_id": "realm-owner-1",
+        # Built from the internal ABI's own model, so this fake cannot answer in a
+        # shape the Admin process would never produce.
+        return MemoryLibraryInternal.model_validate({
             "audience_scope": (
                 f"companion:{companion_id}" if companion_id else "owner"
             ),
-            "materialization": {
-                "ready": True,
-                "data_readable": True,
-                "materialization_state": "ready",
-                "projection_pending": 0,
-                "last_materialized_at": "2026-08-29T12:00:00Z",
-                "degraded_reason": "",
-            },
             "wings": [
                 {
                     "wing_id": "Wing_Life",
@@ -469,7 +466,7 @@ class _Backend:
             "entry_count": 2,
             "withheld_count": 1,
             "truncated": False,
-        }
+        }).model_dump(mode="json")
 
     async def memory_graph(self, *, owner_id: str, companion_id: str | None) -> dict:
         self.asked.append((owner_id, companion_id))
@@ -500,8 +497,9 @@ class _Backend:
         since: str,
         limit: int | None,
         companion_id: str | None,
+        cursor: str | None = None,
     ) -> dict:
-        self.asked.append((owner_id, since, limit, companion_id))
+        self.asked.append((owner_id, since, limit, companion_id, cursor))
         return {
             "contract_version": "1",
             "operation": "memory.day",
@@ -518,6 +516,7 @@ class _Backend:
             ],
             "entry_count": 1,
             "more_in_window": True,
+            "next_cursor": "opaque-next",
             "undated_count": 2,
             "truncated": False,
         }
@@ -762,46 +761,41 @@ class _Backend:
             "truncated": True,
         }
 
-    async def forget_preview(self, *, owner_id: str, target: str, action: str) -> dict:
-        self.asked.append((owner_id, target, action))
+    async def forget_preview(self, *, owner_id: str, target: str) -> dict:
+        self.asked.append((owner_id, target))
         if target == "一切":
-            return {
-                "contract_version": "1",
-                "operation": "memory.forget-proposal",
-                "status": "too_broad",
-                "target": target,
-                "action": None,
-                "entries": [],
-                "needs_confirmation": False,
-                "confirmation_token": None,
-                "expires_at": None,
-                "detail": "too many matches",
-            }
-        return {
-            "contract_version": "1",
-            "operation": "memory.forget-proposal",
+            return ForgetProposalInternal(
+                status="too_broad",
+                target=target,
+                entries=[],
+                needs_confirmation=False,
+                detail="too many matches",
+            ).model_dump(mode="json")
+        return ForgetProposalInternal.model_validate({
             "status": "preview",
             "target": target,
-            "action": action,
             "entries": [
                 {"entry_id": "drawer_1", "preview": "上周那件事", "score": 0.8}
             ],
             "needs_confirmation": True,
             "confirmation_token": "opaque-token",
             "expires_at": 1900000000,
-            "detail": "",
-        }
+        }).model_dump(mode="json")
 
     async def forget_confirm(self, *, owner_id: str, confirmation_token: str) -> dict:
         self.asked.append((owner_id, confirmation_token))
-        return {
-            "contract_version": "1",
-            "operation": "memory.forgotten",
-            "action": "delete",
-            "target": "上周那件事",
-            "entry_count": 1,
-            "status": "accepted",
-        }
+        return ForgetResultInternal(
+            request_id="owner-forget-p1",
+            target="上周那件事",
+            entry_count=1,
+            status="accepted",
+        ).model_dump(mode="json")
+
+    async def forget_status(self, *, owner_id: str, request_id: str) -> dict:
+        self.asked.append((owner_id, request_id))
+        return ForgetProgressInternal(request_id=request_id, status="applied").model_dump(
+            mode="json"
+        )
 
     async def close(self) -> None:
         return None
@@ -1377,7 +1371,7 @@ async def test_a_preview_is_for_the_session_owner_and_changes_nothing(
         )
 
     assert anonymous.status_code == 401
-    assert backend.asked == [("owner-1", "上周那件事", "delete")]
+    assert backend.asked == [("owner-1", "上周那件事")]
     body = answered.json()
     assert body["status"] == "preview"
     assert body["entries"][0]["entry_id"] == "drawer_1"
@@ -1413,6 +1407,33 @@ async def test_the_token_reaches_the_confirm_untouched(tmp_path, monkeypatch) ->
     # The Host's word for where the change got to, relayed rather than read as
     # "done": publishing is durable, applying is a projection still running.
     assert confirmed.json()["status"] == "accepted"
+    assert confirmed.json()["request_id"] == "owner-forget-p1"
+
+
+async def test_where_a_forget_got_to_is_asked_by_its_request_id(tmp_path, monkeypatch) -> None:
+    """The answer to 「正在生效」: a client asks until applied or failed."""
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    backend = _Backend()
+    transport = httpx.ASGITransport(app=_app(tmp_path, backend))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        answered = await client.get(
+            "/api/management/v1/memory/forget/status",
+            headers=headers,
+            params={"request_id": "owner-forget-p1"},
+        )
+        missing = await client.get("/api/management/v1/memory/forget/status", headers=headers)
+
+    assert answered.status_code == 200
+    assert answered.json() == {
+        "contract_version": "1",
+        "request_id": "owner-forget-p1",
+        "status": "applied",
+    }
+    assert backend.asked[-1] == ("owner-1", "owner-forget-p1")
+    assert missing.status_code == 422
 
 
 async def test_too_broad_is_not_flattened_into_an_empty_list(
@@ -1489,7 +1510,7 @@ async def test_the_day_is_the_authenticated_owners(tmp_path, monkeypatch) -> Non
         answered = await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
 
     assert anonymous.status_code == 401
-    assert backend.asked == [("owner-1", _NOON, None, None)]
+    assert backend.asked == [("owner-1", _NOON, None, None, None)]
     body = answered.json()
     assert body["since"] == _NOON
     assert body["entries"][0]["preview"] == "乌龙茶"
@@ -1549,8 +1570,18 @@ async def test_the_window_and_audience_reach_the_backend(tmp_path, monkeypatch) 
             params={"since": _NOON, "limit": 5, "companion_id": "c-a"},
             headers=headers,
         )
+        first = await client.get(_ENTRIES, params={"since": _NOON}, headers=headers)
+        await client.get(
+            _ENTRIES,
+            params={"since": _NOON, "cursor": first.json()["next_cursor"]},
+            headers=headers,
+        )
 
-    assert backend.asked == [("owner-1", _NOON, 5, "c-a")]
+    assert backend.asked == [
+        ("owner-1", _NOON, 5, "c-a", None),
+        ("owner-1", _NOON, None, None, None),
+        ("owner-1", _NOON, None, None, "opaque-next"),
+    ]
 
 
 async def test_the_day_names_no_owner_and_no_space(tmp_path, monkeypatch) -> None:
