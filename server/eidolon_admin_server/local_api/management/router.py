@@ -49,6 +49,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from eidolon_admin_server.app.control_plane.contracts import MemoryMaterialization
 from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
+from eidolon_admin_server.local_api import host_release
+from eidolon_admin_server.local_api.host_release import HostReleaseView
 from eidolon_admin_server.local_api.host_services import (  # noqa: E402
     HostMachinePort,
     HostServiceControlError,
@@ -2304,6 +2306,22 @@ def register_management_routes(
             return host_vitals(await host.read_vitals())
         except HostServiceControlError as exc:
             raise refuse(exc.status_code, str(exc)) from exc
+
+    @router.get("/host/release", response_model=HostReleaseView)
+    async def read_host_release(
+        response: Response,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> HostReleaseView:
+        """Which target release this Host is serving from.
+
+        Machine-scoped, like the vitals beside it. Answered from the code this
+        process loaded rather than from the `current` links, which say what
+        the next start will load. `release_id` is always present; null means a
+        source checkout, not a Host that could not tell.
+        """
+        await authenticated_controller_id(authorization)
+        response.headers["Cache-Control"] = "no-store"
+        return HostReleaseView(release_id=host_release.RUNNING_RELEASE)
 
     @router.get("/host/services", response_model=HostServiceInventoryView)
     async def read_host_services(

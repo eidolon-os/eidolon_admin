@@ -10,6 +10,7 @@ import eidolon_admin_server.local_api.app as local_api_app
 from eidolon_admin_server.bootstrap.config import BootstrapMode, BootstrapSettings
 from eidolon_admin_server.bootstrap.control import BootstrapControlClient
 from eidolon_admin_server.local_api.app import create_app
+from eidolon_admin_server.local_api import host_release
 from eidolon_admin_server.local_api.config import LocalApiSettings
 from eidolon_admin_server.local_api.host_services import (
     AdminHostServicesClient,
@@ -321,6 +322,70 @@ async def test_the_machine_is_readable_by_a_phone_that_holds_this_host(
     assert read.json()["operation"] == "host.vitals"
     assert read.json()["observed_at"] == "2026-08-25T09:00:00Z"
     assert read.json()["vitals"]
+
+
+@pytest.mark.parametrize("running", ["rk3588-home-hil-20260930-1", None])
+async def test_a_phone_reads_which_release_this_host_serves_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, running: str | None
+) -> None:
+    principal = {
+        "contract_version": "1",
+        "controller_id": _CONTROLLER_ID,
+        "reset_epoch": 0,
+    }
+
+    async def bootstrap_request(self, operation: str, **_parameters):
+        if operation in {"controller.authenticate", "controller.validate"}:
+            return principal
+        raise AssertionError(f"unexpected bootstrap operation: {operation}")
+
+    monkeypatch.setattr(BootstrapControlClient, "request", bootstrap_request)
+    monkeypatch.setattr(host_release, "RUNNING_RELEASE", running)
+    transport = httpx.ASGITransport(app=_app(tmp_path, _HostServicesPort()))
+    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+        anonymous = await client.get("/api/management/v1/host/release")
+        headers = await _authenticate(client)
+        read = await client.get("/api/management/v1/host/release", headers=headers)
+
+    assert anonymous.status_code == 401
+    assert read.status_code == 200
+    assert read.headers["cache-control"] == "no-store"
+    # A source checkout is said with a present null, never by leaving the
+    # field out: absence would read the same as a Host too old to answer.
+    assert read.json() == {
+        "operation": "host.release",
+        "contract_version": "1",
+        "release_id": running,
+    }
+
+
+@pytest.mark.parametrize(
+    ("loaded_from", "expected"),
+    [
+        (
+            "/opt/eidolon/releases/rk3588-home-hil-20260930-1/eidolon_admin/.venv/"
+            "lib/python3.13/site-packages/eidolon_admin_server/local_api/host_release.py",
+            "rk3588-home-hil-20260930-1",
+        ),
+        # Unresolved, a path through `current` names no release: that link
+        # says what the next start loads, not what this process is running.
+        (
+            "/opt/eidolon/current/eidolon_admin/.venv/lib/python3.13/site-packages/"
+            "eidolon_admin_server/local_api/host_release.py",
+            None,
+        ),
+        (
+            "/Users/someone/eidolon_admin/server/eidolon_admin_server/local_api/host_release.py",
+            None,
+        ),
+        ("/opt/eidolon/releases/rk3588-home-hil-20260930-1", None),
+        ("/opt/eidolon/releases/.hidden/eidolon_admin/host_release.py", None),
+    ],
+)
+def test_the_release_is_named_only_by_a_path_inside_one(
+    loaded_from: str, expected: str | None
+) -> None:
+    assert host_release.release_of(Path(loaded_from)) == expected
 
 
 async def test_an_unknown_operation_is_refused_before_reaching_admin(

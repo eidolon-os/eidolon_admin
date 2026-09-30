@@ -2125,6 +2125,40 @@
         "title": "HostPowerStatusWire",
         "type": "object"
       },
+      "HostReleaseView": {
+        "additionalProperties": false,
+        "properties": {
+          "contract_version": {
+            "const": "1",
+            "default": "1",
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "operation": {
+            "const": "host.release",
+            "default": "host.release",
+            "title": "Operation",
+            "type": "string"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          }
+        },
+        "required": [
+          "release_id"
+        ],
+        "title": "HostReleaseView",
+        "type": "object"
+      },
       "HostServiceInventoryView": {
         "additionalProperties": false,
         "properties": {
@@ -7107,6 +7141,56 @@
           }
         },
         "summary": "Power Off Host",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/host/release": {
+      "get": {
+        "description": "Which target release this Host is serving from.\n\nMachine-scoped, like the vitals beside it. Answered from the code this\nprocess loaded rather than from the `current` links, which say what\nthe next start will load. `release_id` is always present; null means a\nsource checkout, not a Host that could not tell.",
+        "operationId": "read_host_release_api_management_v1_host_release_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostReleaseView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Read Host Release",
         "tags": [
           "management"
         ]

@@ -366,6 +366,12 @@ export interface HostPowerStatusWire {
   unavailable_reason?: string | null
 }
 
+export interface HostReleaseView {
+  contract_version?: "1"
+  operation?: "host.release"
+  release_id: string | null
+}
+
 export interface HostServiceInventoryView {
   services?: Array<HostServiceView>
 }
@@ -876,6 +882,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/host/monitor': HostMonitorWire
   'GET /api/management/v1/host/power': HostPowerStatusWire
   'POST /api/management/v1/host/poweroff': HostPowerOffAccepted
+  'GET /api/management/v1/host/release': HostReleaseView
   'GET /api/management/v1/host/services': HostServiceInventoryView
   'POST /api/management/v1/host/services/{service_id}/{operation}': HostServiceMutationView
   'GET /api/management/v1/host/vitals': HostVitalsView
