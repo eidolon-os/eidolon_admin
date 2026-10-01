@@ -352,10 +352,19 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/library", params)
 
-    async def memory_graph(self, *, owner_id: str, companion_id: str | None) -> dict:
-        params = {"owner_id": owner_id}
+    async def memory_graph(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        cursor: str | None = None,
+        history: bool = False,
+    ) -> dict:
+        params = {"owner_id": owner_id, "history": str(history).lower()}
         if companion_id:
             params["companion_id"] = companion_id
+        if cursor:
+            params["cursor"] = cursor
         return await self._get("/api/internal/v1/management/memory/graph", params)
 
     async def memory_entries(
@@ -376,10 +385,20 @@ class AdminManagementClient:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/entries", params)
 
-    async def memory_export(self, *, owner_id: str, companion_id: str | None) -> dict:
+    async def memory_export(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        wing: str | None = None,
+        room: str | None = None,
+    ) -> dict:
         params = {"owner_id": owner_id}
         if companion_id:
             params["companion_id"] = companion_id
+        params.update(
+            {k: v for k, v in {"wing": wing, "room": room}.items() if v is not None}
+        )
         return await self._get("/api/internal/v1/management/memory/export", params)
 
     async def revoke_runtime_sessions(self, *, owner_id: str) -> dict:

@@ -105,6 +105,9 @@ def test_the_contract_carries_only_the_management_surface() -> None:
 #:
 #: These six shape an answer about a subject the session already fixed:
 ALLOWED_QUERY_PARAMETERS = {
+    "wing",
+    "room",
+    "history",
     # A position the Host issued. Reading it would make its page boundary part
     # of the client.
     "cursor",

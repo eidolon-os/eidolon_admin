@@ -1,14 +1,12 @@
 """Asking an Eidolon what it remembers about something.
 
 The other memory read on this surface, and the one a person reaches for first:
-the library answers "what do you have", 今日 answers "what happened", and this
+the library answers "what do you have", the timeline answers "when", and this
 answers the question they actually arrive with — "do you remember X".
 
-What it hands back is a sentence and a time, and that is the whole design. The
-records memory returns carry wings, rooms, scores and provenance; those are *how*
-it found something, not what it remembers. A person asked the second question,
-and passing the first through would make every client decide again which half to
-show — with the machinery winning, because it is there.
+Text travels with known dates and the user's original words, so the same detail
+presentation can explain a search result or a browsed record. Retrieval scores
+and internal routing stay in the service.
 
 Nothing here filters. The realm applies the same visibility policy its Eidolon's
 recall uses, so a second filter would be a second answer to "what may this person
@@ -19,6 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+from eidolon_memory_contracts.owner import MemoryProvenance
 
 from eidolon_admin_server.app.control_plane.contracts import (
     MemoryRecollection,
@@ -47,6 +47,7 @@ class RecollectionView:
     #: being filled in with the time of asking — a person reading "记于今天"
     #: about something from March would be reading a fabrication.
     remembered_at: str | None
+    provenance: MemoryProvenance
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,4 +95,8 @@ def _view(record: MemoryRecollection) -> RecollectionView:
     fields no realm sends) is gone.
     """
 
-    return RecollectionView(text=record.text, remembered_at=record.remembered_at or None)
+    return RecollectionView(
+        text=record.text,
+        remembered_at=record.remembered_at or None,
+        provenance=record.provenance,
+    )

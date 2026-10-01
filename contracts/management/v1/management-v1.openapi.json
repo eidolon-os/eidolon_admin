@@ -2545,6 +2545,9 @@
             "title": "Preview",
             "type": "string"
           },
+          "provenance": {
+            "$ref": "#/components/schemas/MemoryProvenance"
+          },
           "recorded_at": {
             "maxLength": 64,
             "minLength": 1,
@@ -2561,6 +2564,11 @@
             "default": "",
             "maxLength": 256,
             "title": "Room Id",
+            "type": "string"
+          },
+          "value": {
+            "default": "",
+            "title": "Value",
             "type": "string"
           },
           "wing_id": {
@@ -2592,6 +2600,9 @@
             "maxLength": 64,
             "title": "Memory Type",
             "type": "string"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/MemoryProvenance"
           },
           "recorded_at": {
             "default": "",
@@ -2667,6 +2678,28 @@
             "minLength": 1,
             "title": "Subject",
             "type": "string"
+          },
+          "valid_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid From"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
           }
         },
         "required": [
@@ -2723,6 +2756,23 @@
             },
             "title": "Edges",
             "type": "array"
+          },
+          "history": {
+            "default": false,
+            "title": "History",
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
           },
           "nodes": {
             "items": {
@@ -2790,6 +2840,52 @@
           "truncated"
         ],
         "title": "MemoryLibraryView",
+        "type": "object"
+      },
+      "MemoryProvenance": {
+        "additionalProperties": false,
+        "description": "Known dates and evidence; absent values are never reconstructed.",
+        "properties": {
+          "last_modified_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Modified At"
+          },
+          "learned_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Learned At"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "source_quote": {
+            "default": "",
+            "title": "Source Quote",
+            "type": "string"
+          }
+        },
+        "title": "MemoryProvenance",
         "type": "object"
       },
       "MemoryRoomView": {
@@ -4018,8 +4114,11 @@
       },
       "RecollectionView": {
         "additionalProperties": false,
-        "description": "One thing my Eidolon remembers, as I read it.\n\nNot the stored record. What memory holds carries wings, rooms, scores and\nprovenance — that is how it found something, not what it remembers, and I\nasked the second question.",
+        "description": "One thing my Eidolon remembers, as I read it.\n\nText and its evidence travel together. Retrieval scores and internal\nrouting fields stay in the service; provenance contains known dates and\nthe user's original words.",
         "properties": {
+          "provenance": {
+            "$ref": "#/components/schemas/MemoryProvenance"
+          },
           "remembered_at": {
             "anyOf": [
               {
@@ -7472,6 +7571,38 @@
             }
           },
           {
+            "in": "query",
+            "name": "wing",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Wing"
+            }
+          },
+          {
+            "in": "query",
+            "name": "room",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Room"
+            }
+          },
+          {
             "in": "header",
             "name": "Authorization",
             "required": false,
@@ -7715,6 +7846,33 @@
                 }
               ],
               "title": "Companion Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "history",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "History",
+              "type": "boolean"
             }
           },
           {

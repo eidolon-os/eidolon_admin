@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import socket
 import subprocess
 import time
@@ -47,7 +48,9 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.e2e]
 _ROOT = Path(__file__).resolve().parents[3]
 _MEMORY = _ROOT / "eidolon_memory"
 _HARNESS = _MEMORY / "tests" / "harness" / "owner_surface_server.py"
-_PYTHON = _MEMORY / ".venv" / "bin" / "python"
+_PYTHON = Path(
+    os.environ.get("EIDOLON_MEMORY_TEST_PYTHON", str(_MEMORY / ".venv/bin/python"))
+)
 _CONTRACT = json.loads(
     (
         Path(__file__).resolve().parents[2]
@@ -73,33 +76,40 @@ def realm(tmp_path: Path):
             "(run `uv sync` there)"
         )
     port = _free_port()
-    process = subprocess.Popen(
-        [
-            str(_PYTHON),
-            str(_HARNESS),
-            "--port",
-            str(port),
-            "--token",
-            _MEMORY_TOKEN,
-            "--state",
-            str(tmp_path),
-        ],
-        cwd=_MEMORY,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    output_path = tmp_path / "realm.log"
+    with output_path.open("wb") as output:
+        process = subprocess.Popen(
+            [
+                str(_PYTHON),
+                str(_HARNESS),
+                "--port",
+                str(port),
+                "--token",
+                _MEMORY_TOKEN,
+                "--state",
+                str(tmp_path),
+            ],
+            cwd=_MEMORY,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
     base = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + 30
     while True:
         try:
-            if httpx.get(f"{base}/api/discovery/agent-routing", timeout=1).status_code == 200:
+            if (
+                httpx.get(
+                    f"{base}/api/discovery/agent-routing", timeout=1, trust_env=False
+                ).status_code
+                == 200
+            ):
                 break
         except httpx.TransportError:
             pass
         if process.poll() is not None or time.monotonic() > deadline:
-            output = process.stdout.read().decode() if process.stdout else ""
             process.kill()
-            pytest.fail(f"memory realm did not start:\n{output}")
+            process.wait(timeout=5)
+            pytest.fail(f"memory realm did not start:\n{output_path.read_text()}")
         time.sleep(0.2)
     try:
         yield base
@@ -114,7 +124,7 @@ def realm(tmp_path: Path):
 def _phone_facing_app(tmp_path: Path, realm_url: str):
     memory = MemoryRecollectionsClient(
         discovery_url=realm_url,
-        client=httpx.AsyncClient(),
+        client=httpx.AsyncClient(trust_env=False),
         timeout_seconds=10.0,
         service_token=_MEMORY_TOKEN,
     )
@@ -158,6 +168,78 @@ RECOLLECTIONS = "/api/management/v1/memory/recollections"
 PREVIEW = "/api/management/v1/memory/forget/preview"
 CONFIRM = "/api/management/v1/memory/forget/confirm"
 STATUS = "/api/management/v1/memory/forget/status"
+GRAPH = "/api/management/v1/memory/graph"
+EXPORT = "/api/management/v1/memory/export"
+
+
+async def test_room_contents_and_search_evidence_reach_the_phone(
+    tmp_path, monkeypatch, realm
+):
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_phone_facing_app(tmp_path, realm))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        room = await _get(
+            client,
+            headers,
+            EXPORT,
+            wing="Wing_Life",
+            room="drawer_tea_b",
+            companion_id="c_b",
+        )
+        hidden = await _get(
+            client,
+            headers,
+            EXPORT,
+            wing="Wing_Life",
+            room="drawer_tea_b",
+            companion_id="c_a",
+        )
+        found = await _get(client, headers, RECOLLECTIONS, q="工资")
+        timeline = await _get(
+            client, headers, ENTRIES, since="0001-01-01T00:00:00.000Z"
+        )
+        assert room["record_count"] == 1
+        assert room["records"][0]["value"] == "喜欢乌龙茶"
+        assert room["records"][0]["provenance"]["source_quote"] == "喜欢乌龙茶"
+        assert hidden["record_count"] == 0
+        assert all(row["provenance"]["source_quote"] for row in found["recollections"])
+        assert all(row["provenance"]["learned_at"] for row in found["recollections"])
+        assert timeline["entry_count"] == 8
+        assert all(row["value"] for row in timeline["entries"])
+
+
+async def test_graph_paging_and_history_cross_every_http_boundary(
+    tmp_path, monkeypatch, realm
+):
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    transport = httpx.ASGITransport(app=_phone_facing_app(tmp_path, realm))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
+        headers = await _authenticate(client)
+        for history, expected in ((False, 179), (True, 180)):
+            edges = []
+            params = {"companion_id": "c_a", "history": str(history).lower()}
+            pages = 0
+            while True:
+                page = await _get(client, headers, GRAPH, **params)
+                assert page["history"] is history
+                edges.extend(page["edges"])
+                pages += 1
+                if not page["next_cursor"]:
+                    break
+                params["cursor"] = page["next_cursor"]
+                assert pages < 3, "graph cursor must advance"
+            assert pages == 2
+            assert len(edges) == len({edge["edge_id"] for edge in edges}) == expected
+            assert not any(
+                "伙伴乙" in edge["object"] or "敏感" in edge["object"] for edge in edges
+            )
+            ended = [edge for edge in edges if edge["valid_to"] is not None]
+            assert len(ended) == int(history)
 
 
 async def test_the_owners_memory_is_theirs_to_read_search_and_page(
@@ -184,6 +266,8 @@ async def test_the_owners_memory_is_theirs_to_read_search_and_page(
         params: dict[str, object] = {"since": _DAY, "limit": 3}
         while True:
             day = await _get(client, headers, ENTRIES, **params)
+            assert all(entry["provenance"]["source_quote"] for entry in day["entries"])
+            assert all(entry["provenance"]["learned_at"] for entry in day["entries"])
             pages += 1
             seen.extend(entry["entry_id"] for entry in day["entries"])
             if not day["more_in_window"]:
@@ -195,7 +279,10 @@ async def test_the_owners_memory_is_theirs_to_read_search_and_page(
     assert "memory_realm_id" not in mine and "materialization" not in mine
     # Owner layer (two) plus what c_b was told (one); nothing c_a was told.
     assert tea_drinkers["entry_count"] == 3
-    assert {item["text"] for item in found["recollections"]} >= {"工资是两万", "工资涨到三万了"}
+    assert {item["text"] for item in found["recollections"]} >= {
+        "工资是两万",
+        "工资涨到三万了",
+    }
     # Four of the walks share a timestamp; paging by time alone would skip them.
     assert len(seen) == len(set(seen)) == 8
     assert pages == 3
@@ -213,22 +300,32 @@ async def test_forgetting_is_shown_bound_confirmed_once_and_seen_to_finish(
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_phone_facing_app(tmp_path, realm))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
 
         short = await _post(client, headers, PREVIEW, {"target": "茶"})
         preview = await _post(client, headers, PREVIEW, {"target": "工资"})
         first = await _post(
-            client, headers, CONFIRM, {"confirmation_token": preview["confirmation_token"]}
+            client,
+            headers,
+            CONFIRM,
+            {"confirmation_token": preview["confirmation_token"]},
         )
         again = await _post(
-            client, headers, CONFIRM, {"confirmation_token": preview["confirmation_token"]}
+            client,
+            headers,
+            CONFIRM,
+            {"confirmation_token": preview["confirmation_token"]},
         )
 
         statuses = [first["status"]]
         deadline = time.monotonic() + 10
         while statuses[-1] not in {"applied", "failed"} and time.monotonic() < deadline:
-            progress = await _get(client, headers, STATUS, request_id=first["request_id"])
+            progress = await _get(
+                client, headers, STATUS, request_id=first["request_id"]
+            )
             statuses.append(progress["status"])
             if statuses[-1] not in {"applied", "failed"}:
                 await asyncio.sleep(0.2)

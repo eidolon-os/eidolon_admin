@@ -23,6 +23,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from eidolon_memory_contracts.owner import MemoryProvenance
+
 from eidolon_sdk.biz.persona import (
     ConversationPreferences,
     PersonaAuthoring,
@@ -356,6 +358,8 @@ class MemoryGraphEdgeInternal(BaseModel):
     object: str
     confidence: float
     recorded_at: str = ""
+    valid_from: str | None = None
+    valid_to: str | None = None
 
 
 class MemoryGraphInternal(BaseModel):
@@ -364,6 +368,8 @@ class MemoryGraphInternal(BaseModel):
     nodes: list[MemoryGraphNodeInternal]
     edges: list[MemoryGraphEdgeInternal]
     truncated: bool
+    next_cursor: str | None = None
+    history: bool = False
 
 
 class MemoryEntryInternal(BaseModel):
@@ -375,6 +381,8 @@ class MemoryEntryInternal(BaseModel):
     wing_id: str = Field(default="", max_length=128)
     room_id: str = Field(default="", max_length=256)
     preview: str = Field(default="", max_length=4096)
+    provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
+    value: str = ""
 
 
 class MemoryDayInternal(BaseModel):
@@ -520,6 +528,7 @@ class RecollectionInternal(BaseModel):
     #: Absent stays absent. Filling it in with the time of asking would put a
     #: date on a memory that never had one.
     remembered_at: str | None = Field(default=None, max_length=64)
+    provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
 
 
 class RecollectionsInternal(BaseModel):
@@ -547,6 +556,7 @@ class MemoryExportRecordInternal(BaseModel):
     #: Whole, required, and uncapped: this is what the copy is of. A cap here
     #: turned one long memory into a failed export of all of them.
     value: str
+    provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
 
 
 class MemoryCopyInternal(BaseModel):
@@ -881,16 +891,22 @@ async def get_memory_graph(
     request: Request,
     owner_id: str,
     companion_id: str | None = None,
+    cursor: str | None = None,
+    history: bool = False,
 ) -> MemoryGraphInternal:
     graph = await read_graph(
         owner_id=owner_id,
         companion_id=companion_id,
         memory=request.app.state.control_plane.memory,
+        cursor=cursor,
+        history=history,
     )
     return MemoryGraphInternal(
         nodes=[MemoryGraphNodeInternal(**node.model_dump()) for node in graph.nodes],
         edges=[MemoryGraphEdgeInternal(**edge.model_dump()) for edge in graph.edges],
         truncated=graph.truncated,
+        next_cursor=graph.next_cursor,
+        history=graph.history,
     )
 
 
@@ -1535,7 +1551,11 @@ async def get_memory_recollections(
     return RecollectionsInternal(
         query=found.query,
         recollections=[
-            RecollectionInternal(text=entry.text, remembered_at=entry.remembered_at)
+            RecollectionInternal(
+                text=entry.text,
+                remembered_at=entry.remembered_at,
+                provenance=entry.provenance,
+            )
             for entry in found.recollections
         ],
     )
@@ -1546,6 +1566,8 @@ async def get_memory_export(
     request: Request,
     owner_id: str,
     companion_id: str | None = None,
+    wing: str | None = None,
+    room: str | None = None,
 ) -> MemoryCopyInternal:
     """A copy of this memory the person can read and keep.
 
@@ -1557,6 +1579,8 @@ async def get_memory_export(
         owner_id=owner_id,
         companion_id=companion_id,
         memory=request.app.state.control_plane.memory,
+        wing=wing,
+        room=room,
     )
     return MemoryCopyInternal(
         taken_at=copy.taken_at,
@@ -1569,6 +1593,7 @@ async def get_memory_export(
                 room_id=record.room_id,
                 memory_type=record.memory_type,
                 value=record.value,
+                provenance=record.provenance,
             )
             for record in copy.records
         ],
@@ -1612,6 +1637,8 @@ async def get_memory_entries(
                 wing_id=entry.wing_id,
                 room_id=entry.room_id,
                 preview=entry.preview,
+                provenance=entry.provenance,
+                value=entry.value,
             )
             for entry in day.entries
         ],

@@ -13,12 +13,12 @@ authenticates, and is passed down as an argument.
 
 from __future__ import annotations
 
-from eidolon_sdk.biz.presentation import InputSelection
-
 from typing import Literal, Protocol, runtime_checkable
 
+from eidolon_memory_contracts.owner import MemoryProvenance
+
 from eidolon_sdk.biz.contracts.refusal import Refusal
-from eidolon_sdk.biz.presentation import OutputSelection
+from eidolon_sdk.biz.presentation import InputSelection, OutputSelection
 from eidolon_sdk.biz.presentation.negotiation import output_policy_required
 from eidolon_sdk.biz.persona import (
     ConversationPreferences,
@@ -881,6 +881,8 @@ class MemoryGraphEdgeView(BaseModel):
     object: str = Field(min_length=1, max_length=256)
     confidence: float = Field(ge=0.0, le=1.0)
     recorded_at: str = Field(default="", max_length=64)
+    valid_from: str | None = None
+    valid_to: str | None = None
 
 
 class MemoryGraphView(BaseModel):
@@ -890,6 +892,8 @@ class MemoryGraphView(BaseModel):
     nodes: list[MemoryGraphNodeView]
     edges: list[MemoryGraphEdgeView]
     truncated: bool
+    next_cursor: str | None = Field(default=None, max_length=1024)
+    history: bool = False
 
 
 class MemoryEntryView(BaseModel):
@@ -907,6 +911,8 @@ class MemoryEntryView(BaseModel):
     wing_id: str = Field(default="", max_length=128)
     room_id: str = Field(default="", max_length=256)
     preview: str = Field(default="", max_length=4096)
+    provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
+    value: str = ""
 
 
 class MemoryDayView(BaseModel):
@@ -951,6 +957,7 @@ class MemoryExportRecordView(BaseModel):
     #: not a copy. Uncapped for the same reason — a cap made one long memory a
     #: failed export of all of them.
     value: str
+    provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
 
 
 class MemoryCopyView(BaseModel):
@@ -1132,9 +1139,9 @@ class PersonaRestoreRequest(BaseModel):
 class RecollectionView(BaseModel):
     """One thing my Eidolon remembers, as I read it.
 
-    Not the stored record. What memory holds carries wings, rooms, scores and
-    provenance — that is how it found something, not what it remembers, and I
-    asked the second question.
+    Text and its evidence travel together. Retrieval scores and internal
+    routing fields stay in the service; provenance contains known dates and
+    the user's original words.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1143,6 +1150,7 @@ class RecollectionView(BaseModel):
     #: Absent when memory does not know. Left absent rather than filled in with
     #: the time I asked.
     remembered_at: str | None = Field(default=None, max_length=64)
+    provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
 
 
 class RecollectionsView(BaseModel):
@@ -1762,6 +1770,15 @@ class ManagementBackendPort(Protocol):
         self, *, owner_id: str, companion_id: str | None
     ) -> dict: ...
 
+    async def memory_graph(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        cursor: str | None = None,
+        history: bool = False,
+    ) -> dict: ...
+
     async def memory_entries(
         self,
         *,
@@ -1773,7 +1790,12 @@ class ManagementBackendPort(Protocol):
     ) -> dict: ...
 
     async def memory_export(
-        self, *, owner_id: str, companion_id: str | None
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        wing: str | None = None,
+        room: str | None = None,
     ) -> dict: ...
 
     async def revoke_runtime_sessions(self, *, owner_id: str) -> dict: ...
@@ -2873,6 +2895,8 @@ def register_management_routes(
     @router.get("/memory/graph", response_model=MemoryGraphView)
     async def get_memory_graph(
         companion_id: str | None = None,
+        cursor: str | None = Query(default=None, max_length=1024),
+        history: bool = False,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> MemoryGraphView:
         owner_id = await authenticated_owner(authorization)
@@ -2880,6 +2904,8 @@ def register_management_routes(
             answer = await backend.memory_graph(
                 owner_id=owner_id,
                 companion_id=companion_id,
+                cursor=cursor,
+                history=history,
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
@@ -2887,6 +2913,8 @@ def register_management_routes(
             nodes=[MemoryGraphNodeView(**node) for node in answer["nodes"]],
             edges=[MemoryGraphEdgeView(**edge) for edge in answer["edges"]],
             truncated=answer["truncated"],
+            next_cursor=answer["next_cursor"],
+            history=answer["history"],
         )
 
     @router.post("/memory/forget/preview", response_model=ForgetProposalView)
@@ -3275,6 +3303,8 @@ def register_management_routes(
     @router.get("/memory/export", response_model=MemoryCopyView)
     async def get_memory_export(
         companion_id: str | None = None,
+        wing: str | None = None,
+        room: str | None = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
     ) -> MemoryCopyView:
         """A copy of everything my Eidolon remembers that I can see.
@@ -3287,7 +3317,7 @@ def register_management_routes(
         owner_id = await authenticated_owner(authorization)
         try:
             answer = await backend.memory_export(
-                owner_id=owner_id, companion_id=companion_id
+                owner_id=owner_id, companion_id=companion_id, wing=wing, room=room
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc

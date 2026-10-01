@@ -185,6 +185,27 @@ async def test_graph_uses_the_same_realm_and_companion_audience() -> None:
     assert graph.nodes[1].label == "乌龙茶"
 
 
+async def test_graph_relays_the_realms_cursor_and_history_without_changing_scope() -> (
+    None
+):
+    seen: list[httpx.Request] = []
+    client = _client(
+        [_realm()], body={**GRAPH, "history": True, "next_cursor": "next"}, seen=seen
+    )
+    graph = await client.graph(
+        owner_id=OWNER,
+        companion_id="c_mochi",
+        cursor="opaque-position",
+        history=True,
+    )
+    asked = next(r for r in seen if r.url.path == "/api/memory/v1/graph")
+    assert asked.url.params["cursor"] == "opaque-position"
+    assert asked.url.params["history"] == "true"
+    assert asked.url.params["companion_id"] == "c_mochi"
+    assert graph.next_cursor == "next"
+    assert graph.history is True
+
+
 async def test_a_published_url_outside_the_family_is_a_contract_violation() -> None:
     """Rather than composing a path onto something this Admin cannot parse."""
     client = _client([_realm(url="http://127.0.0.1:10031/legacy/search")])
@@ -239,7 +260,11 @@ async def test_a_wing_this_admin_has_never_heard_of_still_parses() -> None:
     body = {
         **BROWSE,
         "wings": [
-            {**BROWSE["wings"][0], "wing_id": "Wing_FromALaterRelease", "is_configured": False}
+            {
+                **BROWSE["wings"][0],
+                "wing_id": "Wing_FromALaterRelease",
+                "is_configured": False,
+            }
         ],
     }
     client = _client([_realm()], body=body)
@@ -335,7 +360,10 @@ async def test_a_violation_names_the_fields_and_never_their_values(caplog) -> No
     The log names which field broke and how. It never carries the value: this
     answer is what a person said.
     """
-    drifted = {**PREVIEW, "entries": [{"id": "drawer_1", "text": "我的工资是两万", "score": 1}]}
+    drifted = {
+        **PREVIEW,
+        "entries": [{"id": "drawer_1", "text": "我的工资是两万", "score": 1}],
+    }
     client = _client([_realm()], body=drifted)
 
     with caplog.at_level(logging.WARNING, logger="eidolon_admin.authority"):
@@ -464,7 +492,9 @@ async def test_an_older_page_relays_the_realms_cursor_unread() -> None:
     assert asked.url.params["cursor"] == "opaque-position"
 
 
-async def test_a_day_read_shares_the_credential_check_with_every_other_realm_read() -> None:
+async def test_a_day_read_shares_the_credential_check_with_every_other_realm_read() -> (
+    None
+):
     """All three reads go through one helper, so one of them cannot drift open."""
     client = _client([_realm()], body=DAY, service_token="")
 

@@ -443,36 +443,48 @@ class _Backend:
         self.asked.append((owner_id, companion_id))
         # Built from the internal ABI's own model, so this fake cannot answer in a
         # shape the Admin process would never produce.
-        return MemoryLibraryInternal.model_validate({
-            "audience_scope": (
-                f"companion:{companion_id}" if companion_id else "owner"
-            ),
-            "wings": [
-                {
-                    "wing_id": "Wing_Life",
-                    "display_name": "生活",
-                    "description": "",
-                    "entry_count": 2,
-                    "rooms": [
-                        {
-                            "room_id": "饮食",
-                            "entry_count": 2,
-                            "titles": ["乌龙茶"],
-                            "more": True,
-                        }
-                    ],
-                }
-            ],
-            "entry_count": 2,
-            "withheld_count": 1,
-            "truncated": False,
-        }).model_dump(mode="json")
+        return MemoryLibraryInternal.model_validate(
+            {
+                "audience_scope": (
+                    f"companion:{companion_id}" if companion_id else "owner"
+                ),
+                "wings": [
+                    {
+                        "wing_id": "Wing_Life",
+                        "display_name": "生活",
+                        "description": "",
+                        "entry_count": 2,
+                        "rooms": [
+                            {
+                                "room_id": "饮食",
+                                "entry_count": 2,
+                                "titles": ["乌龙茶"],
+                                "more": True,
+                            }
+                        ],
+                    }
+                ],
+                "entry_count": 2,
+                "withheld_count": 1,
+                "truncated": False,
+            }
+        ).model_dump(mode="json")
 
-    async def memory_graph(self, *, owner_id: str, companion_id: str | None) -> dict:
+    async def memory_graph(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        cursor: str | None = None,
+        history: bool = False,
+    ) -> dict:
         self.asked.append((owner_id, companion_id))
+        self.graph_query = (cursor, history)
         return {
             "contract_version": "1",
             "operation": "memory.graph",
+            "next_cursor": None,
+            "history": history,
             "nodes": [
                 {"node_id": "self", "label": "我", "degree": 1},
                 {"node_id": "tea", "label": "乌龙茶", "degree": 1},
@@ -730,7 +742,14 @@ class _Backend:
             ],
         }
 
-    async def memory_export(self, *, owner_id: str, companion_id: str | None) -> dict:
+    async def memory_export(
+        self,
+        *,
+        owner_id: str,
+        companion_id: str | None,
+        wing: str | None = None,
+        room: str | None = None,
+    ) -> dict:
         self.asked.append((owner_id, companion_id))
         return {
             "contract_version": "1",
@@ -1308,12 +1327,18 @@ async def test_graph_is_private_to_the_selected_companion(
         headers = await _authenticate(client)
         answered = await client.get(
             _GRAPH,
-            params={"companion_id": "companion-a"},
+            params={
+                "companion_id": "companion-a",
+                "cursor": "next-page",
+                "history": "true",
+            },
             headers=headers,
         )
 
     assert answered.status_code == 200
     assert backend.asked == [("owner-1", "companion-a")]
+    assert backend.graph_query == ("next-page", True)
+    assert answered.json()["history"] is True
     assert answered.json()["edges"][0]["predicate"] == "likes"
 
 
@@ -2449,23 +2474,37 @@ async def test_draft_preview_uses_session_owner_and_requires_auth(
     assert backend.asked[0][1]["persona"]["voice_portrait"] == "简短"
 
 
-async def test_first_companion_catalogue_requires_controller_but_not_owner(tmp_path, monkeypatch):
+async def test_first_companion_catalogue_requires_controller_but_not_owner(
+    tmp_path, monkeypatch
+):
     """Choosing the first persona grants no access to Owner-scoped routes."""
     _stub_controller(monkeypatch, owner_id=None)
 
     class CatalogueBackend(_Backend):
         async def persona_presets(self):
-            return {"presets": [{
-                "preset_id": "water", "revision": "1", "default_name": "澄澄",
-                "title": "水 · 温柔倾听", "description": "愿意听你说完",
-                "persona": {}, "preferences": {}, "examples": ["你：你好。\nTA：你好。"],
-            }]}
+            return {
+                "presets": [
+                    {
+                        "preset_id": "water",
+                        "revision": "1",
+                        "default_name": "澄澄",
+                        "title": "水 · 温柔倾听",
+                        "description": "愿意听你说完",
+                        "persona": {},
+                        "preferences": {},
+                        "examples": ["你：你好。\nTA：你好。"],
+                    }
+                ]
+            }
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_app(tmp_path, CatalogueBackend())),
         base_url="https://local.test",
     ) as client:
-        paths = ["/api/management/v1/persona-presets", "/api/management/v1/persona-authoring-template"]
+        paths = [
+            "/api/management/v1/persona-presets",
+            "/api/management/v1/persona-authoring-template",
+        ]
         for path in paths:
             assert (await client.get(path)).status_code == 401
         headers = await _authenticate(client)
@@ -2473,6 +2512,9 @@ async def test_first_companion_catalogue_requires_controller_but_not_owner(tmp_p
             response = await client.get(path, headers=headers)
             assert response.status_code == 200, response.text
         assert (await client.get(_COMPANIONS, headers=headers)).status_code == 409
-        response = await client.put(_COMPANIONS_WRITE, headers=headers,
-            json={"operation_id": _OPERATION, "display_name": "不能在初始化前另建"})
+        response = await client.put(
+            _COMPANIONS_WRITE,
+            headers=headers,
+            json={"operation_id": _OPERATION, "display_name": "不能在初始化前另建"},
+        )
         assert response.status_code == 409

@@ -444,15 +444,18 @@ export interface MemoryDayView {
 export interface MemoryEntryView {
   entry_id: string
   preview?: string
+  provenance?: MemoryProvenance
   recorded_at: string
   recorded_at_source?: string
   room_id?: string
+  value?: string
   wing_id?: string
 }
 
 export interface MemoryExportRecordView {
   entry_id: string
   memory_type?: string
+  provenance?: MemoryProvenance
   recorded_at?: string
   recorded_at_source?: string
   room_id?: string
@@ -467,6 +470,8 @@ export interface MemoryGraphEdgeView {
   predicate: string
   recorded_at?: string
   subject: string
+  valid_from?: string | null
+  valid_to?: string | null
 }
 
 export interface MemoryGraphNodeView {
@@ -478,6 +483,8 @@ export interface MemoryGraphNodeView {
 export interface MemoryGraphView {
   contract_version?: "1"
   edges: Array<MemoryGraphEdgeView>
+  history?: boolean
+  next_cursor?: string | null
   nodes: Array<MemoryGraphNodeView>
   truncated: boolean
 }
@@ -489,6 +496,13 @@ export interface MemoryLibraryView {
   truncated: boolean
   wings: Array<MemoryWingView>
   withheld_count: number
+}
+
+export interface MemoryProvenance {
+  last_modified_at?: string | null
+  learned_at?: string | null
+  occurred_at?: string | null
+  source_quote?: string
 }
 
 export interface MemoryRoomView {
@@ -694,6 +708,7 @@ export interface PlacementWrite {
 }
 
 export interface RecollectionView {
+  provenance?: MemoryProvenance
   remembered_at?: string | null
   text?: string
 }

@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from eidolon_memory_contracts.owner import MemoryProvenance
+
 from eidolon_admin_server.app.control_plane.contracts import (
     MemoryBrowse,
     MemoryEntries,
@@ -64,6 +66,8 @@ class MemoryBrowser(Protocol):
         *,
         owner_id: str,
         companion_id: str | None = None,
+        cursor: str | None = None,
+        history: bool = False,
     ) -> MemoryGraph: ...
 
     async def export(
@@ -71,6 +75,8 @@ class MemoryBrowser(Protocol):
         *,
         owner_id: str,
         companion_id: str | None = None,
+        wing: str | None = None,
+        room: str | None = None,
     ) -> MemoryExport: ...
 
 
@@ -107,6 +113,8 @@ class MemoryGraphView:
     nodes: tuple[MemoryGraphNode, ...]
     edges: tuple[MemoryGraphEdge, ...]
     truncated: bool
+    next_cursor: str | None
+    history: bool
 
 
 async def read_graph(
@@ -114,12 +122,21 @@ async def read_graph(
     owner_id: str,
     companion_id: str | None,
     memory: MemoryBrowser,
+    cursor: str | None = None,
+    history: bool = False,
 ) -> MemoryGraphView:
-    graph = await memory.graph(owner_id=owner_id, companion_id=companion_id)
+    graph = await memory.graph(
+        owner_id=owner_id,
+        companion_id=companion_id,
+        cursor=cursor,
+        history=history,
+    )
     return MemoryGraphView(
         nodes=graph.nodes,
         edges=graph.edges,
         truncated=graph.truncated,
+        next_cursor=graph.next_cursor,
+        history=graph.history,
     )
 
 
@@ -171,6 +188,8 @@ class MemoryEntryView:
     wing_id: str
     room_id: str
     preview: str
+    provenance: MemoryProvenance
+    value: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +244,8 @@ async def read_day(
                 wing_id=entry.wing_id,
                 room_id=entry.room_id,
                 preview=entry.preview,
+                provenance=entry.provenance,
+                value=entry.value,
             )
             for entry in page.entries
         ),
@@ -245,6 +266,7 @@ class MemoryExportRecordView:
     room_id: str
     memory_type: str
     value: str
+    provenance: MemoryProvenance
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +291,8 @@ async def read_copy(
     *,
     owner_id: str,
     companion_id: str | None,
+    wing: str | None = None,
+    room: str | None = None,
     memory: MemoryBrowser,
 ) -> MemoryCopy:
     """A relay, like the other two, and for the same reason.
@@ -278,7 +302,9 @@ async def read_copy(
     answer to "everything I can see" is.
     """
 
-    page = await memory.export(owner_id=owner_id, companion_id=companion_id)
+    page = await memory.export(
+        owner_id=owner_id, companion_id=companion_id, wing=wing, room=room
+    )
     return MemoryCopy(
         taken_at=page.taken_at,
         records=tuple(
@@ -290,6 +316,7 @@ async def read_copy(
                 room_id=record.room_id,
                 memory_type=record.memory_type,
                 value=record.value,
+                provenance=record.provenance,
             )
             for record in page.records
         ),
