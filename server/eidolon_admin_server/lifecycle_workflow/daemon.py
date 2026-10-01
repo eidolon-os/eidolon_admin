@@ -19,7 +19,7 @@ from ..app.control_plane.directory import SystemDirectoryClient
 from ..app.control_plane.errors import AuthorityFailure
 from ..app.control_plane.removal_intents import SqliteRemovalIntentStore
 from ..app.control_plane.service import ControlPlaneService
-from .peercred import ExactUidWorkloadAuthorizer, LinuxSoPeerCredentialAdapter
+from .peercred import ExactUidWorkloadAuthorizer, native_peer_credentials
 from .protocol import (
     LifecycleRemovalCall,
     LifecycleWorkflowProblem,
@@ -43,7 +43,7 @@ class LifecycleWorkflowDaemon:
     ) -> None:
         self._settings = settings
         self._service = service
-        self._peer_reader = peer_reader or LinuxSoPeerCredentialAdapter()
+        self._peer_reader = peer_reader or native_peer_credentials()
         self._peer_authorizer = peer_authorizer or ExactUidWorkloadAuthorizer(
             expected_uid=settings.allowed_local_api_uid
         )

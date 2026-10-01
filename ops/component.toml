@@ -19,6 +19,7 @@ kind = "service"
 exec = ".venv/bin/eidolon-bootstrapd"
 user = "eidolon-bootstrap"
 after = ["local-fs.target", "dbus.service", "bluetooth.service", "NetworkManager.service"]
+supervisord = { program = "bootstrapd", group = "bootstrap", environment = { EIDOLON_BOOTSTRAP_MODE = "development" } }
 requires = []
 # Its own account, and the only one that can read the Host identity. It also
 # needs BlueZ and NetworkManager, because commissioning a Host happens over
@@ -30,6 +31,7 @@ kind = "service"
 exec = ".venv/bin/eidolon-admin"
 user = "eidolon"
 serves = ["admin", "admin_web"]
+supervisord = { program = "admin-api", group = "admin" }
 requires = ["eidolond"]
 after = ["local-fs.target"]
 
@@ -39,6 +41,7 @@ kind = "service"
 exec = ".venv/bin/eidolon-local-api"
 user = "eidolon-local-api"
 serves = ["local_api"]
+supervisord = { program = "local-api", group = "local-api", auxiliary_programs = ["local-api-mdns"], environment = { EIDOLON_BOOTSTRAP_MODE = "development" } }
 requires = ["eidolon-bootstrapd", "eidolon-lifecycle-workflow"]
 after = ["local-fs.target"]
 # The phone's only door. Owner-scoped and Controller-authenticated; every
@@ -50,9 +53,10 @@ id = "eidolon-lifecycle-workflow"
 kind = "service"
 exec = ".venv/bin/eidolon-lifecycle-workflow"
 user = "eidolon-lifecycle"
+supervisord = { program = "lifecycle-workflow", group = "lifecycle-workflow" }
 requires = ["eidolond", "eidolon-admin"]
 after = ["local-fs.target"]
-# Owns only durable RemovalIntent and accepts only the removal RPC. Linux peer
+# Owns only durable RemovalIntent and accepts only the removal RPC. Native kernel peer
 # credentials, not fields in that RPC, authenticate the Local workload.
 
 [ports.admin]

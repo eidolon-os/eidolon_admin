@@ -1,4 +1,4 @@
-"""Linux-only proof that Lifecycle Workflow consumes kernel peer identity."""
+"""Native proof that Lifecycle Workflow consumes kernel peer identity."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from eidolon_admin_server.lifecycle_workflow.daemon import (
     _unlink_owned_socket,
 )
 from eidolon_admin_server.lifecycle_workflow.peercred import (
-    LinuxSoPeerCredentialAdapter,
+    native_peer_credentials,
 )
 from eidolon_admin_server.lifecycle_workflow.protocol import (
     LifecycleRemovalCall,
@@ -52,8 +52,8 @@ pytestmark = [
     pytest.mark.asyncio,
     pytest.mark.integration,
     pytest.mark.skipif(
-        sys.platform != "linux",
-        reason="requires Linux kernel SO_PEERCRED; a Darwin skip is not HIL evidence",
+        sys.platform not in ("linux", "darwin"),
+        reason="requires a supported native Unix peer identity adapter",
     ),
 ]
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -215,10 +215,10 @@ async def _exchange_from_uid(
     return LifecycleWorkflowReply.model_validate(await read_frame(reader))
 
 
-async def test_real_af_unix_so_peercred_reports_the_kernel_process_identity() -> None:
+async def test_real_af_unix_native_peercred_reports_the_kernel_process_identity() -> None:
     left, right = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        credential = LinuxSoPeerCredentialAdapter().read(left)
+        credential = native_peer_credentials().read(left)
     finally:
         left.close()
         right.close()
@@ -229,7 +229,7 @@ async def test_real_af_unix_so_peercred_reports_the_kernel_process_identity() ->
 
 
 @pytest.mark.parametrize("allowed", [True, False])
-async def test_real_so_peercred_controls_the_workflow_before_request_parsing(
+async def test_real_native_peercred_controls_the_workflow_before_request_parsing(
     allowed: bool,
 ) -> None:
     temporary = tempfile.TemporaryDirectory(prefix="elw-linux-", dir="/tmp")
@@ -298,7 +298,7 @@ async def test_real_distinct_uids_share_socket_acl_but_only_local_uid_is_authori
     assert service.calls[0]["workload_principal_id"] == "eidolon-local-api"
 
 
-async def test_real_linux_socket_path_refuses_live_and_replaces_stale() -> None:
+async def test_real_native_socket_path_refuses_live_and_replaces_stale() -> None:
     temporary = tempfile.TemporaryDirectory(prefix="elw-linux-path-", dir="/tmp")
     root = Path(temporary.name)
     os.chown(root, os.geteuid(), os.getegid())

@@ -27,7 +27,7 @@ from ..app.control_plane.contracts import (
 )
 from ..app.control_plane.errors import AuthorityFailure
 from .daemon import _bind_socket, _unlink_owned_socket
-from .peercred import ExactUidWorkloadAuthorizer, LinuxSoPeerCredentialAdapter
+from .peercred import ExactUidWorkloadAuthorizer, native_peer_credentials
 from .protocol import read_frame, write_frame
 
 
@@ -95,7 +95,7 @@ class RemovalCapabilityBroker:
     ) -> None:
         self._path = socket_path
         self._service = service
-        self._reader = LinuxSoPeerCredentialAdapter()
+        self._reader = native_peer_credentials()
         self._authorizer = ExactUidWorkloadAuthorizer(
             expected_uid=allowed_workflow_uid,
             principal_id="eidolon-lifecycle-workflow",
