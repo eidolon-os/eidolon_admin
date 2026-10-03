@@ -2124,6 +2124,64 @@ class HubManagementClient:
         return result
 
 
+class HubSmartHomeClient:
+    """Hub's internal smart-home integration API, relayed for one Owner.
+
+    Provider accounts (bind, list, unbind, sync) and the observed snapshot. The
+    credential is Hub's internal smart-home token; the Owner scope travels in
+    the body, as it does for the Agent and the Channel.
+    """
+
+    def __init__(
+        self,
+        *,
+        directory: SystemDirectoryClient,
+        client: httpx.AsyncClient,
+        service_token: str,
+        timeout_seconds: float,
+    ) -> None:
+        self._directory = directory
+        self._client = client
+        self._token = service_token
+        self._timeout = timeout_seconds
+
+    @property
+    def has_credential(self) -> bool:
+        return bool(self._token)
+
+    async def _base_url(self) -> str:
+        endpoint = await self._directory.resolve(
+            service_id="hub",
+            endpoint_id="device-authority.http",
+            required_contract=HUB_CONTRACT,
+        )
+        return endpoint.address.rstrip("/")
+
+    async def call(self, owner_id: str, path: str, body: dict | None = None) -> dict:
+        if not self._token:
+            raise AuthorityFailure(
+                "hub", "unauthorized", "Hub smart-home credential was not configured", 503
+            )
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{await self._base_url()}/api/smarthome/v1/{path}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json={"owner_id": owner_id, **(body or {})},
+        )
+        if not 200 <= response.status_code < 300:
+            _raise_status("hub", response)
+        try:
+            value = response.json()
+        except ValueError as exc:
+            raise _contract_violation("hub", "Hub smart-home answer was not JSON") from exc
+        if not isinstance(value, dict):
+            raise _contract_violation("hub", "Hub smart-home answer was not an object")
+        return value
+
+
 class KernelMountClient:
     def __init__(
         self,

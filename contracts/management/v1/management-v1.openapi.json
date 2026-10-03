@@ -1,6 +1,180 @@
 {
   "components": {
     "schemas": {
+      "AccountBind": {
+        "additionalProperties": false,
+        "description": "What the phone sends to bind an ecosystem account; the fields follow the Provider's AccountSchema.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "fields": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "kind": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "AccountBind",
+        "type": "object"
+      },
+      "AccountChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "AccountChoice",
+        "type": "object"
+      },
+      "AccountField": {
+        "additionalProperties": false,
+        "description": "One thing a person fills in to bind a Provider account; declared by the adapter.",
+        "properties": {
+          "choices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Choices",
+            "type": "array"
+          },
+          "kind": {
+            "default": "text",
+            "enum": [
+              "text",
+              "secret",
+              "url",
+              "phone",
+              "choice"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "label"
+        ],
+        "title": "AccountField",
+        "type": "object"
+      },
+      "AccountList": {
+        "additionalProperties": false,
+        "properties": {
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderAccount"
+            },
+            "title": "Accounts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "accounts"
+        ],
+        "title": "AccountList",
+        "type": "object"
+      },
+      "AccountRemoved": {
+        "additionalProperties": false,
+        "properties": {
+          "removed": {
+            "title": "Removed",
+            "type": "string"
+          }
+        },
+        "required": [
+          "removed"
+        ],
+        "title": "AccountRemoved",
+        "type": "object"
+      },
+      "AccountSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AccountField"
+            },
+            "maxItems": 16,
+            "title": "Fields",
+            "type": "array"
+          },
+          "kind": {
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label"
+        ],
+        "title": "AccountSchema",
+        "type": "object"
+      },
       "ActivityMomentView": {
         "additionalProperties": false,
         "description": "One thing that happened to my things.\n\nFacts and names, not a sentence: the wording belongs in the client, next to\nthe rest of its language, so a Host does not have to know Chinese to be able\nto say that an Eidolon was put away.",
@@ -1127,12 +1301,41 @@
             "title": "Device Id",
             "type": "string"
           },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Limits"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "maxLength": 32,
             "minLength": 1,
             "pattern": "\\S",
             "title": "Name",
             "type": "string"
+          },
+          "orphaned": {
+            "default": false,
+            "title": "Orphaned",
+            "type": "boolean"
+          },
+          "overrides": {
+            "default": [],
+            "items": {
+              "enum": [
+                "name",
+                "aliases",
+                "area_id"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Overrides",
+            "type": "array"
           },
           "provider": {
             "default": "virtual",
@@ -1155,6 +1358,54 @@
               }
             ],
             "title": "Provider Ref"
+          },
+          "source": {
+            "default": "manual",
+            "enum": [
+              "manual",
+              "imported"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "synced_at_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Synced At Ms"
+          },
+          "traits": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "on_off",
+                    "level",
+                    "thermostat",
+                    "fan_speed",
+                    "position",
+                    "lock",
+                    "operational",
+                    "volume",
+                    "measure"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 9,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traits"
           },
           "type": {
             "enum": [
@@ -1431,6 +1682,44 @@
           "conditions"
         ],
         "title": "DeviceRemovalView",
+        "type": "object"
+      },
+      "DeviceStatusView": {
+        "additionalProperties": false,
+        "properties": {
+          "online": {
+            "title": "Online",
+            "type": "boolean"
+          },
+          "state": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "State",
+            "type": "object"
+          }
+        },
+        "required": [
+          "online",
+          "state"
+        ],
+        "title": "DeviceStatusView",
         "type": "object"
       },
       "DeviceView": {
@@ -1872,6 +2161,28 @@
           "put_away"
         ],
         "title": "HomeCountsView",
+        "type": "object"
+      },
+      "HomeSnapshotView": {
+        "additionalProperties": false,
+        "description": "The registry with what Hub has observed of each device.",
+        "properties": {
+          "registry": {
+            "$ref": "#/components/schemas/Registry"
+          },
+          "status": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DeviceStatusView"
+            },
+            "title": "Status",
+            "type": "object"
+          }
+        },
+        "required": [
+          "registry",
+          "status"
+        ],
+        "title": "HomeSnapshotView",
         "type": "object"
       },
       "HomeView": {
@@ -2352,6 +2663,50 @@
           }
         },
         "title": "InputSelection",
+        "type": "object"
+      },
+      "Limits": {
+        "additionalProperties": false,
+        "description": "Bounds a real device declares that are tighter than, or differ from, its type's.",
+        "properties": {
+          "modes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modes"
+          },
+          "target_c": {
+            "anyOf": [
+              {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target C"
+          }
+        },
+        "title": "Limits",
         "type": "object"
       },
       "ManagementContextView": {
@@ -4112,6 +4467,98 @@
         "title": "PlacementWrite",
         "type": "object"
       },
+      "ProviderAccount": {
+        "additionalProperties": false,
+        "description": "A bound account, without any credential. ``pending`` carries what is still to choose.",
+        "properties": {
+          "account_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "choices": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AccountChoice"
+            },
+            "maxItems": 32,
+            "title": "Choices",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "kind": {
+            "pattern": "^[a-z][a-z0-9_]{0,31}$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "last_seen_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen Ms"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "connected",
+              "degraded",
+              "revoked"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "kind",
+          "label",
+          "status"
+        ],
+        "title": "ProviderAccount",
+        "type": "object"
+      },
+      "ProviderList": {
+        "additionalProperties": false,
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/AccountSchema"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers"
+        ],
+        "title": "ProviderList",
+        "type": "object"
+      },
       "RecollectionView": {
         "additionalProperties": false,
         "description": "One thing my Eidolon remembers, as I read it.\n\nText and its evidence travel together. Retrieval scores and internal\nrouting fields stay in the service; provenance contains known dates and\nthe user's original words.",
@@ -4459,13 +4906,14 @@
       },
       "Scene": {
         "additionalProperties": false,
+        "description": "Either Eidolon's own list of actions, or a scene a Provider runs as a whole.",
         "properties": {
           "actions": {
+            "default": [],
             "items": {
               "$ref": "#/components/schemas/Command"
             },
             "maxItems": 32,
-            "minItems": 1,
             "title": "Actions",
             "type": "array"
           },
@@ -4475,6 +4923,34 @@
             "pattern": "\\S",
             "title": "Name",
             "type": "string"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "provider_ref": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9._:-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Ref"
           },
           "scene_id": {
             "maxLength": 128,
@@ -4486,8 +4962,7 @@
         },
         "required": [
           "scene_id",
-          "name",
-          "actions"
+          "name"
         ],
         "title": "Scene",
         "type": "object"
@@ -4610,6 +5085,71 @@
           "role"
         ],
         "title": "SpokenMessageView",
+        "type": "object"
+      },
+      "SyncReport": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "orphaned": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Orphaned",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/SyncSkipped"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "updated": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Updated",
+            "type": "array"
+          }
+        },
+        "required": [
+          "added",
+          "updated",
+          "orphaned",
+          "skipped",
+          "revision"
+        ],
+        "title": "SyncReport",
+        "type": "object"
+      },
+      "SyncSkipped": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "reason"
+        ],
+        "title": "SyncSkipped",
         "type": "object"
       },
       "TaskPageView": {
@@ -8954,6 +9494,230 @@
         ]
       }
     },
+    "/api/management/v1/smarthome/accounts": {
+      "get": {
+        "operationId": "list_accounts_api_management_v1_smarthome_accounts_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Accounts",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/smarthome/accounts/bind": {
+      "post": {
+        "operationId": "bind_account_api_management_v1_smarthome_accounts_bind_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountBind"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderAccount"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Bind Account",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/smarthome/accounts/{account_id}/sync": {
+      "post": {
+        "operationId": "sync_account_api_management_v1_smarthome_accounts__account_id__sync_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Sync Account",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/smarthome/accounts/{account_id}/unbind": {
+      "post": {
+        "operationId": "unbind_account_api_management_v1_smarthome_accounts__account_id__unbind_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRemoved"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unbind Account",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/smarthome/areas": {
       "post": {
         "operationId": "create_area_api_management_v1_smarthome_areas_post",
@@ -9474,6 +10238,55 @@
         ]
       }
     },
+    "/api/management/v1/smarthome/providers": {
+      "get": {
+        "operationId": "list_providers_api_management_v1_smarthome_providers_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Providers",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/smarthome/registry": {
       "get": {
         "operationId": "get_registry_api_management_v1_smarthome_registry_get",
@@ -9770,6 +10583,55 @@
           }
         },
         "summary": "Update Scene",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/smarthome/snapshot": {
+      "get": {
+        "operationId": "home_snapshot_api_management_v1_smarthome_snapshot_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeSnapshotView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Home Snapshot",
         "tags": [
           "management"
         ]

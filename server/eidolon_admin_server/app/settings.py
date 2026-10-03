@@ -213,6 +213,9 @@ class Settings(BaseSettings):
     # Installation secret shared only with Hub's Owner management verifier.
     # It is used to mint short-lived Admin Device-approval credentials and is
     # never exposed through Admin or the Local API.
+    # Hub's internal smart-home credential (the one the Agent and Channel hold),
+    # for relaying Provider account binding and import on the Owner's behalf.
+    hub_smarthome_token: str = ""
     hub_management_jwt_secret: SecretStr = SecretStr("")
     hub_management_jwt_ttl_seconds: int = Field(default=60, ge=30, le=300)
     removal_capability_socket: Path | None = None

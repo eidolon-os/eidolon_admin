@@ -6,6 +6,39 @@
 // No operation takes an owner_id: the Owner comes from the authenticated
 // Controller session, so it is not expressible from a client.
 
+export interface AccountBind {
+  account_id?: string | null
+  fields?: Record<string, string>
+  kind: string
+}
+
+export interface AccountChoice {
+  label: string
+  value: string
+}
+
+export interface AccountField {
+  choices?: Array<string>
+  kind?: "text" | "secret" | "url" | "phone" | "choice"
+  label: string
+  name: string
+  required?: boolean
+}
+
+export interface AccountList {
+  accounts: Array<ProviderAccount>
+}
+
+export interface AccountRemoved {
+  removed: string
+}
+
+export interface AccountSchema {
+  fields?: Array<AccountField>
+  kind: string
+  label: string
+}
+
 export interface ActivityMomentView {
   action: string
   detail?: Record<string, string>
@@ -192,9 +225,15 @@ export interface Device {
   aliases?: Array<string>
   area_id?: string | null
   device_id: string
+  limits?: Limits | null
   name: string
+  orphaned?: boolean
+  overrides?: Array<"name" | "aliases" | "area_id">
   provider?: string
   provider_ref?: string | null
+  source?: "manual" | "imported"
+  synced_at_ms?: number | null
+  traits?: Array<"on_off" | "level" | "thermostat" | "fan_speed" | "position" | "lock" | "operational" | "volume" | "measure"> | null
   type: "light" | "switch" | "climate" | "water_heater" | "cover" | "fan" | "media" | "appliance" | "lock" | "camera" | "sensor"
 }
 
@@ -241,6 +280,11 @@ export interface DeviceRemovalView {
   device_id: string
   outcome: string
   request_id: string
+}
+
+export interface DeviceStatusView {
+  online: boolean
+  state: Record<string, boolean | number | number | string | null>
 }
 
 export interface DeviceView {
@@ -322,6 +366,11 @@ export interface HomeCountsView {
   ready: number
   total: number
   waiting: number
+}
+
+export interface HomeSnapshotView {
+  registry: Registry
+  status: Record<string, DeviceStatusView>
 }
 
 export interface HomeView {
@@ -410,6 +459,11 @@ export interface HostVitalsView {
 
 export interface InputSelection {
   microphone?: boolean
+}
+
+export interface Limits {
+  modes?: Array<string> | null
+  target_c?: Array<unknown> | null
 }
 
 export interface ManagementContextView {
@@ -707,6 +761,20 @@ export interface PlacementWrite {
   expected_revision: number
 }
 
+export interface ProviderAccount {
+  account_id: string
+  choices?: Array<AccountChoice>
+  error?: string | null
+  kind: string
+  label: string
+  last_seen_ms?: number | null
+  status: "pending" | "connected" | "degraded" | "revoked"
+}
+
+export interface ProviderList {
+  providers: Array<AccountSchema>
+}
+
 export interface RecollectionView {
   provenance?: MemoryProvenance
   remembered_at?: string | null
@@ -771,8 +839,10 @@ export interface RoleGroupStatus {
 }
 
 export interface Scene {
-  actions: Array<Command>
+  actions?: Array<Command>
   name: string
+  provider?: string | null
+  provider_ref?: string | null
   scene_id: string
 }
 
@@ -799,6 +869,19 @@ export interface SharedStart {
 export interface SpokenMessageView {
   role: string
   text?: string
+}
+
+export interface SyncReport {
+  added: Array<string>
+  orphaned: Array<string>
+  revision: number
+  skipped: Array<SyncSkipped>
+  updated: Array<string>
+}
+
+export interface SyncSkipped {
+  reason: string
+  ref: string
 }
 
 export interface TaskPageView {
@@ -918,6 +1001,10 @@ export interface ManagementResponses {
   'GET /api/management/v1/session-traces/{session_id}': unknown
   'POST /api/management/v1/shared-sessions/close': unknown
   'POST /api/management/v1/shared-sessions/open': unknown
+  'GET /api/management/v1/smarthome/accounts': AccountList
+  'POST /api/management/v1/smarthome/accounts/bind': ProviderAccount
+  'POST /api/management/v1/smarthome/accounts/{account_id}/sync': SyncReport
+  'POST /api/management/v1/smarthome/accounts/{account_id}/unbind': AccountRemoved
   'POST /api/management/v1/smarthome/areas': Registry
   'DELETE /api/management/v1/smarthome/areas/{area_id}': Registry
   'PUT /api/management/v1/smarthome/areas/{area_id}': Registry
@@ -926,9 +1013,11 @@ export interface ManagementResponses {
   'PUT /api/management/v1/smarthome/devices/{device_id}': Registry
   'DELETE /api/management/v1/smarthome/placements/{device_ref}': Registry
   'PUT /api/management/v1/smarthome/placements/{device_ref}': Registry
+  'GET /api/management/v1/smarthome/providers': ProviderList
   'GET /api/management/v1/smarthome/registry': Registry
   'POST /api/management/v1/smarthome/samples/apartment': Registry
   'POST /api/management/v1/smarthome/scenes': Registry
   'DELETE /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'PUT /api/management/v1/smarthome/scenes/{scene_id}': Registry
+  'GET /api/management/v1/smarthome/snapshot': HomeSnapshotView
 }

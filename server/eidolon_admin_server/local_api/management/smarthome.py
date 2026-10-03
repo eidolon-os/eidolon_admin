@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from eidolon_sdk.biz.smarthome import Registry
+from eidolon_sdk.biz.smarthome import AccountSchema, ProviderAccount, Registry
 from fastapi import APIRouter, Header, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 from eidolon_admin_server.app.management.smarthome_router import (
     AreaWrite,
@@ -86,4 +87,98 @@ def register_smarthome_routes(app, *, backend, authenticated_owner) -> None:
     async def clear_placement(device_ref: str, expected_revision: int = Query(ge=0), authorization: str | None = Header(default=None, alias="Authorization")) -> Registry:
         return await relay(authorization, method="DELETE", resource=f"placements/{quote(device_ref, safe='')}", expected_revision=expected_revision)
 
+    # --- Provider accounts (bind an ecosystem, import its devices) ---------------
+
+    async def relay_accounts(authorization, *, method="GET", resource, payload=None) -> dict:
+        owner_id = await authenticated_owner(authorization)
+        try:
+            return await backend.smarthome_accounts(
+                owner_id=owner_id, method=method, resource=resource, payload=payload
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+
+    @router.get("/providers", response_model=ProviderList)
+    async def list_providers(authorization: str | None = Header(default=None, alias="Authorization")) -> ProviderList:
+        return ProviderList.model_validate(await relay_accounts(authorization, resource="providers"))
+
+    @router.get("/accounts", response_model=AccountList)
+    async def list_accounts(authorization: str | None = Header(default=None, alias="Authorization")) -> AccountList:
+        return AccountList.model_validate(await relay_accounts(authorization, resource="accounts"))
+
+    @router.post("/accounts/bind", response_model=ProviderAccount)
+    async def bind_account(body: AccountBind, authorization: str | None = Header(default=None, alias="Authorization")) -> ProviderAccount:
+        return ProviderAccount.model_validate(
+            await relay_accounts(authorization, method="POST", resource="accounts/bind", payload=body.model_dump(mode="json"))
+        )
+
+    @router.post("/accounts/{account_id}/unbind", response_model=AccountRemoved)
+    async def unbind_account(account_id: str, authorization: str | None = Header(default=None, alias="Authorization")) -> AccountRemoved:
+        return AccountRemoved.model_validate(
+            await relay_accounts(authorization, method="POST", resource=f"accounts/{quote(account_id, safe='')}/unbind")
+        )
+
+    @router.post("/accounts/{account_id}/sync", response_model=SyncReport)
+    async def sync_account(account_id: str, authorization: str | None = Header(default=None, alias="Authorization")) -> SyncReport:
+        return SyncReport.model_validate(
+            await relay_accounts(authorization, method="POST", resource=f"accounts/{quote(account_id, safe='')}/sync")
+        )
+
+    @router.get("/snapshot", response_model=HomeSnapshotView)
+    async def home_snapshot(authorization: str | None = Header(default=None, alias="Authorization")) -> HomeSnapshotView:
+        return HomeSnapshotView.model_validate(await relay_accounts(authorization, resource="snapshot"))
+
     app.include_router(router)
+
+
+class ProviderList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    providers: list[AccountSchema]
+
+
+class AccountList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    accounts: list[ProviderAccount]
+
+
+class AccountBind(BaseModel):
+    """What the phone sends to bind an ecosystem account; the fields follow the Provider's AccountSchema."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(min_length=1, max_length=32)
+    account_id: str | None = Field(default=None, min_length=1, max_length=128)
+    fields: dict[str, str] = Field(default_factory=dict)
+
+
+class AccountRemoved(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    removed: str
+
+
+class SyncSkipped(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ref: str
+    reason: str
+
+
+class SyncReport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    added: list[str]
+    updated: list[str]
+    orphaned: list[str]
+    skipped: list[SyncSkipped]
+    revision: int
+
+
+class DeviceStatusView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    online: bool
+    state: dict[str, bool | int | float | str | None]
+
+
+class HomeSnapshotView(BaseModel):
+    """The registry with what Hub has observed of each device."""
+
+    model_config = ConfigDict(extra="forbid")
+    registry: Registry
+    status: dict[str, DeviceStatusView]

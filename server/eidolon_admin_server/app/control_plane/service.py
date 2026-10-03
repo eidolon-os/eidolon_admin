@@ -23,6 +23,7 @@ from .clients import (
     DataAuthorityClient,
     DataWorkspaceAuthorityClient,
     HubManagementClient,
+    HubSmartHomeClient,
     KernelMountClient,
     AgentActivityClient,
     MemoryRecollectionsClient,
@@ -99,6 +100,7 @@ class ControlPlaneService:
         memory: MemoryRecollectionsClient,
         activity: AgentActivityClient,
         memory_supervisor: MemorySupervisorClient | None = None,
+        smarthome: HubSmartHomeClient | None = None,
         hub_credentials: HubAdminCredentialIssuer | None = None,
         commissioning_vouchers: CommissioningVoucherIssuer | None = None,
         admission_intents=None,
@@ -113,6 +115,7 @@ class ControlPlaneService:
         self.memory = memory
         self.activity = activity
         self.memory_supervisor = memory_supervisor
+        self.smarthome = smarthome
         self.hub_credentials = hub_credentials
         self.commissioning_vouchers = commissioning_vouchers
         self.admission_intents = (
@@ -203,6 +206,12 @@ class ControlPlaneService:
             memory_supervisor=MemorySupervisorClient(
                 base_url=settings.memory_supervisor_url,
                 client=http_client,
+                timeout_seconds=settings.authority_timeout_seconds,
+            ),
+            smarthome=HubSmartHomeClient(
+                directory=directory,
+                client=http_client,
+                service_token=settings.hub_smarthome_token,
                 timeout_seconds=settings.authority_timeout_seconds,
             ),
             hub_credentials=HubAdminCredentialIssuer(

@@ -109,6 +109,16 @@ class AdminManagementClient:
             payload,
         )
 
+    async def smarthome_accounts(
+        self, *, owner_id: str, method: str = "GET", resource: str, payload: dict | None = None
+    ) -> dict:
+        return await self._call(
+            method,
+            f"/api/internal/v1/management/smarthome/{resource}",
+            {"owner_id": owner_id},
+            payload,
+        )
+
     async def context(self, *, owner_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/context", {"owner_id": owner_id}

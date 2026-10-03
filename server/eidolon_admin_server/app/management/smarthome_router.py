@@ -119,3 +119,53 @@ async def set_placement(request: Request, owner_id: str, device_ref: str, body: 
 @router.delete("/placements/{device_ref}", response_model=Registry)
 async def clear_placement(request: Request, owner_id: str, device_ref: str, expected_revision: int = Query(ge=0)) -> Registry:
     return await _registry(request, owner_id, method="DELETE", resource=f"placements/{quote(device_ref, safe='')}", expected_revision=expected_revision)
+
+
+# --- Provider accounts: relayed to Hub, which holds the adapters and the vault -----
+
+
+class AccountBind(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(min_length=1, max_length=32)
+    account_id: str | None = Field(default=None, min_length=1, max_length=128)
+    fields: dict[str, str] = Field(default_factory=dict)
+
+
+def _smarthome(request: Request):
+    client = request.app.state.control_plane.smarthome
+    if client is None:
+        from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
+
+        raise AuthorityFailure("hub", "unauthorized", "Hub smart-home credential was not configured", 503)
+    return client
+
+
+@router.get("/providers")
+async def providers(request: Request, owner_id: str) -> dict:
+    return await _smarthome(request).call(owner_id, "providers")
+
+
+@router.get("/accounts")
+async def accounts(request: Request, owner_id: str) -> dict:
+    return await _smarthome(request).call(owner_id, "accounts")
+
+
+@router.post("/accounts/bind")
+async def bind_account(request: Request, owner_id: str, body: AccountBind) -> dict:
+    return await _smarthome(request).call(owner_id, "accounts/bind", body.model_dump(mode="json"))
+
+
+@router.post("/accounts/{account_id}/unbind")
+async def unbind_account(request: Request, owner_id: str, account_id: str) -> dict:
+    return await _smarthome(request).call(owner_id, f"accounts/{quote(account_id, safe='')}/unbind")
+
+
+@router.post("/accounts/{account_id}/sync")
+async def sync_account(request: Request, owner_id: str, account_id: str) -> dict:
+    return await _smarthome(request).call(owner_id, f"accounts/{quote(account_id, safe='')}/sync")
+
+
+@router.get("/snapshot")
+async def snapshot(request: Request, owner_id: str) -> dict:
+    return await _smarthome(request).call(owner_id, "snapshot")
+
