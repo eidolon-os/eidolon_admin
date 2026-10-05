@@ -399,3 +399,34 @@ def test_an_undeclared_claim_window_is_empty_not_invalid() -> None:
 
     with pytest.raises(BootstrapConfigurationError, match="on_demand or always_open"):
         load_bootstrap_settings({**base, "EIDOLON_BOOTSTRAP_CLAIM_WINDOW": "always"})
+
+
+def test_fixed_development_code_admits_multiple_admins_across_restart(tmp_path, monkeypatch):
+    """Independent phones reuse the standing code; existing grants survive."""
+    import asyncio
+    from eidolon_admin_server.bootstrap.adapters.persistence.sqlite import SQLiteBootstrapStateStore
+    from eidolon_admin_server.bootstrap.domain import ControllerRole
+
+    monkeypatch.setattr(__import__(__name__, fromlist=["FACTORY_CODE"]), "FACTORY_CODE", "99999990")
+    settings = _always_open(tmp_path)
+    _write_factory_code(settings, FACTORY_CODE)
+    store = SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
+    service, _ = _service(settings, store)
+    service.reconcile_network_state(NetworkState.CONNECTED)
+    for index in range(3):
+        if index == 2:
+            store.connection.close()
+            store = SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
+            service, _ = _service(settings, store)
+        session = CommissioningProtocolSession(CommissioningService(
+            store=store, network=InMemoryNetworkProvisioning(),
+            on_claimed=service.reopen_standing_claim_window,
+        ))
+        result = asyncio.run(_claim(session, service, f"{index + 1:08d}", f"{index + 4:08d}"))
+        assert result["ok"] is True
+        grants = store.list_controllers()
+        assert len(grants) == index + 1
+        assert len({grant.public_key for grant in grants}) == index + 1
+        assert all(grant.role is ControllerRole.HOST_ADMIN and grant.revoked_at is None for grant in grants)
+        assert service.commissioning_endpoint()["setup_session"] is not None
+    store.connection.close()
