@@ -69,10 +69,6 @@ class CommissioningProtocolSession:
                 )
                 result = self._service.status(self._authorization)
             elif operation == "controller.challenge":
-                if self._authorization is not None:
-                    raise CommissioningRequestRejected(
-                        "operation_conflict", "Session is already authenticated"
-                    )
                 controller_id = payload.get("controller_id")
                 authorization = self._service.authorize_controller(controller_id)
                 challenge = (
@@ -95,10 +91,6 @@ class CommissioningProtocolSession:
                     "reset_epoch": reset_epoch,
                 }
             elif operation == "controller.authenticate":
-                if self._authorization is not None:
-                    raise CommissioningRequestRejected(
-                        "operation_conflict", "Session is already authenticated"
-                    )
                 self._authorization = self._authenticate_controller(payload)
                 result = self._service.status(self._authorization)
             else:

@@ -24,7 +24,7 @@ from ...ports.state_store import (
 )
 
 
-BOOTSTRAP_SCHEMA_VERSION = 9
+BOOTSTRAP_SCHEMA_VERSION = 10
 _SCHEMA_VERSION = BOOTSTRAP_SCHEMA_VERSION
 
 #: A Grant belongs to one reset epoch, so its identity carries the epoch.
@@ -119,6 +119,7 @@ class SQLiteBootstrapStateStore:
                 self._migrate_v6_to_v7,
                 self._migrate_v7_to_v8,
                 self._migrate_v8_to_v9,
+                self._migrate_v9_to_v10,
             )
             for step in ladder[version - 1 :]:
                 step()
@@ -178,6 +179,13 @@ class SQLiteBootstrapStateStore:
                 NetworkState.UNCONFIGURED.value,
                 now,
             ),
+        )
+
+    def _migrate_v9_to_v10(self) -> None:
+        """Normalize operation history without changing grants or Host state."""
+        self.connection.execute(
+            "UPDATE bootstrap_operations SET operation_type = 'change_network' "
+            "WHERE operation_type = 'initial_network'"
         )
 
     def _migrate_v1_to_v2(self) -> None:
@@ -452,7 +460,10 @@ class SQLiteBootstrapStateStore:
             if session is not None and session["consumed_at"] is not None:
                 if session["claimed_controller_id"] == grant.controller_id:
                     existing = self.get_controller(grant.controller_id)
-                    if existing is not None and existing.public_key == grant.public_key:
+                    if (existing is not None and existing.public_key == grant.public_key
+                            and existing.revoked_at is None
+                            and session["secret_hash"] == secret_hash
+                            and existing.created_at <= session["consumed_at"]):
                         return existing
                 raise BootstrapStateConflict("commissioning session is unavailable")
             self.authorize_commissioning_session(
@@ -461,12 +472,7 @@ class SQLiteBootstrapStateStore:
                 now=now,
             )
             state = self.get_state()
-            # A claimed Host may still admit another phone. The session is the
-            # authority — one-time, expiring, and minted only by someone who
-            # already holds this Host — so refusing on claim_state alone meant
-            # a second phone could be added no way but by revoking the first.
-            if state.network_state is not NetworkState.CONNECTED:
-                raise BootstrapStateConflict("network must be connected before claim")
+            # A valid enrollment window adds a peer independently of networking.
             if grant.reset_epoch != state.reset_epoch:
                 raise BootstrapStateConflict(
                     "controller reset epoch does not match host"
@@ -492,6 +498,11 @@ class SQLiteBootstrapStateStore:
                     controller_id, public_key, public_key_fingerprint, role,
                     display_name, platform, reset_epoch, created_at, revoked_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(controller_id, reset_epoch) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    platform = excluded.platform,
+                    created_at = excluded.created_at,
+                    revoked_at = NULL
                 """,
                 (
                     grant.controller_id,
@@ -545,11 +556,11 @@ class SQLiteBootstrapStateStore:
         if row is None:
             return None
         held = self._controller_from_row(row)
-        if held.public_key != grant.public_key or held.revoked_at is not None:
+        if held.public_key != grant.public_key:
             raise BootstrapStateConflict(
                 "another Controller already holds this identity on this Host"
             )
-        return held
+        return held if held.revoked_at is None else None
 
     def get_controller(self, controller_id: str) -> ControllerGrant | None:
         row = self.connection.execute(

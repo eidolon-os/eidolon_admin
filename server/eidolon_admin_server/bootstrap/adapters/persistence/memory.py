@@ -136,6 +136,12 @@ class InMemoryBootstrapStateStore:
                 claimed_controller_id == grant.controller_id
                 and existing is not None
                 and existing.public_key == grant.public_key
+                and existing.revoked_at is None
+                and any(metadata.session_id == session_id
+                        and stored_hash == secret_hash
+                        and metadata.consumed_at is not None
+                        and existing.created_at <= metadata.consumed_at
+                        for metadata, stored_hash in self._sessions)
             ):
                 return existing
             raise BootstrapStateConflict("commissioning session is unavailable")
@@ -145,8 +151,6 @@ class InMemoryBootstrapStateStore:
             now=now,
         )
         state = self.get_state()
-        if state.network_state is not NetworkState.CONNECTED:
-            raise BootstrapStateConflict("network must be connected before claim")
         if grant.reset_epoch != state.reset_epoch:
             raise BootstrapStateConflict("controller reset epoch does not match host")
         held = self._grant_in_epoch(grant, state.reset_epoch)
@@ -196,11 +200,11 @@ class InMemoryBootstrapStateStore:
             )
         if held is None:
             return None
-        if held.public_key != grant.public_key or held.revoked_at is not None:
+        if held.public_key != grant.public_key:
             raise BootstrapStateConflict(
                 "another Controller already holds this identity on this Host"
             )
-        return held
+        return held if held.revoked_at is None else None
 
     def get_controller(self, controller_id: str) -> ControllerGrant | None:
         self._require_open()

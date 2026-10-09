@@ -778,16 +778,8 @@ def test_a_claim_never_overwrites_a_real_adapter_s_network_state(
 ) -> None:
     """Only a simulated adapter lets a request publish a network fact.
 
-    The LAN claim path published CONNECTED unconditionally, because the only
-    Host that could reach it had a simulated adapter with no OS state to
-    discover. On a Host whose adapter observes the real link that would let a
-    caller's claim overwrite a fact it holds no authority over — so the store's
-    own refusal stands, and it is the correct answer.
-
-    Which of the two this is comes from the adapter, not from configuration.
-    This test used to name ``NETWORK_MANAGER`` in settings while injecting a
-    simulator, describing a Host that cannot exist; the adapter that will
-    actually answer is the one asked.
+    Grant enrollment does not require or mutate a network fact. A Host reached
+    over another interface may still report Wi-Fi unconfigured.
     """
 
     class ObservingNetwork(InMemoryNetworkProvisioning):
@@ -818,13 +810,11 @@ def test_a_claim_never_overwrites_a_real_adapter_s_network_state(
         issued = service.issue_setup_code(300)
         assert service.health()["state"]["network_state"] == "unconfigured"
 
-        with pytest.raises(CommissioningRequestRejected) as rejected:
-            service.claim_lan_controller(
-                commissioning_id=issued["commissioning_id"],
-                setup_code=issued["setup_code"],
-                controller=controller,
-            )
-        assert "network must be connected" in str(rejected.value)
+        claimed = service.claim_lan_controller(
+            commissioning_id=issued["commissioning_id"],
+            setup_code=issued["setup_code"], controller=controller,
+        )
+        assert claimed["state"]["claim_state"] == "claimed"
         # The request did not get to invent an answer on the way through.
         assert service.health()["state"]["network_state"] == "unconfigured"
 
@@ -1113,7 +1103,7 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
         assert accepted_claim.json()["host_id"] == descriptor.json()["host_id"]
         assert accepted_claim.json()["controller"]["controller_id"] == controller_id
         assert accepted_claim.json()["state"]["claim_state"] == "claimed"
-        assert accepted_claim.json()["state"]["network_state"] == "connected"
+        assert accepted_claim.json()["state"]["network_state"] == "unconfigured"
     finally:
         stop.set()
         await asyncio.wait_for(daemon_task, timeout=2)
@@ -1148,12 +1138,6 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
         session_id=setup["commissioning_id"],
         secret=setup["setup_code"],
     )
-    operation_id = "9a6bc772-86f7-4ace-a022-ecb9cb8df114"
-    await commissioning.configure_network(
-        initial,
-        {"operation_id": operation_id, "ssid": "Existing Home"},
-    )
-    await commissioning.confirm_network(initial, operation_id)
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
         Encoding.DER,
@@ -1170,6 +1154,13 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
             "platform": "android",
         },
     )
+    admin = commissioning.authorize_controller(controller_id)
+    operation_id = "9a6bc772-86f7-4ace-a022-ecb9cb8df114"
+    await commissioning.configure_network(
+        admin,
+        {"operation_id": operation_id, "ssid": "Existing Home"},
+    )
+    await commissioning.confirm_network(admin, operation_id)
     bootstrap_service.shutdown()
 
     stop = asyncio.Event()
@@ -1260,12 +1251,6 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
         session_id=setup["commissioning_id"],
         secret=setup["setup_code"],
     )
-    operation_id = "9a6bc772-86f7-4ace-a022-ecb9cb8df114"
-    await commissioning.configure_network(
-        initial,
-        {"operation_id": operation_id, "ssid": "Existing Home"},
-    )
-    await commissioning.confirm_network(initial, operation_id)
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
         Encoding.DER,
@@ -1282,6 +1267,13 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
             "platform": "android",
         },
     )
+    admin = commissioning.authorize_controller(controller_id)
+    operation_id = "9a6bc772-86f7-4ace-a022-ecb9cb8df114"
+    await commissioning.configure_network(
+        admin,
+        {"operation_id": operation_id, "ssid": "Existing Home"},
+    )
+    await commissioning.confirm_network(admin, operation_id)
     bootstrap_service.shutdown()
 
     stop = asyncio.Event()

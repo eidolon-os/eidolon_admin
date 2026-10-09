@@ -133,7 +133,7 @@ def test_every_refusal_code_the_host_raises_is_in_the_error_contract() -> None:
     }
 
     assert raised, "found no refusal sites to check"
-    assert "already_claimed" in raised, "already_claimed is declared but never raised"
+    assert "already_claimed" not in declared
     assert raised <= declared, sorted(raised - declared)
 
 
@@ -148,17 +148,15 @@ async def test_an_unclaimed_host_with_no_grants_says_nobody_is_authorized(
 
     error = await _refuse(_session(store), _challenge())
 
-    # Not `already_claimed`: this Host has no owner to belong to. The phone must
-    # be able to say "this Host is waiting for its first Setup code" from this.
+    # Refusal describes this Controller, not exclusive Host ownership.
     assert error["code"] == "controller_denied"
 
 
 @pytest.mark.asyncio
-async def test_a_claimed_host_says_it_is_claimed_rather_than_just_denying(
+async def test_unknown_controller_is_denied_independently_of_other_grants(
     tmp_path: Path,
 ) -> None:
     service, store = _service(tmp_path)
-    # A claim requires a connected network, as it does on a real Host.
     service.reconcile_network_state(NetworkState.CONNECTED)
     credential = service.issue_setup_code(300)
     session = _session(store)
@@ -189,12 +187,10 @@ async def test_a_claimed_host_says_it_is_claimed_rather_than_just_denying(
     )
     assert claimed["ok"] is True, claimed
 
-    # A different phone now asks. The window is closed either way, so
-    # `setup_session` is null for both this and the test above; only the
-    # refusal code tells them apart.
+    # Other grants do not change this unknown Controller's refusal.
     error = await _refuse(_session(store), _challenge("ectrl-" + "b" * 20))
 
-    assert error["code"] == "already_claimed"
+    assert error["code"] == "controller_denied"
     assert error["retryable"] is False
 
 

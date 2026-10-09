@@ -19,7 +19,6 @@ from .domain import (
     BootstrapOperation,
     BootstrapOperationState,
     BootstrapOperationType,
-    ClaimState,
     ControllerGrant,
     ControllerRole,
     NetworkState,
@@ -201,27 +200,6 @@ class CommissioningService:
             or grant.reset_epoch != state.reset_epoch
             or grant.role is not ControllerRole.HOST_ADMIN
         ):
-            # Both refusals mean "not you", but they mean different things to
-            # the person holding the phone, and the endpoint document cannot
-            # tell them apart: `setup_session` reads null on a Host that was
-            # never commissioned and on a claimed Host whose window closed.
-            #
-            # A claimed Host says so. Then "this Host belongs to someone
-            # already" and "this Host is waiting for its first Setup code" stop
-            # being one message that guesses, which is what sent an operator
-            # down the controller-reset path on a Host that had no grants at
-            # all. `already_claimed` was declared in
-            # contracts/bootstrap/v1/error.schema.json from the start and never
-            # raised; this is what it was for.
-            #
-            # It tells an unauthenticated peer in BLE range whether this Host is
-            # claimed. That is the same fact a claimed Host already leaks by
-            # refusing every claim, one round trip later.
-            if state.claim_state is ClaimState.CLAIMED:
-                raise CommissioningRequestRejected(
-                    "already_claimed",
-                    "This Host is already claimed and this Controller is not one of its Host Admins",
-                )
             raise CommissioningRequestRejected(
                 "controller_denied", "Controller is not authorized for this Host"
             )
@@ -258,6 +236,10 @@ class CommissioningService:
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         self._require_authorized(authorization)
+        if not isinstance(authorization, ControllerAuthorization):
+            raise CommissioningRequestRejected(
+                "controller_denied", "Host Admin authorization is required"
+            )
         operation_id = self._operation_id(payload.get("operation_id"))
         ssid = self._ssid(payload.get("ssid"))
         passphrase = payload.get("passphrase")
@@ -282,18 +264,7 @@ class CommissioningService:
                 )
             return {"operation": existing.to_dict()}
         state = self._store.get_state()
-        if state.claim_state.value == "unclaimed":
-            if not isinstance(authorization, CommissioningAuthorization):
-                raise CommissioningRequestRejected(
-                    "commissioning_denied", "Initial setup credential is required"
-                )
-            operation_type = BootstrapOperationType.INITIAL_NETWORK
-        else:
-            if not isinstance(authorization, ControllerAuthorization):
-                raise CommissioningRequestRejected(
-                    "controller_denied", "Host Admin authorization is required"
-                )
-            operation_type = BootstrapOperationType.CHANGE_NETWORK
+        operation_type = BootstrapOperationType.CHANGE_NETWORK
         now = _timestamp(self._clock())
         operation = BootstrapOperation(
             operation_id=operation_id,
@@ -330,6 +301,7 @@ class CommissioningService:
                 updated_at=_timestamp(self._clock()),
             )
         except (BootstrapStateConflict, NetworkProvisioningError) as exc:
+            code = "operation_conflict" if isinstance(exc, BootstrapStateConflict) else "network_stage_failed"
             logger.warning(
                 "Wi-Fi staging failed operation_id=%s ssid=%r reason=%s",
                 operation_id,
@@ -347,10 +319,10 @@ class CommissioningService:
                     state=BootstrapOperationState.FAILED,
                     network_state=fallback,
                     updated_at=_timestamp(self._clock()),
-                    error_code="network_stage_failed",
+                    error_code=code,
                 )
             raise CommissioningRequestRejected(
-                "network_stage_failed", "The Host could not stage this Wi-Fi network"
+                code, str(exc)
             ) from exc
         return {"operation": operation.to_dict()}
 
@@ -360,6 +332,10 @@ class CommissioningService:
         operation_id: str,
     ) -> dict[str, Any]:
         self._require_authorized(authorization)
+        if not isinstance(authorization, ControllerAuthorization):
+            raise CommissioningRequestRejected(
+                "controller_denied", "Host Admin authorization is required"
+            )
         operation_id = self._operation_id(operation_id)
         operation = self._store.get_operation(operation_id)
         if operation is None:
@@ -392,6 +368,10 @@ class CommissioningService:
         operation_id: str,
     ) -> dict[str, Any]:
         self._require_authorized(authorization)
+        if not isinstance(authorization, ControllerAuthorization):
+            raise CommissioningRequestRejected(
+                "controller_denied", "Host Admin authorization is required"
+            )
         operation_id = self._operation_id(operation_id)
         operation = self._store.get_operation(operation_id)
         if operation is None:

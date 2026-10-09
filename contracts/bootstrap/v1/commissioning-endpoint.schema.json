@@ -20,7 +20,7 @@
     "reset_epoch": { "type": "integer", "minimum": 0 },
     "tls_spki_fingerprint": { "type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$" },
     "setup_session": {
-      "description": "The open claim window, or null when there is none. Null does not say why: a Host that was never commissioned and a claimed Host whose window closed both read null here. A Controller that needs to tell them apart asks, and is answered `controller_denied` or `already_claimed`.",
+      "description": "The open window for adding a peer Host Admin, or null. Existing Controller grants authenticate independently of this window. Missing or revoked grants return controller_denied.",
       "oneOf": [
         { "type": "null" },
         {

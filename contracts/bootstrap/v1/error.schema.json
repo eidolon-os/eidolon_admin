@@ -17,7 +17,6 @@
         "operation_expired",
         "commissioning_denied",
         "controller_denied",
-        "already_claimed",
         "invalid_controller_key",
         "invalid_network",
         "network_stage_failed",

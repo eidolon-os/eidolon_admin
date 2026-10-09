@@ -316,7 +316,7 @@ def _protocol_request(operation: str, payload: dict, suffix: int) -> dict:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
-async def test_commissioning_service_completes_network_then_atomic_claim(
+async def test_commissioning_service_enrolls_then_configures_network(
     tmp_path: Path,
     store_kind: str,
 ) -> None:
@@ -362,9 +362,16 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
             {"ssid": "Cafe", "signal": 34, "secured": False},
         ]
 
+        controller_payload = {
+            "public_key": _controller_public_key(),
+            "display_name": "Manson 的手机",
+            "platform": "android",
+        }
+        claimed = commissioning.claim_controller(authorization, controller_payload)
+        admin = commissioning.authorize_controller(claimed["controller"]["controller_id"])
         operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
         staged = await commissioning.configure_network(
-            authorization,
+            admin,
             {
                 "operation_id": operation_id,
                 "ssid": "Home",
@@ -373,19 +380,8 @@ async def test_commissioning_service_completes_network_then_atomic_claim(
         )
         assert staged["operation"]["state"] == "waiting_confirmation"
 
-        controller_payload = {
-            "public_key": _controller_public_key(),
-            "display_name": "Manson 的手机",
-            "platform": "android",
-        }
-
-        with pytest.raises(CommissioningRequestRejected, match="network must"):
-            # Store enforces the same ordering even if a caller skips confirm.
-            commissioning.claim_controller(authorization, controller_payload)
-
-        confirmed = await commissioning.confirm_network(authorization, operation_id)
+        confirmed = await commissioning.confirm_network(admin, operation_id)
         assert confirmed["operation"]["state"] == "succeeded"
-        claimed = commissioning.claim_controller(authorization, controller_payload)
         assert claimed["state"]["claim_state"] == "claimed"
         assert claimed["controller"]["role"] == "host_admin"
         assert len(store.list_controllers()) == 1
@@ -522,16 +518,6 @@ async def test_claimed_controller_authenticates_and_changes_network(
     )
     commissioning = CommissioningService(store=store, network=network)
     descriptor = bootstrap.issue_setup_code(300)
-    initial = commissioning.authorize(
-        session_id=descriptor["commissioning_id"],
-        secret=descriptor["setup_code"],
-    )
-    first_operation = "c74b0000-5edc-4af7-af70-aefc7531d862"
-    await commissioning.configure_network(
-        initial,
-        {"operation_id": first_operation, "ssid": "First Home"},
-    )
-    await commissioning.confirm_network(initial, first_operation)
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
         Encoding.DER, PublicFormat.SubjectPublicKeyInfo
@@ -539,17 +525,22 @@ async def test_claimed_controller_authenticates_and_changes_network(
     encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
     digest = hashlib.sha256(public_der).hexdigest()
     controller_id = f"ectrl-{digest[:20]}"
-    commissioning.claim_controller(
-        initial,
-        {
-            "controller_id": controller_id,
-            "public_key": encoded_public,
-            "display_name": "Primary phone",
-            "platform": "android",
-        },
-    )
-
     protocol = CommissioningProtocolSession(commissioning)
+    authenticated = await protocol.handle(_protocol_request('session.authenticate', {
+        'commissioning_id': descriptor['commissioning_id'],
+        'setup_code': descriptor['setup_code'],
+    }, 8))
+    assert authenticated['ok']
+    claimed = await protocol.handle(_protocol_request('claim.complete', {
+        'controller_id': controller_id, 'public_key': encoded_public,
+        'display_name': 'Phone', 'platform': 'android',
+    }, 9))
+    assert claimed['ok']
+    # A grant alone never substitutes for proof of possession on this link.
+    denied = await protocol.handle(_protocol_request('wifi.configure', {
+        'operation_id': '86c70054-f13e-4e21-aa75-e63157154302', 'ssid': 'New Home',
+    }, 7))
+    assert not denied['ok']
     challenge_response = await protocol.handle(
         _protocol_request("controller.challenge", {"controller_id": controller_id}, 10)
     )
@@ -611,6 +602,10 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
         session_id=descriptor["commissioning_id"],
         secret=descriptor["setup_code"],
     )
+    grant = commissioning.claim_controller(authorization, {
+        "public_key": _controller_public_key(), "display_name": "Phone", "platform": "android",
+    })["controller"]
+    authorization = commissioning.authorize_controller(grant["controller_id"])
     interrupted_id = "11d8113d-1792-4c31-bfbb-da413232e942"
     await commissioning.configure_network(
         authorization,
@@ -634,10 +629,7 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
         restarted.reconcile_network_state(NetworkState.UNCONFIGURED)
         assert store.get_state().network_state is NetworkState.UNCONFIGURED
 
-        authorization = commissioning.authorize(
-            session_id=descriptor["commissioning_id"],
-            secret=descriptor["setup_code"],
-        )
+        authorization = commissioning.authorize_controller(grant["controller_id"])
         replacement_network = InMemoryNetworkProvisioning()
         replacement = CommissioningService(store=store, network=replacement_network)
         retried = await replacement.configure_network(
@@ -676,6 +668,7 @@ def test_every_modelled_state_is_one_something_can_produce() -> None:
     sources = (
         Path(memory_store.__file__).read_text(encoding="utf-8"),
         Path(sqlite_store.__file__).read_text(encoding="utf-8"),
+        Path(__import__(CommissioningService.__module__, fromlist=["x"]).__file__).read_text(),
     )
     for enum in (ClaimState, NetworkState):
         for member in enum:

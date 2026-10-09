@@ -52,13 +52,14 @@ Info endpoint 是公开数据，允许被读取和重放；签名、reset epoch�
 
 TLS 成功只证明 Host 并提供加密，不自动授权 mutation：
 
-- 开发开箱：App 在 TLS 内提交短期 commissioning ID 和 6 位 Setup 码；Bootstrap
-  只保存 hash，并在连续 5 次失败后撤销；
-- 认领：Controller 使用独立 Android Keystore P-256 key；Grant 创建、session 消费和
-  `claim_state=claimed` 在一个 store 事务完成；
-- 已认领换网：Host 返回随机 challenge，Controller 对带 purpose、ID 和 reset epoch
-  的 canonical JSON 做 ECDSA-SHA256 签名；一次性开箱 secret 不复用；
+- 接入码：8 位 Setup 码用于新增一份管理授权；窗口期限以 Host 元数据及配置为准。
+- 平等管理员：每个 mobile 使用独立 P-256 key，Grant 创建和窗口消费在同一事务完成。
+  `claim_state=claimed` 仅汇总有效授权，不表示某台 mobile 独占 Host。
+- 授权先于网络：离线也可以登记 Controller。首次配网与换网均要求 Controller challenge
+  签名证明私钥持有；Setup 身份不能修改网络。BLE 同一连接可在登记后完成管理员认证。
+- 发现和授权分离：Setup 窗口未开放不妨碍已有管理员认证；不同手机各有独立 Grant。
 - operation/request ID 保证重试不会创建重复 Grant 或配网 operation。
+- 单个撤销不影响其他管理员；新有效邀请可重新授权同一密钥，旧消费凭据不能恢复撤销的授权。
 
 Controller key 与现有 Mobile Body/Hub device key 使用不同 alias 和 ID 前缀。
 

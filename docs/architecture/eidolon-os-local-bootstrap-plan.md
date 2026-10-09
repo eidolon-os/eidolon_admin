@@ -454,7 +454,7 @@ operation_state:
 1. `bootstrapd` 在无网络情况下常驻，并持有 Host Identity。
 2. App 按固定 BLE Service UUID 扫描；广播 Host marker/RSSI 只用于展示和排序候选。
 3. App 读取候选的公开 Info characteristic，验证 Host 公钥可派生出 Host ID/指纹，并验证 Host 对 endpoint 的签名。
-4. 开发路径从 endpoint 取得短期 commissioning ID/expiry，并要求用户输入 SSH 生成的 6 位码；产品路径后续由制造二维码预先绑定预期 Host 身份。
+4. 优先使用已有 Controller 密钥认证；没有有效授权时，从 endpoint 取得接入窗口元数据并使用 8 位 Setup 码新增平等管理员。窗口可由已有管理员邀请、Host 本地操作或开发常开策略提供。
 5. App 同时验证 endpoint 的 reset epoch 和 TLS SPKI fingerprint；Service UUID 由已连接的固定 GATT service 确定，避免公开 Info characteristic 超过 512-byte 上限。
 6. Android 与该 endpoint 建立 TLS 1.2+，并 pin 已签名的 SPKI。
 7. 旧的 LAN Local API Host proof 路径保留给网络可达后的诊断/接入测试，但不再是
@@ -462,13 +462,11 @@ operation_state:
 
 **B. Host commissioning（当前开发组合的基础真机闭环已通过）**
 
-8. App 在 TLS 内提交短期 commissioning ID/Setup 码，Bootstrap 只校验已保存的 hash，并在 5 次失败后撤销 session。
-9. App 展示 Host 扫描到的 SSID；Bootstrap 只通过 `NetworkProvisioning` Port staging 新网络。
-10. 验证 association、IP/DHCP 和本地链路；远程/互联网连通性不作为当前成功条件。失败或超时则 rollback，设备保持可接入。
-11. NetworkManager 激活后 App 通过 BLE 确认 operation；Bootstrap 创建 Controller
-    Grant，并在同一事务消费 commissioning session、迁移 claim 状态。LAN Local API
-    handoff 是下一步，不阻塞 Host commissioning 的本地完成语义。
-12. 该阶段完成条件是 `claim_state=claimed`、`network_state=connected`；Workspace 是否就绪由 Data 平面回答，不在 Bootstrap 状态里，也不阻塞 Host commissioning。
+8. App 使用 Setup 码登记独立 Controller Grant；Host 无网络也能完成。窗口消费与 Grant 提交在同一事务内，其他 mobile 授权不变。
+9. App 保存 Host 记录，再通过 Controller challenge 签名建立管理员会话。已有 Grant 的恢复不依赖 Setup 窗口。
+10. 按需展示 Host 扫描的 SSID；只有管理员可 staging、confirm 或 rollback 网络。首次配网和后续换网共用同一操作。
+11. NetworkManager 激活后 App 经 BLE 确认；失败回滚网络而不撤销 Grant。共享网络事务复用现有 operation ID 及单活动操作约束。
+12. 授权、网络配置、局域网业务可达各自独立。认领成功不要求 Wi-Fi 已连接，也不要求手机与 Host 同网；Workspace 就绪由 Data 平面回答。
 
 **C. Workspace onboarding（Host/Mobile 已接入，基础真机闭环已通过）**
 

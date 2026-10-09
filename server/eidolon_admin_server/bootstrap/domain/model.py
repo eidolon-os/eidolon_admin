@@ -16,6 +16,8 @@ from typing import Any
 
 
 class ClaimState(StrEnum):
+    """Aggregate administrator presence, never exclusive ownership."""
+
     UNCLAIMED = "unclaimed"
     CLAIMED = "claimed"
 
@@ -33,7 +35,6 @@ class ControllerRole(StrEnum):
 
 
 class BootstrapOperationType(StrEnum):
-    INITIAL_NETWORK = "initial_network"
     CHANGE_NETWORK = "change_network"
 
 
