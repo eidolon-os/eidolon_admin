@@ -564,11 +564,18 @@ class ControlPlaneService:
         # the same refusal one step later.
         vouchers = self._commissioning_vouchers()
         key_id = payload.operational_spki_sha256
-        answered = await self.hub.base_identity_for_key(
+        # The voucher's name is minted first and spoken to Hub before anything
+        # is signed: Hub records under it which Controller is admitting this
+        # key, so the Proposal that later carries the voucher is decided by
+        # that Controller rather than queued for the Owner to decide again.
+        # The answer is the same identity the Host used to ask for alone.
+        jti = vouchers.new_jti()
+        answered = await self.hub.record_commissioning_standing(
             authorization=issuer.issue_admission_context(
                 actor=payload.actor,
                 business_owner_id=payload.business_owner_id,
             ),
+            jti=jti,
             operational_key_id=key_id,
         )
         device_base_id = answered.get("device_base_id")
@@ -576,6 +583,7 @@ class ControlPlaneService:
             owner_domain_id=str(payload.owner_domain_id),
             operational_spki_sha256=key_id,
             device_base_id=device_base_id,
+            jti=jti,
         )
         return CommissioningVoucherIssued(
             voucher=voucher.voucher,

@@ -59,6 +59,18 @@ class CommissioningVoucherIssuer:
     secret: bytes
     ttl: timedelta = DEFAULT_TTL
 
+    @staticmethod
+    def new_jti() -> str:
+        """The one-shot name of a voucher, minted before anything is signed.
+
+        Minted here and not inside ``issue`` because the name is spoken twice:
+        once to Hub, which records under it who is admitting this key, and once
+        inside the signed claims the device will carry. Both have to be the
+        same name, so there is one place it comes from.
+        """
+
+        return "jti-" + secrets.token_hex(16)
+
     def issue(
         self,
         *,
@@ -67,11 +79,12 @@ class CommissioningVoucherIssuer:
         device_base_id: str | None = None,
         provenance: str = "minted",
         now: datetime | None = None,
+        jti: str | None = None,
     ) -> CommissioningVoucher:
         issued_at = now or datetime.now(UTC)
         expires_at = issued_at + self.ttl
         base_id = device_base_id or "device-base-" + secrets.token_bytes(32).hex()
-        jti = "jti-" + secrets.token_hex(16)
+        jti = jti or self.new_jti()
         claims = commissioning_voucher_claims(
             device_base_id=base_id,
             owner_domain_id=owner_domain_id,

@@ -62,12 +62,14 @@ class Hub:
     def __init__(self, answer: dict) -> None:
         self.answer = answer
         self.asked: list[str] = []
+        self.recorded: list[str] = []
 
-    async def base_identity_for_key(
-        self, *, authorization: str, operational_key_id: str
+    async def record_commissioning_standing(
+        self, *, authorization: str, jti: str, operational_key_id: str
     ) -> dict:
         self.asked.append(operational_key_id)
-        return self.answer
+        self.recorded.append(jti)
+        return {**self.answer, "jti": jti}
 
 
 def _service(hub: Hub | None, *, vouchers: CommissioningVoucherIssuer | None = None):
@@ -119,6 +121,8 @@ async def test_a_voucher_is_bound_to_the_key_and_verifiable_with_the_derived_sec
     assert decoded["operational_spki_sha256"] == key_id
     assert decoded["purpose"] == "eidolon-commissioning-voucher-v1"
     assert decoded["jti"] == issued.jti
+    # The name Hub recorded the standing under is the name the device carries.
+    assert hub.recorded == [issued.jti]
     assert decoded["device_base_id"].startswith("device-base-")
     assert public_key not in issued.voucher
 

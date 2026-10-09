@@ -1973,6 +1973,37 @@ class HubManagementClient:
         )
         return response.json()
 
+    async def record_commissioning_standing(
+        self,
+        *,
+        authorization: str,
+        jti: str,
+        operational_key_id: str,
+    ) -> dict:
+        """Tell Hub who is admitting this key, and be answered its identity.
+
+        The same question as ``base_identity_for_key`` with the asking kept:
+        a Controller asking before it signs a voucher is the Owner deciding
+        that this key may join, and Hub records that under the voucher's
+        ``jti`` so the Proposal carrying it is decided by this Controller
+        rather than queued for it to decide again.
+        """
+
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{await self._base_url()}/api/admission/v1/commissioning-standings",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json={
+                "contract_version": "1",
+                "jti": jti,
+                "operational_key_id": operational_key_id,
+            },
+        )
+        return response.json()
+
     async def list_authorized_enrollments(
         self,
         *,
