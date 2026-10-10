@@ -14,6 +14,7 @@ authenticates, and is passed down as an argument.
 from __future__ import annotations
 
 from typing import Literal, Protocol, runtime_checkable
+from datetime import UTC, datetime
 
 from eidolon_memory_contracts.owner import MemoryProvenance
 
@@ -257,18 +258,12 @@ def _machine_attention(vitals) -> list[str]:
     return said
 
 
-#: What this list does not know, said rather than implied by a short list.
-#:
-#: The second sentence used to say nothing on this Host observes whether a
-#: device is switched on. That stopped being exactly true: the channel provider
-#: knows which bodies are on a channel, and the runtime map reads it. It is a
-#: narrower fact than it sounds — on a channel means in a call — so this list
-#: still cannot say whether anything is powered on, and now says which of the
-#: two it means.
+#: The device channel stays connected during standby. Connectivity is
+#: independent of conversation activity, ownership and configuration readiness.
 _DEVICE_COVERAGE = (
     "只包含已经属于你的设备。还在等你确认的设备是另一份清单。"
-    "这里不说设备是否开着：这台主机只在一台设备正在通话时才看得见它，"
-    "平时没有任何东西在观测它有没有通电。"
+    "连接状态来自设备通道的实时观测；在线表示设备已连接主机，不代表正在通话。"
+    "没有可观测通道或观测失败时显示未知。"
 )
 
 
@@ -329,6 +324,38 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
             revision=0 if device.outputs.policy is None else device.outputs.policy.revision,
         ),
     )
+
+
+def _inventory_presence(device, observations: dict) -> "DevicePresenceView":
+    if observations.get("unavailable"):
+        return DevicePresenceView(reason="设备连接观测暂时不可用")
+    ref = device.claim.device_ref
+    rows = observations.get("bodies", [])
+    if not isinstance(rows, list):
+        return DevicePresenceView(reason="设备连接观测格式不兼容")
+    for row in rows:
+        if not isinstance(row, dict) or row.get("device_id") != ref.device_instance_id:
+            continue
+        observed_ref = row.get("device_ref")
+        if not isinstance(observed_ref, dict) or any(
+            observed_ref.get(field) != getattr(ref, field)
+            for field in ("device_instance_id", "owner_domain_id", "claim_generation", "trust_epoch", "owner_domain_generation")
+        ):
+            continue  # An older claim cannot speak for this device lifecycle.
+        observed = row.get("observed_at_ms")
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        if type(observed) is not int or not 0 <= now_ms - observed < 15000:
+            return DevicePresenceView(reason="设备连接观测已过期")
+        present = row.get("on_channel")
+        if type(present) is not bool:
+            return DevicePresenceView(source="channel", reason="暂时无法读取设备通道")
+        return DevicePresenceView(
+            state="online" if present else "offline", source="channel",
+            observed_at=datetime.fromtimestamp(observed / 1000, UTC).isoformat(),
+            valid_until=datetime.fromtimestamp((observed + 15000) / 1000, UTC).isoformat(),
+            reason="设备已连接主机" if present else "设备未连接主机通道",
+        )
+    return DevicePresenceView()
 
 
 def _device_state(claim_state: str, answering: str | None, outputs) -> str:
@@ -1329,6 +1356,15 @@ class HomeView(BaseModel):
     unavailable: dict[str, str] = Field(default_factory=dict)
 
 
+class DevicePresenceView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["online", "offline", "unknown"] = "unknown"
+    source: str = "none"
+    observed_at: str | None = None
+    valid_until: str | None = None
+    reason: str = "尚未观测到设备连接"
+
+
 class DeviceView(BaseModel):
     """One device this Owner holds, as a person reads it.
 
@@ -1381,19 +1417,9 @@ class DeviceView(BaseModel):
     #: When the Claim last moved. The nearest thing to "since when is this mine"
     #: that any authority actually knows.
     updated_at: str = Field(min_length=1, max_length=64)
-    #: There is deliberately no presence field here. One existed, typed for
-    #: three values and only ever set to ``unknown`` with a sentence saying
-    #: nothing observed presence — which no client rendered, and which stopped
-    #: being true when ``channel.presence`` started reading the channel
-    #: provider. That read answers a *different* question: whether a body is on
-    #: its channel, which is to say in a call. A device sitting powered on and
-    #: idle is not on a channel and is not off, and putting that value on an
-    #: inventory row would have people read 在线 as "working" when it means
-    #: "talking right now". It belongs on the runtime map, where it is.
-    #:
-    #: Neither an active Claim nor a Kernel mount is evidence a device is
-    #: switched on. Nothing here is, so nothing here says so.
-    #: The canonical state word from the Claim, kept beside the readable one.
+    #: Separate from admission/configuration state. Optional for older Hosts.
+    presence: DevicePresenceView | None = None
+    #: Canonical Claim state, never interpreted as connectivity.
     claim_state: str = Field(min_length=1, max_length=32)
     #: The generations that make an identifier mean one physical device rather
     #: than a name that was reused. Carried because a person asking for help
@@ -1608,31 +1634,6 @@ class ControllersView(BaseModel):
     controllers: list[ControllerView]
 
 
-class ControllerInvitationRequest(BaseModel):
-    """Open a window in which one more phone may claim this Host."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    #: How long the window stays open. The Host decides the bounds and refuses
-    #: what it will not do, so nothing is restated here.
-    ttl_seconds: int | None = Field(default=None, ge=1)
-
-
-class ControllerInvitationView(BaseModel):
-    """A one-time code, and when it stops working.
-
-    The code is a secret with a deadline, so the deadline travels with it: a
-    screen that showed the code without saying when it dies would let someone
-    read it out five minutes too late and think the Host was broken.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"] = "1"
-    setup_code: str = Field(min_length=1, max_length=64)
-    expires_at: str = Field(min_length=1, max_length=64)
-
-
 @runtime_checkable
 class OwnerDevicePort(Protocol):
     """The devices this Owner holds, composed where both halves are visible.
@@ -1675,7 +1676,7 @@ class ControllerDirectoryPort(Protocol):
 
     Deliberately *not* behind the management backend. That boundary exists so
     the LAN-facing process holds no authority credential (plan §3.4.1), and the
-    three things here are not an authority's data: they are this Host's own
+    operations here are not an authority's data: they are this Host's own
     grant record, reached over the control socket this process already
     authenticates every request against. Routing them through the other process
     would add a hop that buys nothing and a second place to get "who is asking"
@@ -1683,10 +1684,6 @@ class ControllerDirectoryPort(Protocol):
     """
 
     async def list_controllers(self, controller_id: str) -> dict: ...
-
-    async def invite_controller(
-        self, controller_id: str, ttl_seconds: int | None
-    ) -> dict: ...
 
     async def revoke_controller(self, controller_id: str, target_id: str) -> dict: ...
 
@@ -1708,6 +1705,8 @@ class ManagementBackendPort(Protocol):
     async def context(self, *, owner_id: str) -> dict: ...
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
+
+    async def device_presence(self, *, owner_id: str) -> dict: ...
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
 
@@ -2164,10 +2163,16 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         names = await _companion_names(backend, session.owner_id)
-        return DevicesView(
-            devices=[_device_view(device, names) for device in inventory.devices],
-            coverage=_DEVICE_COVERAGE,
-        )
+        try:
+            observations = await backend.device_presence(owner_id=session.owner_id)
+        except ManagementBackendError:
+            observations = {"bodies": [], "unavailable": True}
+        rows = []
+        for device in inventory.devices:
+            view = _device_view(device, names)
+            view.presence = _inventory_presence(device, observations)
+            rows.append(view)
+        return DevicesView(devices=rows, coverage=_DEVICE_COVERAGE)
 
     @router.put("/devices/{device_id}/companion", response_model=DeviceView)
     async def put_device_companion(
@@ -2416,24 +2421,6 @@ def register_management_routes(
                 _controller_view(row, asking=asking)
                 for row in answer.get("controllers", [])
             ]
-        )
-
-    @router.post("/controllers/invitations", response_model=ControllerInvitationView)
-    async def invite_controller(
-        payload: ControllerInvitationRequest,
-        authorization: str | None = Header(default=None, alias="Authorization"),
-    ) -> ControllerInvitationView:
-        """Let one more phone in, for a while.
-
-        Asked for by a phone that already holds this Host, so nobody is ever
-        added by the Host alone. The answer is a one-time code and the moment it
-        stops working.
-        """
-        asking = await authenticated_controller_id(authorization)
-        answer = await controllers.invite_controller(asking, payload.ttl_seconds)
-        return ControllerInvitationView(
-            setup_code=str(answer["setup_code"]),
-            expires_at=str(answer["expires_at"]),
         )
 
     @router.delete("/controllers/{controller_id}", response_model=ControllerView)

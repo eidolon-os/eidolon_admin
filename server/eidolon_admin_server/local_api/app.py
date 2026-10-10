@@ -1075,16 +1075,6 @@ def create_app(
                 "controller.list", authentication=True, controller_id=controller_id
             )
 
-        async def invite_controller(
-            self, controller_id: str, ttl_seconds: int | None
-        ) -> dict:
-            return await request_bootstrap(
-                "controller.invite",
-                authentication=True,
-                controller_id=controller_id,
-                ttl_seconds=ttl_seconds,
-            )
-
         async def revoke_controller(self, controller_id: str, target_id: str) -> dict:
             return await request_bootstrap(
                 "controller.revoke",

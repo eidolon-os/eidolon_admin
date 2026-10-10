@@ -159,16 +159,6 @@ export interface CompanionSummaryView {
   updated_at: string
 }
 
-export interface ControllerInvitationRequest {
-  ttl_seconds?: number | null
-}
-
-export interface ControllerInvitationView {
-  contract_version?: "1"
-  expires_at: string
-  setup_code: string
-}
-
 export interface ControllerView {
   claimed_at: string
   controller_id: string
@@ -263,6 +253,14 @@ export interface DeviceOutputsView {
   revision: number
 }
 
+export interface DevicePresenceView {
+  observed_at?: string | null
+  reason?: string
+  source?: string
+  state?: "online" | "offline" | "unknown"
+  valid_until?: string | null
+}
+
 export interface DeviceRemovalConditionView {
   authority: string
   name: string
@@ -300,6 +298,7 @@ export interface DeviceView {
   mount_revision: number
   outputs: DeviceOutputsView
   owner_domain_generation: number
+  presence?: DevicePresenceView | null
   quiet_because?: string
   revision: number
   state: string
@@ -961,7 +960,6 @@ export interface ManagementResponses {
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/retry': TaskView
   'GET /api/management/v1/context': ManagementContextView
   'GET /api/management/v1/controllers': ControllersView
-  'POST /api/management/v1/controllers/invitations': ControllerInvitationView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
   'POST /api/management/v1/device-conversations/close': DeviceConversationStatus
   'POST /api/management/v1/device-conversations/open': DeviceConversationStatus

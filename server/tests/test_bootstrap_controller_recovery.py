@@ -188,9 +188,7 @@ def test_claiming_twice_in_one_epoch_returns_the_grant_already_held(
         second = _claim(
             store,
             network,
-            service.invite_controller(
-                controller_id=first["controller"]["controller_id"], ttl_seconds=300
-            ),
+            service.issue_setup_code(300),
             phone,
             "Pad again",
         )
@@ -244,9 +242,7 @@ def test_a_store_conflict_is_a_conflict_and_never_an_unnamed_exception(
             )
 
         # A different key claiming an identity this epoch already holds.
-        second = service.invite_controller(
-            controller_id=grant.controller_id, ttl_seconds=300
-        )
+        second = service.issue_setup_code(300)
         with pytest.raises(BootstrapStateConflict, match="already holds this identity"):
             store.claim_controller(
                 session_id=second["commissioning_id"],
@@ -273,9 +269,7 @@ def test_a_reclaim_never_reaches_a_phone_as_internal_error(tmp_path: Path) -> No
     try:
         phone = _controller_public_key()
         first = _claim(store, network, service.issue_setup_code(300), phone, "Pad")
-        invitation = service.invite_controller(
-            controller_id=first["controller"]["controller_id"], ttl_seconds=300
-        )
+        invitation = service.issue_setup_code(300)
 
         session = CommissioningProtocolSession(
             CommissioningService(store=store, network=network)

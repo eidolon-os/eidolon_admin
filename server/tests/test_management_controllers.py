@@ -64,16 +64,6 @@ class _Bootstrap:
         self.asked.append(("list", {"controller_id": controller_id}))
         return {"controllers": self.grants}
 
-    async def invite_controller(self, controller_id: str, ttl_seconds: int | None) -> dict:
-        self.asked.append(
-            ("invite", {"controller_id": controller_id, "ttl_seconds": ttl_seconds})
-        )
-        return {
-            "setup_code": "1234-5678",
-            "expires_at": "2026-08-25T10:00:00Z",
-            "session_id": "not-for-a-person",
-        }
-
     async def revoke_controller(self, controller_id: str, target_id: str) -> dict:
         self.asked.append(
             ("revoke", {"controller_id": controller_id, "target_id": target_id})
@@ -183,13 +173,7 @@ async def test_a_public_key_is_not_something_a_person_is_shown(
     assert row["fingerprint"] == "sha256:ab12"
 
 
-async def test_inviting_answers_with_the_code_and_its_deadline(
-    tmp_path, monkeypatch
-) -> None:
-    """The code is a secret with a deadline, so the deadline travels with it —
-    and the Host's internal session id does not, because it is not for a
-    person."""
-
+async def test_phone_invitation_endpoint_is_removed(tmp_path, monkeypatch) -> None:
     _stub_controller(monkeypatch)
     bootstrap = _Bootstrap()
     transport = httpx.ASGITransport(app=_app(tmp_path, bootstrap))
@@ -198,16 +182,8 @@ async def test_inviting_answers_with_the_code_and_its_deadline(
         opened = await client.post(
             f"{_CONTROLLERS}/invitations", json={"ttl_seconds": 600}, headers=headers
         )
-
-    assert opened.status_code == 200
-    assert opened.json() == {
-        "contract_version": "1",
-        "setup_code": "1234-5678",
-        "expires_at": "2026-08-25T10:00:00Z",
-    }
-    assert bootstrap.asked == [
-        ("invite", {"controller_id": _CONTROLLER_ID, "ttl_seconds": 600})
-    ]
+    assert opened.status_code in (404, 405)
+    assert bootstrap.asked == []
 
 
 async def test_revoking_says_which_phone_was_signed_out(tmp_path, monkeypatch) -> None:

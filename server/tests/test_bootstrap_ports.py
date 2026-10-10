@@ -723,8 +723,8 @@ def test_a_claimed_host_still_admits_a_second_phone(tmp_path: Path, store_kind: 
         first = _claim_a_phone(bootstrap, store, network, "Pad")
         assert store.get_state().claim_state is ClaimState.CLAIMED
 
-        # An invitation is asked for by a phone that already holds the Host.
-        invitation = bootstrap.invite_controller(controller_id=first, ttl_seconds=300)
+        # Each peer obtains a Setup code from the Host independently.
+        invitation = bootstrap.issue_setup_code(300)
         commissioning = CommissioningService(store=store, network=network)
         authorization = commissioning.authorize(
             session_id=invitation["commissioning_id"],
@@ -773,7 +773,7 @@ def test_the_last_phone_cannot_revoke_itself_into_an_unmanageable_host(
         with pytest.raises(BootstrapOperationRejected, match="last Controller"):
             bootstrap.revoke_controller(controller_id=first, target_id=first)
 
-        invitation = bootstrap.invite_controller(controller_id=first)
+        invitation = bootstrap.issue_setup_code(300)
         commissioning = CommissioningService(store=store, network=network)
         second = commissioning.claim_controller(
             commissioning.authorize(

@@ -414,20 +414,6 @@ class BootstrapService:
             )
         return self._controller_principal(grant)
 
-    def invite_controller(
-        self, *, controller_id: str, ttl_seconds: int | None = None
-    ) -> dict[str, Any]:
-        """Open a short window in which one more phone may claim this Host.
-
-        Asked for by a phone that already holds this Host, the way Matter has
-        an existing administrator open a commissioning window with a freshly
-        minted one-time secret. Before this, a second phone could be added no
-        way but by revoking the first.
-        """
-
-        self._active_controller(controller_id)
-        return self.issue_setup_code(ttl_seconds)
-
     def list_controllers(self, *, controller_id: str) -> dict[str, Any]:
         """Show every phone that holds this Host, to one that already does."""
 

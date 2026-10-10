@@ -928,56 +928,6 @@
         "title": "CompanionSummaryView",
         "type": "object"
       },
-      "ControllerInvitationRequest": {
-        "additionalProperties": false,
-        "description": "Open a window in which one more phone may claim this Host.",
-        "properties": {
-          "ttl_seconds": {
-            "anyOf": [
-              {
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ttl Seconds"
-          }
-        },
-        "title": "ControllerInvitationRequest",
-        "type": "object"
-      },
-      "ControllerInvitationView": {
-        "additionalProperties": false,
-        "description": "A one-time code, and when it stops working.\n\nThe code is a secret with a deadline, so the deadline travels with it: a\nscreen that showed the code without saying when it dies would let someone\nread it out five minutes too late and think the Host was broken.",
-        "properties": {
-          "contract_version": {
-            "const": "1",
-            "default": "1",
-            "title": "Contract Version",
-            "type": "string"
-          },
-          "expires_at": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Expires At",
-            "type": "string"
-          },
-          "setup_code": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Setup Code",
-            "type": "string"
-          }
-        },
-        "required": [
-          "setup_code",
-          "expires_at"
-        ],
-        "title": "ControllerInvitationView",
-        "type": "object"
-      },
       "ControllerView": {
         "additionalProperties": false,
         "description": "One phone that may manage this Host.\n\nNo public key. A key is how the Host recognises a phone, not how a person\ndoes — and handing every controller's key to every other controller is\nspending authority material to draw a list. The fingerprint is what a person\nis shown when pairing, so it is what is shown here.",
@@ -1584,6 +1534,55 @@
         "title": "DeviceOutputsView",
         "type": "object"
       },
+      "DevicePresenceView": {
+        "additionalProperties": false,
+        "properties": {
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed At"
+          },
+          "reason": {
+            "default": "尚未观测到设备连接",
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "default": "none",
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "default": "unknown",
+            "enum": [
+              "online",
+              "offline",
+              "unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "valid_until": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid Until"
+          }
+        },
+        "title": "DevicePresenceView",
+        "type": "object"
+      },
       "DeviceRemovalConditionView": {
         "additionalProperties": false,
         "description": "One thing that has to become true, and whether it has.\n\nRemoval converges across three authorities and this is how it says where it\nis: not a percentage, but which specific facts are settled. A condition that\nis not yet met is not a failure.",
@@ -1803,6 +1802,16 @@
             "minimum": 0.0,
             "title": "Owner Domain Generation",
             "type": "integer"
+          },
+          "presence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DevicePresenceView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "quiet_because": {
             "default": "",
@@ -6983,66 +6992,6 @@
           }
         },
         "summary": "List Controllers",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/controllers/invitations": {
-      "post": {
-        "description": "Let one more phone in, for a while.\n\nAsked for by a phone that already holds this Host, so nobody is ever\nadded by the Host alone. The answer is a one-time code and the moment it\nstops working.",
-        "operationId": "invite_controller_api_management_v1_controllers_invitations_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "Authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ControllerInvitationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ControllerInvitationView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Invite Controller",
         "tags": [
           "management"
         ]

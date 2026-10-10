@@ -102,9 +102,7 @@ async def test_offline_peer_enrollment_keeps_network_admin_only(tmp_path, store_
         service.authorize_controller(peers[1].grant.controller_id)
         with pytest.raises(CommissioningRequestRejected):
             service.claim_controller(*enrollments[0])
-        invitation = bootstrap.invite_controller(
-            controller_id=peers[1].grant.controller_id
-        )
+        invitation = bootstrap.issue_setup_code(300)
         fresh = service.authorize(
             session_id=invitation["commissioning_id"], secret=invitation["setup_code"]
         )

@@ -11,9 +11,8 @@ What the tests hold:
 - **a name is never invented.** Nobody has named devices yet, so a row shows
   what the Manifest calls this kind of thing, and failing that the tail of the
   identifier — something a person can read out when asking for help;
-- **presence is not on this row at all.** An active Claim and a live mount both
-  say the device is *known*; neither says it is switched on, and the one
-  presence this Host does keep answers a different question;
+- **presence comes from a current transport observation**, never from an
+  active Claim or a live mount;
 - **the names of Eidolons are a nicety, the devices are not.** A roster this
   read cannot get costs the names and nothing else;
 - **a device this Owner does not hold is absent**, and checked before any
@@ -66,6 +65,7 @@ def _device(
         claim=SimpleNamespace(
             device_ref=SimpleNamespace(
                 device_instance_id=device_id,
+                owner_domain_id="owner-domain-1",
                 claim_generation=3,
                 trust_epoch=2,
                 owner_domain_generation=1,
@@ -158,6 +158,9 @@ class _Devices:
 class _Backend:
     def __init__(self, *, roster_fails: bool = False) -> None:
         self.roster_fails = roster_fails
+
+    async def device_presence(self, *, owner_id: str) -> dict:
+        return {"bodies": []}
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict:
         if self.roster_fails:
@@ -265,19 +268,10 @@ async def test_a_device_reads_as_what_it_is_and_who_answers_through_it(
     assert "还在等你确认" in answered.json()["coverage"]
 
 
-async def test_a_row_makes_no_claim_about_presence_at_all(
+async def test_inventory_alone_does_not_claim_device_is_online(
     tmp_path, monkeypatch
 ) -> None:
-    """Both an active Claim and a live mount say the device is *known*, and a
-    screen that read either as "switched on" would tell someone their unplugged
-    speaker is fine.
-
-    This used to be a field typed for three values and only ever set to
-    ``unknown``. Absence is the stronger guarantee: there is no longer a place
-    for an inference to be written into. The one presence this Host does keep —
-    whether a body is on its channel, which is to say in a call — is a different
-    question and lives on the runtime map, not on an inventory row.
-    """
+    """A Claim and mount provide no transport observation on their own."""
 
     _stub_controller(monkeypatch)
     transport = httpx.ASGITransport(app=_app(tmp_path, _Devices(_device())))
@@ -290,7 +284,8 @@ async def test_a_row_makes_no_claim_about_presence_at_all(
     assert "online_reason" not in row
     # And the list says which of the two facts it cannot give, rather than
     # claiming nothing on this Host observes anything.
-    assert "正在通话" in answered["coverage"]
+    assert "不代表正在通话" in answered["coverage"]
+    assert row["presence"]["state"] == "unknown"
 
 
 async def test_a_device_nobody_named_falls_back_to_its_identifier(
@@ -604,3 +599,46 @@ async def test_microphone_choice_travels_with_output_revision(tmp_path, monkeypa
     assert result.json()['outputs']['inputs'] == {'microphone': False}
     assert result.json()['outputs']['allowed']['speech'] is True
     assert result.json()['outputs']['revision'] == 1
+
+
+@pytest.mark.parametrize("present,expected", [(True, "online"), (False, "offline"), (None, "unknown")])
+async def test_device_presence_survives_the_management_boundary(tmp_path, monkeypatch, present, expected):
+    class Backend(_Backend):
+        async def device_presence(self, *, owner_id):
+            assert owner_id == "owner-1"
+            return {"bodies": [{
+                "device_id": _KNOWN,
+                "device_ref": dict(vars(_device().claim.device_ref)),
+                "on_channel": present,
+                "observed_at_ms": int(datetime.now(UTC).timestamp() * 1000),
+            }]}
+    _stub_controller(monkeypatch)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(_device()), Backend())), base_url="https://local.test") as client:
+        response = await client.get(_DEVICES, headers=await _authenticate(client))
+    assert response.status_code == 200
+    assert response.json()["devices"][0]["presence"]["state"] == expected
+
+
+@pytest.mark.parametrize("broken", ["stale", "generation", "owner_domain", "missing_ref", "unavailable", "future"])
+async def test_bad_presence_never_costs_inventory_or_claims_online(tmp_path, monkeypatch, broken):
+    class Backend(_Backend):
+        async def device_presence(self, *, owner_id):
+            if broken == "unavailable":
+                raise ManagementBackendError("down", status_code=503, refusal=refusal_for_status(503, "down"))
+            reference = dict(vars(_device().claim.device_ref))
+            if broken == "generation":
+                reference["claim_generation"] -= 1
+            if broken == "owner_domain":
+                reference["owner_domain_id"] = "another-domain"
+            timestamp = int(datetime.now(UTC).timestamp() * 1000)
+            if broken == "stale": timestamp -= 16000
+            if broken == "future": timestamp += 60000
+            return {"bodies": [{"device_id": _KNOWN, "device_ref": None if broken == "missing_ref" else reference,
+                                "on_channel": True, "observed_at_ms": timestamp}]}
+    _stub_controller(monkeypatch)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(_device()), Backend())), base_url="https://local.test") as client:
+        response = await client.get(_DEVICES, headers=await _authenticate(client))
+    assert response.status_code == 200
+    row = response.json()["devices"][0]
+    assert row["device_id"] == _KNOWN
+    assert row["presence"]["state"] == "unknown"
