@@ -38,6 +38,8 @@ from ..app.control_plane.contracts import (
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
     ControllerEnrollmentRecoveryQuery,
+    ControllerWithdrawalRequest,
+    ControllerWithdrawn,
     DeviceRemovalResult,
     RemovalCondition,
 )
@@ -297,6 +299,24 @@ def commissioning_voucher_request(
     )
 
 
+def controller_withdrawal_request(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    withdrawn_controller_id: str,
+) -> ControllerWithdrawalRequest:
+    return ControllerWithdrawalRequest(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        owner_domain_id=owner_domain_id,
+        principal_id=withdrawn_controller_id,
+    )
+
+
 def enrollment_recovery_query(
     *,
     controller_id: str,
@@ -453,6 +473,22 @@ class AdminDeviceAdmissionClient:
         return await self._post(
             "admission/commissioning-vouchers", payload, CommissioningVoucherIssued
         )
+
+    async def withdraw_controller(
+        self, *, payload: ControllerWithdrawalRequest
+    ) -> ControllerWithdrawn:
+        withdrawn = await self._post(
+            "admission/controller-withdrawals", payload, ControllerWithdrawn
+        )
+        if (
+            withdrawn.principal_id != payload.principal_id
+            or withdrawn.owner_domain_id != payload.owner_domain_id
+        ):
+            raise DeviceAdmissionError(
+                "Admin Controller withdrawal answered about another Controller",
+                status_code=502,
+            )
+        return withdrawn
 
     async def recover_enrollment(
         self, *, payload: ControllerEnrollmentRecoveryQuery

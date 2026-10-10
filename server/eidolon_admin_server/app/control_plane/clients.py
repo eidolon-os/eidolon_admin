@@ -2004,6 +2004,24 @@ class HubManagementClient:
         )
         return response.json()
 
+    async def withdraw_controller(self, *, authorization: str, principal_id: str) -> dict:
+        """Tell Hub this Owner Domain no longer acts through a Controller.
+
+        Every standing that Controller recorded stops deciding Proposals; the
+        ones its vouchers still bring wait for a Controller the Owner keeps.
+        """
+
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{await self._base_url()}/api/admission/v1/controller-withdrawals",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json={"contract_version": "1", "principal_id": principal_id},
+        )
+        return response.json()
+
     async def list_authorized_enrollments(
         self,
         *,

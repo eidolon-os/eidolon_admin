@@ -619,6 +619,33 @@ class CommissioningVoucherIssued(StrictModel):
     expires_at: datetime
 
 
+class ControllerWithdrawalRequest(ControllerCommand):
+    """End what a Controller vouched for, because this Host is about to revoke it.
+
+    A voucher this Host signed carries its Controller's standing to Hub for as
+    long as the voucher is unused. Revoking that Controller's grant has to end
+    the standing too — said to Hub *before* the grant goes, so that there is
+    no moment in which the phone is revoked and its vouchers still admit. The
+    asking Controller may name itself.
+    """
+
+    required_scope: ClassVar[str] = "device.claim.approve"
+
+    business_owner_id: BusinessOwnerId
+    owner_domain_id: OwnerDomainId
+    principal_id: str = Field(pattern=r"^ectrl-[0-9a-f]{20}$")
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.owner_domain_id
+
+
+class ControllerWithdrawn(StrictModel):
+    contract_version: Literal["1"] = "1"
+    owner_domain_id: OwnerDomainId
+    principal_id: str
+    withdrawn_at: datetime
+
+
 class ControllerEnrollmentRecoveryQuery(ControllerCommand):
     """One Enrollment's projection, read in the Controller's own Owner Domain.
 

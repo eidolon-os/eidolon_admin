@@ -182,3 +182,69 @@ def test_the_signing_key_is_not_the_management_secret_itself() -> None:
     assert derive_voucher_signing_key(SECRET) != SECRET
     assert derive_voucher_signing_key(SECRET) == derive_voucher_signing_key(SECRET)
     assert rfc8785.dumps({"a": 1}) == b'{"a":1}'
+
+
+class WithdrawingHub:
+    def __init__(self) -> None:
+        self.withdrawn: list[tuple[str, str]] = []
+
+    async def withdraw_controller(self, *, authorization: str, principal_id: str) -> dict:
+        self.withdrawn.append((authorization, principal_id))
+        return {
+            "contract_version": "1",
+            "owner_domain_id": str(DOMAIN),
+            "principal_id": principal_id,
+            "withdrawn_at": "2026-10-10T10:00:00Z",
+        }
+
+
+@pytest.mark.asyncio
+async def test_withdrawing_a_controller_is_said_to_hub_by_the_controller_asking() -> None:
+    """The other half of recording standing: Hub keeps the record, so Hub hears the end."""
+
+    from eidolon_admin_server.app.control_plane.contracts import ControllerWithdrawalRequest
+
+    hub = WithdrawingHub()
+    withdrawn = await _service(hub).withdraw_controller(  # type: ignore[arg-type]
+        payload=ControllerWithdrawalRequest(
+            contract_version="1",
+            actor=ACTOR,
+            business_owner_id=BUSINESS_OWNER,
+            owner_domain_id=DOMAIN,
+            principal_id="ectrl-ffffffffffffffffffff",
+        )
+    )
+
+    assert withdrawn.principal_id == "ectrl-ffffffffffffffffffff"
+    assert [principal for _token, principal in hub.withdrawn] == ["ectrl-ffffffffffffffffffff"]
+    # Spoken with an admission context for the asking Controller, as a standing is recorded.
+    assert hub.withdrawn[0][0]
+
+
+def test_only_a_controller_that_may_decide_can_ask_for_a_withdrawal() -> None:
+    from pydantic import ValidationError
+
+    from eidolon_admin_server.app.control_plane.contracts import ControllerWithdrawalRequest
+
+    reader = ControllerActorRef(
+        principal_id="ectrl-0123456789abcdef0123",
+        owner_domain_id=DOMAIN,
+        granted_scopes=("device.read",),
+        authentication_strength="software",
+    )
+    with pytest.raises(ValidationError):
+        ControllerWithdrawalRequest(
+            contract_version="1",
+            actor=reader,
+            business_owner_id=BUSINESS_OWNER,
+            owner_domain_id=DOMAIN,
+            principal_id="ectrl-ffffffffffffffffffff",
+        )
+    with pytest.raises(ValidationError):
+        ControllerWithdrawalRequest(
+            contract_version="1",
+            actor=ACTOR,
+            business_owner_id=BUSINESS_OWNER,
+            owner_domain_id=DOMAIN,
+            principal_id="not-a-controller",
+        )

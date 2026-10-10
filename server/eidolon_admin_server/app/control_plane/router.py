@@ -19,6 +19,8 @@ from eidolon_sdk.biz.presentation.device import DeviceOutputConfiguration
 from .contracts import (
     CommissioningVoucherIssued,
     ControllerCommissioningVoucherRequest,
+    ControllerWithdrawalRequest,
+    ControllerWithdrawn,
     ControllerDeviceOutputPolicyQuery,
     ControllerDeviceOutputPolicyUpdate,
     BoundaryCapabilities,
@@ -396,6 +398,13 @@ async def issue_commissioning_voucher(
     payload: ControllerCommissioningVoucherRequest, request: Request
 ) -> CommissioningVoucherIssued:
     return await _service(request).issue_commissioning_voucher(payload=payload)
+
+
+@router.post("/admission/controller-withdrawals", response_model=ControllerWithdrawn)
+async def withdraw_controller(
+    payload: ControllerWithdrawalRequest, request: Request
+) -> ControllerWithdrawn:
+    return await _service(request).withdraw_controller(payload=payload)
 
 
 @router.post("/admission/claim-queries", response_model=ClaimPage)

@@ -96,6 +96,7 @@ from ..app.control_plane.contracts import ControllerDeviceRemovalRequest
 from ..app.control_plane.contracts import CommissioningVoucherIssued
 from .device_admissions import (
     commissioning_voucher_request,
+    controller_withdrawal_request,
     AdminDeviceAdmissionClient,
     AdminDeviceAdmissionPort,
     DeviceAdmissionError,
@@ -493,6 +494,17 @@ def create_app(
 
         if session.owner_resolved:
             return session.owner_id
+        session.remember_owner(await host_owner_id())
+        return session.owner_id
+
+    async def host_owner_id() -> str | None:
+        """Whose Workspace this Host holds, asked of the Data plane; ``None`` if none.
+
+        What ``owner_scope`` remembers on a session, asked without one, for
+        the one caller that needs the Owner but is not scoped to it: revoking
+        a phone, which a Host with no Workspace must still be able to do.
+        """
+
         # Two hops, and which one failed is the only useful thing to say about
         # a failure. Untagged, both arrived at the phone as a bare 503 that the
         # App drops by convention, so a person and whoever they asked saw a
@@ -513,8 +525,7 @@ def create_app(
             if not isinstance(detail, dict):
                 detail = {"reason": _OWNER_SCOPE_DATA_REASON}
             raise HTTPException(exc.status_code, detail) from exc
-        session.remember_owner(None if existing is None else existing.owner.owner_id)
-        return session.owner_id
+        return None if existing is None else existing.owner.owner_id
 
     async def owner_and_controller(principal: dict, session: Any) -> tuple[str, str]:
         """The Owner this request is scoped to, and the phone that asked.
@@ -1395,6 +1406,50 @@ def create_app(
                 ) from exc
             return await self._reread(session=session, device_id=device_id)
 
+    async def withdraw_standing_of(*, controller_id: str, target_id: str) -> None:
+        """Tell Hub to stop acting on what ``target_id`` vouched for.
+
+        Said before the grant is revoked, and a failure here refuses the
+        revocation: the other order leaves a moment — as long as a voucher
+        lives — in which the phone is revoked and the devices it vouched for
+        are still admitted in its name. A Host with no Owner Domain admission
+        configured, or no Workspace yet, has never signed a voucher, so there
+        is nothing to end and nothing is asked.
+        """
+
+        if resolved.device_onboarding_target is None:
+            return
+        owner_id = await host_owner_id()
+        if owner_id is None:
+            return
+        owner_domain_id, business_owner_id = _admission_scope(owner_id)
+        try:
+            await device_admission.withdraw_controller(
+                payload=controller_withdrawal_request(
+                    controller_id=controller_id,
+                    owner_domain_id=owner_domain_id,
+                    business_owner_id=business_owner_id,
+                    withdrawn_controller_id=target_id,
+                )
+            )
+        except DeviceAdmissionError as exc:
+            raise HTTPException(
+                exc.status_code, device_admission_detail(exc)
+            ) from exc
+
+    class _WithdrawingControllers:
+        """The grant record, with revocation preceded by ending the grant's standing."""
+
+        def __init__(self, directory) -> None:
+            self._directory = directory
+
+        async def list_controllers(self, controller_id: str) -> dict:
+            return await self._directory.list_controllers(controller_id)
+
+        async def revoke_controller(self, controller_id: str, target_id: str) -> dict:
+            await withdraw_standing_of(controller_id=controller_id, target_id=target_id)
+            return await self._directory.revoke_controller(controller_id, target_id)
+
     async def management_controller(authorization: str | None) -> str:
         """Which phone is asking — the one thing these three routes need.
 
@@ -1409,7 +1464,7 @@ def create_app(
         app,
         backend=management,
         authenticated_owner=management_owner,
-        controllers=controller_directory or _Controllers(),
+        controllers=_WithdrawingControllers(controller_directory or _Controllers()),
         authenticated_controller_id=management_controller,
         host=host_services,
         devices=owner_device_port or _Devices(),

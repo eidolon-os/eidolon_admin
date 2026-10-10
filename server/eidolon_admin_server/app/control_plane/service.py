@@ -39,6 +39,8 @@ from .contracts import (
     ControllerBodyAssignment,
     CommissioningVoucherIssued,
     ControllerCommissioningVoucherRequest,
+    ControllerWithdrawalRequest,
+    ControllerWithdrawn,
     ControllerEnrollmentRecoveryQuery,
     BoundaryCapabilities,
     ControllerDeviceRemovalRequest,
@@ -591,6 +593,27 @@ class ControlPlaneService:
             device_base_id=voucher.device_base_id,
             expires_at=voucher.expires_at,
         )
+
+    async def withdraw_controller(
+        self, *, payload: ControllerWithdrawalRequest
+    ) -> ControllerWithdrawn:
+        """End the standing a Controller recorded, before its grant is revoked.
+
+        The other half of ``issue_commissioning_voucher``: that call tells Hub
+        which Controller is admitting a key, and this one tells it that the
+        Controller no longer speaks for the Owner. Hub keeps the record, so it
+        is Hub that has to hear it.
+        """
+
+        issuer = self._admission_issuer()
+        answered = await self.hub.withdraw_controller(
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+            ),
+            principal_id=payload.principal_id,
+        )
+        return ControllerWithdrawn.model_validate(answered)
 
     async def get_enrollment_recovery(
         self, *, payload: ControllerEnrollmentRecoveryQuery

@@ -469,6 +469,7 @@ def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> N
         "ControllerDeviceOutputPolicyQuery",
         "ControllerDeviceOutputPolicyUpdate",
         "ControllerEnrollmentDecisionIntent",
+        "ControllerWithdrawalRequest",
     }
     for command in commands:
         # Declared, not restated: the scope lives on the command that needs it.
