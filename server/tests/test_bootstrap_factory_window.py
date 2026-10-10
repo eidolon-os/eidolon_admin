@@ -430,3 +430,71 @@ def test_fixed_development_code_admits_multiple_admins_across_restart(tmp_path, 
         assert all(grant.role is ControllerRole.HOST_ADMIN and grant.revoked_at is None for grant in grants)
         assert service.commissioning_endpoint()["setup_session"] is not None
     store.connection.close()
+
+
+def test_a_lan_claim_puts_the_standing_window_back_like_a_ble_one(
+    tmp_path: Path,
+) -> None:
+    """Both transports carry one claim, so both must reopen the window it spent.
+
+    Found on a Pi 5 declared ``always_open``: a tablet minted a one-time code,
+    a phone joined with it over the LAN, and afterwards the Host's own Setup
+    code no longer worked. The LAN claim built a commissioning service of its
+    own without the post-claim hook, so only a BLE claim ever reopened it --
+    and an Owner who later lost both phones was locked out until a restart.
+    """
+
+    import asyncio
+
+    settings = _always_open(tmp_path)
+    _write_factory_code(settings, FACTORY_CODE)
+    store = InMemoryBootstrapStateStore()
+    service = BootstrapService(
+        settings=settings,
+        store=store,
+        identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
+        network=InMemoryNetworkProvisioning(),
+    )
+    service.initialize()
+    service.reconcile_network_state(NetworkState.CONNECTED)
+
+    def phone(name: str) -> dict[str, str]:
+        return {
+            "public_key": _controller_public_key(),
+            "display_name": name,
+            "platform": "android",
+        }
+
+    # The first phone claims with the code on the chassis, over BLE -- through
+    # the very instance the daemon hands its BLE listener.
+    ble = CommissioningProtocolSession(service.commissioning)
+    assert asyncio.run(_claim(ble, service, "55555555", "66666666"))["ok"] is True
+    assert service.commissioning_endpoint()["setup_session"] is not None
+
+    # It mints a one-time code for a second phone. Minting supersedes, so the
+    # standing window is shut while that code is out.
+    invite = service.issue_setup_code()
+    assert (
+        service.commissioning_endpoint()["setup_session"]["commissioning_id"]
+        == invite["commissioning_id"]
+    )
+
+    service.claim_lan_controller(
+        commissioning_id=invite["commissioning_id"],
+        setup_code=invite["setup_code"],
+        controller=phone("Phone"),
+    )
+
+    reopened = service.commissioning_endpoint()["setup_session"]
+    assert reopened is not None
+    assert reopened["commissioning_id"] != invite["commissioning_id"]
+
+    # And what reopened is the chassis code's window: a third phone gets in
+    # with it over the LAN, with no restart and no control socket.
+    service.claim_lan_controller(
+        commissioning_id=reopened["commissioning_id"],
+        setup_code=FACTORY_CODE,
+        controller=phone("Spare"),
+    )
+    assert len(store.list_controllers()) == 3
+    assert service.commissioning_endpoint()["setup_session"] is not None

@@ -99,6 +99,20 @@ class BootstrapService:
             or CommissioningTlsIdentityManager(settings.commissioning_tls_pem_path)
         )
         self._network = network
+        # One claim state machine for both transports. BLE and the LAN Local
+        # API carry the identical claim, so they must also share what follows
+        # it: each used to build its own, only the daemon's was told to reopen
+        # a standing window, and a phone that claimed over the LAN left an
+        # ``always_open`` Host closed until bootstrapd next restarted.
+        self._commissioning = (
+            None
+            if network is None
+            else CommissioningService(
+                store=store,
+                network=network,
+                on_claimed=self.reopen_standing_claim_window,
+            )
+        )
         self._run_id: str | None = None
         self._started_at: str | None = None
         self._commissioning_status = (
@@ -107,6 +121,16 @@ class BootstrapService:
             else "starting"
         )
         self._controller_challenges: dict[str, tuple[str, int, float]] = {}
+
+    @property
+    def commissioning(self) -> CommissioningService:
+        """The claim state machine every commissioning transport drives."""
+
+        if self._commissioning is None:
+            raise BootstrapOperationRejected(
+                "commissioning requires a network adapter"
+            )
+        return self._commissioning
 
     def initialize(self) -> None:
         now = _timestamp(_now())
@@ -579,14 +603,14 @@ class BootstrapService:
         """Claim an already-networked Host through the Local API.
 
         Authorization and the atomic Grant/session consumption are delegated
-        to the same CommissioningService used by the BLE protocol.
+        to the same CommissioningService instance the BLE protocol drives.
         """
 
-        if self._network is None:
+        if self._commissioning is None:
             raise BootstrapOperationRejected(
                 "LAN commissioning requires a network adapter"
             )
-        commissioning = CommissioningService(store=self._store, network=self._network)
+        commissioning = self._commissioning
         authorization = commissioning.authorize(
             session_id=commissioning_id,
             secret=setup_code,

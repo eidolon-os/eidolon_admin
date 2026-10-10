@@ -148,11 +148,7 @@ async def run_daemon(
                 service.reconcile_network_state(recovered_network.state)
         except Exception:
             logger.exception("network provisioning recovery failed closed")
-        commissioning = CommissioningService(
-            store=store,
-            network=network,
-            on_claimed=service.reopen_standing_claim_window,
-        )
+        commissioning = service.commissioning
         await control.start()
         logger.info(
             "bootstrapd ready host_id=%s mode=%s socket=%s",
