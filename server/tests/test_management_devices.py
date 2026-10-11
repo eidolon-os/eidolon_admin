@@ -653,18 +653,37 @@ async def test_presence_matches_real_sdk_device_ref(tmp_path, monkeypatch, prese
         **vars(device.claim.device_ref), "owner_domain_id": "owner-domain-1",
     })
 
-    class Backend(_Backend):
-        async def device_presence(self, *, owner_domain_id):
-            assert owner_domain_id == "owner-domain-1"
-            return {"bodies": [{
-                "device_id": device.device_id,
-                "device_ref": device.claim.device_ref.model_dump(mode="json"),
-                "on_channel": present,
-                "observed_at_ms": int(datetime.now(UTC).timestamp() * 1000),
-            }]}
+    from fastapi import FastAPI
+    from eidolon_admin_server.app.management.device_presence_router import router
+    from eidolon_admin_server.local_api.management.backend import AdminManagementClient
+
+    async def channel(request):
+        assert request.url.path == "/v1/device-channels/presence"
+        return httpx.Response(200, json={"bodies": [{
+            "device_id": device.device_id,
+            "owner_id": "owner_business-account",
+            "device_ref": device.claim.device_ref.model_dump(mode="json"),
+            "on_channel": present,
+            "observed_at_ms": int(datetime.now(UTC).timestamp() * 1000),
+        }]})
+
+    admin = FastAPI()
+    admin.include_router(router, prefix="/api")
+    admin.state.settings = SimpleNamespace(local_api_service_token="test-service-token")
+    admin.state.registry = {"channel-provider": SimpleNamespace(
+        base_url="http://channel", upstream_prefix="", auth=SimpleNamespace(type="none"))}
 
     _stub_controller(monkeypatch)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(device), Backend())), base_url="https://local.test") as client:
-        response = await client.get(_DEVICES, headers=await _authenticate(client))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(channel)) as upstream, httpx.AsyncClient(transport=httpx.ASGITransport(app=admin)) as internal:
+        admin.state.http_client = upstream
+        adapter = AdminManagementClient(base_url="http://admin", service_token="test-service-token", client=internal, timeout_seconds=5)
+
+        class Backend(_Backend):
+            async def device_presence(self, *, owner_domain_id):
+                assert owner_domain_id == "owner-domain-1"
+                return await adapter.device_presence(owner_domain_id=owner_domain_id)
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(device), Backend())), base_url="https://local.test") as client:
+            response = await client.get(_DEVICES, headers=await _authenticate(client))
     assert response.status_code == 200
     assert response.json()["devices"][0]["presence"]["state"] == expected

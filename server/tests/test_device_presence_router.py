@@ -17,8 +17,8 @@ async def test_presence_requires_internal_auth_and_filters_device_domain(mode):
         if mode == "malformed":
             return httpx.Response(200, json={"bodies": {}})
         return httpx.Response(200, json={"bodies": [
-            {"device_id": "mine", "owner_id": "owner-a", "on_channel": True},
-            {"device_id": "other", "owner_id": "owner-b", "on_channel": True},
+            {"device_id": "mine", "owner_id": "owner_account", "device_ref": {"owner_domain_id": "owner-a"}, "on_channel": True},
+            {"device_id": "other", "owner_id": "owner_account", "device_ref": {"owner_domain_id": "owner-b"}, "on_channel": True},
         ]})
     app = FastAPI()
     app.include_router(router)

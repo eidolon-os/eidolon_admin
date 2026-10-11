@@ -35,4 +35,6 @@ async def device_presence(request: Request, owner_domain_id: str) -> dict:
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(503, "设备连接观测暂时不可用") from exc
     return {"bodies": [row for row in rows
-                       if isinstance(row, dict) and row.get("owner_id") == owner_domain_id]}
+                       if isinstance(row, dict)
+                       and isinstance(row.get("device_ref"), dict)
+                       and row["device_ref"].get("owner_domain_id") == owner_domain_id]}
