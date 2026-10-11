@@ -159,7 +159,7 @@ class _Backend:
     def __init__(self, *, roster_fails: bool = False) -> None:
         self.roster_fails = roster_fails
 
-    async def device_presence(self, *, owner_id: str) -> dict:
+    async def device_presence(self, *, owner_domain_id: str) -> dict:
         return {"bodies": []}
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict:
@@ -604,8 +604,8 @@ async def test_microphone_choice_travels_with_output_revision(tmp_path, monkeypa
 @pytest.mark.parametrize("present,expected", [(True, "online"), (False, "offline"), (None, "unknown")])
 async def test_device_presence_survives_the_management_boundary(tmp_path, monkeypatch, present, expected):
     class Backend(_Backend):
-        async def device_presence(self, *, owner_id):
-            assert owner_id == "owner-1"
+        async def device_presence(self, *, owner_domain_id):
+            assert owner_domain_id == "owner-domain-1"
             return {"bodies": [{
                 "device_id": _KNOWN,
                 "device_ref": dict(vars(_device().claim.device_ref)),
@@ -622,7 +622,7 @@ async def test_device_presence_survives_the_management_boundary(tmp_path, monkey
 @pytest.mark.parametrize("broken", ["stale", "generation", "owner_domain", "missing_ref", "unavailable", "future"])
 async def test_bad_presence_never_costs_inventory_or_claims_online(tmp_path, monkeypatch, broken):
     class Backend(_Backend):
-        async def device_presence(self, *, owner_id):
+        async def device_presence(self, *, owner_domain_id):
             if broken == "unavailable":
                 raise ManagementBackendError("down", status_code=503, refusal=refusal_for_status(503, "down"))
             reference = dict(vars(_device().claim.device_ref))

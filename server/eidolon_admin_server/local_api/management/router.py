@@ -1706,7 +1706,7 @@ class ManagementBackendPort(Protocol):
 
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
 
-    async def device_presence(self, *, owner_id: str) -> dict: ...
+    async def device_presence(self, *, owner_domain_id: str) -> dict: ...
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
 
@@ -2163,14 +2163,20 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         names = await _companion_names(backend, session.owner_id)
-        try:
-            observations = await backend.device_presence(owner_id=session.owner_id)
-        except ManagementBackendError:
-            observations = {"bodies": [], "unavailable": True}
+        # Channel ownership is a device domain, not the business Owner in the
+        # controller session. Only query domains from the authorized inventory.
+        observations_by_domain = {}
+        for domain in sorted({str(device.claim.device_ref.owner_domain_id) for device in inventory.devices}):
+            try:
+                observations_by_domain[domain] = await backend.device_presence(owner_domain_id=domain)
+            except ManagementBackendError:
+                observations_by_domain[domain] = {"bodies": [], "unavailable": True}
         rows = []
         for device in inventory.devices:
             view = _device_view(device, names)
-            view.presence = _inventory_presence(device, observations)
+            view.presence = _inventory_presence(
+                device, observations_by_domain[str(device.claim.device_ref.owner_domain_id)]
+            )
             rows.append(view)
         return DevicesView(devices=rows, coverage=_DEVICE_COVERAGE)
 

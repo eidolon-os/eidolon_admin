@@ -124,9 +124,9 @@ class AdminManagementClient:
             "/api/internal/v1/management/context", {"owner_id": owner_id}
         )
 
-    async def device_presence(self, *, owner_id: str) -> dict:
+    async def device_presence(self, *, owner_domain_id: str) -> dict:
         return await self._get(
-            "/api/internal/v1/management/device-presence", {"owner_id": owner_id}
+            "/api/internal/v1/management/device-presence", {"owner_domain_id": owner_domain_id}
         )
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:

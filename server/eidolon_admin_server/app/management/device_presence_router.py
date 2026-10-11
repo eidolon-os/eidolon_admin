@@ -1,4 +1,4 @@
-"""Owner-scoped channel observations, independent of the runtime dashboard."""
+"""Device-domain-scoped channel observations, independent of the runtime dashboard."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ router = APIRouter(
 
 
 @router.get("/device-presence")
-async def device_presence(request: Request, owner_id: str) -> dict:
-    """The authenticated Local API supplies the Owner, never the phone."""
+async def device_presence(request: Request, owner_domain_id: str) -> dict:
+    """The Local API supplies a domain from its authorized device inventory."""
     service = request.app.state.registry.get("channel-provider")
     if service is None or not service.base_url:
         raise HTTPException(503, "设备连接观测服务未配置")
@@ -35,4 +35,4 @@ async def device_presence(request: Request, owner_id: str) -> dict:
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(503, "设备连接观测暂时不可用") from exc
     return {"bodies": [row for row in rows
-                       if isinstance(row, dict) and row.get("owner_id") == owner_id]}
+                       if isinstance(row, dict) and row.get("owner_id") == owner_domain_id]}
