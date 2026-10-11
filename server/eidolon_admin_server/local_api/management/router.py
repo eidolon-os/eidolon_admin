@@ -338,7 +338,7 @@ def _inventory_presence(device, observations: dict) -> "DevicePresenceView":
             continue
         observed_ref = row.get("device_ref")
         if not isinstance(observed_ref, dict) or any(
-            observed_ref.get(field) != getattr(ref, field)
+            observed_ref.get(field) != (str(ref.owner_domain_id) if field == "owner_domain_id" else getattr(ref, field))
             for field in ("device_instance_id", "owner_domain_id", "claim_generation", "trust_epoch", "owner_domain_generation")
         ):
             continue  # An older claim cannot speak for this device lifecycle.

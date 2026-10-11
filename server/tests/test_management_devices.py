@@ -642,3 +642,29 @@ async def test_bad_presence_never_costs_inventory_or_claims_online(tmp_path, mon
     row = response.json()["devices"][0]
     assert row["device_id"] == _KNOWN
     assert row["presence"]["state"] == "unknown"
+
+
+@pytest.mark.parametrize("present,expected", [(True, "online"), (False, "offline"), (None, "unknown")])
+async def test_presence_matches_real_sdk_device_ref(tmp_path, monkeypatch, present, expected):
+    from eidolon_sdk.device_foundation.v1 import DeviceRef
+
+    device = _device(device_id="device-instance-" + "a" * 64)
+    device.claim.device_ref = DeviceRef.model_validate({
+        **vars(device.claim.device_ref), "owner_domain_id": "owner-domain-1",
+    })
+
+    class Backend(_Backend):
+        async def device_presence(self, *, owner_domain_id):
+            assert owner_domain_id == "owner-domain-1"
+            return {"bodies": [{
+                "device_id": device.device_id,
+                "device_ref": device.claim.device_ref.model_dump(mode="json"),
+                "on_channel": present,
+                "observed_at_ms": int(datetime.now(UTC).timestamp() * 1000),
+            }]}
+
+    _stub_controller(monkeypatch)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(device), Backend())), base_url="https://local.test") as client:
+        response = await client.get(_DEVICES, headers=await _authenticate(client))
+    assert response.status_code == 200
+    assert response.json()["devices"][0]["presence"]["state"] == expected
