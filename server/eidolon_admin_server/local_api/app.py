@@ -91,6 +91,7 @@ from .devices import (
     output_configuration_query,
     output_policy_decision,
     owner_device_inventory_view,
+    validate_inventory_membership,
 )
 from ..app.control_plane.contracts import ControllerDeviceRemovalRequest
 from ..app.control_plane.contracts import CommissioningVoucherIssued
@@ -685,6 +686,7 @@ def create_app(
                 ),
             )
         )
+        validate_inventory_membership(endpoints=endpoints, bound_owner_id=owner_id, claims=claims)
         present = tuple(endpoint for endpoint in endpoints.endpoints if endpoint.present)
         configurations = await asyncio.gather(
             *(

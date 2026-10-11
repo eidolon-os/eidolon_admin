@@ -374,13 +374,10 @@ class AdminOwnerDevicesClient:
             await self._client.aclose()
 
 
-def owner_device_inventory_view(
-    *,
-    endpoints: KernelBodyEndpointPage,
-    bound_owner_id: str,
-    claims: ClaimPage,
-    outputs: Mapping[str, DeviceOutputConfiguration],
-) -> LocalDeviceInventoryView:
+def validate_inventory_membership(
+    *, endpoints: KernelBodyEndpointPage, bound_owner_id: str, claims: ClaimPage
+) -> None:
+    """Do not query or expose configuration through a stale authorization ref."""
     if any(endpoint.owner_id != bound_owner_id for endpoint in endpoints.endpoints):
         raise DeviceInventoryError(
             "Host Owner scope does not match Kernel Device membership", status_code=409
@@ -393,8 +390,20 @@ def owner_device_inventory_view(
         for endpoint in present
     ):
         raise DeviceInventoryError(
-            "Kernel membership and Hub Claim projection do not match", status_code=502
+            "设备授权已更新，主机正在同步设备配置，请稍候。", status_code=503
         )
+
+
+def owner_device_inventory_view(
+    *,
+    endpoints: KernelBodyEndpointPage,
+    bound_owner_id: str,
+    claims: ClaimPage,
+    outputs: Mapping[str, DeviceOutputConfiguration],
+) -> LocalDeviceInventoryView:
+    validate_inventory_membership(endpoints=endpoints, bound_owner_id=bound_owner_id, claims=claims)
+    claimed = {item.device_ref.device_instance_id: item for item in claims.items}
+    present = tuple(endpoint for endpoint in endpoints.endpoints if endpoint.present)
     if any(endpoint.device_id not in outputs for endpoint in present):
         raise DeviceInventoryError(
             "Device output configuration is missing for a claimed device", status_code=502

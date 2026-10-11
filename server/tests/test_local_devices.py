@@ -242,3 +242,16 @@ def test_the_owners_decision_and_the_devices_declaration_stay_two_facts() -> Non
     assert outputs[_DEVICE_READY].policy.allowed == OutputSelection(expression=True)
     assert outputs[_DEVICE_MOUNTED].capabilities.speech is True
     assert outputs[_DEVICE_MOUNTED].policy is None
+
+
+def test_reauthorization_waits_for_mount_projection_without_using_old_outputs():
+    claims = _claims()
+    first = claims.items[0]
+    changed = first.model_copy(update={"device_ref": first.device_ref.model_copy(
+        update={"claim_generation": first.device_ref.claim_generation + 1})})
+    claims = claims.model_copy(update={"items": (changed, *claims.items[1:])})
+    with pytest.raises(DeviceInventoryError) as caught:
+        owner_device_inventory_view(endpoints=_endpoint_page(), bound_owner_id="owner-1",
+                                    claims=claims, outputs=_outputs())
+    assert caught.value.status_code == 503
+    assert "正在同步" in str(caught.value)
