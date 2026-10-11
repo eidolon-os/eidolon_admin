@@ -7,6 +7,8 @@ from typing import Any, TypeVar
 from urllib.parse import quote
 
 import httpx
+
+from eidolon_sdk.core.http import request_with_reconnect
 from eidolon_sdk.biz.persona import (
     ConversationPreferences,
     PersonaAuthoring,
@@ -198,22 +200,25 @@ async def _request(
     json: dict | None = None,
     content: bytes | None = None,
     params: dict[str, str] | None = None,
+    replay_safe: bool = False,
 ) -> httpx.Response:
     try:
-        return await client.request(
-            method,
+        return await request_with_reconnect(
+            client, method,
             url,
             timeout=timeout,
             headers=headers,
             json=json,
             content=content,
             params=params,
+            replay_safe=replay_safe,
         )
     except (
         httpx.TimeoutException,
         httpx.NetworkError,
         httpx.RemoteProtocolError,
     ) as exc:
+        _LOG.warning("%s transport failed: %s", authority, type(exc).__name__)
         raise AuthorityFailure(
             authority,
             "unavailable",
@@ -1860,6 +1865,7 @@ class HubManagementClient:
             self._client,
             "POST",
             f"{base_url}/api/device-control/v1/output-policy-queries",
+            replay_safe=True,
             timeout=self._timeout,
             headers=self._headers(authorization),
             json=query.model_dump(mode="json"),

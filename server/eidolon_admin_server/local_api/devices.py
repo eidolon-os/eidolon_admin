@@ -10,7 +10,7 @@ from typing import Literal, Protocol
 from urllib.parse import quote
 
 import httpx
-from eidolon_sdk.core.http import create_async_client
+from eidolon_sdk.core.http import create_async_client, request_with_reconnect
 from eidolon_sdk.biz.presentation import DeviceOutputPolicy, OutputSelection
 from eidolon_sdk.biz.presentation.device import (
     DeviceOutputConfiguration,
@@ -160,7 +160,8 @@ class AdminOwnerDevicesClient:
         if not self._token:
             raise DeviceInventoryError("Local API Admin service credential is not configured")
         try:
-            response = await self._client.get(
+            response = await request_with_reconnect(
+                self._client, "GET",
                 f"{self._base_url}/api/control-plane/v1/owners/"
                 f"{quote(owner_id, safe='')}/body-endpoints",
                 headers={"Authorization": f"Bearer {self._token}"},
@@ -305,11 +306,12 @@ class AdminOwnerDevicesClient:
                 "Local API Admin service credential is not configured"
             )
         try:
-            response = await self._client.request(
-                verb,
+            response = await request_with_reconnect(
+                self._client, verb,
                 f"{self._base_url}/api/control-plane/v1/owners/"
                 f"{quote(owner_id, safe='')}/devices/"
                 f"{quote(device_id, safe='')}/{suffix}",
+                replay_safe=verb == "POST" and suffix == "output-policy-queries",
                 headers={"Authorization": f"Bearer {self._token}"},
                 json=payload.model_dump(mode="json"),
                 timeout=self._timeout,

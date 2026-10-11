@@ -10,7 +10,7 @@ from typing import Any, Literal, Protocol
 from urllib.parse import quote
 
 import httpx
-from eidolon_sdk.core.http import create_async_client
+from eidolon_sdk.core.http import create_async_client, request_with_reconnect
 from eidolon_sdk.device_foundation.v1 import (
     ActorRef,
     BusinessOwnerId,
@@ -430,10 +430,12 @@ class AdminDeviceAdmissionClient:
             )
         return {"Authorization": f"Bearer {self._token}"}
 
-    async def _post(self, path: str, payload: BaseModel, model):
+    async def _post(self, path: str, payload: BaseModel, model, *, replay_safe: bool = False):
         try:
-            response = await self._client.post(
+            response = await request_with_reconnect(
+                self._client, "POST",
                 f"{self._base_url}/api/control-plane/v1/{path}",
+                replay_safe=replay_safe,
                 headers=self._headers(),
                 json=payload.model_dump(mode="json"),
                 timeout=self._timeout,
@@ -507,7 +509,7 @@ class AdminDeviceAdmissionClient:
         return projection
 
     async def query_claims(self, *, payload: ControllerClaimQuery) -> ClaimPage:
-        page = await self._post("admission/claim-queries", payload, ClaimPage)
+        page = await self._post("admission/claim-queries", payload, ClaimPage, replay_safe=True)
         if page.owner_domain_id != payload.query.owner_domain_id:
             raise DeviceAdmissionError(
                 "Admin Claim query returned another Owner Domain", status_code=502

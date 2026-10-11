@@ -1204,3 +1204,36 @@ async def test_the_client_that_reaches_the_authority_carries_the_source_preset()
     # Omitted rather than null, so a create that claims no preset is the same
     # bytes an older client sends and its retry stays a replay.
     assert "source_preset_id" not in sent[1]
+
+
+@pytest.mark.parametrize("method,replay_safe,attempts", [("GET", False, 2), ("POST", True, 2), ("PUT", False, 1)])
+async def test_authority_reconnect_preserves_mutation_safety(method, replay_safe, attempts):
+    from eidolon_admin_server.app.control_plane.clients import _request
+    calls = 0
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        raise httpx.RemoteProtocolError("Server disconnected")
+    async with client(handler) as http:
+        with pytest.raises(AuthorityFailure):
+            await _request("hub", http, method, "http://hub.test/test", timeout=1, replay_safe=replay_safe)
+    assert calls == attempts
+
+
+async def test_directory_recovers_from_lost_idle_connection():
+    calls = 0
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.RemoteProtocolError("Server disconnected")
+        return httpx.Response(200, json={
+            "operation": "system.service-endpoint", "service_id": "hub",
+            "endpoint_id": "device-authority.http", "protocol": "http",
+            "address": "http://hub.test", "contract": HUB_CONTRACT,
+        })
+    async with client(handler) as http:
+        subject = SystemDirectoryClient(base_url="http://directory.test", timeout_seconds=1, client=http)
+        result = await subject.resolve(service_id="hub", endpoint_id="device-authority.http", required_contract=HUB_CONTRACT)
+    assert result.address == "http://hub.test"
+    assert calls == 2

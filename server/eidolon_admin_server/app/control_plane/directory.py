@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import logging
+
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import httpx
-from eidolon_sdk.core.http import create_async_client
+from eidolon_sdk.core.http import create_async_client, request_with_reconnect
 from pydantic import ValidationError
 
 from .contracts import ServiceEndpoint
 from .errors import AuthorityFailure
+
+
+_LOG = logging.getLogger(__name__)
 
 
 class SystemDirectoryClient:
@@ -31,10 +36,9 @@ class SystemDirectoryClient:
         if client is not None:
             self._client = client
         else:
-            transport = (
-                httpx.AsyncHTTPTransport(uds=str(uds_path)) if uds_path else None
+            self._client = create_async_client(
+                timeout=5.0, uds=str(uds_path) if uds_path else None, trust_env=False,
             )
-            self._client = create_async_client(timeout=5.0, transport=transport, trust_env=False)
 
     async def resolve(
         self,
@@ -48,12 +52,13 @@ class SystemDirectoryClient:
             f"/endpoints/{quote(endpoint_id, safe='')}"
         )
         try:
-            response = await self._client.get(url, timeout=self._timeout)
+            response = await request_with_reconnect(self._client, "GET", url, timeout=self._timeout)
         except (
             httpx.TimeoutException,
             httpx.NetworkError,
             httpx.RemoteProtocolError,
         ) as exc:
+            _LOG.warning("directory transport failed: %s", type(exc).__name__)
             raise AuthorityFailure(
                 "directory",
                 "unavailable",

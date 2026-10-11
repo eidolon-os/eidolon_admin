@@ -11,6 +11,8 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import httpx
+
+from eidolon_sdk.core.http import request_with_reconnect
 from eidolon_sdk.biz.contracts.refusal import Refusal
 from pydantic import ValidationError
 
@@ -604,8 +606,8 @@ class AdminManagementClient:
                 ),
             )
         try:
-            return await self._client.request(
-                method,
+            return await request_with_reconnect(
+                self._client, method,
                 f"{self._base_url}{path}",
                 params=params,
                 json=body,
