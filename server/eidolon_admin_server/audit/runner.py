@@ -137,8 +137,10 @@ async def run_audit_indexer(
             if ingested == 0:
                 await asyncio.sleep(_IDLE_SLEEP_SECONDS)
     finally:
-        await indexer.close()
-        await index.close()
+        try:
+            await indexer.close()
+        finally:
+            await index.close()
 
 
 async def _prune_once(index: AuditIndexStore) -> None:

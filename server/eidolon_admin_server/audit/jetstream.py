@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,8 @@ class AuditJetStreamSettings:
     connect_timeout_seconds: float = 2.0
     reconnect_attempts: int = 3
     reconnect_wait_seconds: float = 0.25
+    drain_timeout_seconds: float = 3.0
+    close_timeout_seconds: float = 2.0
 
 
 class JetStreamAuditIndexer:
@@ -81,7 +84,16 @@ class JetStreamAuditIndexer:
         self._connection = None
         self._subscription = None
         if connection is not None:
-            await connection.drain()
+            try:
+                await asyncio.wait_for(connection.drain(), self.settings.drain_timeout_seconds)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "audit NATS drain incomplete; closing connection", exc_info=True
+                )
+            finally:
+                # The index is replayable; do not consume the whole Host stop
+                # budget waiting for its broker or leave a reconnect task alive.
+                await asyncio.wait_for(connection.close(), self.settings.close_timeout_seconds)
 
     async def consume_once(self) -> int:
         await self.connect()

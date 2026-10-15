@@ -156,10 +156,14 @@ async def test_a_dead_subscription_is_rebuilt_rather_than_asked_again() -> None:
 
     from eidolon_admin_server.audit.jetstream import JetStreamAuditIndexer
 
-    indexer = JetStreamAuditIndexer.__new__(JetStreamAuditIndexer)
+    from eidolon_admin_server.audit.jetstream import AuditJetStreamSettings
+    indexer = JetStreamAuditIndexer(None, AuditJetStreamSettings())
 
     class _Connection:
         drained = False
+
+        async def close(self):
+            pass
 
         async def drain(self):
             type(self).drained = True
@@ -168,8 +172,7 @@ async def test_a_dead_subscription_is_rebuilt_rather_than_asked_again() -> None:
     indexer._connection = _Connection()
     indexer._subscription = object()
 
-    with pytest.raises(RuntimeError):
-        await indexer.close()
+    await indexer.close()
 
     # Cleared despite the failure, so the next connect() rebuilds both.
     assert indexer._connection is None

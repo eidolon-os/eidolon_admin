@@ -181,8 +181,11 @@ def create_app(
             systemd.stopping("Admin control plane stopping")
             if indexer is not None:
                 indexer.cancel()
-                with suppress(asyncio.CancelledError):
-                    await indexer
+                try:
+                    with suppress(asyncio.CancelledError):
+                        await indexer
+                except Exception:
+                    logger.exception("audit shutdown failed; releasing remaining Admin resources")
             if broker is not None:
                 await broker.close()
             await audit_reader.close()
