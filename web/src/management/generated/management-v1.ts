@@ -253,12 +253,26 @@ export interface DeviceOutputsView {
   revision: number
 }
 
+export interface DevicePresenceRow {
+  claim_generation: number
+  device_id: string
+  owner_domain_generation: number
+  owner_domain_id: string
+  presence: DevicePresenceView
+  trust_epoch: number
+}
+
 export interface DevicePresenceView {
   observed_at?: string | null
   reason?: string
+  remaining_ms?: number
   source?: string
   state?: "online" | "offline" | "unknown"
   valid_until?: string | null
+}
+
+export interface DevicePresencesView {
+  devices: Array<DevicePresenceRow>
 }
 
 export interface DeviceRemovalConditionView {
@@ -298,6 +312,7 @@ export interface DeviceView {
   mount_revision: number
   outputs: DeviceOutputsView
   owner_domain_generation: number
+  owner_domain_id?: string | null
   presence?: DevicePresenceView | null
   quiet_because?: string
   revision: number
@@ -965,6 +980,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/device-conversations/open': DeviceConversationStatus
   'POST /api/management/v1/device-conversations/status': DeviceConversationStatus
   'GET /api/management/v1/devices': DevicesView
+  'GET /api/management/v1/devices/presence': DevicePresencesView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView

@@ -687,3 +687,44 @@ async def test_presence_matches_real_sdk_device_ref(tmp_path, monkeypatch, prese
             response = await client.get(_DEVICES, headers=await _authenticate(client))
     assert response.status_code == 200
     assert response.json()["devices"][0]["presence"]["state"] == expected
+
+
+@pytest.mark.parametrize("age_ms,expected", [(0, "offline"), (5000, "offline"), (15000, "unknown"), (-1000, "unknown")])
+async def test_lightweight_presence_scopes_domain_without_inventory(tmp_path, monkeypatch, age_ms, expected):
+    device = _device(device_id="device-instance-" + "a" * 64)
+    ref = dict(vars(device.claim.device_ref))
+
+    class Devices:
+        async def presence_domain(self, *, session):
+            assert session.owner_id == "owner-1"
+            return "owner-domain-1"
+
+        async def list_devices(self, **kwargs):
+            raise AssertionError("presence must not compose inventory")
+
+    class Backend(_Backend):
+        async def roster(self, **kwargs):
+            raise AssertionError("presence must not read companions")
+
+        async def device_presence(self, *, owner_domain_id):
+            assert owner_domain_id == "owner-domain-1"
+            row = {"device_id": device.device_id, "device_ref": ref,
+                   "on_channel": False, "observed_at_ms": int(datetime.now(UTC).timestamp() * 1000) - age_ms}
+            foreign = {**row, "device_ref": {**ref, "owner_domain_id": "foreign-owner"}}
+            return {"bodies": [row, foreign, {"device_ref": {"owner_domain_id": "owner-domain-1"}}]}
+
+    _stub_controller(monkeypatch)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app(tmp_path, Devices(), Backend())), base_url="https://local.test") as client:
+        denied = await client.get(_DEVICES + "/presence")
+        assert denied.status_code == 401
+        response = await client.get(_DEVICES + "/presence", headers=await _authenticate(client))
+    assert response.status_code == 200
+    rows = response.json()["devices"]
+    assert len(rows) == 1
+    assert rows[0]["claim_generation"] == 3
+    presence = rows[0]["presence"]
+    assert presence["state"] == expected
+    if expected == "offline":
+        assert 0 < presence["remaining_ms"] <= 15000 - age_ms
+    else:
+        assert presence["remaining_ms"] == 0

@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 
 from eidolon_memory_contracts.owner import MemoryProvenance
 
+from eidolon_sdk.device_foundation.v1 import DeviceRef
 from eidolon_sdk.biz.contracts.refusal import Refusal
 from eidolon_sdk.biz.presentation import InputSelection, OutputSelection
 from eidolon_sdk.biz.presentation.negotiation import output_policy_required
@@ -46,7 +47,7 @@ from fastapi import (
     Response,
     status,
 )
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from eidolon_admin_server.conversation_identity import CONVERSATION_ID_MAX_LENGTH
 from eidolon_admin_server.local_api import host_release
@@ -298,6 +299,7 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
     claim_state = getattr(claim.state, "value", str(claim.state))
     return DeviceView(
         device_id=device_id,
+        owner_domain_id=str(reference.owner_domain_id),
         # Nobody has named devices yet, so what the Manifest calls this kind of
         # thing — and failing that the tail of the identifier, which is at least
         # something a person can read out when asking for help. Never invented.
@@ -327,9 +329,12 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
 
 
 def _inventory_presence(device, observations: dict) -> "DevicePresenceView":
+    return _reference_presence(device.claim.device_ref, observations)
+
+
+def _reference_presence(ref, observations: dict) -> "DevicePresenceView":
     if observations.get("unavailable"):
         return DevicePresenceView(reason="设备连接观测暂时不可用")
-    ref = device.claim.device_ref
     rows = observations.get("bodies", [])
     if not isinstance(rows, list):
         return DevicePresenceView(reason="设备连接观测格式不兼容")
@@ -350,6 +355,7 @@ def _inventory_presence(device, observations: dict) -> "DevicePresenceView":
         if type(present) is not bool:
             return DevicePresenceView(source="channel", reason="暂时无法读取设备通道")
         return DevicePresenceView(
+            remaining_ms=15000 - (now_ms - observed),
             state="online" if present else "offline", source="channel",
             observed_at=datetime.fromtimestamp(observed / 1000, UTC).isoformat(),
             valid_until=datetime.fromtimestamp((observed + 15000) / 1000, UTC).isoformat(),
@@ -1363,6 +1369,22 @@ class DevicePresenceView(BaseModel):
     observed_at: str | None = None
     valid_until: str | None = None
     reason: str = "尚未观测到设备连接"
+    remaining_ms: int = Field(default=0, ge=0, le=15000)
+
+
+class DevicePresenceRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device_id: str
+    owner_domain_id: str
+    owner_domain_generation: int
+    claim_generation: int
+    trust_epoch: int
+    presence: DevicePresenceView
+
+
+class DevicePresencesView(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    devices: list[DevicePresenceRow]
 
 
 class DeviceView(BaseModel):
@@ -1383,6 +1405,7 @@ class DeviceView(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     device_id: str = Field(min_length=1, max_length=128)
+    owner_domain_id: str | None = None
     #: What to show. Empty is not a state this returns: there is always the
     #: identifier's tail to fall back to.
     label: str = Field(min_length=1, max_length=128)
@@ -1644,6 +1667,8 @@ class OwnerDevicePort(Protocol):
     authenticated Controller only exists at this boundary, which is why the
     composition happens here rather than behind the management backend.
     """
+
+    async def presence_domain(self, *, session) -> str: ...
 
     async def list_devices(self, *, session): ...
 
@@ -2179,6 +2204,35 @@ def register_management_routes(
             )
             rows.append(view)
         return DevicesView(devices=rows, coverage=_DEVICE_COVERAGE)
+
+    @router.get("/devices/presence", response_model=DevicePresencesView)
+    async def get_device_presences(authorization: str | None = Header(default=None, alias="Authorization")):
+        session = await authenticated_controller_session(authorization)
+        domain = await devices.presence_domain(session=session)
+        try:
+            observations = await backend.device_presence(owner_domain_id=domain)
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        rows = []
+        for row in observations.get("bodies", []):
+            if not isinstance(row, dict):
+                continue
+            raw_ref = row.get("device_ref")
+            if not isinstance(raw_ref, dict) or raw_ref.get("owner_domain_id") != domain:
+                continue
+            # Reuse the same freshness and full-generation check as inventory.
+            try:
+                ref = DeviceRef.model_validate(raw_ref)
+            except (ValidationError, ValueError):
+                continue
+            presence = _reference_presence(ref, {"bodies": [row]})
+            rows.append(DevicePresenceRow(
+                device_id=ref.device_instance_id, owner_domain_id=domain,
+                owner_domain_generation=ref.owner_domain_generation,
+                claim_generation=ref.claim_generation, trust_epoch=ref.trust_epoch,
+                presence=presence,
+            ))
+        return DevicePresencesView(devices=rows)
 
     @router.put("/devices/{device_id}/companion", response_model=DeviceView)
     async def put_device_companion(

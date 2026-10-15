@@ -1534,6 +1534,44 @@
         "title": "DeviceOutputsView",
         "type": "object"
       },
+      "DevicePresenceRow": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_generation": {
+            "title": "Claim Generation",
+            "type": "integer"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "owner_domain_generation": {
+            "title": "Owner Domain Generation",
+            "type": "integer"
+          },
+          "owner_domain_id": {
+            "title": "Owner Domain Id",
+            "type": "string"
+          },
+          "presence": {
+            "$ref": "#/components/schemas/DevicePresenceView"
+          },
+          "trust_epoch": {
+            "title": "Trust Epoch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "device_id",
+          "owner_domain_id",
+          "owner_domain_generation",
+          "claim_generation",
+          "trust_epoch",
+          "presence"
+        ],
+        "title": "DevicePresenceRow",
+        "type": "object"
+      },
       "DevicePresenceView": {
         "additionalProperties": false,
         "properties": {
@@ -1552,6 +1590,13 @@
             "default": "尚未观测到设备连接",
             "title": "Reason",
             "type": "string"
+          },
+          "remaining_ms": {
+            "default": 0,
+            "maximum": 15000.0,
+            "minimum": 0.0,
+            "title": "Remaining Ms",
+            "type": "integer"
           },
           "source": {
             "default": "none",
@@ -1581,6 +1626,23 @@
           }
         },
         "title": "DevicePresenceView",
+        "type": "object"
+      },
+      "DevicePresencesView": {
+        "additionalProperties": false,
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DevicePresenceRow"
+            },
+            "title": "Devices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "devices"
+        ],
+        "title": "DevicePresencesView",
         "type": "object"
       },
       "DeviceRemovalConditionView": {
@@ -1802,6 +1864,17 @@
             "minimum": 0.0,
             "title": "Owner Domain Generation",
             "type": "integer"
+          },
+          "owner_domain_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Domain Id"
           },
           "presence": {
             "anyOf": [
@@ -7278,6 +7351,55 @@
           }
         },
         "summary": "Get Devices",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/presence": {
+      "get": {
+        "operationId": "get_device_presences_api_management_v1_devices_presence_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePresencesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Device Presences",
         "tags": [
           "management"
         ]

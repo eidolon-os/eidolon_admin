@@ -1252,6 +1252,10 @@ def create_app(
         async def close_shared_session(self, *, session, session_id):
             return await self._shared_command(session=session, action="close", session_id=session_id)
 
+        async def presence_domain(self, *, session) -> str:
+            domain, _ = _admission_scope(session.owner_id)
+            return str(domain)
+
         async def list_devices(self, *, session):
             try:
                 return await composed_device_inventory(
