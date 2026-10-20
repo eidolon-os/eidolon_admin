@@ -3411,6 +3411,8 @@ def register_management_routes(
             truncated=answer["truncated"],
         )
 
+    from .voiceprints import register_voiceprint_routes
+    register_voiceprint_routes(router, backend, authenticated_owner, _refused)
     app.include_router(router)
 
 

@@ -268,6 +268,12 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
+    async def voiceprint_call(self, *, owner_id, companion_id, suffix, method="GET", payload=None):
+        path = f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}/voiceprints{suffix}"
+        if method == "GET":
+            return await self._get(path, {"owner_id": owner_id})
+        return await self._put(path, {"owner_id": owner_id}, payload or {}, method=method)
+
     async def companion_face(
         self, *, owner_id: str, companion_id: str, known_etag: str | None
     ) -> tuple[int, bytes, str | None]:
@@ -617,7 +623,7 @@ class AdminManagementClient:
                     **(headers or {}),
                 },
                 timeout=max(self._timeout, 40)
-                if path.endswith("/persona-preview")
+                if path.endswith("/persona-preview") or "/voiceprints/" in path
                 else self._timeout,
             )
         except (
