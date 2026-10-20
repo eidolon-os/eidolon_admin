@@ -544,17 +544,6 @@ class DataAuthorityClient:
             CompanionFace,
         )
 
-    async def voiceprint_call(self, method, owner_id, companion_id, suffix, model, payload=None):
-        if not self._token:
-            raise AuthorityFailure("data", "configuration", "Data credential missing", 503)
-        endpoint = await self._directory.resolve(service_id="data",
-            endpoint_id="companion-authority.http", required_contract=DATA_CONTRACT)
-        response = await _request("data", self._client, method,
-            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
-            f"{quote(owner_id, safe='')}/companions/{quote(companion_id, safe='')}/voiceprints{suffix}",
-            timeout=self._timeout, headers={"Authorization": f"Bearer {self._token}"}, json=payload)
-        return _parse("data", response, model)
-
     async def get_companion_face(self, companion_id: str) -> bytes | None:
         """The face itself, or None when this Companion has none.
 

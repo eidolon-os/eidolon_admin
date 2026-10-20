@@ -332,20 +332,6 @@ export interface DevicesView {
   devices: Array<DeviceView>
 }
 
-export interface EnrollmentCreate {
-  display_name: string
-  operation_id: string
-  profile_id?: string | null
-}
-
-export interface EnrollmentView {
-  accepted_samples: number
-  enrollment_id: string
-  expires_at: number
-  profile_id: string
-  state: "collecting" | "ready" | "cancelled" | "expired"
-}
-
 export interface ForgetConfirmRequest {
   confirmation_token: string
 }
@@ -789,11 +775,6 @@ export interface PlacementWrite {
   expected_revision: number
 }
 
-export interface PolicyUpdate {
-  expected_revision: number
-  mode: "off" | "allowlist"
-}
-
 export interface ProviderAccount {
   account_id: string
   choices?: Array<AccountChoice>
@@ -899,14 +880,6 @@ export interface SharedStart {
   session_id: string
 }
 
-export interface SpeakerProfileView {
-  display_name: string
-  enrollment_id: string
-  profile_id: string
-  recording_available?: boolean
-  revision: number
-}
-
 export interface SpokenMessageView {
   role: string
   text?: string
@@ -978,18 +951,6 @@ export interface VitalView {
   unavailable_reason?: string | null
 }
 
-export interface VoiceAudioRequest {
-  pcm_base64: string
-}
-
-export interface VoicePolicyView {
-  allowed_profile_ids?: Array<string>
-  companion_id: string
-  mode?: "off" | "allowlist"
-  profiles?: Array<SpeakerProfileView>
-  revision?: number
-}
-
 /** Response type per operation, keyed as it is called. */
 export interface ManagementResponses {
   'GET /api/management/v1/activity': ActivityView
@@ -1012,17 +973,6 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions/{companion_id}/tasks/{task_id}': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/cancel': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/retry': TaskView
-  'GET /api/management/v1/companions/{companion_id}/voiceprints': VoicePolicyView
-  'DELETE /api/management/v1/companions/{companion_id}/voiceprints/bindings/{profile_id}': VoicePolicyView
-  'PUT /api/management/v1/companions/{companion_id}/voiceprints/bindings/{profile_id}': VoicePolicyView
-  'POST /api/management/v1/companions/{companion_id}/voiceprints/enrollments': EnrollmentView
-  'DELETE /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}': EnrollmentView
-  'GET /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}': EnrollmentView
-  'POST /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/complete': SpeakerProfileView
-  'PUT /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}': EnrollmentView
-  'PUT /api/management/v1/companions/{companion_id}/voiceprints/policy': VoicePolicyView
-  'DELETE /api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}': VoicePolicyView
-  'GET /api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}/recording': VoiceAudioRequest
   'GET /api/management/v1/context': ManagementContextView
   'GET /api/management/v1/controllers': ControllersView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
