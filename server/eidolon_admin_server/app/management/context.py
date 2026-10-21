@@ -85,6 +85,7 @@ _CAPABILITIES: tuple[str, ...] = (
     #: away. Its own name because it is the one part of a Companion a person
     #: changes by choosing a photograph rather than by typing.
     "companion.face",
+    "companion.voiceprints",
     "companion.archive",
     "companion.restore",
     "persona.read",
@@ -169,6 +170,7 @@ _ENABLED: frozenset[str] = frozenset(
         "owner.rename",
         # The face, over the same surface as everything else about a Companion.
         "companion.face",
+        "companion.voiceprints",
         # Which phones may manage this Host. Answered by the Host's own trust
         # root rather than by an authority, which is why it is the one part of
         # this surface the LAN process serves directly.

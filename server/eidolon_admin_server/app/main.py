@@ -280,6 +280,8 @@ def create_app(
     # Its own prefix, not another branch of control-plane: that family already
     # answers to two audiences and a third meaning is how this got confusing.
     app.include_router(management_router, prefix="/api")
+    from .management.voiceprints_router import router as voiceprints_router
+    app.include_router(voiceprints_router, prefix="/api")
     app.include_router(management_smarthome_router, prefix="/api")
     app.include_router(management_mission_control_router, prefix="/api")
     app.include_router(management_session_traces_router, prefix="/api")
