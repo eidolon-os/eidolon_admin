@@ -5246,6 +5246,37 @@
         "title": "SharedStart",
         "type": "object"
       },
+      "SpeakerAdmissionLimits": {
+        "additionalProperties": false,
+        "description": "Published release limits for conversation, distinct from recording UX.",
+        "properties": {
+          "max_allowed_speakers": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Max Allowed Speakers",
+            "type": "integer"
+          },
+          "max_audio_ms": {
+            "maximum": 30000.0,
+            "minimum": 1500.0,
+            "title": "Max Audio Ms",
+            "type": "integer"
+          },
+          "min_audio_ms": {
+            "maximum": 30000.0,
+            "minimum": 1500.0,
+            "title": "Min Audio Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_allowed_speakers",
+          "min_audio_ms",
+          "max_audio_ms"
+        ],
+        "title": "SpeakerAdmissionLimits",
+        "type": "object"
+      },
       "SpeakerExtractionReadiness": {
         "additionalProperties": false,
         "description": "Numerical extraction readiness is never Companion admission readiness.",
@@ -5263,6 +5294,16 @@
           "extraction_ready": {
             "title": "Extraction Ready",
             "type": "boolean"
+          },
+          "limits": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerAdmissionLimits"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "state": {
             "enum": [

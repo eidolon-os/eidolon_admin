@@ -899,10 +899,17 @@ export interface SharedStart {
   session_id: string
 }
 
+export interface SpeakerAdmissionLimits {
+  max_allowed_speakers: number
+  max_audio_ms: number
+  min_audio_ms: number
+}
+
 export interface SpeakerExtractionReadiness {
   admission_ready?: boolean
   calibration_digest?: string
   extraction_ready: boolean
+  limits?: SpeakerAdmissionLimits | null
   state: "disabled" | "not_started" | "loading" | "ready" | "unavailable" | "closed"
   validation_state?: "unavailable" | "calibrated" | "controlled_trial"
 }
