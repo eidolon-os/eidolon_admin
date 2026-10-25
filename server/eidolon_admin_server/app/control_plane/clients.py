@@ -544,6 +544,12 @@ class DataAuthorityClient:
             CompanionFace,
         )
 
+    async def get_voiceprint_snapshot(self, companion_id):
+        from eidolon_sdk.biz.voiceprint import VoicePolicySnapshot
+        return await self._companion_call(
+            "GET", f"{companion_id}/voiceprint-snapshot", companion_id, VoicePolicySnapshot
+        )
+
     async def voiceprint_call(self, method, owner_id, companion_id, suffix, model, payload=None):
         if not self._token:
             raise AuthorityFailure("data", "configuration", "Data credential missing", 503)

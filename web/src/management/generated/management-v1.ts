@@ -900,9 +900,11 @@ export interface SharedStart {
 }
 
 export interface SpeakerExtractionReadiness {
-  admission_ready?: false
+  admission_ready?: boolean
+  calibration_digest?: string
   extraction_ready: boolean
   state: "disabled" | "not_started" | "loading" | "ready" | "unavailable" | "closed"
+  validation_state?: "unavailable" | "calibrated" | "controlled_trial"
 }
 
 export interface SpeakerProfileView {
@@ -911,7 +913,15 @@ export interface SpeakerProfileView {
   profile_id: string
   recording_available?: boolean
   revision: number
-  validation_state?: "unvalidated"
+  validation_state?: "unvalidated" | "validated"
+}
+
+export interface SpeakerSimilarity {
+  display_name?: string
+  profile_id: string
+  revision: number
+  similarity?: number | null
+  status: "scored" | "incompatible"
 }
 
 export interface SpokenMessageView {
@@ -989,8 +999,24 @@ export interface VoiceAudioRequest {
   pcm_base64: string
 }
 
+export interface VoiceMatchTestResult {
+  audio_ms: number
+  companion_id: string
+  elapsed_ms: number
+  extraction_ms: number
+  model_id: string
+  policy_revision: number
+  preprocessing_version: string
+  scores: Array<SpeakerSimilarity>
+  scoring_version?: "normalized-template-cosine-v1"
+  validation_state?: "unvalidated"
+  weights_hash: string
+}
+
 export interface VoicePolicyView {
+  admission_state?: "unvalidated" | "ready"
   allowed_profile_ids?: Array<string>
+  calibration_digest?: string
   companion_id: string
   mode?: "off" | "allowlist"
   profiles?: Array<SpeakerProfileView>
@@ -1028,6 +1054,7 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}': EnrollmentView
   'POST /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/complete': SpeakerProfileView
   'PUT /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}': EnrollmentView
+  'POST /api/management/v1/companions/{companion_id}/voiceprints/match-test': VoiceMatchTestResult
   'PUT /api/management/v1/companions/{companion_id}/voiceprints/policy': VoicePolicyView
   'DELETE /api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}': VoicePolicyView
   'GET /api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}/recording': VoiceAudioRequest

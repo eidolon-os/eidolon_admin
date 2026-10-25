@@ -5251,10 +5251,14 @@
         "description": "Numerical extraction readiness is never Companion admission readiness.",
         "properties": {
           "admission_ready": {
-            "const": false,
             "default": false,
             "title": "Admission Ready",
             "type": "boolean"
+          },
+          "calibration_digest": {
+            "default": "",
+            "title": "Calibration Digest",
+            "type": "string"
           },
           "extraction_ready": {
             "title": "Extraction Ready",
@@ -5270,6 +5274,16 @@
               "closed"
             ],
             "title": "State",
+            "type": "string"
+          },
+          "validation_state": {
+            "default": "unavailable",
+            "enum": [
+              "unavailable",
+              "calibrated",
+              "controlled_trial"
+            ],
+            "title": "Validation State",
             "type": "string"
           }
         },
@@ -5305,8 +5319,11 @@
             "type": "integer"
           },
           "validation_state": {
-            "const": "unvalidated",
             "default": "unvalidated",
+            "enum": [
+              "unvalidated",
+              "validated"
+            ],
             "title": "Validation State",
             "type": "string"
           }
@@ -5318,6 +5335,52 @@
           "enrollment_id"
         ],
         "title": "SpeakerProfileView",
+        "type": "object"
+      },
+      "SpeakerSimilarity": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "default": "",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "profile_id": {
+            "title": "Profile Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": -1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity"
+          },
+          "status": {
+            "enum": [
+              "scored",
+              "incompatible"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id",
+          "revision",
+          "status"
+        ],
+        "title": "SpeakerSimilarity",
         "type": "object"
       },
       "SpokenMessageView": {
@@ -5738,15 +5801,105 @@
         "title": "VoiceAudioRequest",
         "type": "object"
       },
+      "VoiceMatchTestResult": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_ms": {
+            "maximum": 30000.0,
+            "minimum": 1500.0,
+            "title": "Audio Ms",
+            "type": "integer"
+          },
+          "companion_id": {
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "minimum": 0.0,
+            "title": "Elapsed Ms",
+            "type": "number"
+          },
+          "extraction_ms": {
+            "minimum": 0.0,
+            "title": "Extraction Ms",
+            "type": "number"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "policy_revision": {
+            "title": "Policy Revision",
+            "type": "integer"
+          },
+          "preprocessing_version": {
+            "title": "Preprocessing Version",
+            "type": "string"
+          },
+          "scores": {
+            "items": {
+              "$ref": "#/components/schemas/SpeakerSimilarity"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Scores",
+            "type": "array"
+          },
+          "scoring_version": {
+            "const": "normalized-template-cosine-v1",
+            "default": "normalized-template-cosine-v1",
+            "title": "Scoring Version",
+            "type": "string"
+          },
+          "validation_state": {
+            "const": "unvalidated",
+            "default": "unvalidated",
+            "title": "Validation State",
+            "type": "string"
+          },
+          "weights_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Weights Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model_id",
+          "weights_hash",
+          "preprocessing_version",
+          "scores",
+          "companion_id",
+          "policy_revision",
+          "audio_ms",
+          "extraction_ms",
+          "elapsed_ms"
+        ],
+        "title": "VoiceMatchTestResult",
+        "type": "object"
+      },
       "VoicePolicyView": {
         "additionalProperties": false,
         "properties": {
+          "admission_state": {
+            "default": "unvalidated",
+            "enum": [
+              "unvalidated",
+              "ready"
+            ],
+            "title": "Admission State",
+            "type": "string"
+          },
           "allowed_profile_ids": {
             "items": {
               "type": "string"
             },
             "title": "Allowed Profile Ids",
             "type": "array"
+          },
+          "calibration_digest": {
+            "default": "",
+            "title": "Calibration Digest",
+            "type": "string"
           },
           "companion_id": {
             "title": "Companion Id",
@@ -7762,6 +7915,74 @@
           }
         },
         "summary": "Sample",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/voiceprints/match-test": {
+      "post": {
+        "operationId": "match_test_api_management_v1_companions__companion_id__voiceprints_match_test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceAudioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceMatchTestResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Match Test",
         "tags": [
           "management"
         ]

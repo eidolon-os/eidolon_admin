@@ -10,6 +10,7 @@ from eidolon_sdk.biz.voiceprint import (
     SpeakerProfileView,
     VoiceAudioRequest,
     SpeakerExtractionReadiness,
+    VoiceMatchTestResult,
 )
 
 from .backend import ManagementBackendError
@@ -28,6 +29,25 @@ def register_voiceprint_routes(router, backend, authenticated_owner, refused):
             )
         except ManagementBackendError as exc:
             raise refused(exc) from exc
+
+    @router.post(
+        "/companions/{companion_id}/voiceprints/match-test",
+        response_model=VoiceMatchTestResult,
+    )
+    async def match_test(
+        companion_id: str,
+        payload: VoiceAudioRequest,
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(
+            authorization,
+            companion_id,
+            "/match-test",
+            "POST",
+            payload.model_dump(mode="json"),
+        )
 
     @router.get(
         "/companions/{companion_id}/voiceprints", response_model=VoicePolicyView

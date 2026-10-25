@@ -3,6 +3,7 @@
 import base64
 import binascii
 import hashlib
+from time import perf_counter
 
 import httpx
 from pydantic import ValidationError
@@ -21,6 +22,12 @@ from eidolon_sdk.biz.voiceprint import (
     EnrollmentEvaluation,
     EnrollmentEvaluationRequest,
     SpeakerExtractionReadiness,
+    SpeakerComparisonRequest,
+    SpeakerComparisonResult,
+    VoiceMatchTestResult,
+    VoicePolicyEvidence,
+    VoicePolicyApproval,
+    VoicePolicyActivation,
 )
 
 from eidolon_admin_server.app.service_auth import require_local_api_credential
@@ -62,6 +69,9 @@ async def channel_call(request, path, model, payload=None):
             "SPEECH_TOO_SHORT": "有效语音太短，请连续说完一句话后重录",
             "AUDIO_TOO_SHORT": "录音太短，请完整说完一句话后重录",
             "AUDIO_CLIPPED": "录音音量过大，请稍微远离手机后重录",
+            "ALLOWLIST_NOT_CALIBRATED": "允许的声音数量超出当前识别能力，请减少后再开启",
+            "ENROLLMENT_VERSION_UNSUPPORTED": "声纹版本与当前模型不兼容，请重新录入对应声音",
+            "ENROLLMENT_VALIDATION_REQUIRED": "已有录音未通过一致性验证，请在管理声纹中重新录入",
         }.get(code, "录音或版本不兼容，请返回重新开始录入")
         raise HTTPException(422, reason)
     if response.status_code != 200:
@@ -88,9 +98,7 @@ async def readiness_value(request):
     response_model=SpeakerExtractionReadiness,
 )
 async def readiness(request: Request, owner_id: str, companion_id: str):
-    await request.app.state.control_plane.data.get_owner_companion(
-        owner_id, companion_id
-    )
+    await request.app.state.control_plane.data.get_owner_companion(owner_id, companion_id)
     return await readiness_value(request)
 
 
@@ -100,28 +108,105 @@ async def view(request: Request, owner_id: str, companion_id: str):
     result = await request.app.state.control_plane.data.voiceprint_call(
         "GET", owner_id, companion_id, "", VoicePolicyView, body
     )
-    return result.model_copy(update={"readiness": await readiness_value(request)})
-
-
-@router.put(
-    "/companions/{companion_id}/voiceprints/policy", response_model=VoicePolicyView
-)
-async def policy(
-    request: Request, owner_id: str, companion_id: str, payload: PolicyUpdate
-):
-    await request.app.state.control_plane.data.get_owner_companion(
-        owner_id, companion_id
+    ready = await readiness_value(request)
+    current = ready.admission_ready and result.calibration_digest == ready.calibration_digest
+    return result.model_copy(
+        update={
+            "readiness": ready,
+            "admission_state": result.admission_state if current else "unvalidated",
+        }
     )
+
+
+@router.post(
+    "/companions/{companion_id}/voiceprints/match-test",
+    response_model=VoiceMatchTestResult,
+)
+async def match_test(
+    request: Request,
+    response: Response,
+    owner_id: str,
+    companion_id: str,
+    payload: VoiceAudioRequest,
+):
+    response.headers["Cache-Control"] = "no-store"
+    started = perf_counter()
+    data = request.app.state.control_plane.data
+    await data.get_owner_companion(owner_id, companion_id)
+    snapshot = await data.get_voiceprint_snapshot(companion_id)
+    if snapshot.owner_id != owner_id or snapshot.companion_id != companion_id:
+        raise HTTPException(404, "伙伴不存在")
+    if not snapshot.templates:
+        raise HTTPException(409, "请先为此伙伴添加至少一个已录入的声音，再测试匹配")
+    profiles = await data.voiceprint_call("GET", owner_id, companion_id, "", VoicePolicyView)
+    extraction_started = perf_counter()
+    probe = await extract(request, payload)
+    extraction_ms = (perf_counter() - extraction_started) * 1000
+    result = await channel_call(
+        request,
+        "compare",
+        SpeakerComparisonResult,
+        SpeakerComparisonRequest(probe=probe, templates=snapshot.templates),
+    )
+    # Deletion, rebinding and re-enrollment during extraction invalidate the result.
+    current = await data.get_voiceprint_snapshot(companion_id)
+    if current != snapshot or profiles.revision != snapshot.revision:
+        raise HTTPException(409, "伙伴的声音列表已变化，请返回刷新后重新测试")
+    expected = {(t.profile_id, t.revision) for t in snapshot.templates}
+    if (
+        len(result.scores) != len(expected)
+        or {(s.profile_id, s.revision) for s in result.scores} != expected
+    ):
+        raise HTTPException(503, "声纹服务结果无效，请稍后重试")
+    names = {p.profile_id: p.display_name for p in profiles.profiles}
+    return VoiceMatchTestResult(
+        **result.model_dump(exclude={"scores"}),
+        scores=[
+            s.model_copy(update={"display_name": names.get(s.profile_id, s.profile_id)})
+            for s in result.scores
+        ],
+        companion_id=companion_id,
+        policy_revision=snapshot.revision,
+        audio_ms=len(base64.b64decode(payload.pcm_base64, validate=True)) // 32,
+        extraction_ms=extraction_ms,
+        elapsed_ms=(perf_counter() - started) * 1000,
+    )
+
+
+@router.put("/companions/{companion_id}/voiceprints/policy", response_model=VoicePolicyView)
+async def policy(request: Request, owner_id: str, companion_id: str, payload: PolicyUpdate):
+    await request.app.state.control_plane.data.get_owner_companion(owner_id, companion_id)
+    data = request.app.state.control_plane.data
+    ready = await readiness_value(request)
+    activation = VoicePolicyActivation(**payload.model_dump())
     if payload.mode == "allowlist":
-        raise HTTPException(409, "声纹识别仍在验证中，目前无法开启限制")
-    return await request.app.state.control_plane.data.voiceprint_call(
+        if not ready.admission_ready:
+            raise HTTPException(409, "声纹识别仍在验证中，目前无法开启限制")
+        evidence = await data.voiceprint_call(
+            "GET", owner_id, companion_id, "/policy-evidence", VoicePolicyEvidence
+        )
+        if (
+            evidence.owner_id != owner_id
+            or evidence.companion_id != companion_id
+            or evidence.revision != payload.expected_revision
+        ):
+            raise HTTPException(409, "伙伴的声音列表已变化，请刷新后重试")
+        approval = await channel_call(request, "approve-policy", VoicePolicyApproval, evidence)
+        if (
+            approval.evidence_digest != evidence.digest()
+            or approval.calibration_digest != ready.calibration_digest
+        ):
+            raise HTTPException(409, "声纹识别版本已变化，请刷新后重试")
+        activation.approval = approval
+    result = await data.voiceprint_call(
         "PUT",
         owner_id,
         companion_id,
         "/policy",
         VoicePolicyView,
-        payload.model_dump(mode="json"),
+        activation.model_dump(mode="json"),
     )
+    return result.model_copy(update={"readiness": ready})
 
 
 @router.put(
@@ -160,9 +245,7 @@ async def unbind(request: Request, owner_id: str, companion_id: str, profile_id:
     "/companions/{companion_id}/voiceprints/profiles/{profile_id}",
     response_model=VoicePolicyView,
 )
-async def delete_profile(
-    request: Request, owner_id: str, companion_id: str, profile_id: str
-):
+async def delete_profile(request: Request, owner_id: str, companion_id: str, profile_id: str):
     body = None
     return await request.app.state.control_plane.data.voiceprint_call(
         "DELETE",
@@ -195,15 +278,11 @@ async def recording(
     )
 
 
-@router.post(
-    "/companions/{companion_id}/voiceprints/enrollments", response_model=EnrollmentView
-)
+@router.post("/companions/{companion_id}/voiceprints/enrollments", response_model=EnrollmentView)
 async def create_enrollment(
     request: Request, owner_id: str, companion_id: str, payload: EnrollmentCreate
 ):
-    await request.app.state.control_plane.data.get_owner_companion(
-        owner_id, companion_id
-    )
+    await request.app.state.control_plane.data.get_owner_companion(owner_id, companion_id)
     if not (await readiness_value(request)).extraction_ready:
         raise HTTPException(503, "声纹服务正在准备或不可用，请稍后重试")
     return await request.app.state.control_plane.data.voiceprint_call(
@@ -220,9 +299,7 @@ async def create_enrollment(
     "/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}",
     response_model=EnrollmentView,
 )
-async def enrollment(
-    request: Request, owner_id: str, companion_id: str, enrollment_id: str
-):
+async def enrollment(request: Request, owner_id: str, companion_id: str, enrollment_id: str):
     body = None
     return await request.app.state.control_plane.data.voiceprint_call(
         "GET",
@@ -238,9 +315,7 @@ async def enrollment(
     "/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}",
     response_model=EnrollmentView,
 )
-async def cancel(
-    request: Request, owner_id: str, companion_id: str, enrollment_id: str
-):
+async def cancel(request: Request, owner_id: str, companion_id: str, enrollment_id: str):
     body = None
     return await request.app.state.control_plane.data.voiceprint_call(
         "DELETE",
@@ -297,13 +372,9 @@ async def complete(
 ):
     data = request.app.state.control_plane.data
     suffix = f"/enrollments/{quote(enrollment_id, safe='')}"
-    current = await data.voiceprint_call(
-        "GET", owner_id, companion_id, suffix, EnrollmentView
-    )
+    current = await data.voiceprint_call("GET", owner_id, companion_id, suffix, EnrollmentView)
     if current.state == "ready":
-        profiles = await data.voiceprint_call(
-            "GET", owner_id, companion_id, "", VoicePolicyView
-        )
+        profiles = await data.voiceprint_call("GET", owner_id, companion_id, "", VoicePolicyView)
         for profile in profiles.profiles:
             if profile.enrollment_id == enrollment_id:
                 return profile
@@ -328,9 +399,7 @@ async def complete(
             recording_sha256=hashlib.sha256(pcm).hexdigest(),
         ),
     )
-    body = EnrollmentCompletion(evaluation=evaluation, recording=payload).model_dump(
-        mode="json"
-    )
+    body = EnrollmentCompletion(evaluation=evaluation, recording=payload).model_dump(mode="json")
     return await data.voiceprint_call(
         "POST", owner_id, companion_id, suffix + "/complete", SpeakerProfileView, body
     )
