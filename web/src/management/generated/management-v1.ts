@@ -236,6 +236,23 @@ export interface Device {
   type: "light" | "switch" | "climate" | "water_heater" | "cover" | "fan" | "media" | "appliance" | "lock" | "camera" | "sensor"
 }
 
+export interface DeviceCapabilityRequest {
+  capability_version: number
+  payload?: Record<string, unknown>
+  request_id: string
+}
+
+export interface DeviceCapabilityView {
+  capability_version: number
+  code?: string
+  completed: boolean
+  device_id: string
+  message?: string
+  op: string
+  result?: unknown | null
+  status: string
+}
+
 export interface DeviceCompanionRequest {
   companion_id?: string | null
   expected_revision: number
@@ -1355,6 +1372,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/device-sessions/status': DeviceConversationStatus
   'GET /api/management/v1/devices': DevicesView
   'GET /api/management/v1/devices/presence': DevicePresencesView
+  'POST /api/management/v1/devices/{device_id}/capabilities/{op}': DeviceCapabilityView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView

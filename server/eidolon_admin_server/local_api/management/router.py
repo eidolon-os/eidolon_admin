@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from eidolon_memory_contracts.owner import MemoryProvenance
 
 from eidolon_sdk.device_foundation.v1 import DeviceRef
+from eidolon_sdk.biz.body import body_status_from_control
 from eidolon_sdk.biz.contracts.refusal import Refusal
 from eidolon_sdk.biz.presentation import InputSelection, OutputSelection
 from eidolon_sdk.biz.presentation.negotiation import output_policy_required
@@ -1566,6 +1567,43 @@ class DeviceRemovalRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
 
 
+class DeviceCapabilityRequest(BaseModel):
+    """One capability command aimed at a device this Owner holds.
+
+    ``request_id`` is the caller's and must survive a retry. A slider dragged
+    across a range is one gesture and several positions; the client sends the
+    one it settled on, and this id makes sending it twice the same command
+    rather than a second one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    payload: dict = Field(default_factory=dict)
+    capability_version: int = Field(ge=1, le=65535)
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
+class DeviceCapabilityView(BaseModel):
+    """What the device did, in the device's own vocabulary.
+
+    ``status`` is a terminal receipt, not an acknowledgement: the command was
+    already delivered and answered by the time this exists. ``completed`` is
+    separate from the status string so a client need not know which of a
+    device's words means success.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str = Field(min_length=1, max_length=128)
+    op: str = Field(min_length=1, max_length=128)
+    capability_version: int = Field(ge=1)
+    status: str = Field(min_length=1, max_length=32)
+    completed: bool
+    result: object | None = None
+    code: str = Field(default="", max_length=64)
+    message: str = Field(default="", max_length=512)
+
+
 class DeviceRemovalConditionView(BaseModel):
     """One thing that has to become true, and whether it has.
 
@@ -1756,6 +1794,18 @@ class ManagementBackendPort(Protocol):
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
 
     async def device_presence(self, *, owner_domain_id: str) -> dict: ...
+
+    async def device_command(
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        op: str,
+        capability_version: int,
+        payload: dict,
+        idempotency_key: str,
+        companion_id: str = "",
+    ) -> dict: ...
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
 
@@ -2325,6 +2375,52 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return _device_view(device, await _companion_names(backend, session.owner_id))
+
+    @router.post(
+        "/devices/{device_id}/capabilities/{op}", response_model=DeviceCapabilityView
+    )
+    async def post_device_capability(
+        device_id: str,
+        op: str,
+        payload: DeviceCapabilityRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceCapabilityView:
+        """Turn one knob on a device this Owner holds.
+
+        The device's own vocabulary comes back translated: a body acknowledges
+        with words the control layer spells differently, and a client that had
+        to know both would report a success as an unfinished command.
+
+        Whose device this is, whether it declared the capability and whether the
+        value is in range are all the Provider's to decide — it holds the
+        channel and the declaration. Nothing here pre-judges them.
+        """
+        session = await authenticated_controller_session(authorization)
+        try:
+            answer = await backend.device_command(
+                owner_id=session.owner_id,
+                device_id=device_id,
+                op=op,
+                capability_version=payload.capability_version,
+                payload=payload.payload,
+                idempotency_key=payload.request_id,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+
+        status = body_status_from_control(str(answer.get("status") or ""))
+        return DeviceCapabilityView(
+            device_id=str(answer.get("device_id") or device_id),
+            op=str(answer.get("op") or op),
+            capability_version=int(
+                answer.get("capability_version") or payload.capability_version
+            ),
+            status=status,
+            completed=status == "done",
+            result=answer.get("result"),
+            code=str(answer.get("code") or ""),
+            message=str(answer.get("message") or ""),
+        )
 
     @router.post("/devices/{device_id}/removal", response_model=DeviceRemovalView)
     async def remove_device(

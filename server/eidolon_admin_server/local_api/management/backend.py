@@ -187,6 +187,32 @@ class AdminManagementClient:
             {"owner_domain_id": owner_domain_id},
         )
 
+    async def device_command(
+        self,
+        *,
+        owner_id: str,
+        device_id: str,
+        op: str,
+        capability_version: int,
+        payload: dict,
+        idempotency_key: str,
+        companion_id: str = "",
+    ) -> dict:
+        return await self._call(
+            "POST",
+            "/api/internal/v1/management/device-commands",
+            {},
+            {
+                "owner_id": owner_id,
+                "device_id": device_id,
+                "op": op,
+                "capability_version": capability_version,
+                "payload": payload,
+                "idempotency_key": idempotency_key,
+                "companion_id": companion_id,
+            },
+        )
+
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/mission-control/snapshot",

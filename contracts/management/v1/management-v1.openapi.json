@@ -1443,6 +1443,99 @@
         "title": "Device",
         "type": "object"
       },
+      "DeviceCapabilityRequest": {
+        "additionalProperties": false,
+        "description": "One capability command aimed at a device this Owner holds.\n\n``request_id`` is the caller's and must survive a retry. A slider dragged\nacross a range is one gesture and several positions; the client sends the\none it settled on, and this id makes sending it twice the same command\nrather than a second one.",
+        "properties": {
+          "capability_version": {
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Capability Version",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability_version",
+          "request_id"
+        ],
+        "title": "DeviceCapabilityRequest",
+        "type": "object"
+      },
+      "DeviceCapabilityView": {
+        "additionalProperties": false,
+        "description": "What the device did, in the device's own vocabulary.\n\n``status`` is a terminal receipt, not an acknowledgement: the command was\nalready delivered and answered by the time this exists. ``completed`` is\nseparate from the status string so a client need not know which of a\ndevice's words means success.",
+        "properties": {
+          "capability_version": {
+            "minimum": 1.0,
+            "title": "Capability Version",
+            "type": "integer"
+          },
+          "code": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Code",
+            "type": "string"
+          },
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "maxLength": 512,
+            "title": "Message",
+            "type": "string"
+          },
+          "op": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Op",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "status": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "op",
+          "capability_version",
+          "status",
+          "completed"
+        ],
+        "title": "DeviceCapabilityView",
+        "type": "object"
+      },
       "DeviceCompanionRequest": {
         "additionalProperties": false,
         "description": "Which Eidolon answers through this device, or that none does.\n\nOne command with two values rather than two commands: a null\n``companion_id`` is \"nothing answers through it\", which is an ordinary\nstate and the way back from every other one.",
@@ -9712,6 +9805,84 @@
           }
         },
         "summary": "Get Device Presences",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/capabilities/{op}": {
+      "post": {
+        "description": "Turn one knob on a device this Owner holds.\n\nThe device's own vocabulary comes back translated: a body acknowledges\nwith words the control layer spells differently, and a client that had\nto know both would report a success as an unfinished command.\n\nWhose device this is, whether it declared the capability and whether the\nvalue is in range are all the Provider's to decide — it holds the\nchannel and the declaration. Nothing here pre-judges them.",
+        "operationId": "post_device_capability_api_management_v1_devices__device_id__capabilities__op__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "op",
+            "required": true,
+            "schema": {
+              "title": "Op",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCapabilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceCapabilityView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Post Device Capability",
         "tags": [
           "management"
         ]

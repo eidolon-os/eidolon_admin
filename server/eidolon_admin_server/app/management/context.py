@@ -111,6 +111,11 @@ _CAPABILITIES: tuple[str, ...] = (
     #: all, and a Host could reasonably let a person point a speaker somewhere
     #: without letting them take it off the shelf.
     "body.assign",
+    #: Operating a device's own hardware — its volume, its backlight. Its own
+    #: name rather than part of ``device.manage``: that one is about which
+    #: devices are on this Host at all, and this is about turning a knob on one
+    #: that is already there.
+    "device.control",
     #: The Host's own record of what it did to this Owner's things. Its own name
     #: rather than part of ``conversation.read``: one is what an Eidolon said,
     #: the other is what was done to it.
@@ -200,7 +205,12 @@ _ENABLED: frozenset[str] = frozenset(
         # answered: `policy_refs` has no source because nothing on this Host
         # defines or evaluates a resource policy, so the surface does not offer
         # a client any way to name one.
-        "body.assign",
+    "body.assign",
+        # Turning a knob on a device that is already on this Host: its volume,
+        # its backlight. True since Channel publishes a capability directory and
+        # a bounded command contract, so a command has an authority, a receipt
+        # and a refusal path rather than a route that only looks like one.
+        "device.control",
         # The governance facts Data writes in the same transaction as each
         # change. Nothing had ever read them.
         "activity.read",

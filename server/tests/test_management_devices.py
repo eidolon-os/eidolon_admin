@@ -728,3 +728,103 @@ async def test_lightweight_presence_scopes_domain_without_inventory(tmp_path, mo
         assert 0 < presence["remaining_ms"] <= 15000 - age_ms
     else:
         assert presence["remaining_ms"] == 0
+
+
+async def test_a_capability_command_answers_in_the_devices_own_vocabulary(
+    tmp_path, monkeypatch
+) -> None:
+    """A body acknowledges with words the control layer spells differently.
+
+    The Provider normalises a device's ``completed`` to ``succeeded``, and a
+    client that had to know both would report a knob that turned as an
+    unfinished command. So the surface translates once and also says
+    ``completed`` outright, rather than leaving each client to compare strings.
+    """
+
+    seen: list[dict] = []
+
+    class Backend(_Backend):
+        async def device_command(
+            self, *, owner_id, device_id, op, capability_version, payload,
+            idempotency_key, companion_id="",
+        ):
+            seen.append(
+                {
+                    "owner_id": owner_id,
+                    "device_id": device_id,
+                    "op": op,
+                    "capability_version": capability_version,
+                    "payload": payload,
+                    "idempotency_key": idempotency_key,
+                }
+            )
+            return {
+                "device_id": device_id,
+                "op": op,
+                "capability_version": capability_version,
+                "status": "succeeded",
+                "result": {"volume": 30},
+                "code": "",
+                "message": "",
+            }
+
+    _stub_controller(monkeypatch)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(_device()), Backend())),
+        base_url="https://local.test",
+    ) as client:
+        response = await client.post(
+            f"{_DEVICES}/{_KNOWN}/capabilities/volume.set",
+            headers=await _authenticate(client),
+            json={
+                "payload": {"volume": 30},
+                "capability_version": 1,
+                "request_id": "gesture-1",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "done"
+    assert body["completed"] is True
+    assert body["result"] == {"volume": 30}
+    assert seen == [
+        {
+            "owner_id": "owner-1",
+            "device_id": _KNOWN,
+            "op": "volume.set",
+            "capability_version": 1,
+            "payload": {"volume": 30},
+            "idempotency_key": "gesture-1",
+        }
+    ]
+
+
+async def test_a_refused_capability_command_keeps_the_refusal(tmp_path, monkeypatch) -> None:
+    class Backend(_Backend):
+        async def device_command(self, **_kwargs):
+            raise ManagementBackendError(
+                "device did not declare that capability",
+                status_code=409,
+                refusal=refusal_for_status(409, "device did not declare that capability"),
+            )
+
+    _stub_controller(monkeypatch)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_app(tmp_path, _Devices(_device()), Backend())),
+        base_url="https://local.test",
+    ) as client:
+        response = await client.post(
+            f"{_DEVICES}/{_KNOWN}/capabilities/display.brightness",
+            headers=await _authenticate(client),
+            json={
+                "payload": {"brightness": 80},
+                "capability_version": 1,
+                "request_id": "gesture-2",
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["reason"] == (
+        "device did not declare that capability"
+    )
