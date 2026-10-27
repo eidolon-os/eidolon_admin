@@ -544,21 +544,25 @@ class DataAuthorityClient:
             CompanionFace,
         )
 
-    async def get_voiceprint_snapshot(self, companion_id):
-        from eidolon_sdk.biz.voiceprint import VoicePolicySnapshot
-        return await self._companion_call(
-            "GET", f"{companion_id}/voiceprint-snapshot", companion_id, VoicePolicySnapshot
-        )
+    async def voiceprint_call(self, method, owner_id, suffix, model, payload=None):
+        return await self._person_resource_call(method, owner_id, "/voiceprints" + suffix, model, payload)
 
-    async def voiceprint_call(self, method, owner_id, companion_id, suffix, model, payload=None):
+    async def person_call(self, method, owner_id, suffix, model, payload=None, params=None):
+        return await self._person_resource_call(method, owner_id, "/persons" + suffix, model, payload, params)
+
+    async def _person_resource_call(self, method, owner_id, path, model, payload=None, params=None):
         if not self._token:
             raise AuthorityFailure("data", "configuration", "Data credential missing", 503)
         endpoint = await self._directory.resolve(service_id="data",
             endpoint_id="companion-authority.http", required_contract=DATA_CONTRACT)
         response = await _request("data", self._client, method,
             f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
-            f"{quote(owner_id, safe='')}/companions/{quote(companion_id, safe='')}/voiceprints{suffix}",
-            timeout=self._timeout, headers={"Authorization": f"Bearer {self._token}"}, json=payload)
+            f"{quote(owner_id, safe='')}{path}", timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"}, json=payload, params=params)
+        if model is None:
+            if response.status_code != 204:
+                _raise_status("data", response)
+            return None
         return _parse("data", response, model)
 
     async def get_companion_face(self, companion_id: str) -> bytes | None:

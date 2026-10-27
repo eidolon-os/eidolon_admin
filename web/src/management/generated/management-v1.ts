@@ -335,6 +335,7 @@ export interface DevicesView {
 export interface EnrollmentCreate {
   display_name: string
   operation_id: string
+  person_id: string
   profile_id?: string | null
 }
 
@@ -687,6 +688,44 @@ export interface OwnerNameView {
   revision: number
 }
 
+export interface PersonCollection {
+  persons?: Array<PersonView>
+}
+
+export interface PersonCreate {
+  display_name: string
+  person_id: string
+  profile?: PersonProfile
+}
+
+export interface PersonDeletion {
+  deleted?: true
+}
+
+export interface PersonProfile {
+  description?: string
+  language?: string
+  preferences?: Array<string>
+  preferred_name?: string
+  schema_version?: 1
+}
+
+export interface PersonUpdate {
+  display_name: string
+  expected_revision: number
+  profile: PersonProfile
+  status: "active" | "inactive"
+}
+
+export interface PersonView {
+  display_name: string
+  owner_id: string
+  person_id: string
+  profile: PersonProfile
+  revision: number
+  status: "active" | "inactive"
+}
+
 export interface PersonaAuthoring {
   archetype?: string
   behavior_guidance?: Array<string>
@@ -787,11 +826,6 @@ export interface Placement {
 export interface PlacementWrite {
   area_id: string
   expected_revision: number
-}
-
-export interface PolicyUpdate {
-  expected_revision: number
-  mode: "off" | "allowlist"
 }
 
 export interface ProviderAccount {
@@ -899,24 +933,15 @@ export interface SharedStart {
   session_id: string
 }
 
-export interface SpeakerAdmissionLimits {
-  max_allowed_speakers: number
-  max_audio_ms: number
-  min_audio_ms: number
-}
-
 export interface SpeakerExtractionReadiness {
-  admission_ready?: boolean
-  calibration_digest?: string
   extraction_ready: boolean
-  limits?: SpeakerAdmissionLimits | null
   state: "disabled" | "not_started" | "loading" | "ready" | "unavailable" | "closed"
-  validation_state?: "unavailable" | "calibrated" | "controlled_trial"
 }
 
 export interface SpeakerProfileView {
   display_name: string
   enrollment_id: string
+  person_id?: string | null
   profile_id: string
   recording_available?: boolean
   revision: number
@@ -1008,11 +1033,11 @@ export interface VoiceAudioRequest {
 
 export interface VoiceMatchTestResult {
   audio_ms: number
-  companion_id: string
   elapsed_ms: number
   extraction_ms: number
   model_id: string
-  policy_revision: number
+  person_id: string
+  person_revision: number
   preprocessing_version: string
   scores: Array<SpeakerSimilarity>
   scoring_version?: "normalized-template-cosine-v1"
@@ -1020,15 +1045,14 @@ export interface VoiceMatchTestResult {
   weights_hash: string
 }
 
-export interface VoicePolicyView {
-  admission_state?: "unvalidated" | "ready"
-  allowed_profile_ids?: Array<string>
-  calibration_digest?: string
-  companion_id: string
-  mode?: "off" | "allowlist"
+export interface VoiceprintAssignment {
+  expected_revision: number
+  person_id: string
+}
+
+export interface VoiceprintCollection {
   profiles?: Array<SpeakerProfileView>
   readiness?: SpeakerExtractionReadiness | null
-  revision?: number
 }
 
 /** Response type per operation, keyed as it is called. */
@@ -1053,19 +1077,6 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions/{companion_id}/tasks/{task_id}': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/cancel': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/retry': TaskView
-  'GET /api/management/v1/companions/{companion_id}/voiceprints': VoicePolicyView
-  'DELETE /api/management/v1/companions/{companion_id}/voiceprints/bindings/{profile_id}': VoicePolicyView
-  'PUT /api/management/v1/companions/{companion_id}/voiceprints/bindings/{profile_id}': VoicePolicyView
-  'POST /api/management/v1/companions/{companion_id}/voiceprints/enrollments': EnrollmentView
-  'DELETE /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}': EnrollmentView
-  'GET /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}': EnrollmentView
-  'POST /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/complete': SpeakerProfileView
-  'PUT /api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}': EnrollmentView
-  'POST /api/management/v1/companions/{companion_id}/voiceprints/match-test': VoiceMatchTestResult
-  'PUT /api/management/v1/companions/{companion_id}/voiceprints/policy': VoicePolicyView
-  'DELETE /api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}': VoicePolicyView
-  'GET /api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}/recording': VoiceAudioRequest
-  'GET /api/management/v1/companions/{companion_id}/voiceprints/readiness': SpeakerExtractionReadiness
   'GET /api/management/v1/context': ManagementContextView
   'GET /api/management/v1/controllers': ControllersView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
@@ -1101,6 +1112,11 @@ export interface ManagementResponses {
   'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
   'GET /api/management/v1/persona-presets': PersonaPresetCatalog
   'POST /api/management/v1/persona-preview': PersonaPreviewResponse
+  'GET /api/management/v1/persons': PersonCollection
+  'POST /api/management/v1/persons': PersonView
+  'DELETE /api/management/v1/persons/{person_id}': PersonDeletion
+  'GET /api/management/v1/persons/{person_id}': PersonView
+  'PUT /api/management/v1/persons/{person_id}': PersonView
   'POST /api/management/v1/role-groups/close': RoleGroupStatus
   'POST /api/management/v1/role-groups/open': RoleGroupStatus
   'POST /api/management/v1/role-groups/status': RoleGroupStatus
@@ -1127,4 +1143,15 @@ export interface ManagementResponses {
   'DELETE /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'PUT /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'GET /api/management/v1/smarthome/snapshot': HomeSnapshotView
+  'GET /api/management/v1/voiceprints': VoiceprintCollection
+  'POST /api/management/v1/voiceprints/enrollments': EnrollmentView
+  'DELETE /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView
+  'GET /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView
+  'POST /api/management/v1/voiceprints/enrollments/{enrollment_id}/complete': SpeakerProfileView
+  'PUT /api/management/v1/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}': EnrollmentView
+  'POST /api/management/v1/voiceprints/persons/{person_id}/match-test': VoiceMatchTestResult
+  'DELETE /api/management/v1/voiceprints/profiles/{profile_id}': VoiceprintCollection
+  'PUT /api/management/v1/voiceprints/profiles/{profile_id}/person': SpeakerProfileView
+  'GET /api/management/v1/voiceprints/profiles/{profile_id}/recording': VoiceAudioRequest
+  'GET /api/management/v1/voiceprints/readiness': SpeakerExtractionReadiness
 }

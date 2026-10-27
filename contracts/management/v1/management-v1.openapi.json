@@ -1996,6 +1996,12 @@
             "title": "Operation Id",
             "type": "string"
           },
+          "person_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Person Id",
+            "type": "string"
+          },
           "profile_id": {
             "anyOf": [
               {
@@ -2010,6 +2016,7 @@
           }
         },
         "required": [
+          "person_id",
           "operation_id",
           "display_name"
         ],
@@ -4085,6 +4092,177 @@
         "title": "OwnerNameView",
         "type": "object"
       },
+      "PersonCollection": {
+        "additionalProperties": false,
+        "properties": {
+          "persons": {
+            "items": {
+              "$ref": "#/components/schemas/PersonView"
+            },
+            "title": "Persons",
+            "type": "array"
+          }
+        },
+        "title": "PersonCollection",
+        "type": "object"
+      },
+      "PersonCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PersonProfile"
+          }
+        },
+        "required": [
+          "person_id",
+          "display_name"
+        ],
+        "title": "PersonCreate",
+        "type": "object"
+      },
+      "PersonDeletion": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "const": true,
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "title": "PersonDeletion",
+        "type": "object"
+      },
+      "PersonProfile": {
+        "additionalProperties": false,
+        "description": "Explicitly supplied information only; inferred traits need a separate contract.",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Description",
+            "type": "string"
+          },
+          "language": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Language",
+            "type": "string"
+          },
+          "preferences": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 32,
+            "title": "Preferences",
+            "type": "array"
+          },
+          "preferred_name": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Preferred Name",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "PersonProfile",
+        "type": "object"
+      },
+      "PersonUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PersonProfile"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "inactive"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "display_name",
+          "status",
+          "profile"
+        ],
+        "title": "PersonUpdate",
+        "type": "object"
+      },
+      "PersonView": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/PersonProfile"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "inactive"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "owner_id",
+          "display_name",
+          "status",
+          "revision",
+          "profile"
+        ],
+        "title": "PersonView",
+        "type": "object"
+      },
       "PersonaAuthoring": {
         "additionalProperties": false,
         "description": "What a person can decide about an Eidolon before it has been anything.\n\nSplit from :class:`PersonaAuthoringDraft` so the name is the only difference\nbetween them. That split is what lets this be a *wire* shape: when someone\nasks for another Eidolon they already said what to call it, and a request\ncarrying the name twice is a request that can disagree with itself.\n\nEvery field has the value the template would have used, so this doubles as\nthe starting point a screen shows. A person opening the form sees what their\nEidolon would be if they typed nothing, and edits from there — which is a\ndifferent act from filling in blanks and imagining the result.\n\nDeliberately open. These are sentences and lists a person writes, not\nvalidated policy; the canonical genome is what gets validated, and it is\nbuilt from this by :func:`build_persona_genome_from_draft` rather than\nstored as typed.",
@@ -4623,30 +4801,6 @@
           "area_id"
         ],
         "title": "PlacementWrite",
-        "type": "object"
-      },
-      "PolicyUpdate": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_revision": {
-            "minimum": 0.0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "mode": {
-            "enum": [
-              "off",
-              "allowlist"
-            ],
-            "title": "Mode",
-            "type": "string"
-          }
-        },
-        "required": [
-          "mode",
-          "expected_revision"
-        ],
-        "title": "PolicyUpdate",
         "type": "object"
       },
       "ProviderAccount": {
@@ -5246,64 +5400,13 @@
         "title": "SharedStart",
         "type": "object"
       },
-      "SpeakerAdmissionLimits": {
-        "additionalProperties": false,
-        "description": "Published release limits for conversation, distinct from recording UX.",
-        "properties": {
-          "max_allowed_speakers": {
-            "maximum": 5.0,
-            "minimum": 1.0,
-            "title": "Max Allowed Speakers",
-            "type": "integer"
-          },
-          "max_audio_ms": {
-            "maximum": 30000.0,
-            "minimum": 1500.0,
-            "title": "Max Audio Ms",
-            "type": "integer"
-          },
-          "min_audio_ms": {
-            "maximum": 30000.0,
-            "minimum": 1500.0,
-            "title": "Min Audio Ms",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "max_allowed_speakers",
-          "min_audio_ms",
-          "max_audio_ms"
-        ],
-        "title": "SpeakerAdmissionLimits",
-        "type": "object"
-      },
       "SpeakerExtractionReadiness": {
         "additionalProperties": false,
-        "description": "Numerical extraction readiness is never Companion admission readiness.",
+        "description": "Numerical extraction readiness; never conversation authorization.",
         "properties": {
-          "admission_ready": {
-            "default": false,
-            "title": "Admission Ready",
-            "type": "boolean"
-          },
-          "calibration_digest": {
-            "default": "",
-            "title": "Calibration Digest",
-            "type": "string"
-          },
           "extraction_ready": {
             "title": "Extraction Ready",
             "type": "boolean"
-          },
-          "limits": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SpeakerAdmissionLimits"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "state": {
             "enum": [
@@ -5315,16 +5418,6 @@
               "closed"
             ],
             "title": "State",
-            "type": "string"
-          },
-          "validation_state": {
-            "default": "unavailable",
-            "enum": [
-              "unavailable",
-              "calibrated",
-              "controlled_trial"
-            ],
-            "title": "Validation State",
             "type": "string"
           }
         },
@@ -5345,6 +5438,17 @@
           "enrollment_id": {
             "title": "Enrollment Id",
             "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
           },
           "profile_id": {
             "title": "Profile Id",
@@ -5851,10 +5955,6 @@
             "title": "Audio Ms",
             "type": "integer"
           },
-          "companion_id": {
-            "title": "Companion Id",
-            "type": "string"
-          },
           "elapsed_ms": {
             "minimum": 0.0,
             "title": "Elapsed Ms",
@@ -5869,8 +5969,12 @@
             "title": "Model Id",
             "type": "string"
           },
-          "policy_revision": {
-            "title": "Policy Revision",
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_revision": {
+            "title": "Person Revision",
             "type": "integer"
           },
           "preprocessing_version": {
@@ -5909,8 +6013,8 @@
           "weights_hash",
           "preprocessing_version",
           "scores",
-          "companion_id",
-          "policy_revision",
+          "person_id",
+          "person_revision",
           "audio_ms",
           "extraction_ms",
           "elapsed_ms"
@@ -5918,43 +6022,31 @@
         "title": "VoiceMatchTestResult",
         "type": "object"
       },
-      "VoicePolicyView": {
+      "VoiceprintAssignment": {
         "additionalProperties": false,
         "properties": {
-          "admission_state": {
-            "default": "unvalidated",
-            "enum": [
-              "unvalidated",
-              "ready"
-            ],
-            "title": "Admission State",
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "person_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Person Id",
             "type": "string"
-          },
-          "allowed_profile_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Allowed Profile Ids",
-            "type": "array"
-          },
-          "calibration_digest": {
-            "default": "",
-            "title": "Calibration Digest",
-            "type": "string"
-          },
-          "companion_id": {
-            "title": "Companion Id",
-            "type": "string"
-          },
-          "mode": {
-            "default": "off",
-            "enum": [
-              "off",
-              "allowlist"
-            ],
-            "title": "Mode",
-            "type": "string"
-          },
+          }
+        },
+        "required": [
+          "person_id",
+          "expected_revision"
+        ],
+        "title": "VoiceprintAssignment",
+        "type": "object"
+      },
+      "VoiceprintCollection": {
+        "additionalProperties": false,
+        "properties": {
           "profiles": {
             "items": {
               "$ref": "#/components/schemas/SpeakerProfileView"
@@ -5971,17 +6063,9 @@
                 "type": "null"
               }
             ]
-          },
-          "revision": {
-            "default": 0,
-            "title": "Revision",
-            "type": "integer"
           }
         },
-        "required": [
-          "companion_id"
-        ],
-        "title": "VoicePolicyView",
+        "title": "VoiceprintCollection",
         "type": "object"
       }
     }
@@ -7403,887 +7487,6 @@
           }
         },
         "summary": "Post Companion Task Retry",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints": {
-      "get": {
-        "operationId": "view_api_management_v1_companions__companion_id__voiceprints_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoicePolicyView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "View",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/bindings/{profile_id}": {
-      "delete": {
-        "operationId": "unbind_api_management_v1_companions__companion_id__voiceprints_bindings__profile_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "title": "Profile Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoicePolicyView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Unbind",
-        "tags": [
-          "management"
-        ]
-      },
-      "put": {
-        "operationId": "bind_api_management_v1_companions__companion_id__voiceprints_bindings__profile_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "title": "Profile Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoicePolicyView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Bind",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/enrollments": {
-      "post": {
-        "operationId": "create_enrollment_api_management_v1_companions__companion_id__voiceprints_enrollments_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EnrollmentCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnrollmentView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Create Enrollment",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}": {
-      "delete": {
-        "operationId": "cancel_api_management_v1_companions__companion_id__voiceprints_enrollments__enrollment_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "enrollment_id",
-            "required": true,
-            "schema": {
-              "title": "Enrollment Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnrollmentView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Cancel",
-        "tags": [
-          "management"
-        ]
-      },
-      "get": {
-        "operationId": "enrollment_api_management_v1_companions__companion_id__voiceprints_enrollments__enrollment_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "enrollment_id",
-            "required": true,
-            "schema": {
-              "title": "Enrollment Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnrollmentView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Enrollment",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/complete": {
-      "post": {
-        "operationId": "complete_api_management_v1_companions__companion_id__voiceprints_enrollments__enrollment_id__complete_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "enrollment_id",
-            "required": true,
-            "schema": {
-              "title": "Enrollment Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VoiceAudioRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpeakerProfileView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Complete",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}": {
-      "put": {
-        "operationId": "sample_api_management_v1_companions__companion_id__voiceprints_enrollments__enrollment_id__samples__sample_id__put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "enrollment_id",
-            "required": true,
-            "schema": {
-              "title": "Enrollment Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "sample_id",
-            "required": true,
-            "schema": {
-              "title": "Sample Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VoiceAudioRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EnrollmentView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Sample",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/match-test": {
-      "post": {
-        "operationId": "match_test_api_management_v1_companions__companion_id__voiceprints_match_test_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VoiceAudioRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoiceMatchTestResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Match Test",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/policy": {
-      "put": {
-        "operationId": "policy_api_management_v1_companions__companion_id__voiceprints_policy_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PolicyUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoicePolicyView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Policy",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}": {
-      "delete": {
-        "operationId": "delete_profile_api_management_v1_companions__companion_id__voiceprints_profiles__profile_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "title": "Profile Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoicePolicyView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Delete Profile",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/profiles/{profile_id}/recording": {
-      "get": {
-        "operationId": "recording_api_management_v1_companions__companion_id__voiceprints_profiles__profile_id__recording_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "title": "Profile Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoiceAudioRequest"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Recording",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/companions/{companion_id}/voiceprints/readiness": {
-      "get": {
-        "operationId": "readiness_api_management_v1_companions__companion_id__voiceprints_readiness_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "companion_id",
-            "required": true,
-            "schema": {
-              "title": "Companion Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpeakerExtractionReadiness"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Readiness",
         "tags": [
           "management"
         ]
@@ -10445,6 +9648,302 @@
         ]
       }
     },
+    "/api/management/v1/persons": {
+      "get": {
+        "operationId": "list_people_api_management_v1_persons_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonCollection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "List People",
+        "tags": [
+          "management"
+        ]
+      },
+      "post": {
+        "operationId": "create_api_management_v1_persons_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Create",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}": {
+      "delete": {
+        "operationId": "delete_api_management_v1_persons__person_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonDeletion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Delete",
+        "tags": [
+          "management"
+        ]
+      },
+      "get": {
+        "operationId": "get_api_management_v1_persons__person_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "update_api_management_v1_persons__person_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Update",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/role-groups/close": {
       "post": {
         "operationId": "close_api_management_v1_role_groups_close_post",
@@ -12021,6 +11520,674 @@
           }
         },
         "summary": "Home Snapshot",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints": {
+      "get": {
+        "operationId": "view_api_management_v1_voiceprints_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceprintCollection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "View",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/enrollments": {
+      "post": {
+        "operationId": "create_enrollment_api_management_v1_voiceprints_enrollments_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollmentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Create Enrollment",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/enrollments/{enrollment_id}": {
+      "delete": {
+        "operationId": "cancel_api_management_v1_voiceprints_enrollments__enrollment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "title": "Enrollment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Cancel",
+        "tags": [
+          "management"
+        ]
+      },
+      "get": {
+        "operationId": "enrollment_api_management_v1_voiceprints_enrollments__enrollment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "title": "Enrollment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Enrollment",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/enrollments/{enrollment_id}/complete": {
+      "post": {
+        "operationId": "complete_api_management_v1_voiceprints_enrollments__enrollment_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "title": "Enrollment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceAudioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerProfileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Complete",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}": {
+      "put": {
+        "operationId": "sample_api_management_v1_voiceprints_enrollments__enrollment_id__samples__sample_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "enrollment_id",
+            "required": true,
+            "schema": {
+              "title": "Enrollment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sample_id",
+            "required": true,
+            "schema": {
+              "title": "Sample Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceAudioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollmentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Sample",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/persons/{person_id}/match-test": {
+      "post": {
+        "operationId": "match_test_api_management_v1_voiceprints_persons__person_id__match_test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceAudioRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceMatchTestResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Match Test",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/profiles/{profile_id}": {
+      "delete": {
+        "operationId": "delete_profile_api_management_v1_voiceprints_profiles__profile_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceprintCollection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Delete Profile",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/profiles/{profile_id}/person": {
+      "put": {
+        "operationId": "assign_api_management_v1_voiceprints_profiles__profile_id__person_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceprintAssignment"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerProfileView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Assign",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/profiles/{profile_id}/recording": {
+      "get": {
+        "operationId": "recording_api_management_v1_voiceprints_profiles__profile_id__recording_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceAudioRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Recording",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/readiness": {
+      "get": {
+        "operationId": "readiness_api_management_v1_voiceprints_readiness_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerExtractionReadiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Readiness",
         "tags": [
           "management"
         ]

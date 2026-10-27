@@ -8,9 +8,7 @@ from fastapi import FastAPI, HTTPException
 from eidolon_sdk.biz.voiceprint import (
     ExtractedSample,
     VoiceTemplate,
-    VoicePolicySnapshot,
-    VoicePolicyView,
-    SpeakerProfileView,
+    PersonVoiceTemplates,
 )
 from eidolon_admin_server.app.management.voiceprints_router import router
 
@@ -38,52 +36,25 @@ async def test_match_is_read_only_and_checks_current_authority(
         speech_ms=3000,
     )
     template = VoiceTemplate(profile_id="p", revision=1, sample=sample)
-    snapshot = VoicePolicySnapshot(
-        companion_id="c",
+    snapshot = PersonVoiceTemplates(
+        person_id="c",
         owner_id="owner",
-        mode="off",
-        revision=2,
+        person_revision=2,
         templates=[] if case == "empty" else [template],
     )
     reads, upstream_calls = [], []
 
     class Data:
-        async def get_owner_companion(self, owner, companion):
+        async def voiceprint_call(self, method, owner, suffix, model, payload=None):
+            assert method == "GET" and owner == "owner" and suffix == "/persons/c/templates"
             if case == "foreign":
                 raise HTTPException(404)
-
-        async def get_voiceprint_snapshot(self, companion):
             reads.append("snapshot")
             if case == "wrong_scope":
                 return snapshot.model_copy(update={"owner_id": "other"})
-            if case == "changed" and reads.count("snapshot") > 1:
-                return snapshot.model_copy(update={"revision": 3, "templates": []})
+            if case == "changed" and len(reads) > 1:
+                return snapshot.model_copy(update={"person_revision": 3, "templates": []})
             return snapshot
-
-        async def voiceprint_call(
-            self, method, owner, companion, suffix, model, payload=None
-        ):
-            assert (method, owner, companion, suffix, payload) == (
-                "GET",
-                "owner",
-                "c",
-                "",
-                None,
-            )
-            reads.append("view")
-            return VoicePolicyView(
-                companion_id="c",
-                revision=2,
-                allowed_profile_ids=["p"],
-                profiles=[
-                    SpeakerProfileView(
-                        profile_id="p",
-                        display_name="本人",
-                        revision=1,
-                        enrollment_id="e",
-                    )
-                ],
-            )
 
     def handle(request):
         assert request.headers["Authorization"] == "Bearer secret"
@@ -120,7 +91,7 @@ async def test_match_is_read_only_and_checks_current_authority(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://admin"
         ) as h:
-            path = "/internal/v1/management/companions/c/voiceprints/match-test?owner_id=owner"
+            path = "/internal/v1/management/voiceprints/persons/c/match-test?owner_id=owner"
             body = {"pcm_base64": base64.b64encode(b"\x01\x00" * 48000).decode()}
             assert (await h.post(path, json=body)).status_code == 401
             assert not reads and not upstream_calls
@@ -132,7 +103,7 @@ async def test_match_is_read_only_and_checks_current_authority(
             assert response.status_code == expected, response.text
             if expected == 200:
                 result = response.json()
-                assert result["scores"][0]["display_name"] == "本人"
+                assert result["person_id"] == "c"
                 assert result["scores"][0]["similarity"] == 0.72
                 assert result["validation_state"] == "unvalidated"
                 assert result["audio_ms"] == 3000
@@ -155,8 +126,8 @@ async def test_public_match_authenticates_owner_and_never_accepts_templates():
         async def voiceprint_call(self, **kwargs):
             calls.append(kwargs)
             return dict(
-                companion_id="c",
-                policy_revision=1,
+                person_id="c",
+                person_revision=1,
                 audio_ms=3000,
                 extraction_ms=10,
                 elapsed_ms=20,
@@ -180,7 +151,7 @@ async def test_public_match_authenticates_owner_and_never_accepts_templates():
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as h:
-        path = "/companions/c/voiceprints/match-test?owner_id=attacker"
+        path = "/voiceprints/persons/c/match-test?owner_id=attacker"
         body = {"pcm_base64": base64.b64encode(b"\x01\x00" * 48000).decode()}
         assert (await h.post(path, json=body)).status_code == 401
         h.headers["Authorization"] = "Bearer controller"
@@ -189,4 +160,4 @@ async def test_public_match_authenticates_owner_and_never_accepts_templates():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
         assert len(calls) == 1 and calls[0]["owner_id"] == "real-owner"
-        assert calls[0]["suffix"] == "/match-test"
+        assert calls[0]["suffix"] == "/persons/c/match-test"

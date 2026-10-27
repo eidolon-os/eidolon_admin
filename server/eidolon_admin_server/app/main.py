@@ -282,6 +282,8 @@ def create_app(
     app.include_router(management_router, prefix="/api")
     from .management.voiceprints_router import router as voiceprints_router
     app.include_router(voiceprints_router, prefix="/api")
+    from .management.persons_router import router as persons_router
+    app.include_router(persons_router, prefix="/api")
     app.include_router(management_smarthome_router, prefix="/api")
     app.include_router(management_mission_control_router, prefix="/api")
     app.include_router(management_session_traces_router, prefix="/api")

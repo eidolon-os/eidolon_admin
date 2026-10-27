@@ -3413,6 +3413,8 @@ def register_management_routes(
 
     from .voiceprints import register_voiceprint_routes
     register_voiceprint_routes(router, backend, authenticated_owner, _refused)
+    from .persons import register_person_routes
+    register_person_routes(router, backend, authenticated_owner, _refused)
     app.include_router(router)
 
 

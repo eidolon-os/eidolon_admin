@@ -11,13 +11,8 @@ async def test_voiceprints_use_authenticated_owner_and_never_accept_client_vecto
     class Backend:
         async def voiceprint_call(self, **kwargs):
             calls.append(kwargs)
-            return {
-                "companion_id": "c",
-                "mode": "off",
-                "revision": 0,
-                "profiles": [],
-                "allowed_profile_ids": [],
-            }
+            return {"profiles": []}
+
 
     async def auth(value):
         if value != "Bearer controller":
@@ -31,14 +26,14 @@ async def test_voiceprints_use_authenticated_owner_and_never_accept_client_vecto
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as h:
-        assert (await h.get("/companions/c/voiceprints")).status_code == 401
+        assert (await h.get("/voiceprints")).status_code == 401
         h.headers["Authorization"] = "Bearer controller"
         assert (
-            await h.get("/companions/c/voiceprints?owner_id=attacker")
+            await h.get("/voiceprints?owner_id=attacker")
         ).status_code == 200
         assert calls[-1]["owner_id"] == "owner-from-session"
         r = await h.put(
-            "/companions/c/voiceprints/enrollments/e/samples/0", json={"vector": [1, 0]}
+            "/voiceprints/enrollments/e/samples/0", json={"vector": [1, 0]}
         )
         assert r.status_code == 422
         assert len(calls) == 1
@@ -56,7 +51,7 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
         EnrollmentEvaluation,
         ExtractedSample,
         SpeakerProfileView,
-        VoicePolicyView,
+        VoiceprintCollection,
         enrollment_evidence_digest,
     )
 
@@ -87,9 +82,9 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
 
     class Data:
         async def voiceprint_call(
-            self, method, owner, companion, suffix, model, payload=None
+            self, method, owner, suffix, model, payload=None
         ):
-            assert owner == "owner" and companion == "c"
+            assert owner == "owner"
             if suffix.endswith("/complete"):
                 stored.append(payload)
                 e.state = "ready"
@@ -97,12 +92,14 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
             if suffix.endswith("/evidence"):
                 return EnrollmentEvidence(enrollment=e, samples=samples)
             if not suffix:
-                return VoicePolicyView(companion_id="c", profiles=[profile])
+                return VoiceprintCollection(profiles=[profile])
             return e
 
     def handle(request):
         import json
 
+        if request.url.path.endswith("/readiness"):
+            return httpx.Response(200, json={"state": "ready", "extraction_ready": True})
         requests.append(request.url.path)
         assert request.headers["Authorization"] == "Bearer channel-secret"
         if request.url.path.endswith("/extract"):
@@ -136,7 +133,7 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://admin"
         ) as h:
-            path = "/internal/v1/management/companions/c/voiceprints/enrollments/e/complete?owner_id=owner"
+            path = "/internal/v1/management/voiceprints/enrollments/e/complete?owner_id=owner"
             body = {"pcm_base64": base64.b64encode(b"\x01\x00" * 32000).decode()}
             assert (await h.post(path, json=body)).status_code == 401
             assert not requests
@@ -172,7 +169,7 @@ async def test_recording_reuses_owner_authentication_and_disables_cache():
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as h:
-        path = "/companions/c/voiceprints/profiles/p/recording"
+        path = "/voiceprints/profiles/p/recording"
         assert (await h.get(path)).status_code == 401
         assert not calls
         response = await h.get(path, headers={"Authorization": "Bearer controller"})
@@ -185,7 +182,7 @@ async def test_recording_reuses_owner_authentication_and_disables_cache():
 async def test_model_outage_preserves_management_but_prevents_recording_and_admission():
     from types import SimpleNamespace
     from eidolon_admin_server.app.management.voiceprints_router import router
-    from eidolon_sdk.biz.voiceprint import VoicePolicyView
+    from eidolon_sdk.biz.voiceprint import VoiceprintCollection
 
     calls = []
 
@@ -195,10 +192,12 @@ async def test_model_outage_preserves_management_but_prevents_recording_and_admi
                 raise HTTPException(404)
 
         async def voiceprint_call(
-            self, method, owner, companion, suffix, model, payload=None
+            self, method, owner, suffix, model, payload=None
         ):
+            if owner != "owner":
+                raise HTTPException(404)
             calls.append((method, suffix))
-            return VoicePolicyView(companion_id="c", mode="allowlist")
+            return VoiceprintCollection()
 
     app = FastAPI()
     app.include_router(router)
@@ -210,15 +209,15 @@ async def test_model_outage_preserves_management_but_prevents_recording_and_admi
         base_url="http://admin",
         headers={"Authorization": "Bearer local-secret"},
     ) as h:
-        prefix = "/internal/v1/management/companions/c/voiceprints"
+        prefix = "/internal/v1/management/voiceprints"
         view = await h.get(prefix + "?owner_id=owner")
         assert view.status_code == 200
         assert view.json()["readiness"]["extraction_ready"] is False
-        assert view.json()["readiness"]["admission_ready"] is False
+        assert "admission_ready" not in view.json()["readiness"]
         assert (
             await h.post(
                 prefix + "/enrollments?owner_id=owner",
-                json={"operation_id": "one", "display_name": "我"},
+                json={"operation_id": "one", "display_name": "我", "person_id": "p"},
             )
         ).status_code == 503
         assert (
@@ -226,6 +225,6 @@ async def test_model_outage_preserves_management_but_prevents_recording_and_admi
                 prefix + "/policy?owner_id=owner",
                 json={"mode": "allowlist", "expected_revision": 0},
             )
-        ).status_code == 409
+        ).status_code == 404
         assert (await h.get(prefix + "/readiness?owner_id=other")).status_code == 404
-        assert calls == [("GET", "")]
+        assert all(method == "GET" for method, _ in calls)

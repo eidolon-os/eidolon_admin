@@ -268,8 +268,17 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
-    async def voiceprint_call(self, *, owner_id, companion_id, suffix, method="GET", payload=None):
-        path = f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}/voiceprints{suffix}"
+    async def person_call(self, *, owner_id, suffix, method="GET", payload=None, expected_revision=None):
+        path = f"/api/internal/v1/management/persons{suffix}"
+        params = {"owner_id": owner_id}
+        if expected_revision is not None:
+            params["expected_revision"] = str(expected_revision)
+        if method == "GET":
+            return await self._get(path, params)
+        return await self._put(path, params, payload or {}, method=method)
+
+    async def voiceprint_call(self, *, owner_id, suffix, method="GET", payload=None):
+        path = f"/api/internal/v1/management/voiceprints{suffix}"
         if method == "GET":
             return await self._get(path, {"owner_id": owner_id})
         return await self._put(path, {"owner_id": owner_id}, payload or {}, method=method)
