@@ -941,7 +941,7 @@ export interface SpeakerExtractionReadiness {
 export interface SpeakerProfileView {
   display_name: string
   enrollment_id: string
-  person_id?: string | null
+  person_id: string
   profile_id: string
   recording_available?: boolean
   revision: number
@@ -1045,11 +1045,6 @@ export interface VoiceMatchTestResult {
   weights_hash: string
 }
 
-export interface VoiceprintAssignment {
-  expected_revision: number
-  person_id: string
-}
-
 export interface VoiceprintCollection {
   profiles?: Array<SpeakerProfileView>
   readiness?: SpeakerExtractionReadiness | null
@@ -1151,7 +1146,6 @@ export interface ManagementResponses {
   'PUT /api/management/v1/voiceprints/enrollments/{enrollment_id}/samples/{sample_id}': EnrollmentView
   'POST /api/management/v1/voiceprints/persons/{person_id}/match-test': VoiceMatchTestResult
   'DELETE /api/management/v1/voiceprints/profiles/{profile_id}': VoiceprintCollection
-  'PUT /api/management/v1/voiceprints/profiles/{profile_id}/person': SpeakerProfileView
   'GET /api/management/v1/voiceprints/profiles/{profile_id}/recording': VoiceAudioRequest
   'GET /api/management/v1/voiceprints/readiness': SpeakerExtractionReadiness
 }

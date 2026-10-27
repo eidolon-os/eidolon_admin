@@ -4,7 +4,6 @@ from urllib.parse import quote
 from fastapi import Header, Response
 from eidolon_sdk.biz.voiceprint import (
     VoiceprintCollection,
-    VoiceprintAssignment,
     EnrollmentView,
     EnrollmentCreate,
     SpeakerProfileView,
@@ -165,20 +164,5 @@ def register_voiceprint_routes(router, backend, authenticated_owner, refused):
             authorization,
             f"/enrollments/{quote(enrollment_id, safe='')}/complete",
             "POST",
-            payload.model_dump(mode="json"),
-        )
-
-    @router.put(
-        "/voiceprints/profiles/{profile_id}/person", response_model=SpeakerProfileView
-    )
-    async def assign(
-        profile_id: str,
-        payload: VoiceprintAssignment,
-        authorization: str | None = Header(default=None),
-    ):
-        return await invoke(
-            authorization,
-            f"/profiles/{quote(profile_id, safe='')}/person",
-            "PUT",
             payload.model_dump(mode="json"),
         )

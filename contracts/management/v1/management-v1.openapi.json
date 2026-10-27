@@ -5440,15 +5440,10 @@
             "type": "string"
           },
           "person_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Person Id"
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Person Id",
+            "type": "string"
           },
           "profile_id": {
             "title": "Profile Id",
@@ -5474,6 +5469,7 @@
           }
         },
         "required": [
+          "person_id",
           "profile_id",
           "display_name",
           "revision",
@@ -6020,28 +6016,6 @@
           "elapsed_ms"
         ],
         "title": "VoiceMatchTestResult",
-        "type": "object"
-      },
-      "VoiceprintAssignment": {
-        "additionalProperties": false,
-        "properties": {
-          "expected_revision": {
-            "minimum": 1.0,
-            "title": "Expected Revision",
-            "type": "integer"
-          },
-          "person_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "title": "Person Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "person_id",
-          "expected_revision"
-        ],
-        "title": "VoiceprintAssignment",
         "type": "object"
       },
       "VoiceprintCollection": {
@@ -12013,74 +11987,6 @@
           }
         },
         "summary": "Delete Profile",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/voiceprints/profiles/{profile_id}/person": {
-      "put": {
-        "operationId": "assign_api_management_v1_voiceprints_profiles__profile_id__person_put",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "profile_id",
-            "required": true,
-            "schema": {
-              "title": "Profile Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VoiceprintAssignment"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpeakerProfileView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Assign",
         "tags": [
           "management"
         ]

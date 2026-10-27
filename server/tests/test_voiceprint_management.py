@@ -72,6 +72,7 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
         expires_at=9999999999,
     )
     profile = SpeakerProfileView(
+        person_id="person",
         profile_id="p",
         display_name="我",
         revision=1,

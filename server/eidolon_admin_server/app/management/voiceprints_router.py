@@ -11,7 +11,6 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request, HTTPException, Depends, Response
 from eidolon_sdk.biz.voiceprint import (
     VoiceprintCollection,
-    VoiceprintAssignment,
     PersonVoiceTemplates,
     EnrollmentView,
     EnrollmentCreate,
@@ -264,21 +263,6 @@ async def view(request: Request, owner_id: str):
         "GET", owner_id, "", VoiceprintCollection
     )
     return result.model_copy(update={"readiness": await readiness_value(request)})
-
-
-@router.put(
-    "/voiceprints/profiles/{profile_id}/person", response_model=SpeakerProfileView
-)
-async def assign(
-    request: Request, owner_id: str, profile_id: str, payload: VoiceprintAssignment
-):
-    return await request.app.state.control_plane.data.voiceprint_call(
-        "PUT",
-        owner_id,
-        f"/profiles/{quote(profile_id, safe='')}/person",
-        SpeakerProfileView,
-        payload.model_dump(mode="json"),
-    )
 
 
 @router.post(

@@ -10,3 +10,5 @@ def test_admission_routes_are_removed():
         paths = [r.path for r in routes]
         assert paths
         assert all("/companions/" not in p and "/policy" not in p and "/bindings" not in p for p in paths)
+
+        assert all(not p.endswith("/profiles/{profile_id}/person") for p in paths)
