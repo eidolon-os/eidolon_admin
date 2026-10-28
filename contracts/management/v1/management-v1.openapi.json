@@ -4311,6 +4311,48 @@
         "title": "PersonFaceUpdate",
         "type": "object"
       },
+      "PersonMemoryDefaults": {
+        "additionalProperties": false,
+        "description": "Owner defaults for future candidates and automatic promotion only.",
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/ProvisionalMemoryPolicy"
+          },
+          "prepare_on_promotion": {
+            "default": false,
+            "title": "Prepare On Promotion",
+            "type": "boolean"
+          }
+        },
+        "title": "PersonMemoryDefaults",
+        "type": "object"
+      },
+      "PersonMemoryDefaultsState": {
+        "additionalProperties": false,
+        "properties": {
+          "owner_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "owner_revision": {
+            "minimum": 1.0,
+            "title": "Owner Revision",
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/PersonMemoryDefaults"
+          }
+        },
+        "required": [
+          "owner_id",
+          "owner_revision",
+          "policy"
+        ],
+        "title": "PersonMemoryDefaultsState",
+        "type": "object"
+      },
       "PersonMemoryPurgeView": {
         "properties": {
           "person_id": {
@@ -10345,6 +10387,122 @@
           }
         },
         "summary": "Archived",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/memory-policy": {
+      "get": {
+        "operationId": "memory_defaults_api_management_v1_persons_memory_policy_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonMemoryDefaultsState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Memory Defaults",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "set_memory_defaults_api_management_v1_persons_memory_policy_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonMemoryDefaults"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonMemoryDefaultsState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Set Memory Defaults",
         "tags": [
           "management"
         ]

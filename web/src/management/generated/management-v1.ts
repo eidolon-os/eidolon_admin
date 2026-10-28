@@ -728,6 +728,17 @@ export interface PersonFaceUpdate {
   image_base64: string
 }
 
+export interface PersonMemoryDefaults {
+  candidate?: ProvisionalMemoryPolicy
+  prepare_on_promotion?: boolean
+}
+
+export interface PersonMemoryDefaultsState {
+  owner_id: string
+  owner_revision: number
+  policy: PersonMemoryDefaults
+}
+
 export interface PersonMemoryPurgeView {
   person_id: string
   realm_id: string
@@ -1182,6 +1193,8 @@ export interface ManagementResponses {
   'GET /api/management/v1/persons': PersonCollection
   'POST /api/management/v1/persons': PersonView
   'GET /api/management/v1/persons/archived': PersonCollection
+  'GET /api/management/v1/persons/memory-policy': PersonMemoryDefaultsState
+  'PUT /api/management/v1/persons/memory-policy': PersonMemoryDefaultsState
   'GET /api/management/v1/persons/{person_id}': PersonView
   'PUT /api/management/v1/persons/{person_id}': PersonView
   'POST /api/management/v1/persons/{person_id}/archive': PersonArchival

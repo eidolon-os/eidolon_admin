@@ -151,14 +151,17 @@ async def test_face_management_keeps_authenticated_owner_and_face_revision():
     class Backend:
         async def person_call(self, **kwargs):
             calls.append(kwargs)
-            if kwargs['suffix'].endswith('/image'): return {'revision': 2, 'image_base64': None}
+            if kwargs['suffix'].endswith('/image'):
+                return {'revision': 2, 'image_base64': None}
             return {'person_id':'p','revision':2,'has_image':False}
     async def auth(value):
-        if value != 'Bearer controller': raise HTTPException(401)
+        if value != 'Bearer controller':
+            raise HTTPException(401)
         return 'claimed-owner'
     router = APIRouter()
     register_person_routes(router, Backend(), auth, lambda e: e)
-    app = FastAPI(); app.include_router(router)
+    app = FastAPI()
+    app.include_router(router)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://local') as c:
         path = '/persons/p/face-profile'
         assert (await c.get(path)).status_code == 401
@@ -256,5 +259,48 @@ async def test_provisional_policy_bridge_keeps_owner_revision_and_independent_fl
             assert (await phone.put(path, json=body)).status_code == 422
             assert (await phone.put(path + '?expected_revision=3&owner_id=forged', json=body)).status_code == 200
             assert calls[-1] == ('PUT', 'claimed', '/p/provisional-memory/policy', body, {'expected_revision': '3'})
+            assert all(call[1] == 'claimed' for call in calls)
+            assert (await phone.get('/persons/p/provisional-memory/access')).status_code == 404
+
+
+async def test_owner_defaults_bridge_keeps_controller_owner_and_owner_revision():
+    calls = []
+    class Data:
+        async def person_call(self, method, owner, suffix, model, payload=None, params=None):
+            calls.append((method, owner, suffix, payload, params))
+            return model.model_validate(dict(owner_id=owner, owner_revision=4,
+                policy=payload or dict(candidate={}, prepare_on_promotion=False)))
+    internal = FastAPI()
+    internal.include_router(people)
+    internal.state.settings = SimpleNamespace(local_api_service_token='secret')
+    internal.state.control_plane = SimpleNamespace(data=Data())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=internal), base_url='http://admin') as admin:
+        class Backend:
+            async def person_call(self, **kw):
+                params = {'owner_id': kw['owner_id']}
+                if kw['expected_revision'] is not None:
+                    params['expected_revision'] = kw['expected_revision']
+                result = await admin.request(kw['method'], '/internal/v1/management/persons' + kw['suffix'],
+                    headers={'Authorization': 'Bearer secret'}, params=params, json=kw['payload'])
+                result.raise_for_status()
+                return result.json()
+        async def auth(value):
+            if value != 'Bearer controller':
+                raise HTTPException(401)
+            return 'claimed'
+        routes = APIRouter()
+        register_person_routes(routes, Backend(), auth, lambda exc: exc)
+        public = FastAPI()
+        public.include_router(routes)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public), base_url='http://phone') as phone:
+            path = '/persons/memory-policy'
+            body = {'candidate': {'save_allowed': True, 'session_recall_allowed': False}, 'prepare_on_promotion': True}
+            assert (await phone.get(path)).status_code == 401
+            assert (await phone.put(path + '?expected_revision=3', json=body)).status_code == 401
+            phone.headers['Authorization'] = 'Bearer controller'
+            assert (await phone.get(path + '?owner_id=forged')).status_code == 200
+            assert (await phone.put(path, json=body)).status_code == 422
+            assert (await phone.put(path + '?expected_revision=3&owner_id=forged', json=body)).status_code == 200
+            assert calls[-1] == ('PUT', 'claimed', '/memory-policy', body, {'expected_revision': '3'})
             assert all(call[1] == 'claimed' for call in calls)
             assert (await phone.get('/persons/p/provisional-memory/access')).status_code == 404

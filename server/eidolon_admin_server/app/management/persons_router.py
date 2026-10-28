@@ -10,6 +10,8 @@ from eidolon_sdk.biz.person_face import (
 from urllib.parse import quote
 from typing import Literal
 from eidolon_sdk.biz.system_data.models import (
+    PersonMemoryDefaults,
+    PersonMemoryDefaultsState,
     PersonalMemoryRealmSnapshot,
     PersonalMemoryState,
     ProvisionalMemoryPolicy,
@@ -44,6 +46,22 @@ async def list_people(request: Request, owner_id: str):
 async def create(request: Request, owner_id: str, payload: PersonCreate):
     return await request.app.state.control_plane.data.person_call(
         "POST", owner_id, "", PersonView, payload.model_dump(mode="json")
+    )
+
+
+@router.get("/memory-policy", response_model=PersonMemoryDefaultsState)
+async def memory_defaults(request: Request, owner_id: str):
+    return await request.app.state.control_plane.data.person_call(
+        "GET", owner_id, "/memory-policy", PersonMemoryDefaultsState,
+    )
+
+
+@router.put("/memory-policy", response_model=PersonMemoryDefaultsState)
+async def set_memory_defaults(request: Request, owner_id: str, payload: PersonMemoryDefaults,
+                              expected_revision: int = Query(ge=1)):
+    return await request.app.state.control_plane.data.person_call(
+        "PUT", owner_id, "/memory-policy", PersonMemoryDefaultsState,
+        payload.model_dump(mode="json"), params={"expected_revision": str(expected_revision)},
     )
 
 
