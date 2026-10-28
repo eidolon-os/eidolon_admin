@@ -96,6 +96,7 @@ def _realm(realm_id: str = "r_a", *, url: str | None = None) -> dict:
     return {
         "memory_realm_id": realm_id,
         "owner_id": OWNER,
+        "scope": "owner",
         "recollections_url": (
             url
             if url is not None

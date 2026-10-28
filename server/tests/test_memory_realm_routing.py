@@ -50,6 +50,7 @@ def _realm(
         "memory_space_id": realm_id,
         "memory_realm_id": realm_id,
         "owner_id": owner_id,
+        "scope": "owner",
         "companion_id": companion_id,
         "enabled": enabled,
         "agent_reachable": agent_reachable,
@@ -224,3 +225,17 @@ async def test_a_host_without_the_credential_says_so_instead_of_asking() -> None
 
     assert failure.kind == "configuration"
     assert failure.retryable is False
+
+async def test_owner_reads_ignore_person_realms_even_when_listed_first():
+    seen = []
+    personal = {**_realm('private'), 'scope': 'person'}
+    client = _client([personal, _realm('default')], recollections=_answer(), seen=seen)
+    await client.recollections(owner_id=OWNER, query='q', limit=1)
+    assert seen[-1].url.path.startswith('/default/')
+
+
+async def test_person_only_or_unclassified_never_becomes_owner_default():
+    for scope in ('person', None):
+        client = _client([{**_realm('private'), 'scope': scope}], recollections=_answer())
+        failure = await _failure(client)
+        assert failure.kind == 'not_found'

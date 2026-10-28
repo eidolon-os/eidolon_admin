@@ -1403,15 +1403,7 @@ class MemoryRecollectionsClient:
         )
 
     async def _space_for(self, owner_id: str) -> str:
-        """The one memory space this Owner has, or a failure naming why not.
-
-        Memory is Owner-level: one Owner, one Realm, read by every Companion
-        that Owner has (docs/跨系统/多Companion记忆隔离机制裁决.md). So this is a
-        uniqueness check, not a search. Two matches mean the Owner-level
-        migration is incomplete or the data is wrong, and either answer would
-        be a coin flip between two Companions' memories — so it refuses rather
-        than taking whichever sorted first.
-        """
+        """Resolve the Owner default explicitly; personal Realms are never candidates."""
         response = await _request(
             "memory",
             self._client,
@@ -1441,6 +1433,7 @@ class MemoryRecollectionsClient:
             realm
             for realm in realms
             if isinstance(realm, dict) and realm.get("owner_id") == owner_id
+            and realm.get("scope") == "owner"
         ]
         if not owned:
             raise AuthorityFailure(
@@ -1456,8 +1449,8 @@ class MemoryRecollectionsClient:
                 "memory",
                 "conflict",
                 (
-                    "this Owner has more than one memory space "
-                    f"({named}); one Owner is one Realm, so which of these "
+                    "this Owner has more than one default memory space "
+                    f"({named}); only one Owner default is allowed, so which of these "
                     "answers cannot be decided here"
                 ),
                 409,
