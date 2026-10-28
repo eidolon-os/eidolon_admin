@@ -1,9 +1,10 @@
+from eidolon_sdk.biz.person_face import PersonFaceState, PersonFaceUpdate, PersonFaceImage
 """Controller-authenticated Person management, scoped to the claimed Owner."""
 
 from urllib.parse import quote
 from typing import Literal
 from eidolon_sdk.biz.system_data.models import PersonalMemoryRealmSnapshot, PersonalMemoryState
-from fastapi import Header, Query
+from fastapi import Header, Query, Response
 from eidolon_sdk.biz.person import (
     PersonCreate,
     PersonUpdate,
@@ -86,3 +87,21 @@ def register_person_routes(router, backend, authenticated_owner, refused):
         return await invoke(authorization,
             "/" + quote(person_id, safe="") + "/memory-realm/" + action, "POST",
             expected_revision=expected_revision)
+
+    @router.get("/persons/{person_id}/face-profile", response_model=PersonFaceState)
+    async def face_state(person_id: str, response: Response, authorization: str | None = Header(default=None)):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(authorization, "/" + quote(person_id, safe="") + "/face-profile")
+
+    @router.get("/persons/{person_id}/face-profile/image", response_model=PersonFaceImage)
+    async def face_image(person_id: str, response: Response, authorization: str | None = Header(default=None)):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(authorization, "/" + quote(person_id, safe="") + "/face-profile/image")
+
+    @router.put("/persons/{person_id}/face-profile", response_model=PersonFaceState)
+    async def face_replace(person_id: str, payload: PersonFaceUpdate, authorization: str | None = Header(default=None)):
+        return await invoke(authorization, "/" + quote(person_id, safe="") + "/face-profile", "PUT", payload.model_dump(mode="json"))
+
+    @router.delete("/persons/{person_id}/face-profile", response_model=PersonFaceState)
+    async def face_delete(person_id: str, expected_revision: int = Query(ge=0), authorization: str | None = Header(default=None)):
+        return await invoke(authorization, "/" + quote(person_id, safe="") + "/face-profile", "DELETE", expected_revision=expected_revision)

@@ -144,3 +144,32 @@ async def test_memory_management_routes_derive_owner_and_keep_revision():
             assert calls[-1]["owner_id"] == "claimed-owner"
             assert calls[-1]["suffix"] == f"/p/memory-realm/{action}"
         assert (await c.post("/persons/p/memory-realm/delete?expected_revision=2")).status_code == 422
+
+
+async def test_face_management_keeps_authenticated_owner_and_face_revision():
+    calls = []
+    class Backend:
+        async def person_call(self, **kwargs):
+            calls.append(kwargs)
+            if kwargs['suffix'].endswith('/image'): return {'revision': 2, 'image_base64': None}
+            return {'person_id':'p','revision':2,'has_image':False}
+    async def auth(value):
+        if value != 'Bearer controller': raise HTTPException(401)
+        return 'claimed-owner'
+    router = APIRouter()
+    register_person_routes(router, Backend(), auth, lambda e: e)
+    app = FastAPI(); app.include_router(router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://local') as c:
+        path = '/persons/p/face-profile'
+        assert (await c.get(path)).status_code == 401
+        c.headers['Authorization'] = 'Bearer controller'
+        for suffix in ('', '/image'):
+            res = await c.get(path+suffix+'?owner_id=forged')
+            assert res.status_code == 200 and res.headers['cache-control'] == 'no-store'
+            assert calls[-1]['owner_id'] == 'claimed-owner'
+        body = {'expected_revision':1,'image_base64':'YQ=='}
+        assert (await c.put(path+'?owner_id=forged',json=body)).status_code == 200
+        assert calls[-1]['owner_id'] == 'claimed-owner' and calls[-1]['payload'] == body
+        assert (await c.delete(path+'?expected_revision=2')).status_code == 200
+        assert calls[-1]['expected_revision'] == 2
+        assert (await c.delete(path)).status_code == 422

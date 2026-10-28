@@ -1,9 +1,10 @@
+from eidolon_sdk.biz.person_face import PersonFaceState, PersonFaceUpdate, PersonFaceImage
 """Person management through the existing Data authority and Local API credential."""
 
 from urllib.parse import quote
 from typing import Literal
 from eidolon_sdk.biz.system_data.models import PersonalMemoryRealmSnapshot, PersonalMemoryState
-from fastapi import APIRouter, Depends, Request, Query
+from fastapi import APIRouter, Depends, Request, Query, Response
 from pydantic import RootModel
 from eidolon_sdk.biz.person import (
     PersonCreate,
@@ -91,3 +92,27 @@ async def change_memory(request: Request, owner_id: str, person_id: str,
     return await request.app.state.control_plane.data.person_call(
         "POST", owner_id, "/" + quote(person_id, safe="") + "/memory-realm/" + action,
         model, params={"expected_revision": str(expected_revision)})
+
+@router.get("/{person_id}/face-profile", response_model=PersonFaceState)
+async def face_state(request: Request, owner_id: str, person_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await request.app.state.control_plane.data.person_call(
+        "GET", owner_id, "/" + quote(person_id, safe="") + "/face-profile", PersonFaceState)
+
+@router.get("/{person_id}/face-profile/image", response_model=PersonFaceImage)
+async def face_image(request: Request, owner_id: str, person_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return await request.app.state.control_plane.data.person_call(
+        "GET", owner_id, "/" + quote(person_id, safe="") + "/face-profile/image", PersonFaceImage)
+
+@router.put("/{person_id}/face-profile", response_model=PersonFaceState)
+async def face_replace(request: Request, owner_id: str, person_id: str, payload: PersonFaceUpdate):
+    return await request.app.state.control_plane.data.person_call(
+        "PUT", owner_id, "/" + quote(person_id, safe="") + "/face-profile", PersonFaceState,
+        payload.model_dump(mode="json"))
+
+@router.delete("/{person_id}/face-profile", response_model=PersonFaceState)
+async def face_delete(request: Request, owner_id: str, person_id: str, expected_revision: int = Query(ge=0)):
+    return await request.app.state.control_plane.data.person_call(
+        "DELETE", owner_id, "/" + quote(person_id, safe="") + "/face-profile", PersonFaceState,
+        params={"expected_revision": str(expected_revision)})
