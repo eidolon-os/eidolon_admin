@@ -5256,6 +5256,64 @@
         "title": "ProviderList",
         "type": "object"
       },
+      "ProvisionalMemoryPolicy": {
+        "additionalProperties": false,
+        "description": "Independent Owner controls; neither permits ordinary private-memory recall.",
+        "properties": {
+          "save_allowed": {
+            "default": false,
+            "title": "Save Allowed",
+            "type": "boolean"
+          },
+          "session_recall_allowed": {
+            "default": false,
+            "title": "Session Recall Allowed",
+            "type": "boolean"
+          }
+        },
+        "title": "ProvisionalMemoryPolicy",
+        "type": "object"
+      },
+      "ProvisionalMemoryPolicyState": {
+        "additionalProperties": false,
+        "properties": {
+          "owner_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "person_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_revision": {
+            "minimum": 1.0,
+            "title": "Person Revision",
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ProvisionalMemoryPolicy"
+          },
+          "realm_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Realm Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_id",
+          "person_id",
+          "person_revision",
+          "realm_id",
+          "policy"
+        ],
+        "title": "ProvisionalMemoryPolicyState",
+        "type": "object"
+      },
       "RecollectionView": {
         "additionalProperties": false,
         "description": "One thing my Eidolon remembers, as I read it.\n\nText and its evidence travel together. Retrieval scores and internal\nrouting fields stay in the service; provenance contains known dates and\nthe user's original words.",
@@ -10990,6 +11048,140 @@
           }
         },
         "summary": "Permanent Delete",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/provisional-memory/policy": {
+      "get": {
+        "operationId": "provisional_policy_api_management_v1_persons__person_id__provisional_memory_policy_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionalMemoryPolicyState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Provisional Policy",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "set_provisional_policy_api_management_v1_persons__person_id__provisional_memory_policy_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionalMemoryPolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProvisionalMemoryPolicyState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Set Provisional Policy",
         "tags": [
           "management"
         ]

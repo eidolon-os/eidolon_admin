@@ -12,6 +12,8 @@ from typing import Literal
 from eidolon_sdk.biz.system_data.models import (
     PersonalMemoryRealmSnapshot,
     PersonalMemoryState,
+    ProvisionalMemoryPolicy,
+    ProvisionalMemoryPolicyState,
 )
 from fastapi import Header, Query, Response
 from eidolon_sdk.biz.person import (
@@ -128,6 +130,19 @@ def register_person_routes(router, backend, authenticated_owner, refused):
             "POST",
             expected_revision=expected_revision,
         )
+
+    @router.get("/persons/{person_id}/provisional-memory/policy", response_model=ProvisionalMemoryPolicyState)
+    async def provisional_policy(person_id: str, authorization: str | None = Header(default=None)):
+        return await invoke(authorization,
+                            "/" + quote(person_id, safe="") + "/provisional-memory/policy")
+
+    @router.put("/persons/{person_id}/provisional-memory/policy", response_model=ProvisionalMemoryPolicyState)
+    async def set_provisional_policy(person_id: str, payload: ProvisionalMemoryPolicy,
+                                     expected_revision: int = Query(ge=1),
+                                     authorization: str | None = Header(default=None)):
+        return await invoke(authorization,
+                            "/" + quote(person_id, safe="") + "/provisional-memory/policy",
+                            "PUT", payload.model_dump(mode="json"), expected_revision)
 
     @router.get("/persons/{person_id}/memory-state", response_model=PersonalMemoryState)
     async def memory_state(

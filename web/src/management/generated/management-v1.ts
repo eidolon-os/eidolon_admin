@@ -899,6 +899,19 @@ export interface ProviderList {
   providers: Array<AccountSchema>
 }
 
+export interface ProvisionalMemoryPolicy {
+  save_allowed?: boolean
+  session_recall_allowed?: boolean
+}
+
+export interface ProvisionalMemoryPolicyState {
+  owner_id: string
+  person_id: string
+  person_revision: number
+  policy: ProvisionalMemoryPolicy
+  realm_id: string
+}
+
 export interface RecollectionView {
   provenance?: MemoryProvenance
   remembered_at?: string | null
@@ -1180,6 +1193,8 @@ export interface ManagementResponses {
   'POST /api/management/v1/persons/{person_id}/memory-realm/{action}': unknown
   'GET /api/management/v1/persons/{person_id}/memory-state': PersonalMemoryState
   'POST /api/management/v1/persons/{person_id}/permanent-delete': PersonMemoryPurgeView
+  'GET /api/management/v1/persons/{person_id}/provisional-memory/policy': ProvisionalMemoryPolicyState
+  'PUT /api/management/v1/persons/{person_id}/provisional-memory/policy': ProvisionalMemoryPolicyState
   'POST /api/management/v1/persons/{person_id}/recognition/retire': PersonView
   'POST /api/management/v1/persons/{person_id}/restore': PersonView
   'POST /api/management/v1/role-groups/close': RoleGroupStatus

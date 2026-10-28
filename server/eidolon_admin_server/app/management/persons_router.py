@@ -12,6 +12,8 @@ from typing import Literal
 from eidolon_sdk.biz.system_data.models import (
     PersonalMemoryRealmSnapshot,
     PersonalMemoryState,
+    ProvisionalMemoryPolicy,
+    ProvisionalMemoryPolicyState,
 )
 from fastapi import APIRouter, Depends, Request, Query, Response
 from pydantic import RootModel
@@ -147,6 +149,25 @@ async def delete(
     return PersonArchival()
 
 
+@router.get("/{person_id}/provisional-memory/policy", response_model=ProvisionalMemoryPolicyState)
+async def provisional_policy(request: Request, owner_id: str, person_id: str):
+    return await request.app.state.control_plane.data.person_call(
+        "GET", owner_id, "/" + quote(person_id, safe="") + "/provisional-memory/policy",
+        ProvisionalMemoryPolicyState,
+    )
+
+
+@router.put("/{person_id}/provisional-memory/policy", response_model=ProvisionalMemoryPolicyState)
+async def set_provisional_policy(request: Request, owner_id: str, person_id: str,
+                                 payload: ProvisionalMemoryPolicy,
+                                 expected_revision: int = Query(ge=1)):
+    return await request.app.state.control_plane.data.person_call(
+        "PUT", owner_id, "/" + quote(person_id, safe="") + "/provisional-memory/policy",
+        ProvisionalMemoryPolicyState, payload.model_dump(mode="json"),
+        params={"expected_revision": str(expected_revision)},
+    )
+
+
 @router.get("/{person_id}/memory-state", response_model=PersonalMemoryState)
 async def memory_state(request: Request, owner_id: str, person_id: str):
     return await request.app.state.control_plane.data.person_call(
@@ -154,6 +175,8 @@ async def memory_state(request: Request, owner_id: str, person_id: str):
         owner_id,
         "/" + quote(person_id, safe="") + "/memory-state",
         PersonalMemoryState,
+    ProvisionalMemoryPolicy,
+    ProvisionalMemoryPolicyState,
     )
 
 

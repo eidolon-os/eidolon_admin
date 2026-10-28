@@ -215,3 +215,46 @@ async def test_retirement_bridge_derives_owner_and_forwards_revision():
             assert response.status_code == 200
             assert response.json()['recognition_state'] == 'retained'
             assert calls == [('POST', 'claimed', '/p/recognition/retire', {'expected_revision': '3'})]
+
+
+async def test_provisional_policy_bridge_keeps_owner_revision_and_independent_flags():
+    calls = []
+    class Data:
+        async def person_call(self, method, owner, suffix, model, payload=None, params=None):
+            calls.append((method, owner, suffix, payload, params))
+            return model.model_validate(dict(owner_id=owner, person_id='p', person_revision=4,
+                realm_id='r', policy=payload or dict(save_allowed=False, session_recall_allowed=True)))
+    internal = FastAPI()
+    internal.include_router(people)
+    internal.state.settings = SimpleNamespace(local_api_service_token='secret')
+    internal.state.control_plane = SimpleNamespace(data=Data())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=internal), base_url='http://admin') as admin:
+        class Backend:
+            async def person_call(self, **kw):
+                params = {'owner_id': kw['owner_id']}
+                if kw['expected_revision'] is not None:
+                    params['expected_revision'] = kw['expected_revision']
+                result = await admin.request(kw['method'], '/internal/v1/management/persons' + kw['suffix'],
+                    headers={'Authorization': 'Bearer secret'}, params=params, json=kw['payload'])
+                result.raise_for_status()
+                return result.json()
+        async def auth(value):
+            if value != 'Bearer controller':
+                raise HTTPException(401)
+            return 'claimed'
+        routes = APIRouter()
+        register_person_routes(routes, Backend(), auth, lambda exc: exc)
+        public = FastAPI()
+        public.include_router(routes)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public), base_url='http://phone') as phone:
+            path = '/persons/p/provisional-memory/policy'
+            body = {'save_allowed': True, 'session_recall_allowed': False}
+            assert (await phone.get(path)).status_code == 401
+            assert (await phone.put(path + '?expected_revision=3', json=body)).status_code == 401
+            phone.headers['Authorization'] = 'Bearer controller'
+            assert (await phone.get(path + '?owner_id=forged')).status_code == 200
+            assert (await phone.put(path, json=body)).status_code == 422
+            assert (await phone.put(path + '?expected_revision=3&owner_id=forged', json=body)).status_code == 200
+            assert calls[-1] == ('PUT', 'claimed', '/p/provisional-memory/policy', body, {'expected_revision': '3'})
+            assert all(call[1] == 'claimed' for call in calls)
+            assert (await phone.get('/persons/p/provisional-memory/access')).status_code == 404
