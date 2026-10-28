@@ -69,7 +69,7 @@ def _free_port() -> int:
 
 
 @pytest.fixture
-def realm(tmp_path: Path):
+def realm(tmp_path: Path, request):
     if not _PYTHON.exists() or not _HARNESS.exists():
         pytest.skip(
             "needs the eidolon_memory checkout beside this one, with its environment "
@@ -88,6 +88,7 @@ def realm(tmp_path: Path):
                 _MEMORY_TOKEN,
                 "--state",
                 str(tmp_path),
+                *(["--multi-person"] if getattr(request, "param", False) else []),
             ],
             cwd=_MEMORY,
             stdout=output,
@@ -150,15 +151,21 @@ def _conforms(method: str, path: str, response: httpx.Response) -> dict:
     schema = _CONTRACT["paths"][path][method]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
-    Draft202012Validator({**schema, "components": _CONTRACT["components"]}).validate(body)
+    Draft202012Validator({**schema, "components": _CONTRACT["components"]}).validate(
+        body
+    )
     return body
 
 
 async def _get(client: httpx.AsyncClient, headers: dict, path: str, **params) -> dict:
-    return _conforms("get", path, await client.get(path, params=params, headers=headers))
+    return _conforms(
+        "get", path, await client.get(path, params=params, headers=headers)
+    )
 
 
-async def _post(client: httpx.AsyncClient, headers: dict, path: str, body: dict) -> dict:
+async def _post(
+    client: httpx.AsyncClient, headers: dict, path: str, body: dict
+) -> dict:
     return _conforms("post", path, await client.post(path, json=body, headers=headers))
 
 
@@ -254,7 +261,9 @@ async def test_the_owners_memory_is_theirs_to_read_search_and_page(
 
     _stub_controller(monkeypatch, owner_id="owner-1")
     transport = httpx.ASGITransport(app=_phone_facing_app(tmp_path, realm))
-    async with httpx.AsyncClient(transport=transport, base_url="https://local.test") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://local.test"
+    ) as client:
         headers = await _authenticate(client)
 
         mine = await _get(client, headers, LIBRARY)
@@ -350,3 +359,67 @@ async def test_forgetting_is_shown_bound_confirmed_once_and_seen_to_finish(
     assert statuses[-1] == "applied", statuses
     assert after["status"] == "not_found"
     assert library["entry_count"] == 6
+
+
+@pytest.mark.parametrize("realm", [True], indirect=True)
+async def test_person_management_crosses_public_api_admin_discovery_and_real_http_realms(
+    tmp_path, monkeypatch, realm
+):
+    _stub_controller(monkeypatch, owner_id="owner-1")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=_phone_facing_app(tmp_path, realm)),
+        base_url="https://local.test",
+    ) as client:
+        headers = await _authenticate(client)
+
+        async def read(path, person=None, **kwargs):
+            params = {**kwargs, **({"person_id": person} if person else {})}
+            response = await client.get(path, params=params, headers=headers)
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        # A is paused: management remains available without runtime admission.
+        for person in (None, "person-a", "person-b"):
+            assert (await read(LIBRARY, person))["entry_count"] == 8
+            assert (await read(EXPORT, person))["record_count"] == 8
+            assert (await read(ENTRIES, person, since="0001-01-01T00:00:00Z"))[
+                "entry_count"
+            ] == 8
+            assert (await read(GRAPH, person))["nodes"]
+            assert (await read(RECOLLECTIONS, person, q="工资"))["recollections"]
+        for person in ("foreign-person", "missing"):
+            assert (
+                await client.get(LIBRARY, params={"person_id": person}, headers=headers)
+            ).status_code == 404
+        preview = await client.post(
+            PREVIEW,
+            params={"person_id": "person-a"},
+            json={"target": "工资"},
+            headers=headers,
+        )
+        token = preview.json()["confirmation_token"]
+        assert token
+        wrong = await client.post(
+            CONFIRM,
+            params={"person_id": "person-b"},
+            json={"confirmation_token": token},
+            headers=headers,
+        )
+        assert wrong.status_code == 409
+        accepted = await client.post(
+            CONFIRM,
+            params={"person_id": "person-a"},
+            json={"confirmation_token": token},
+            headers=headers,
+        )
+        assert accepted.status_code == 200
+        request_id = accepted.json()["request_id"]
+        for _ in range(50):
+            result = await read(STATUS, "person-a", request_id=request_id)
+            if result["status"] == "applied":
+                break
+            await asyncio.sleep(0.1)
+        assert result["status"] == "applied"
+        assert (await read(LIBRARY, "person-a"))["entry_count"] < 8
+        assert (await read(LIBRARY, "person-b"))["entry_count"] == 8
+        assert (await read(LIBRARY))["entry_count"] == 8

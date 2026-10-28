@@ -321,9 +321,17 @@ def _device_view(device, names: dict[str, str]) -> "DeviceView":
         outputs=DeviceOutputsView(
             capabilities=device.outputs.capabilities,
             input_capabilities=device.outputs.input_capabilities,
-            inputs=(device.outputs.policy.inputs if device.outputs.policy is not None else None),
-            allowed=None if device.outputs.policy is None else device.outputs.policy.allowed,
-            revision=0 if device.outputs.policy is None else device.outputs.policy.revision,
+            inputs=(
+                device.outputs.policy.inputs
+                if device.outputs.policy is not None
+                else None
+            ),
+            allowed=None
+            if device.outputs.policy is None
+            else device.outputs.policy.allowed,
+            revision=0
+            if device.outputs.policy is None
+            else device.outputs.policy.revision,
         ),
     )
 
@@ -343,8 +351,19 @@ def _reference_presence(ref, observations: dict) -> "DevicePresenceView":
             continue
         observed_ref = row.get("device_ref")
         if not isinstance(observed_ref, dict) or any(
-            observed_ref.get(field) != (str(ref.owner_domain_id) if field == "owner_domain_id" else getattr(ref, field))
-            for field in ("device_instance_id", "owner_domain_id", "claim_generation", "trust_epoch", "owner_domain_generation")
+            observed_ref.get(field)
+            != (
+                str(ref.owner_domain_id)
+                if field == "owner_domain_id"
+                else getattr(ref, field)
+            )
+            for field in (
+                "device_instance_id",
+                "owner_domain_id",
+                "claim_generation",
+                "trust_epoch",
+                "owner_domain_generation",
+            )
         ):
             continue  # An older claim cannot speak for this device lifecycle.
         observed = row.get("observed_at_ms")
@@ -356,9 +375,12 @@ def _reference_presence(ref, observations: dict) -> "DevicePresenceView":
             return DevicePresenceView(source="channel", reason="暂时无法读取设备通道")
         return DevicePresenceView(
             remaining_ms=15000 - (now_ms - observed),
-            state="online" if present else "offline", source="channel",
+            state="online" if present else "offline",
+            source="channel",
             observed_at=datetime.fromtimestamp(observed / 1000, UTC).isoformat(),
-            valid_until=datetime.fromtimestamp((observed + 15000) / 1000, UTC).isoformat(),
+            valid_until=datetime.fromtimestamp(
+                (observed + 15000) / 1000, UTC
+            ).isoformat(),
             reason="设备已连接主机" if present else "设备未连接主机通道",
         )
     return DevicePresenceView()
@@ -378,7 +400,9 @@ def _device_state(claim_state: str, answering: str | None, outputs) -> str:
         return "access_revoked"
     if not answering:
         return "awaiting_companion"
-    if outputs.policy is None and output_policy_required(outputs.capabilities, requirement=outputs.policy_required):
+    if outputs.policy is None and output_policy_required(
+        outputs.capabilities, requirement=outputs.policy_required
+    ):
         return "awaiting_outputs"
     return "ready"
 
@@ -2191,22 +2215,32 @@ def register_management_routes(
         # Channel ownership is a device domain, not the business Owner in the
         # controller session. Only query domains from the authorized inventory.
         observations_by_domain = {}
-        for domain in sorted({str(device.claim.device_ref.owner_domain_id) for device in inventory.devices}):
+        for domain in sorted(
+            {
+                str(device.claim.device_ref.owner_domain_id)
+                for device in inventory.devices
+            }
+        ):
             try:
-                observations_by_domain[domain] = await backend.device_presence(owner_domain_id=domain)
+                observations_by_domain[domain] = await backend.device_presence(
+                    owner_domain_id=domain
+                )
             except ManagementBackendError:
                 observations_by_domain[domain] = {"bodies": [], "unavailable": True}
         rows = []
         for device in inventory.devices:
             view = _device_view(device, names)
             view.presence = _inventory_presence(
-                device, observations_by_domain[str(device.claim.device_ref.owner_domain_id)]
+                device,
+                observations_by_domain[str(device.claim.device_ref.owner_domain_id)],
             )
             rows.append(view)
         return DevicesView(devices=rows, coverage=_DEVICE_COVERAGE)
 
     @router.get("/devices/presence", response_model=DevicePresencesView)
-    async def get_device_presences(authorization: str | None = Header(default=None, alias="Authorization")):
+    async def get_device_presences(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ):
         session = await authenticated_controller_session(authorization)
         domain = await devices.presence_domain(session=session)
         try:
@@ -2218,7 +2252,10 @@ def register_management_routes(
             if not isinstance(row, dict):
                 continue
             raw_ref = row.get("device_ref")
-            if not isinstance(raw_ref, dict) or raw_ref.get("owner_domain_id") != domain:
+            if (
+                not isinstance(raw_ref, dict)
+                or raw_ref.get("owner_domain_id") != domain
+            ):
                 continue
             # Reuse the same freshness and full-generation check as inventory.
             try:
@@ -2226,12 +2263,16 @@ def register_management_routes(
             except (ValidationError, ValueError):
                 continue
             presence = _reference_presence(ref, {"bodies": [row]})
-            rows.append(DevicePresenceRow(
-                device_id=ref.device_instance_id, owner_domain_id=domain,
-                owner_domain_generation=ref.owner_domain_generation,
-                claim_generation=ref.claim_generation, trust_epoch=ref.trust_epoch,
-                presence=presence,
-            ))
+            rows.append(
+                DevicePresenceRow(
+                    device_id=ref.device_instance_id,
+                    owner_domain_id=domain,
+                    owner_domain_generation=ref.owner_domain_generation,
+                    claim_generation=ref.claim_generation,
+                    trust_epoch=ref.trust_epoch,
+                    presence=presence,
+                )
+            )
         return DevicePresencesView(devices=rows)
 
     @router.put("/devices/{device_id}/companion", response_model=DeviceView)
@@ -2917,6 +2958,7 @@ def register_management_routes(
     async def get_memory_library(
         companion_id: str | None = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> MemoryLibraryView:
         """What my Eidolon remembers.
 
@@ -2927,7 +2969,9 @@ def register_management_routes(
         owner_id = await authenticated_owner(authorization)
         try:
             answer = await backend.memory_library(
-                owner_id=owner_id, companion_id=companion_id
+                owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
+                companion_id=companion_id,
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
@@ -2945,11 +2989,13 @@ def register_management_routes(
         cursor: str | None = Query(default=None, max_length=1024),
         history: bool = False,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> MemoryGraphView:
         owner_id = await authenticated_owner(authorization)
         try:
             answer = await backend.memory_graph(
                 owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
                 companion_id=companion_id,
                 cursor=cursor,
                 history=history,
@@ -2968,6 +3014,7 @@ def register_management_routes(
     async def preview_forget(
         payload: ForgetTargetRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> ForgetProposalView:
         """Show what forgetting this would remove. Nothing changes here.
 
@@ -2977,7 +3024,11 @@ def register_management_routes(
         """
         owner_id = await authenticated_owner(authorization)
         try:
-            answer = await backend.forget_preview(owner_id=owner_id, target=payload.target)
+            answer = await backend.forget_preview(
+                owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
+                target=payload.target,
+            )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return ForgetProposalView(
@@ -2994,6 +3045,7 @@ def register_management_routes(
     async def confirm_forget(
         payload: ForgetConfirmRequest,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> ForgetResultView:
         """Forget exactly what the preview showed.
 
@@ -3004,7 +3056,9 @@ def register_management_routes(
         owner_id = await authenticated_owner(authorization)
         try:
             answer = await backend.forget_confirm(
-                owner_id=owner_id, confirmation_token=payload.confirmation_token
+                owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
+                confirmation_token=payload.confirmation_token,
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
@@ -3019,6 +3073,7 @@ def register_management_routes(
     async def forget_status(
         request_id: str = Query(min_length=1, max_length=128),
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> ForgetProgressView:
         """Where a confirmed forget has got to.
 
@@ -3028,10 +3083,16 @@ def register_management_routes(
         """
         owner_id = await authenticated_owner(authorization)
         try:
-            answer = await backend.forget_status(owner_id=owner_id, request_id=request_id)
+            answer = await backend.forget_status(
+                owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
+                request_id=request_id,
+            )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
-        return ForgetProgressView(request_id=answer["request_id"], status=answer["status"])
+        return ForgetProgressView(
+            request_id=answer["request_id"], status=answer["status"]
+        )
 
     @router.post(
         "/owner/actions/revoke-runtime-sessions",
@@ -3324,6 +3385,7 @@ def register_management_routes(
         limit: int = Query(default=10, ge=1, le=50),
         companion_id: str | None = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> RecollectionsView:
         """ "你还记得…吗" — the question a person actually arrives with.
 
@@ -3334,6 +3396,7 @@ def register_management_routes(
         try:
             answer = await backend.recollections(
                 owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
                 query=q,
                 limit=limit,
                 companion_id=companion_id,
@@ -3353,6 +3416,7 @@ def register_management_routes(
         wing: str | None = None,
         room: str | None = None,
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> MemoryCopyView:
         """A copy of everything my Eidolon remembers that I can see.
 
@@ -3364,7 +3428,11 @@ def register_management_routes(
         owner_id = await authenticated_owner(authorization)
         try:
             answer = await backend.memory_export(
-                owner_id=owner_id, companion_id=companion_id, wing=wing, room=room
+                owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
+                companion_id=companion_id,
+                wing=wing,
+                room=room,
             )
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
@@ -3383,6 +3451,7 @@ def register_management_routes(
         companion_id: str | None = None,
         cursor: str | None = Query(default=None, max_length=1024),
         authorization: str | None = Header(default=None, alias="Authorization"),
+        person_id: str | None = None,
     ) -> MemoryDayView:
         """What it has written down since a moment I name.
 
@@ -3394,6 +3463,7 @@ def register_management_routes(
         try:
             answer = await backend.memory_entries(
                 owner_id=owner_id,
+                **({"person_id": person_id} if person_id is not None else {}),
                 since=since,
                 limit=limit,
                 companion_id=companion_id,
@@ -3412,8 +3482,10 @@ def register_management_routes(
         )
 
     from .voiceprints import register_voiceprint_routes
+
     register_voiceprint_routes(router, backend, authenticated_owner, _refused)
     from .persons import register_person_routes
+
     register_person_routes(router, backend, authenticated_owner, _refused)
     app.include_router(router)
 

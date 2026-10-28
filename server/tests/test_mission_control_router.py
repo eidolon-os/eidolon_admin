@@ -136,7 +136,9 @@ def _status(snapshot: Any, source: str) -> SourceStatus | None:
 
 
 async def test_a_lane_no_authority_answers_says_so_rather_than_reading_empty() -> None:
-    snapshot = await service.build_snapshot(_Request(_ControlPlane()), owner_id=_OWNER_ID)
+    snapshot = await service.build_snapshot(
+        _Request(_ControlPlane()), owner_id=_OWNER_ID
+    )
 
     # Three Data lanes still have no HTTP authority; Memory now has its own
     # runtime authority and explicitly reports when that client is not wired.
@@ -164,6 +166,7 @@ async def test_memory_lane_uses_realm_identity_and_storage_materialization() -> 
             self.spec = {
                 "owner_id": owner_id,
                 "memory_realm_id": realm_id,
+                "scope": "owner",
                 "enabled": True,
             }
             self.health = {"worker_running": running}
@@ -185,7 +188,8 @@ async def test_memory_lane_uses_realm_identity_and_storage_materialization() -> 
     memory = await service._memory_summary(_OWNER_ID, _Page(), _Status(), [])
 
     assert memory.realms_total == 1
-    assert memory.active_realm_id == "realm-owner-1"
+    assert memory.active_realm_id == ""
+    assert memory.default_realm_id == "realm-owner-1"
     assert memory.runners_total == 1
     assert memory.runners_online == 1
     assert memory.audience_scope == "companion:c-one"
@@ -294,7 +298,9 @@ async def test_the_floor_is_read_from_the_host_not_probed_here() -> None:
     """
 
     class _Service:
-        def __init__(self, service_id: str, state: str, detail: str | None = None) -> None:
+        def __init__(
+            self, service_id: str, state: str, detail: str | None = None
+        ) -> None:
             self.service_id = service_id
             self.runtime_state = state
             self.detail = detail
@@ -384,9 +390,7 @@ async def test_every_authority_method_this_composition_calls_really_exists() -> 
     So this reads the calls out of the composition and asks the real classes.
     """
 
-    source = (
-        pathlib.Path(service.__file__).read_text(encoding="utf-8")
-    )
+    source = pathlib.Path(service.__file__).read_text(encoding="utf-8")
     authorities = {
         "data_authority_of": clients.DataAuthorityClient,
         "workspace_authority_of": clients.DataWorkspaceAuthorityClient,
@@ -400,8 +404,7 @@ async def test_every_authority_method_this_composition_calls_really_exists() -> 
             if not hasattr(client, method):
                 missing.append(f"{client.__name__}.{method}")
     assert not missing, (
-        "the composition calls authority methods that do not exist: "
-        f"{sorted(missing)}"
+        f"the composition calls authority methods that do not exist: {sorted(missing)}"
     )
 
 
@@ -468,12 +471,8 @@ async def test_the_default_companion_is_the_one_the_owner_points_at() -> None:
     class _Snapshot:
         companion = _Companion()
 
-    control_plane = _ControlPlane(
-        snapshot=_Snapshot(), default_companion_id="cmp-1"
-    )
-    snapshot = await service.build_snapshot(
-        _Request(control_plane), owner_id=_OWNER_ID
-    )
+    control_plane = _ControlPlane(snapshot=_Snapshot(), default_companion_id="cmp-1")
+    snapshot = await service.build_snapshot(_Request(control_plane), owner_id=_OWNER_ID)
 
     assert snapshot.default_companion_id == "cmp-1"
     assert snapshot.companion is not None
@@ -501,9 +500,7 @@ async def test_an_owner_with_no_default_is_shown_as_having_none() -> None:
         companion = _Companion()
 
     control_plane = _ControlPlane(snapshot=_Snapshot(), default_companion_id=None)
-    snapshot = await service.build_snapshot(
-        _Request(control_plane), owner_id=_OWNER_ID
-    )
+    snapshot = await service.build_snapshot(_Request(control_plane), owner_id=_OWNER_ID)
 
     assert snapshot.default_companion_id is None
     assert snapshot.companion is None
@@ -628,3 +625,48 @@ async def test_a_filled_index_reads_as_ok_even_when_this_owner_is_new() -> None:
 
     assert outcome.state == "ok"
     assert outcome.detail == ""
+
+
+@pytest.mark.parametrize(
+    "enabled,realm,expected",
+    [
+        (True, "personal", "personal"),
+        (False, "personal", ""),
+        (None, "personal", ""),
+        (True, "foreign", ""),
+    ],
+)
+async def test_memory_lane_only_names_an_explicit_last_turn_realm(
+    enabled, realm, expected
+):
+    from types import SimpleNamespace
+
+    page = SimpleNamespace(
+        realms=[
+            SimpleNamespace(
+                spec={
+                    "owner_id": _OWNER_ID,
+                    "memory_realm_id": "personal",
+                    "scope": "person",
+                },
+                health={},
+            ),
+            SimpleNamespace(
+                spec={
+                    "owner_id": _OWNER_ID,
+                    "memory_realm_id": "default",
+                    "scope": "owner",
+                },
+                health={},
+            ),
+        ]
+    )
+    result = await service._memory_summary(
+        _OWNER_ID,
+        page,
+        None,
+        [{"memory_realm_id": realm, "metadata_": {"memory_enabled": enabled}}],
+    )
+    assert result.active_realm_id == expected
+    assert result.default_realm_id == "default"
+    assert result.personal_realm_ids == ["personal"]

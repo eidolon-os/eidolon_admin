@@ -204,7 +204,8 @@ async def _request(
 ) -> httpx.Response:
     try:
         return await request_with_reconnect(
-            client, method,
+            client,
+            method,
             url,
             timeout=timeout,
             headers=headers,
@@ -545,20 +546,40 @@ class DataAuthorityClient:
         )
 
     async def voiceprint_call(self, method, owner_id, suffix, model, payload=None):
-        return await self._person_resource_call(method, owner_id, "/voiceprints" + suffix, model, payload)
+        return await self._person_resource_call(
+            method, owner_id, "/voiceprints" + suffix, model, payload
+        )
 
-    async def person_call(self, method, owner_id, suffix, model, payload=None, params=None):
-        return await self._person_resource_call(method, owner_id, "/persons" + suffix, model, payload, params)
+    async def person_call(
+        self, method, owner_id, suffix, model, payload=None, params=None
+    ):
+        return await self._person_resource_call(
+            method, owner_id, "/persons" + suffix, model, payload, params
+        )
 
-    async def _person_resource_call(self, method, owner_id, path, model, payload=None, params=None):
+    async def _person_resource_call(
+        self, method, owner_id, path, model, payload=None, params=None
+    ):
         if not self._token:
-            raise AuthorityFailure("data", "configuration", "Data credential missing", 503)
-        endpoint = await self._directory.resolve(service_id="data",
-            endpoint_id="companion-authority.http", required_contract=DATA_CONTRACT)
-        response = await _request("data", self._client, method,
+            raise AuthorityFailure(
+                "data", "configuration", "Data credential missing", 503
+            )
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        response = await _request(
+            "data",
+            self._client,
+            method,
             f"{endpoint.address.rstrip('/')}/api/companion-authority/v1/owners/"
-            f"{quote(owner_id, safe='')}{path}", timeout=self._timeout,
-            headers={"Authorization": f"Bearer {self._token}"}, json=payload, params=params)
+            f"{quote(owner_id, safe='')}{path}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json=payload,
+            params=params,
+        )
         if model is None:
             if response.status_code != 204:
                 _raise_status("data", response)
@@ -754,7 +775,8 @@ class DataWorkspaceAuthorityClient:
     ) -> Registry:
         params = (
             {"expected_revision": str(expected_revision)}
-            if expected_revision is not None else None
+            if expected_revision is not None
+            else None
         )
         response = await _request(
             "data",
@@ -1087,10 +1109,31 @@ class MemorySupervisorClient:
         base_url: str,
         client: httpx.AsyncClient,
         timeout_seconds: float,
+        service_token: str = "",
     ) -> None:
+        self._service_token = service_token
         self._base_url = base_url.rstrip("/")
         self._client = client
         self._timeout = timeout_seconds
+
+    async def erase_person(self, *, realm_id: str, owner_id: str, person_id: str):
+        response = await _request(
+            "memory",
+            self._client,
+            "POST",
+            f"{self._base_url}/api/admin/realms/{quote(realm_id, safe='')}/erase-person",
+            timeout=max(self._timeout, 60),
+            headers={"Authorization": f"Bearer {self._service_token}"},
+            params={"owner_id": owner_id, "person_id": person_id},
+        )
+        if response.status_code != 200 or response.json().get("erased") is not True:
+            raise AuthorityFailure(
+                "memory",
+                "unavailable",
+                "personal memory erasure was not confirmed",
+                503,
+                retryable=True,
+            )
 
     async def request_reconcile(self) -> bool:
         """True when the supervisor accepted; False when it could not be told.
@@ -1151,7 +1194,9 @@ class MemoryRecollectionsClient:
         client: httpx.AsyncClient,
         timeout_seconds: float,
         service_token: str = "",
+        person_id: str | None = None,
     ) -> None:
+        self._person_id = person_id
         self._discovery_url = discovery_url.rstrip("/")
         self._client = client
         self._timeout = timeout_seconds
@@ -1159,6 +1204,17 @@ class MemoryRecollectionsClient:
         #: it publishes where a space lives, which is not the space's contents —
         #: and only the read of what a person remembers presents this.
         self._service_token = service_token.strip()
+
+    def for_person(self, person_id: str | None):
+        if person_id is None:
+            return self
+        return type(self)(
+            discovery_url=self._discovery_url,
+            client=self._client,
+            timeout_seconds=self._timeout,
+            service_token=self._service_token,
+            person_id=person_id,
+        )
 
     @property
     def has_credential(self) -> bool:
@@ -1432,14 +1488,22 @@ class MemoryRecollectionsClient:
         owned = [
             realm
             for realm in realms
-            if isinstance(realm, dict) and realm.get("owner_id") == owner_id
-            and realm.get("scope") == "owner"
+            if isinstance(realm, dict)
+            and realm.get("owner_id") == owner_id
+            and (
+                (self._person_id is None and realm.get("scope") == "owner")
+                or (
+                    self._person_id is not None
+                    and realm.get("scope") == "person"
+                    and realm.get("person_id") == self._person_id
+                )
+            )
         ]
         if not owned:
             raise AuthorityFailure(
                 "memory",
                 "not_found",
-                "this Owner has no memory space",
+                "requested memory space does not exist for this Owner",
                 404,
                 retryable=False,
             )
@@ -1449,8 +1513,8 @@ class MemoryRecollectionsClient:
                 "memory",
                 "conflict",
                 (
-                    "this Owner has more than one default memory space "
-                    f"({named}); only one Owner default is allowed, so which of these "
+                    "requested memory identity has more than one memory space "
+                    f"({named}); a memory identity must resolve uniquely, so which of these "
                     "answers cannot be decided here"
                 ),
                 409,
@@ -1470,7 +1534,10 @@ class MemoryRecollectionsClient:
         # is listening. Dialling it anyway turns "this Realm is not running"
         # into "memory is unreachable" — the wrong problem, and it sent people
         # to look at the wrong service.
-        if not realm.get("enabled", True) or realm.get("agent_reachable") is False:
+        if (
+            not realm.get("management_enabled", realm.get("enabled", True))
+            or realm.get("management_reachable", realm.get("agent_reachable")) is False
+        ):
             raise AuthorityFailure(
                 "memory",
                 "runtime_missing",
@@ -1865,8 +1932,12 @@ class HubManagementClient:
         except ValueError as exc:
             raise _contract_violation("hub", "invalid shared session response") from exc
         expected_id = command["session_id"]
-        if (not isinstance(result, dict) or result.get("session_id") != expected_id
-                or result.get("state") != ("transport_ready" if action == "open" else "closed")):
+        if (
+            not isinstance(result, dict)
+            or result.get("session_id") != expected_id
+            or result.get("state")
+            != ("transport_ready" if action == "open" else "closed")
+        ):
             raise _contract_violation("hub", "invalid shared session response")
         return result
 
@@ -2024,7 +2095,9 @@ class HubManagementClient:
         )
         return response.json()
 
-    async def withdraw_controller(self, *, authorization: str, principal_id: str) -> dict:
+    async def withdraw_controller(
+        self, *, authorization: str, principal_id: str
+    ) -> dict:
         """Tell Hub this Owner Domain no longer acts through a Controller.
 
         Every standing that Controller recorded stops deciding Proposals; the
@@ -2229,7 +2302,10 @@ class HubSmartHomeClient:
     async def call(self, owner_id: str, path: str, body: dict | None = None) -> dict:
         if not self._token:
             raise AuthorityFailure(
-                "hub", "unauthorized", "Hub smart-home credential was not configured", 503
+                "hub",
+                "unauthorized",
+                "Hub smart-home credential was not configured",
+                503,
             )
         response = await _request(
             "hub",
@@ -2245,7 +2321,9 @@ class HubSmartHomeClient:
         try:
             value = response.json()
         except ValueError as exc:
-            raise _contract_violation("hub", "Hub smart-home answer was not JSON") from exc
+            raise _contract_violation(
+                "hub", "Hub smart-home answer was not JSON"
+            ) from exc
         if not isinstance(value, dict):
             raise _contract_violation("hub", "Hub smart-home answer was not an object")
         return value

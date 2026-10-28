@@ -702,6 +702,37 @@ export interface PersonDeletion {
   deleted?: true
 }
 
+export interface PersonFaceImage {
+  content_type?: "image/jpeg" | null
+  image_base64?: string | null
+  revision: number
+}
+
+export interface PersonFaceState {
+  content_type?: "image/jpeg" | null
+  feature_schema_version?: number | null
+  has_image: boolean
+  model_id?: string | null
+  person_id: string
+  preprocessing_version?: string | null
+  recognition_state?: "not_configured"
+  revision: number
+  schema_version?: 1
+  sha256?: string | null
+}
+
+export interface PersonFaceUpdate {
+  expected_revision: number
+  image_base64: string
+}
+
+export interface PersonMemoryPurgeView {
+  person_id: string
+  realm_id: string
+  revision: number
+  state: "pending" | "completed"
+}
+
 export interface PersonProfile {
   description?: string
   language?: string
@@ -816,6 +847,23 @@ export interface PersonaTraitState {
   last_changed_at?: string | null
   source?: string
   value?: number
+}
+
+export interface PersonalMemoryRealmSnapshot {
+  owner_id: string
+  person_id: string
+  person_revision: number
+  realm_id: string
+  status: "active"
+}
+
+export interface PersonalMemoryState {
+  owner_id: string
+  person_id: string
+  person_revision: number
+  person_status: "active" | "inactive"
+  realm_id?: string | null
+  state: "unbound" | "active" | "inactive"
 }
 
 export interface Placement {
@@ -1109,9 +1157,19 @@ export interface ManagementResponses {
   'POST /api/management/v1/persona-preview': PersonaPreviewResponse
   'GET /api/management/v1/persons': PersonCollection
   'POST /api/management/v1/persons': PersonView
+  'GET /api/management/v1/persons/archived': PersonCollection
   'DELETE /api/management/v1/persons/{person_id}': PersonDeletion
   'GET /api/management/v1/persons/{person_id}': PersonView
   'PUT /api/management/v1/persons/{person_id}': PersonView
+  'DELETE /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
+  'GET /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
+  'PUT /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
+  'GET /api/management/v1/persons/{person_id}/face-profile/image': PersonFaceImage
+  'POST /api/management/v1/persons/{person_id}/memory-purge': PersonMemoryPurgeView
+  'PUT /api/management/v1/persons/{person_id}/memory-realm': PersonalMemoryRealmSnapshot
+  'POST /api/management/v1/persons/{person_id}/memory-realm/{action}': unknown
+  'GET /api/management/v1/persons/{person_id}/memory-state': PersonalMemoryState
+  'POST /api/management/v1/persons/{person_id}/restore': PersonView
   'POST /api/management/v1/role-groups/close': RoleGroupStatus
   'POST /api/management/v1/role-groups/open': RoleGroupStatus
   'POST /api/management/v1/role-groups/status': RoleGroupStatus

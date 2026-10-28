@@ -181,8 +181,7 @@ async def compose_runtime(
         ledger.record(
             "memory.runtime",
             ok=False,
-            detail=memory_status.degraded_reason
-            or memory_status.materialization_state,
+            detail=memory_status.degraded_reason or memory_status.materialization_state,
         )
     guard_device_ids = frozenset(_active_guard_bindings(guard_bindings))
     runtime_blackboard = _runtime_blackboard(owner_id, ledger)
@@ -221,7 +220,9 @@ async def compose_runtime(
     # lane envelope, and nothing about it reaches the Owner's map.)
     runtime_jobs = _dedupe_jobs(runtime_jobs)
 
-    data_runtime_events = _enrich_event_scope(_events_from_data(data_events), runtime_devices)
+    data_runtime_events = _enrich_event_scope(
+        _events_from_data(data_events), runtime_devices
+    )
     recent_events = list(data_runtime_events)
     recent_events.extend(_events_from_turns(turns[:5]))
     recent_events.extend(_events_from_jobs(runtime_jobs[:5]))
@@ -249,11 +250,7 @@ async def compose_runtime(
         recent_events=recent_events,
         source_status=source_status,
     )
-    trace_spans = [
-        span
-        for turn in runtime_turns[:12]
-        for span in _trace_spans(turn)
-    ]
+    trace_spans = [span for turn in runtime_turns[:12] for span in _trace_spans(turn)]
     permission_ledger = _permission_ledger(recent_events)
     evidence_chains = _evidence_chains(
         companion=companion,
@@ -265,35 +262,35 @@ async def compose_runtime(
 
     return RuntimeComposition(
         snapshot=RuntimeSnapshot(
-        generated_at=generated_at,
-        owner=RuntimeOwner(
-            owner_id=owner.owner_id,
-            display_name=owner.display_name,
-            # Left empty on purpose. The Owner row in the database carried a
-            # kind; the workspace authority's OwnerIdentity does not publish
-            # one, and inventing a value here would put a fact on a screen that
-            # nothing stands behind.
-            kind="",
-            status=owner.lifecycle_state,
-        ),
-        companion=_runtime_companion(companion) if companion is not None else None,
-        companions=[_runtime_companion(row) for row in companions],
-        default_companion_id=default_companion_id,
-        devices=runtime_devices,
-        services=services,
-        activities=activities,
-        # Same reason as the activities above: whoever bounds this says so.
-        recent_turns=runtime_turns,
-        memory=memory,
-        jobs=runtime_jobs,
-        recent_events=recent_events,
-        source_status=source_status,
-        runtime_blackboard=runtime_blackboard,
-        experience=experience,
-        trace_spans=trace_spans,
-        evidence_chains=evidence_chains,
-        permission_ledger=permission_ledger,
-        demo_mode=demo_mode,  # type: ignore[arg-type]
+            generated_at=generated_at,
+            owner=RuntimeOwner(
+                owner_id=owner.owner_id,
+                display_name=owner.display_name,
+                # Left empty on purpose. The Owner row in the database carried a
+                # kind; the workspace authority's OwnerIdentity does not publish
+                # one, and inventing a value here would put a fact on a screen that
+                # nothing stands behind.
+                kind="",
+                status=owner.lifecycle_state,
+            ),
+            companion=_runtime_companion(companion) if companion is not None else None,
+            companions=[_runtime_companion(row) for row in companions],
+            default_companion_id=default_companion_id,
+            devices=runtime_devices,
+            services=services,
+            activities=activities,
+            # Same reason as the activities above: whoever bounds this says so.
+            recent_turns=runtime_turns,
+            memory=memory,
+            jobs=runtime_jobs,
+            recent_events=recent_events,
+            source_status=source_status,
+            runtime_blackboard=runtime_blackboard,
+            experience=experience,
+            trace_spans=trace_spans,
+            evidence_chains=evidence_chains,
+            permission_ledger=permission_ledger,
+            demo_mode=demo_mode,  # type: ignore[arg-type]
         ),
         ledger=ledger,
     )
@@ -304,7 +301,9 @@ async def build_snapshot(
 ) -> RuntimeSnapshot:
     """The console's reading. Same composition, operator projection."""
 
-    return (await compose_runtime(request, owner_id=owner_id, demo_mode=demo_mode)).snapshot
+    return (
+        await compose_runtime(request, owner_id=owner_id, demo_mode=demo_mode)
+    ).snapshot
 
 
 def hub_event_to_runtime(raw: dict[str, Any]) -> RuntimeEvent:
@@ -624,7 +623,9 @@ async def _agent_turns(
         )
         rows = body.get("turns") if isinstance(body, dict) else []
         turns = rows if isinstance(rows, list) else []
-        ledger.record("agent.turns", ok=True, detail=f"{len(turns)} turns", started=started)
+        ledger.record(
+            "agent.turns", ok=True, detail=f"{len(turns)} turns", started=started
+        )
         return [row for row in turns if isinstance(row, dict)]
     except Exception as exc:  # noqa: BLE001
         ledger.record("agent.turns", ok=False, detail=str(exc))
@@ -655,9 +656,7 @@ async def owner_activity_page(
 
     ledger = LaneLedger()
     rows = await _agent_turns(request, owner_id, ledger, limit=limit, before=before)
-    failure = next(
-        (status.detail for status in ledger.statuses() if not status.ok), ""
-    )
+    failure = next((status.detail for status in ledger.statuses() if not status.ok), "")
     activities = [_voice_activity(_turn(row)) for row in rows]
     # The oldest row this page returned, so the next page starts strictly before
     # it. Absent when the page was short, which is the tail.
@@ -689,7 +688,9 @@ async def _agent_long_tasks(
         )
         rows = body.get("tasks") if isinstance(body, dict) else []
         tasks = rows if isinstance(rows, list) else []
-        ledger.record("agent.long_tasks", ok=True, detail=f"{len(tasks)} tasks", started=started)
+        ledger.record(
+            "agent.long_tasks", ok=True, detail=f"{len(tasks)} tasks", started=started
+        )
         return [row for row in tasks if isinstance(row, dict)]
     except Exception as exc:  # noqa: BLE001
         ledger.record("agent.long_tasks", ok=False, detail=str(exc))
@@ -715,22 +716,52 @@ async def _memory_summary(
     )
 
     latest = _turn(turns[0]) if turns else None
-    observability_summary = _dict_or_empty(turns[0].get("observability_summary")) if turns else {}
-    memory_summary = _dict_or_empty(observability_summary.get("memory")) if turns else {}
-    write_summary = _dict_or_empty(observability_summary.get("memory_write")) if turns else {}
-    active_realm = ""
-    for realm in realms:
-        spec = getattr(realm, "spec", {})
-        if bool(spec.get("enabled")):
-            active_realm = str(spec.get("memory_realm_id") or "")
-            break
-    if not active_realm and realms:
-        active_realm = str(getattr(realms[0], "spec", {}).get("memory_realm_id") or "")
-    hit_count = int(memory_summary.get("hit_count") or (latest.memory_hits if latest else 0))
+    observability_summary = (
+        _dict_or_empty(turns[0].get("observability_summary")) if turns else {}
+    )
+    memory_summary = (
+        _dict_or_empty(observability_summary.get("memory")) if turns else {}
+    )
+    write_summary = (
+        _dict_or_empty(observability_summary.get("memory_write")) if turns else {}
+    )
+    specs = [getattr(realm, "spec", {}) for realm in realms]
+    defaults = [
+        str(spec.get("memory_realm_id") or "")
+        for spec in specs
+        if spec.get("scope") == "owner"
+    ]
+    personal = [
+        str(spec.get("memory_realm_id") or "")
+        for spec in specs
+        if spec.get("scope") == "person"
+    ]
+    latest_metadata = _dict_or_empty(turns[0].get("metadata_")) if turns else {}
+    candidate = (
+        str(
+            turns[0].get("memory_realm_id")
+            or latest_metadata.get("memory_realm_id")
+            or ""
+        )
+        if turns
+        else ""
+    )
+    # An unrecognized turn may carry the default runtime catalog pointer but has memory disabled.
+    active_realm = (
+        candidate
+        if latest_metadata.get("memory_enabled") is True
+        and candidate in {str(spec.get("memory_realm_id")) for spec in specs}
+        else ""
+    )
+    hit_count = int(
+        memory_summary.get("hit_count") or (latest.memory_hits if latest else 0)
+    )
     disposition = _str_or_none(write_summary.get("disposition"))
     return RuntimeMemory(
         realms_total=len(realms),
         active_realm_id=active_realm,
+        default_realm_id=defaults[0] if len(defaults) == 1 else "",
+        personal_realm_ids=personal,
         runners_total=runners_total,
         runners_online=runners_online,
         audience_scope=str(getattr(status, "audience_scope", "") or ""),
@@ -744,7 +775,9 @@ async def _memory_summary(
         last_recall_hits=hit_count,
         last_write_disposition=disposition,
         fanout_allowed=bool(write_summary.get("fanout_allowed")),
-        privacy_mode=_str_or_none(observability_summary.get("privacy_mode")) if turns else None,
+        privacy_mode=_str_or_none(observability_summary.get("privacy_mode"))
+        if turns
+        else None,
         summary=(
             f"{getattr(status, 'materialization_state', 'unavailable')}; "
             f"{int(getattr(status, 'projection_pending', 0) or 0)} pending"
@@ -969,9 +1002,8 @@ def _merge_devices(
             if online and runtime is not None
             else []
         )
-        companion_id = (
-            getattr(runtime, "provider_companion_id", None)
-            or getattr(data, "bound_companion_id", None)
+        companion_id = getattr(runtime, "provider_companion_id", None) or getattr(
+            data, "bound_companion_id", None
         )
         bound_companion = companion_by_id.get(companion_id) if companion_id else None
         is_guard = device_id in guard_device_ids or _is_guard_companion(bound_companion)
@@ -985,7 +1017,10 @@ def _merge_devices(
                 kind=kind,
                 status=status,
                 online=online,
-                approved=bool(getattr(hub, "approved", False) or getattr(data, "approved_at", None)),
+                approved=bool(
+                    getattr(hub, "approved", False)
+                    or getattr(data, "approved_at", None)
+                ),
                 owner_id=(
                     getattr(data, "owner_id", None)
                     or getattr(hub, "owner_id", None)
@@ -994,8 +1029,7 @@ def _merge_devices(
                 companion_id=companion_id,
                 interaction_mode=getattr(data, "interaction_mode", None),
                 room_name=(
-                    getattr(runtime, "room_name", "")
-                    or getattr(hub, "room_name", "")
+                    getattr(runtime, "room_name", "") or getattr(hub, "room_name", "")
                 ),
                 participant_sid=(
                     getattr(runtime, "participant_sid", "")
@@ -1023,7 +1057,9 @@ def _merge_devices(
                 },
             )
         )
-    return sorted(devices, key=lambda item: (not item.online, item.role_kind, item.device_id))
+    return sorted(
+        devices, key=lambda item: (not item.online, item.role_kind, item.device_id)
+    )
 
 
 #: Sentinel for "the channel was not asked about this body", which is a third
@@ -1201,7 +1237,9 @@ def _project_runtime_turns(
             continue
         if not event.type.startswith("channel.turn."):
             continue
-        channel_turn_id = str(event.payload.get("channel_turn_id") or event.turn_id or "")
+        channel_turn_id = str(
+            event.payload.get("channel_turn_id") or event.turn_id or ""
+        )
         if channel_turn_id:
             grouped.setdefault(channel_turn_id, []).append(event)
 
@@ -1209,14 +1247,30 @@ def _project_runtime_turns(
     used_agent_ids: set[str] = set()
     projected: list[RuntimeTurn] = []
     for channel_turn_id, turn_events in grouped.items():
-        ordered = sorted(turn_events, key=lambda event: _as_utc(event.ts) or datetime.min.replace(tzinfo=UTC))
-        trace_id = next((event.trace_id for event in ordered if event.trace_id), channel_turn_id)
+        ordered = sorted(
+            turn_events,
+            key=lambda event: _as_utc(event.ts) or datetime.min.replace(tzinfo=UTC),
+        )
+        trace_id = next(
+            (event.trace_id for event in ordered if event.trace_id), channel_turn_id
+        )
         agent_turn = agent_by_trace.get(trace_id)
         if agent_turn is not None:
             used_agent_ids.add(agent_turn.turn_id)
-        terminal = next((event for event in reversed(ordered) if event.type in _CHANNEL_TERMINAL_TYPES), None)
+        terminal = next(
+            (
+                event
+                for event in reversed(ordered)
+                if event.type in _CHANNEL_TERMINAL_TYPES
+            ),
+            None,
+        )
         room_name = next(
-            (str(event.payload.get("room_name") or "") for event in ordered if event.payload.get("room_name")),
+            (
+                str(event.payload.get("room_name") or "")
+                for event in ordered
+                if event.payload.get("room_name")
+            ),
             "",
         )
         last_event_at = _as_utc(ordered[-1].ts) if ordered else None
@@ -1227,26 +1281,41 @@ def _project_runtime_turns(
                     event
                     for event in sorted(
                         session_boundaries.get(room_name, []),
-                        key=lambda item: _as_utc(item.ts) or datetime.min.replace(tzinfo=UTC),
+                        key=lambda item: (
+                            _as_utc(item.ts) or datetime.min.replace(tzinfo=UTC)
+                        ),
                     )
-                    if (_as_utc(event.ts) or datetime.min.replace(tzinfo=UTC)) >= last_event_at
+                    if (_as_utc(event.ts) or datetime.min.replace(tzinfo=UTC))
+                    >= last_event_at
                 ),
                 None,
             )
-        phase_events = [event for event in ordered if event.type == "channel.turn.phase_changed"]
-        latest_phase = str(phase_events[-1].payload.get("phase") or "") if phase_events else ""
+        phase_events = [
+            event for event in ordered if event.type == "channel.turn.phase_changed"
+        ]
+        latest_phase = (
+            str(phase_events[-1].payload.get("phase") or "") if phase_events else ""
+        )
         if terminal is not None:
             status = str(terminal.payload.get("status") or "completed")
             outcome = terminal.outcome
         elif session_boundary is not None:
-            status = "failed" if session_boundary.type == "channel.session.failed" else "orphaned"
+            status = (
+                "failed"
+                if session_boundary.type == "channel.session.failed"
+                else "orphaned"
+            )
             outcome = "failure"
         else:
             status = "running"
             outcome = "deferred"
         started_at = _as_utc(ordered[0].ts) if ordered else None
-        finished_at = _as_utc(terminal.ts) if terminal else (
-            _as_utc(session_boundary.ts) if session_boundary is not None else None
+        finished_at = (
+            _as_utc(terminal.ts)
+            if terminal
+            else (
+                _as_utc(session_boundary.ts) if session_boundary is not None else None
+            )
         )
         elapsed_ms = (
             int((finished_at - started_at).total_seconds() * 1000)
@@ -1281,15 +1350,20 @@ def _project_runtime_turns(
                 runtime_session_id=(
                     agent_turn.runtime_session_id if agent_turn else None
                 ),
-                owner_id=ordered[-1].owner_id or (agent_turn.owner_id if agent_turn else ""),
-                companion_id=ordered[-1].companion_id or (agent_turn.companion_id if agent_turn else ""),
-                device_id=next((event.device_id for event in ordered if event.device_id), None)
+                owner_id=ordered[-1].owner_id
+                or (agent_turn.owner_id if agent_turn else ""),
+                companion_id=ordered[-1].companion_id
+                or (agent_turn.companion_id if agent_turn else ""),
+                device_id=next(
+                    (event.device_id for event in ordered if event.device_id), None
+                )
                 or (agent_turn.device_id if agent_turn else None),
                 status=status,
                 trigger="voice.full_duplex",
                 started_at=started_at,
                 finished_at=finished_at,
-                latency_ms=elapsed_ms or (agent_turn.latency_ms if agent_turn else None),
+                latency_ms=elapsed_ms
+                or (agent_turn.latency_ms if agent_turn else None),
                 memory_hits=agent_turn.memory_hits if agent_turn else 0,
                 tool_names=agent_turn.tool_names if agent_turn else [],
                 privacy_mode=agent_turn.privacy_mode if agent_turn else "safe",
@@ -1309,12 +1383,21 @@ def _project_runtime_turns(
                 ),
                 event_ids=[
                     *[event.event_id for event in ordered],
-                    *([session_boundary.event_id] if session_boundary is not None else []),
+                    *(
+                        [session_boundary.event_id]
+                        if session_boundary is not None
+                        else []
+                    ),
                 ],
                 missing_milestones=(
-                    [str(item) for item in terminal.payload.get("missing_milestones") or []]
+                    [
+                        str(item)
+                        for item in terminal.payload.get("missing_milestones") or []
+                    ]
                     if terminal
-                    else ["terminal_event"] if session_boundary is not None else []
+                    else ["terminal_event"]
+                    if session_boundary is not None
+                    else []
                 ),
                 stages=stages,
             )
@@ -1352,10 +1435,17 @@ def _channel_turn_stages(
         previous_elapsed = max(previous_elapsed, elapsed)
         if key not in stage_rows:
             ordered_keys.append(key)
-            stage_rows[key] = {"key": key, "label": label, "status": "done", "latency_ms": latency}
+            stage_rows[key] = {
+                "key": key,
+                "label": label,
+                "status": "done",
+                "latency_ms": latency,
+            }
         else:
             stage_rows[key]["label"] = label
-            stage_rows[key]["latency_ms"] = int(stage_rows[key].get("latency_ms") or 0) + latency
+            stage_rows[key]["latency_ms"] = (
+                int(stage_rows[key].get("latency_ms") or 0) + latency
+            )
     stages = [stage_rows[key] for key in ordered_keys]
     if not stages:
         return stages
@@ -1410,7 +1500,9 @@ def _turn(row: dict[str, Any]) -> RuntimeTurn:
         tool_names=[str(item) for item in tools.get("names") or []],
         privacy_mode=_str_or_none(obs.get("privacy_mode")),
         phase="agent_turn",
-        outcome="failure" if str(row.get("status") or "").lower() in {"failed", "errored", "error"} else "success",
+        outcome="failure"
+        if str(row.get("status") or "").lower() in {"failed", "errored", "error"}
+        else "success",
         stages=stages,
         breakdown=_turn_breakdown(latency, tools),
     )
@@ -1446,7 +1538,11 @@ def _turn_breakdown(
     """
 
     rows = [
-        {"key": key, "label": label, "latency_ms": _int_or_none(latency.get(f"{key}_ms"))}
+        {
+            "key": key,
+            "label": label,
+            "latency_ms": _int_or_none(latency.get(f"{key}_ms")),
+        }
         for key, label in _BREAKDOWN
     ]
     # Tools last: they happen inside the generation rather than after it, so the
@@ -1492,7 +1588,9 @@ def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any
     tools = obs.get("tools") or {}
     latency = obs.get("latency") or {}
     running = _stage_status(row.get("status")) == "running"
-    first_delta = _int_or_none(latency.get("first_delta_ms") or row.get("latency_first_delta_ms"))
+    first_delta = _int_or_none(
+        latency.get("first_delta_ms") or row.get("latency_first_delta_ms")
+    )
     return [
         {
             "key": "input",
@@ -1503,7 +1601,9 @@ def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any
         {
             "key": "memory_recall",
             "label": f"查找相关记忆：{memory.get('hit_count') or 0} 条",
-            "status": "degraded" if memory.get("degraded") else ("done" if memory.get("attempted") else "pending"),
+            "status": "degraded"
+            if memory.get("degraded")
+            else ("done" if memory.get("attempted") else "pending"),
             "latency_ms": None,
         },
         {
@@ -1521,7 +1621,9 @@ def _turn_stages(row: dict[str, Any], obs: dict[str, Any]) -> list[dict[str, Any
         {
             "key": "response",
             "label": f"开口回应：{_friendly_first_delta(first_delta, running=running)}",
-            "status": _response_stage_status(row, first_delta=first_delta, running=running),
+            "status": _response_stage_status(
+                row, first_delta=first_delta, running=running
+            ),
             "latency_ms": first_delta,
         },
         {
@@ -1554,7 +1656,9 @@ def _tool_stage_status(tools: dict[str, Any], *, running: bool) -> str:
     return "pending" if running else "done"
 
 
-def _response_stage_status(row: dict[str, Any], *, first_delta: int | None, running: bool) -> str:
+def _response_stage_status(
+    row: dict[str, Any], *, first_delta: int | None, running: bool
+) -> str:
     if first_delta is None:
         # The answer has not started. On a turn that ended without one, that is
         # what the turn's own status says happened.
@@ -1624,15 +1728,14 @@ def _project_runtime_activities(
     activities = [_voice_activity(turn) for turn in turns]
     activities.extend(_job_activity(job) for job in jobs)
     activities.extend(
-        activity
-        for event in events
-        if (activity := _event_activity(event)) is not None
+        activity for event in events if (activity := _event_activity(event)) is not None
     )
     ordered = sorted(
         activities,
         key=lambda item: (
             _activity_is_active(item.status),
-            _as_utc(item.updated_at or item.started_at) or datetime.min.replace(tzinfo=UTC),
+            _as_utc(item.updated_at or item.started_at)
+            or datetime.min.replace(tzinfo=UTC),
         ),
         reverse=True,
     )
@@ -1695,7 +1798,9 @@ def _voice_activity(turn: RuntimeTurn) -> RuntimeActivity:
             )
         )
     active = _activity_is_active(turn.status)
-    current = next((hop.hop_id for hop in reversed(route) if hop.status == "running"), None)
+    current = next(
+        (hop.hop_id for hop in reversed(route) if hop.status == "running"), None
+    )
     if active and current is None and route:
         current = route[-1].hop_id
     playback_seen = any(hop.stage in {"tts", "playback"} for hop in route)
@@ -1733,7 +1838,11 @@ def _voice_stage_node(stage: str, device_id: str | None) -> tuple[str, str, str]
 def _voice_activity_summary(turn: RuntimeTurn) -> str:
     if _activity_is_active(turn.status):
         stage = next(
-            (str(item.get("label") or "") for item in reversed(turn.stages) if item.get("status") == "running"),
+            (
+                str(item.get("label") or "")
+                for item in reversed(turn.stages)
+                if item.get("status") == "running"
+            ),
             "语音轮次进行中",
         )
         return stage
@@ -1780,7 +1889,11 @@ def _job_activity(job: RuntimeJob) -> RuntimeActivity:
         turn_id=job.turn_id,
         job_id=job.job_id,
         status=job.status,
-        outcome="deferred" if active else "failure" if job.status.lower() in {"failed", "error", "errored"} else "success",
+        outcome="deferred"
+        if active
+        else "failure"
+        if job.status.lower() in {"failed", "error", "errored"}
+        else "success",
         summary=job.summary or f"{job.provider}:{job.kind}",
         current_hop_id=route[-1].hop_id if active else None,
         started_at=job.created_at,
@@ -1888,8 +2001,15 @@ def _long_task_job(row: dict[str, Any]) -> RuntimeJob:
         kind=str(row.get("task_type") or "long_task"),
         status=str(row.get("status") or "unknown"),
         summary=_redact_text(task, keep=64),
-        progress=_safe_payload({"summary": row.get("progress_summary"), "external_status": row.get("external_status")}),
-        result_summary=_redact_text(str(row.get("result_tts_summary") or row.get("result_text") or ""), keep=80),
+        progress=_safe_payload(
+            {
+                "summary": row.get("progress_summary"),
+                "external_status": row.get("external_status"),
+            }
+        ),
+        result_summary=_redact_text(
+            str(row.get("result_tts_summary") or row.get("result_text") or ""), keep=80
+        ),
         created_at=_parse_dt(row.get("created_at")),
         updated_at=_parse_dt(row.get("updated_at")),
         completed_at=_parse_dt(row.get("completed_at")),
@@ -1900,7 +2020,10 @@ def _dedupe_jobs(jobs: list[RuntimeJob]) -> list[RuntimeJob]:
     out: dict[str, RuntimeJob] = {}
     for job in sorted(
         jobs,
-        key=lambda item: _as_utc(item.updated_at or item.created_at) or datetime.min.replace(tzinfo=UTC),
+        key=lambda item: (
+            _as_utc(item.updated_at or item.created_at)
+            or datetime.min.replace(tzinfo=UTC)
+        ),
         reverse=True,
     ):
         out.setdefault(job.job_id, job)
@@ -1914,7 +2037,9 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
         # legacy string heuristics only for rows written before they existed.
         source = getattr(row, "source", None) or _event_source(row.event_type)
         severity = getattr(row, "severity", None) or (
-            "warn" if "revoked" in row.event_type or "cancel" in row.event_type else "info"
+            "warn"
+            if "revoked" in row.event_type or "cancel" in row.event_type
+            else "info"
         )
         outcome = getattr(row, "outcome", None) or "success"
         raw_payload = row.payload_json or {}
@@ -1927,7 +2052,8 @@ def _events_from_data(rows: list[Any]) -> list[RuntimeEvent]:
         events.append(
             RuntimeEvent(
                 event_id=row.event_id,
-                ts=_as_utc(getattr(row, "occurred_at", None) or row.created_at) or datetime.now(UTC),
+                ts=_as_utc(getattr(row, "occurred_at", None) or row.created_at)
+                or datetime.now(UTC),
                 source=source,
                 type=row.event_type,
                 severity=severity,
@@ -2019,11 +2145,15 @@ def _permission_ledger(events: list[RuntimeEvent]) -> list[PermissionLedgerItem]
     out: list[PermissionLedgerItem] = []
     for event in events:
         blob = f"{event.type} {event.summary}".lower()
-        match = next((m for m in _PERMISSION_KINDS if any(tok in blob for tok in m[0])), None)
+        match = next(
+            (m for m in _PERMISSION_KINDS if any(tok in blob for tok in m[0])), None
+        )
         if match is None:
             continue
         _, kind, privacy_level, retention = match
-        status = event.summary.rsplit("->", 1)[-1].strip() if "->" in event.summary else ""
+        status = (
+            event.summary.rsplit("->", 1)[-1].strip() if "->" in event.summary else ""
+        )
         out.append(
             PermissionLedgerItem(
                 ts=event.ts,
@@ -2054,37 +2184,101 @@ def _evidence_chains(
         for d in devices
     )
     camera_grant = next((i for i in ledger if i.kind == "camera.take_photo"), None)
-    active_jobs = [j for j in jobs if (j.status or "").lower() in {"running", "queued", "accepted", "pending", "active"}]
-    done_jobs = [j for j in jobs if (j.status or "").lower() in {"succeeded", "done", "completed"}]
+    active_jobs = [
+        j
+        for j in jobs
+        if (j.status or "").lower()
+        in {"running", "queued", "accepted", "pending", "active"}
+    ]
+    done_jobs = [
+        j
+        for j in jobs
+        if (j.status or "").lower() in {"succeeded", "done", "completed"}
+    ]
 
     cross_body = [
-        EvidenceStep(key="bodies", label="多身体在线", done=len(devices) >= 2, detail=f"{len(online)}/{len(devices)} 在线"),
-        EvidenceStep(key="identity", label="同一身份与记忆域", done=companion is not None and memory.realms_total > 0),
-        EvidenceStep(key="write", label="记忆写入", done=memory.last_write_disposition is not None),
-        EvidenceStep(key="recall", label="跨身体召回命中", done=memory.last_recall_hits > 0, detail=f"{memory.last_recall_hits} hit"),
+        EvidenceStep(
+            key="bodies",
+            label="多身体在线",
+            done=len(devices) >= 2,
+            detail=f"{len(online)}/{len(devices)} 在线",
+        ),
+        EvidenceStep(
+            key="identity",
+            label="同一身份与记忆域",
+            done=companion is not None and memory.realms_total > 0,
+        ),
+        EvidenceStep(
+            key="write",
+            label="记忆写入",
+            done=memory.last_write_disposition is not None,
+        ),
+        EvidenceStep(
+            key="recall",
+            label="跨身体召回命中",
+            done=memory.last_recall_hits > 0,
+            detail=f"{memory.last_recall_hits} hit",
+        ),
     ]
     vision = [
         EvidenceStep(key="capability", label="视觉身体", done=has_camera),
-        EvidenceStep(key="authorized", label="授权调用摄像头", done=camera_grant is not None, detail=camera_grant.summary if camera_grant else ""),
-        EvidenceStep(key="retention", label="仅摘要 · 不留原图", done=camera_grant is not None),
+        EvidenceStep(
+            key="authorized",
+            label="授权调用摄像头",
+            done=camera_grant is not None,
+            detail=camera_grant.summary if camera_grant else "",
+        ),
+        EvidenceStep(
+            key="retention", label="仅摘要 · 不留原图", done=camera_grant is not None
+        ),
     ]
     coworker = [
         EvidenceStep(key="delegate", label="任务交办", done=bool(jobs)),
-        EvidenceStep(key="running", label="后台执行", done=bool(active_jobs) or bool(done_jobs)),
-        EvidenceStep(key="artifact", label="产物完成", done=any(j.result_summary for j in done_jobs)),
+        EvidenceStep(
+            key="running", label="后台执行", done=bool(active_jobs) or bool(done_jobs)
+        ),
+        EvidenceStep(
+            key="artifact",
+            label="产物完成",
+            done=any(j.result_summary for j in done_jobs),
+        ),
         EvidenceStep(key="report", label="回报 / 落库", done=bool(done_jobs)),
     ]
 
-    def _chain(key: str, title: str, claim: str, steps: list[EvidenceStep]) -> EvidenceChain:
+    def _chain(
+        key: str, title: str, claim: str, steps: list[EvidenceStep]
+    ) -> EvidenceChain:
         done = sum(1 for s in steps if s.done)
         total = len(steps)
         status = "proven" if done == total else "partial" if done else "pending"
-        return EvidenceChain(key=key, title=title, claim=claim, status=status, confidence=round(done / total * 100), steps=steps)
+        return EvidenceChain(
+            key=key,
+            title=title,
+            claim=claim,
+            status=status,
+            confidence=round(done / total * 100),
+            steps=steps,
+        )
 
     return [
-        _chain("cross_body_memory", "跨身体记忆", "同一伙伴的身份与记忆不绑定任何单一硬件。", cross_body),
-        _chain("vision_permission", "视觉授权", "摄像头是受权限管理的视觉身体，默认只留摘要、不扩散原图。", vision),
-        _chain("coworker_task", "Coworker 任务", "前台对话可把上下文交给后台数字员工并回报产物。", coworker),
+        _chain(
+            "cross_body_memory",
+            "跨身体记忆",
+            "同一伙伴的身份与记忆不绑定任何单一硬件。",
+            cross_body,
+        ),
+        _chain(
+            "vision_permission",
+            "视觉授权",
+            "摄像头是受权限管理的视觉身体，默认只留摘要、不扩散原图。",
+            vision,
+        ),
+        _chain(
+            "coworker_task",
+            "Coworker 任务",
+            "前台对话可把上下文交给后台数字员工并回报产物。",
+            coworker,
+        ),
     ]
 
 
@@ -2138,25 +2332,52 @@ def _experience(
     source_status: list[SourceStatus],
 ) -> RuntimeExperience:
     online_devices = [device for device in devices if device.online]
-    companion_name = getattr(companion, "display_name", "") or getattr(companion, "companion_id", "") or "伙伴"
-    owner_name = getattr(owner, "display_name", "") or getattr(owner, "owner_id", "") or "当前用户"
+    companion_name = (
+        getattr(companion, "display_name", "")
+        or getattr(companion, "companion_id", "")
+        or "伙伴"
+    )
+    owner_name = (
+        getattr(owner, "display_name", "")
+        or getattr(owner, "owner_id", "")
+        or "当前用户"
+    )
     latest_event = recent_events[0] if recent_events else None
     turn_event = _latest_event(recent_events, "turn")
-    running_jobs = [job for job in jobs if job.status not in {"ok", "done", "succeeded", "completed", "failed", "errored"}]
+    running_jobs = [
+        job
+        for job in jobs
+        if job.status
+        not in {"ok", "done", "succeeded", "completed", "failed", "errored"}
+    ]
     degraded = [status for status in source_status if not status.ok]
-    active_activities = [activity for activity in activities if _activity_is_active(activity.status)]
-    completion = _experience_completion(devices, services, activities, memory, jobs, recent_events)
-    system_state = "active" if active_activities else ("working" if running_jobs else ("watching" if latest_event else "standby"))
+    active_activities = [
+        activity for activity in activities if _activity_is_active(activity.status)
+    ]
+    completion = _experience_completion(
+        devices, services, activities, memory, jobs, recent_events
+    )
+    system_state = (
+        "active"
+        if active_activities
+        else (
+            "working" if running_jobs else ("watching" if latest_event else "standby")
+        )
+    )
 
     if primary_voice_turn:
         headline = f"{companion_name} 正在处理一次来自身体的交互"
         subheadline = "身份、记忆、工具和设备状态正在被串成一条可见链路。"
     elif active_activities:
         headline = f"{owner_name} 有 {len(active_activities)} 条运行活动"
-        subheadline = "Guard、设备事件、指令和后台任务各自保留独立路径，不依赖语音轮次。"
+        subheadline = (
+            "Guard、设备事件、指令和后台任务各自保留独立路径，不依赖语音轮次。"
+        )
     elif running_jobs:
         headline = f"{companion_name} 有后台任务正在推进"
-        subheadline = "前台可以继续交流，后台任务会独立执行并在完成后回到同一个 companion。"
+        subheadline = (
+            "前台可以继续交流，后台任务会独立执行并在完成后回到同一个 companion。"
+        )
     elif turn_event:
         headline = f"{companion_name} 最近完成了一次跨系统交互"
         subheadline = "身体、身份、记忆、行动和权限状态已经汇入当前运行视图。"
@@ -2165,7 +2386,9 @@ def _experience(
         subheadline = "这些身体共享同一个身份、记忆和权限边界，不是彼此孤立的聊天入口。"
     else:
         headline = f"{companion_name} 的 Agent OS 待命中"
-        subheadline = "连接硬件或发起一次对话后，这里会显示系统如何调度身体、记忆和任务。"
+        subheadline = (
+            "连接硬件或发起一次对话后，这里会显示系统如何调度身体、记忆和任务。"
+        )
 
     plain_summary = (
         f"{owner_name} 面前看到的是一个 companion；这块屏幕展示的是背后的 Agent OS："
@@ -2176,9 +2399,13 @@ def _experience(
     elif not devices:
         next_best_action = "先绑定或启动一个硬件身体，大屏会立刻出现身体拓扑。"
     elif not active_activities:
-        next_best_action = "对 2.06、BOX-3 或 Web body 说一句话，观察身份、记忆和任务链路如何亮起。"
+        next_best_action = (
+            "对 2.06、BOX-3 或 Web body 说一句话，观察身份、记忆和任务链路如何亮起。"
+        )
     else:
-        next_best_action = "继续观察这次交互：回应完成后，记忆写入和任务状态会回到这里。"
+        next_best_action = (
+            "继续观察这次交互：回应完成后，记忆写入和任务状态会回到这里。"
+        )
 
     return RuntimeExperience(
         headline=headline,
@@ -2187,8 +2414,12 @@ def _experience(
         system_state=system_state,
         completion=completion,
         storyline=_storyline(devices, primary_voice_turn, memory, jobs, recent_events),
-        lanes=_experience_lanes(devices, services, primary_voice_turn, memory, jobs, recent_events, degraded),
-        capability_cards=_capability_cards(devices, services, primary_voice_turn, memory, jobs, recent_events),
+        lanes=_experience_lanes(
+            devices, services, primary_voice_turn, memory, jobs, recent_events, degraded
+        ),
+        capability_cards=_capability_cards(
+            devices, services, primary_voice_turn, memory, jobs, recent_events
+        ),
         next_best_action=next_best_action,
     )
 
@@ -2200,7 +2431,9 @@ def _storyline(
     jobs: list[RuntimeJob],
     events: list[RuntimeEvent],
 ) -> list[RuntimeStoryStep]:
-    latest_device = next((device for device in devices if device.online), devices[0] if devices else None)
+    latest_device = next(
+        (device for device in devices if device.online), devices[0] if devices else None
+    )
     camera_event = next((event for event in events if _is_sensor_event(event)), None)
     turn_event = _latest_event(events, "turn")
     job = jobs[0] if jobs else None
@@ -2239,9 +2472,13 @@ def _storyline(
                     else "等待一次真实对话或 PTT 输入"
                 )
             ),
-            status=_stage_status(primary_voice_turn.status) if primary_voice_turn else ("done" if turn_event else "pending"),
+            status=_stage_status(primary_voice_turn.status)
+            if primary_voice_turn
+            else ("done" if turn_event else "pending"),
             source="agent",
-            ts=primary_voice_turn.started_at if primary_voice_turn else (turn_event.ts if turn_event else None),
+            ts=primary_voice_turn.started_at
+            if primary_voice_turn
+            else (turn_event.ts if turn_event else None),
         ),
         RuntimeStoryStep(
             key="memory",
@@ -2317,13 +2554,19 @@ def _experience_lanes(
                 else "等待用户开口"
             ),
             detail="这里展示从身体输入到智能体回应的关键步骤，不展示私密原文。",
-            status=_stage_status(primary_voice_turn.status) if primary_voice_turn else "pending",
+            status=_stage_status(primary_voice_turn.status)
+            if primary_voice_turn
+            else "pending",
             items=[
                 RuntimeLaneItem(
                     label=str(stage.get("label") or ""),
                     value=_friendly_status(stage.get("status")),
                     status=str(stage.get("status") or "pending"),
-                    detail=(f"{stage.get('latency_ms')} ms" if stage.get("latency_ms") is not None else ""),
+                    detail=(
+                        f"{stage.get('latency_ms')} ms"
+                        if stage.get("latency_ms") is not None
+                        else ""
+                    ),
                 )
                 for stage in (primary_voice_turn.stages if primary_voice_turn else [])
             ],
@@ -2335,9 +2578,21 @@ def _experience_lanes(
             detail="记忆用于让 companion 跨身体保持连续，但默认只显示数量、策略和摘要。",
             status="done" if memory.realms_total else "pending",
             items=[
-                RuntimeLaneItem(label="活跃记忆空间", value=memory.active_realm_id or "未配置", status="done" if memory.active_realm_id else "pending"),
-                RuntimeLaneItem(label="写入策略", value=_friendly_memory_write(memory.last_write_disposition), status="done" if memory.fanout_allowed else "idle"),
-                RuntimeLaneItem(label="记忆后台", value=f"{memory.runners_online}/{memory.runners_total} 在线", status="done" if memory.runners_online else "idle"),
+                RuntimeLaneItem(
+                    label="最近一轮使用的记忆空间",
+                    value=memory.active_realm_id or "本轮未使用或暂无记录",
+                    status="done" if memory.active_realm_id else "pending",
+                ),
+                RuntimeLaneItem(
+                    label="写入策略",
+                    value=_friendly_memory_write(memory.last_write_disposition),
+                    status="done" if memory.fanout_allowed else "idle",
+                ),
+                RuntimeLaneItem(
+                    label="记忆后台",
+                    value=f"{memory.runners_online}/{memory.runners_total} 在线",
+                    status="done" if memory.runners_online else "idle",
+                ),
             ],
         ),
         RuntimeLane(
@@ -2345,7 +2600,9 @@ def _experience_lanes(
             title="行动调度",
             headline=f"{len(jobs)} 个任务可见" if jobs else "还没有后台任务",
             detail="整理、查询、生成和委托类行动会在这里持续推进。",
-            status="running" if any(_stage_status(job.status) == "running" for job in jobs) else ("done" if jobs else "pending"),
+            status="running"
+            if any(_stage_status(job.status) == "running" for job in jobs)
+            else ("done" if jobs else "pending"),
             items=[
                 RuntimeLaneItem(
                     label=job.kind,
@@ -2359,7 +2616,9 @@ def _experience_lanes(
         RuntimeLane(
             key="permission",
             title="权限与传感器",
-            headline=f"{len(sensor_events)} 条设备/传感器摘要" if sensor_events else "高敏能力默认可审计",
+            headline=f"{len(sensor_events)} 条设备/传感器摘要"
+            if sensor_events
+            else "高敏能力默认可审计",
             detail="摄像头、麦克风和设备控制不会把原始内容直接摊在大屏上。",
             status="done" if sensor_events else "pending",
             items=[
@@ -2381,7 +2640,9 @@ def _experience_lanes(
             items=[
                 RuntimeLaneItem(
                     label=_friendly_service_name(service.service_id, service.name),
-                    value="在线" if service.online else ("未配置" if not service.checked else "离线"),
+                    value="在线"
+                    if service.online
+                    else ("未配置" if not service.checked else "离线"),
                     status="done" if service.online else "degraded",
                     detail=service.detail,
                 )
@@ -2425,7 +2686,12 @@ def _capability_cards(
         RuntimeCapabilityCard(
             key="vision",
             title="视觉/传感器",
-            metric="可见" if ("camera.snapshot" in caps or any(_is_sensor_event(event) for event in events)) else "待接入",
+            metric="可见"
+            if (
+                "camera.snapshot" in caps
+                or any(_is_sensor_event(event) for event in events)
+            )
+            else "待接入",
             status="done" if "camera.snapshot" in caps else "pending",
             detail="高敏输入默认展示授权和摘要，不展示原始图像。",
         ),
@@ -2440,13 +2706,17 @@ def _capability_cards(
             key="services",
             title="运行底座",
             metric=f"{sum(1 for svc in services if svc.online)}/{len(services)}",
-            status="done" if services and all(svc.online or not svc.checked for svc in services) else "degraded",
+            status="done"
+            if services and all(svc.online or not svc.checked for svc in services)
+            else "degraded",
             detail="Hub、Agent、Memory、Admin 等服务共同构成 Agent OS。",
         ),
     ]
 
 
-def _default_companion(companions: list[Any], default_companion_id: str | None) -> Any | None:
+def _default_companion(
+    companions: list[Any], default_companion_id: str | None
+) -> Any | None:
     """The Companion the Owner's pointer names, or nothing.
 
     It used to be "the first row whose status is active", falling back to the
@@ -2571,7 +2841,7 @@ def _friendly_source(value: str) -> str:
         "memory": "记忆系统",
         "data": "事实账本",
         "admin": "控制台",
-            "mission_control": "飞控台",
+        "mission_control": "飞控台",
     }.get(value, value)
 
 
@@ -2606,13 +2876,26 @@ def _friendly_service_name(service_id: str, name: str) -> str:
 
 def _is_sensor_event(event: RuntimeEvent) -> bool:
     blob = f"{event.type} {event.summary} {event.device_id or ''}".lower()
-    return any(token in blob for token in ("camera", "sensor", "photo", "vision", "command", "device.command"))
+    return any(
+        token in blob
+        for token in (
+            "camera",
+            "sensor",
+            "photo",
+            "vision",
+            "command",
+            "device.command",
+        )
+    )
 
 
 def _latest_event(events: list[RuntimeEvent], token: str) -> RuntimeEvent | None:
     token = token.lower()
     for event in events:
-        if token in f"{event.type} {event.summary} {event.subject if hasattr(event, 'subject') else ''}".lower():
+        if (
+            token
+            in f"{event.type} {event.summary} {event.subject if hasattr(event, 'subject') else ''}".lower()
+        ):
             return event
     return None
 

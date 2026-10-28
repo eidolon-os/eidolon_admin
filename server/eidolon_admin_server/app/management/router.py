@@ -848,6 +848,7 @@ async def get_memory_library(
     request: Request,
     owner_id: str,
     companion_id: str | None = None,
+    person_id: str | None = None,
 ) -> MemoryLibraryInternal:
     """What this Owner's memory holds, by wing and room.
 
@@ -858,7 +859,11 @@ async def get_memory_library(
     library = await read_library(
         owner_id=owner_id,
         companion_id=companion_id,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
     )
     return MemoryLibraryInternal(
         audience_scope=library.audience_scope,
@@ -893,11 +898,16 @@ async def get_memory_graph(
     companion_id: str | None = None,
     cursor: str | None = None,
     history: bool = False,
+    person_id: str | None = None,
 ) -> MemoryGraphInternal:
     graph = await read_graph(
         owner_id=owner_id,
         companion_id=companion_id,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
         cursor=cursor,
         history=history,
     )
@@ -915,12 +925,17 @@ async def post_forget_preview(
     request: Request,
     owner_id: str,
     payload: ForgetTargetInternal,
+    person_id: str | None = None,
 ) -> ForgetProposalInternal:
     """What forgetting this would remove, without removing it."""
     proposal = await propose_forget(
         owner_id=owner_id,
         target=payload.target,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
     )
     return ForgetProposalInternal(
         status=proposal.status,
@@ -943,12 +958,17 @@ async def post_forget_confirm(
     request: Request,
     owner_id: str,
     payload: ForgetConfirmInternal,
+    person_id: str | None = None,
 ) -> ForgetResultInternal:
     """Apply exactly the set a preview bound."""
     result = await apply_forget(
         owner_id=owner_id,
         confirmation_token=payload.confirmation_token,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
     )
     return ForgetResultInternal(
         request_id=result.request_id,
@@ -963,12 +983,17 @@ async def get_forget_status(
     request: Request,
     owner_id: str,
     request_id: str,
+    person_id: str | None = None,
 ) -> ForgetProgressInternal:
     """Where a confirmed forget has got to — the answer to 「正在生效」."""
     progress = await read_forget_progress(
         owner_id=owner_id,
         request_id=request_id,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
     )
     return ForgetProgressInternal(
         request_id=progress.request_id,
@@ -1534,6 +1559,7 @@ async def get_memory_recollections(
     q: str = Query(min_length=1, max_length=256),
     limit: int = Query(default=10, ge=1, le=50),
     companion_id: str | None = None,
+    person_id: str | None = None,
 ) -> RecollectionsInternal:
     """What this Eidolon remembers about something.
 
@@ -1546,7 +1572,11 @@ async def get_memory_recollections(
         query=q,
         limit=limit,
         companion_id=companion_id,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
     )
     return RecollectionsInternal(
         query=found.query,
@@ -1568,6 +1598,7 @@ async def get_memory_export(
     companion_id: str | None = None,
     wing: str | None = None,
     room: str | None = None,
+    person_id: str | None = None,
 ) -> MemoryCopyInternal:
     """A copy of this memory the person can read and keep.
 
@@ -1578,7 +1609,11 @@ async def get_memory_export(
     copy = await read_copy(
         owner_id=owner_id,
         companion_id=companion_id,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
         wing=wing,
         room=room,
     )
@@ -1611,6 +1646,7 @@ async def get_memory_entries(
     limit: int | None = None,
     companion_id: str | None = None,
     cursor: str | None = None,
+    person_id: str | None = None,
 ) -> MemoryDayInternal:
     """What was recorded at or after ``since``, a page at a time.
 
@@ -1624,7 +1660,11 @@ async def get_memory_entries(
         limit=limit,
         companion_id=companion_id,
         cursor=cursor,
-        memory=request.app.state.control_plane.memory,
+        memory=(
+            request.app.state.control_plane.memory.for_person(person_id)
+            if person_id is not None
+            else request.app.state.control_plane.memory
+        ),
     )
     return MemoryDayInternal(
         since=day.since,

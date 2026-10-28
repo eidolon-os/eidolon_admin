@@ -247,6 +247,8 @@ class RuntimeJob(BaseModel):
 class RuntimeMemory(BaseModel):
     realms_total: int = 0
     active_realm_id: str = ""
+    default_realm_id: str = ""
+    personal_realm_ids: list[str] = Field(default_factory=list)
     runners_total: int = 0
     runners_online: int = 0
     audience_scope: str = ""
@@ -386,4 +388,6 @@ class RuntimeSnapshot(BaseModel):
     evidence_chains: list[EvidenceChain] = Field(default_factory=list)
     permission_ledger: list[PermissionLedgerItem] = Field(default_factory=list)
     demo_mode: DemoMode = "live"
-    privacy_notice: str = "Default safe mode: raw transcripts, messages, and images are redacted."
+    privacy_notice: str = (
+        "Default safe mode: raw transcripts, messages, and images are redacted."
+    )

@@ -112,7 +112,12 @@ class AdminManagementClient:
         )
 
     async def smarthome_accounts(
-        self, *, owner_id: str, method: str = "GET", resource: str, payload: dict | None = None
+        self,
+        *,
+        owner_id: str,
+        method: str = "GET",
+        resource: str,
+        payload: dict | None = None,
     ) -> dict:
         return await self._call(
             method,
@@ -128,7 +133,8 @@ class AdminManagementClient:
 
     async def device_presence(self, *, owner_domain_id: str) -> dict:
         return await self._get(
-            "/api/internal/v1/management/device-presence", {"owner_domain_id": owner_domain_id}
+            "/api/internal/v1/management/device-presence",
+            {"owner_domain_id": owner_domain_id},
         )
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
@@ -268,7 +274,9 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
-    async def person_call(self, *, owner_id, suffix, method="GET", payload=None, expected_revision=None):
+    async def person_call(
+        self, *, owner_id, suffix, method="GET", payload=None, expected_revision=None
+    ):
         path = f"/api/internal/v1/management/persons{suffix}"
         params = {"owner_id": owner_id}
         if expected_revision is not None:
@@ -281,7 +289,9 @@ class AdminManagementClient:
         path = f"/api/internal/v1/management/voiceprints{suffix}"
         if method == "GET":
             return await self._get(path, {"owner_id": owner_id})
-        return await self._put(path, {"owner_id": owner_id}, payload or {}, method=method)
+        return await self._put(
+            path, {"owner_id": owner_id}, payload or {}, method=method
+        )
 
     async def companion_face(
         self, *, owner_id: str, companion_id: str, known_etag: str | None
@@ -378,8 +388,13 @@ class AdminManagementClient:
             body,
         )
 
-    async def memory_library(self, *, owner_id: str, companion_id: str | None) -> dict:
-        params = {"owner_id": owner_id}
+    async def memory_library(
+        self, *, owner_id: str, companion_id: str | None, person_id: str | None = None
+    ) -> dict:
+        params = {
+            **({"person_id": person_id} if person_id is not None else {}),
+            "owner_id": owner_id,
+        }
         if companion_id:
             params["companion_id"] = companion_id
         return await self._get("/api/internal/v1/management/memory/library", params)
@@ -391,8 +406,13 @@ class AdminManagementClient:
         companion_id: str | None,
         cursor: str | None = None,
         history: bool = False,
+        person_id: str | None = None,
     ) -> dict:
-        params = {"owner_id": owner_id, "history": str(history).lower()}
+        params = {
+            **({"person_id": person_id} if person_id is not None else {}),
+            "owner_id": owner_id,
+            "history": str(history).lower(),
+        }
         if companion_id:
             params["companion_id"] = companion_id
         if cursor:
@@ -407,8 +427,13 @@ class AdminManagementClient:
         limit: int | None,
         companion_id: str | None,
         cursor: str | None = None,
+        person_id: str | None = None,
     ) -> dict:
-        params = {"owner_id": owner_id, "since": since}
+        params = {
+            **({"person_id": person_id} if person_id is not None else {}),
+            "owner_id": owner_id,
+            "since": since,
+        }
         if cursor:
             params["cursor"] = cursor
         if limit is not None:
@@ -424,8 +449,12 @@ class AdminManagementClient:
         companion_id: str | None,
         wing: str | None = None,
         room: str | None = None,
+        person_id: str | None = None,
     ) -> dict:
-        params = {"owner_id": owner_id}
+        params = {
+            **({"person_id": person_id} if person_id is not None else {}),
+            "owner_id": owner_id,
+        }
         if companion_id:
             params["companion_id"] = companion_id
         params.update(
@@ -558,33 +587,60 @@ class AdminManagementClient:
         )
 
     async def recollections(
-        self, *, owner_id: str, query: str, limit: int, companion_id: str | None
+        self,
+        *,
+        owner_id: str,
+        query: str,
+        limit: int,
+        companion_id: str | None,
+        person_id: str | None = None,
     ) -> dict:
-        params = {"owner_id": owner_id, "q": query, "limit": str(limit)}
+        params = {
+            **({"person_id": person_id} if person_id is not None else {}),
+            "owner_id": owner_id,
+            "q": query,
+            "limit": str(limit),
+        }
         if companion_id:
             params["companion_id"] = companion_id
         return await self._get(
             "/api/internal/v1/management/memory/recollections", params
         )
 
-    async def forget_preview(self, *, owner_id: str, target: str) -> dict:
+    async def forget_preview(
+        self, *, owner_id: str, target: str, person_id: str | None = None
+    ) -> dict:
         return await self._put(
             "/api/internal/v1/management/memory/forget/preview",
-            {"owner_id": owner_id},
+            {
+                **({"person_id": person_id} if person_id is not None else {}),
+                "owner_id": owner_id,
+            },
             {"target": target},
             method="POST",
         )
 
-    async def forget_status(self, *, owner_id: str, request_id: str) -> dict:
+    async def forget_status(
+        self, *, owner_id: str, request_id: str, person_id: str | None = None
+    ) -> dict:
         return await self._get(
             "/api/internal/v1/management/memory/forget/status",
-            {"owner_id": owner_id, "request_id": request_id},
+            {
+                **({"person_id": person_id} if person_id is not None else {}),
+                "owner_id": owner_id,
+                "request_id": request_id,
+            },
         )
 
-    async def forget_confirm(self, *, owner_id: str, confirmation_token: str) -> dict:
+    async def forget_confirm(
+        self, *, owner_id: str, confirmation_token: str, person_id: str | None = None
+    ) -> dict:
         return await self._put(
             "/api/internal/v1/management/memory/forget/confirm",
-            {"owner_id": owner_id},
+            {
+                **({"person_id": person_id} if person_id is not None else {}),
+                "owner_id": owner_id,
+            },
             {"confirmation_token": confirmation_token},
             method="POST",
         )
@@ -622,7 +678,8 @@ class AdminManagementClient:
             )
         try:
             return await request_with_reconnect(
-                self._client, method,
+                self._client,
+                method,
                 f"{self._base_url}{path}",
                 params=params,
                 json=body,
@@ -631,7 +688,9 @@ class AdminManagementClient:
                     "Authorization": f"Bearer {self._service_token}",
                     **(headers or {}),
                 },
-                timeout=max(self._timeout, 40)
+                timeout=max(self._timeout, 75)
+                if path.endswith("/memory-purge")
+                else max(self._timeout, 40)
                 if path.endswith("/persona-preview") or "/voiceprints/" in path
                 else self._timeout,
             )

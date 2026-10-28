@@ -207,6 +207,7 @@ class ControlPlaneService:
             ),
             memory_supervisor=MemorySupervisorClient(
                 base_url=settings.memory_supervisor_url,
+                service_token=settings.memory_api_service_token,
                 client=http_client,
                 timeout_seconds=settings.authority_timeout_seconds,
             ),
@@ -386,8 +387,12 @@ class ControlPlaneService:
                 409,
             )
 
-        mount_request_id = _operator_child_request_id(payload.request_id, "kernel-mount")
-        assign_request_id = _operator_child_request_id(payload.request_id, "kernel-assign")
+        mount_request_id = _operator_child_request_id(
+            payload.request_id, "kernel-mount"
+        )
+        assign_request_id = _operator_child_request_id(
+            payload.request_id, "kernel-assign"
+        )
         steps = [
             WorkflowStep(
                 name="hub_approval",
@@ -655,31 +660,48 @@ class ControlPlaneService:
 
     async def role_group(self, *, payload, action: str) -> dict:
         issuer = self._admission_issuer()
-        command = (payload.selection.model_dump(mode="json") if action == "open"
-                   else {"session_id": payload.session_id})
-        return await self.hub.role_group(action=action, command=command,
+        command = (
+            payload.selection.model_dump(mode="json")
+            if action == "open"
+            else {"session_id": payload.session_id}
+        )
+        return await self.hub.role_group(
+            action=action,
+            command=command,
             authorization=issuer.issue_admission_context(
-                actor=payload.actor, business_owner_id=payload.business_owner_id))
+                actor=payload.actor, business_owner_id=payload.business_owner_id
+            ),
+        )
 
     async def device_conversation(self, *, payload, action: str) -> dict:
         issuer = self._admission_issuer()
-        command = (payload.selection.model_dump(mode="json") if action == "open"
-                   else {"session_id": payload.session_id})
+        command = (
+            payload.selection.model_dump(mode="json")
+            if action == "open"
+            else {"session_id": payload.session_id}
+        )
         return await self.hub.device_conversation(
-            action=action, command=command,
+            action=action,
+            command=command,
             authorization=issuer.issue_admission_context(
-                actor=payload.actor, business_owner_id=payload.business_owner_id,
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
             ),
         )
 
     async def shared_session(self, *, payload, action: str) -> dict:
         issuer = self._admission_issuer()
-        command = (payload.selection.model_dump(mode="json") if action == "open"
-                   else {"session_id": payload.session_id})
+        command = (
+            payload.selection.model_dump(mode="json")
+            if action == "open"
+            else {"session_id": payload.session_id}
+        )
         return await self.hub.shared_session(
-            action=action, command=command,
+            action=action,
+            command=command,
             authorization=issuer.issue_admission_context(
-                actor=payload.actor, business_owner_id=payload.business_owner_id,
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
             ),
         )
 

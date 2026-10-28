@@ -4144,6 +4144,191 @@
         "title": "PersonDeletion",
         "type": "object"
       },
+      "PersonFaceImage": {
+        "additionalProperties": false,
+        "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "const": "image/jpeg",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "image_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Base64"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "PersonFaceImage",
+        "type": "object"
+      },
+      "PersonFaceState": {
+        "additionalProperties": false,
+        "properties": {
+          "content_type": {
+            "anyOf": [
+              {
+                "const": "image/jpeg",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "feature_schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Schema Version"
+          },
+          "has_image": {
+            "title": "Has Image",
+            "type": "boolean"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "preprocessing_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preprocessing Version"
+          },
+          "recognition_state": {
+            "const": "not_configured",
+            "default": "not_configured",
+            "title": "Recognition State",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "required": [
+          "person_id",
+          "revision",
+          "has_image"
+        ],
+        "title": "PersonFaceState",
+        "type": "object"
+      },
+      "PersonFaceUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "image_base64": {
+            "maxLength": 1398104,
+            "minLength": 1,
+            "title": "Image Base64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "image_base64"
+        ],
+        "title": "PersonFaceUpdate",
+        "type": "object"
+      },
+      "PersonMemoryPurgeView": {
+        "properties": {
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "realm_id": {
+            "title": "Realm Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "completed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "realm_id",
+          "person_id",
+          "revision",
+          "state"
+        ],
+        "title": "PersonMemoryPurgeView",
+        "type": "object"
+      },
       "PersonProfile": {
         "additionalProperties": false,
         "description": "Explicitly supplied information only; inferred traits need a separate contract.",
@@ -4753,6 +4938,105 @@
           }
         },
         "title": "PersonaTraitState",
+        "type": "object"
+      },
+      "PersonalMemoryRealmSnapshot": {
+        "additionalProperties": false,
+        "description": "Data catalog binding, not a user authorization credential.",
+        "properties": {
+          "owner_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "person_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_revision": {
+            "minimum": 1.0,
+            "title": "Person Revision",
+            "type": "integer"
+          },
+          "realm_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Realm Id",
+            "type": "string"
+          },
+          "status": {
+            "const": "active",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "realm_id",
+          "owner_id",
+          "person_id",
+          "person_revision",
+          "status"
+        ],
+        "title": "PersonalMemoryRealmSnapshot",
+        "type": "object"
+      },
+      "PersonalMemoryState": {
+        "additionalProperties": false,
+        "description": "Owner management state; never a runtime memory access grant.",
+        "properties": {
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_revision": {
+            "minimum": 1.0,
+            "title": "Person Revision",
+            "type": "integer"
+          },
+          "person_status": {
+            "enum": [
+              "active",
+              "inactive"
+            ],
+            "title": "Person Status",
+            "type": "string"
+          },
+          "realm_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Realm Id"
+          },
+          "state": {
+            "enum": [
+              "unbound",
+              "active",
+              "inactive"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_id",
+          "person_id",
+          "person_revision",
+          "person_status",
+          "state"
+        ],
+        "title": "PersonalMemoryState",
         "type": "object"
       },
       "Placement": {
@@ -8611,6 +8895,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
+            }
+          },
+          {
             "in": "header",
             "name": "Authorization",
             "required": false,
@@ -8709,6 +9009,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
+            }
+          },
+          {
             "in": "header",
             "name": "Authorization",
             "required": false,
@@ -8758,6 +9074,22 @@
         "description": "Forget exactly what the preview showed.\n\nThe token is passed through untouched. No layer above the memory realm\ncan read it, and none should be able to: it is what ties this decision\nto the entries the person actually looked at.",
         "operationId": "confirm_forget_api_management_v1_memory_forget_confirm_post",
         "parameters": [
+          {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
+            }
+          },
           {
             "in": "header",
             "name": "Authorization",
@@ -8818,6 +9150,22 @@
         "description": "Show what forgetting this would remove. Nothing changes here.\n\nTwo steps rather than one because a topic is not a set: the words are\nresolved once, shown, and bound — and the confirm acts on what was\nshown rather than on what the words match by then.",
         "operationId": "preview_forget_api_management_v1_memory_forget_preview_post",
         "parameters": [
+          {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
+            }
+          },
           {
             "in": "header",
             "name": "Authorization",
@@ -8887,6 +9235,22 @@
               "minLength": 1,
               "title": "Request Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
             }
           },
           {
@@ -8982,6 +9346,22 @@
             }
           },
           {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
+            }
+          },
+          {
             "in": "header",
             "name": "Authorization",
             "required": false,
@@ -9045,6 +9425,22 @@
                 }
               ],
               "title": "Companion Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
             }
           },
           {
@@ -9134,6 +9530,22 @@
                 }
               ],
               "title": "Companion Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "person_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Person Id"
             }
           },
           {
@@ -9728,6 +10140,55 @@
         ]
       }
     },
+    "/api/management/v1/persons/archived": {
+      "get": {
+        "operationId": "archived_api_management_v1_persons_archived_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonCollection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Archived",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/persons/{person_id}": {
       "delete": {
         "operationId": "delete_api_management_v1_persons__person_id__delete",
@@ -9913,6 +10374,585 @@
           }
         },
         "summary": "Update",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/face-profile": {
+      "delete": {
+        "operationId": "face_delete_api_management_v1_persons__person_id__face_profile_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 0,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonFaceState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Face Delete",
+        "tags": [
+          "management"
+        ]
+      },
+      "get": {
+        "operationId": "face_state_api_management_v1_persons__person_id__face_profile_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonFaceState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Face State",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "face_replace_api_management_v1_persons__person_id__face_profile_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonFaceUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonFaceState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Face Replace",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/face-profile/image": {
+      "get": {
+        "operationId": "face_image_api_management_v1_persons__person_id__face_profile_image_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonFaceImage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Face Image",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/memory-purge": {
+      "post": {
+        "operationId": "purge_memory_api_management_v1_persons__person_id__memory_purge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonMemoryPurgeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Purge Memory",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/memory-realm": {
+      "put": {
+        "operationId": "enable_memory_api_management_v1_persons__person_id__memory_realm_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalMemoryRealmSnapshot"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Enable Memory",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/memory-realm/{action}": {
+      "post": {
+        "operationId": "change_memory_api_management_v1_persons__person_id__memory_realm__action__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action",
+            "required": true,
+            "schema": {
+              "enum": [
+                "suspend",
+                "restore"
+              ],
+              "title": "Action",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Change Memory",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/memory-state": {
+      "get": {
+        "operationId": "memory_state_api_management_v1_persons__person_id__memory_state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonalMemoryState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Memory State",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/restore": {
+      "post": {
+        "operationId": "restore_api_management_v1_persons__person_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Restore",
         "tags": [
           "management"
         ]
