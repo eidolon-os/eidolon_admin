@@ -5797,7 +5797,23 @@
             "type": "string"
           },
           "enrollment_id": {
-            "title": "Enrollment Id",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrollment Id"
+          },
+          "origin": {
+            "default": "enrollment",
+            "enum": [
+              "enrollment",
+              "observation"
+            ],
+            "title": "Origin",
             "type": "string"
           },
           "person_id": {
@@ -5819,6 +5835,17 @@
             "title": "Revision",
             "type": "integer"
           },
+          "source_observation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Observation Id"
+          },
           "validation_state": {
             "default": "unvalidated",
             "enum": [
@@ -5833,8 +5860,7 @@
           "person_id",
           "profile_id",
           "display_name",
-          "revision",
-          "enrollment_id"
+          "revision"
         ],
         "title": "SpeakerProfileView",
         "type": "object"

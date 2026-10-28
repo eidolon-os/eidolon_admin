@@ -997,11 +997,13 @@ export interface SpeakerExtractionReadiness {
 
 export interface SpeakerProfileView {
   display_name: string
-  enrollment_id: string
+  enrollment_id?: string | null
+  origin?: "enrollment" | "observation"
   person_id: string
   profile_id: string
   recording_available?: boolean
   revision: number
+  source_observation_id?: string | null
   validation_state?: "unvalidated" | "validated"
 }
 
