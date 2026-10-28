@@ -67,8 +67,8 @@ async def test_internal_person_crud_and_voice_delete_forward_exact_authority_arg
             )
         ).status_code == 200
         assert (
-            await c.delete(
-                base + "/" + person.person_id,
+            await c.post(
+                base + "/" + person.person_id + "/archive",
                 params={"owner_id": "owner", "expected_revision": 1},
             )
         ).status_code == 200
@@ -88,7 +88,7 @@ async def test_local_person_management_derives_owner_and_preserves_delete_revisi
     class Backend:
         async def person_call(self, **kwargs):
             calls.append(kwargs)
-            return {"persons": []} if kwargs["method"] == "GET" else {"deleted": True}
+            return {"persons": []} if kwargs["method"] == "GET" else {"archived": True}
 
     async def auth(value):
         if value != "Bearer controller":
@@ -107,13 +107,13 @@ async def test_local_person_management_derives_owner_and_preserves_delete_revisi
         assert (await c.get("/persons?owner_id=forged")).status_code == 200
         assert calls[-1]["owner_id"] == "claimed-owner"
         assert (
-            await c.delete("/persons/person?expected_revision=7&owner_id=forged")
+            await c.post("/persons/person/archive?expected_revision=7&owner_id=forged")
         ).status_code == 200
         assert (
             calls[-1]["owner_id"] == "claimed-owner"
             and calls[-1]["expected_revision"] == 7
         )
-        assert (await c.delete("/persons/person")).status_code == 422
+        assert (await c.post("/persons/person/archive")).status_code == 422
 
 
 async def test_memory_management_routes_derive_owner_and_keep_revision():
@@ -173,3 +173,45 @@ async def test_face_management_keeps_authenticated_owner_and_face_revision():
         assert (await c.delete(path+'?expected_revision=2')).status_code == 200
         assert calls[-1]['expected_revision'] == 2
         assert (await c.delete(path)).status_code == 422
+
+
+async def test_retirement_bridge_derives_owner_and_forwards_revision():
+    calls = []
+    person = PersonView(person_id='p', owner_id='claimed', display_name='匿名',
+                        status='active', revision=4, profile=PersonProfile(),
+                        maturity='candidate', is_named=False, recognition_state='retained')
+
+    class Data:
+        async def person_call(self, method, owner, suffix, model, payload=None, params=None):
+            calls.append((method, owner, suffix, params))
+            return person
+
+    internal = FastAPI()
+    internal.include_router(people)
+    internal.state.settings = SimpleNamespace(local_api_service_token='secret')
+    internal.state.control_plane = SimpleNamespace(data=Data())
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=internal), base_url='http://admin') as admin:
+        class Backend:
+            async def person_call(self, **kw):
+                response = await admin.request(kw['method'], '/internal/v1/management/persons' + kw['suffix'],
+                    headers={'Authorization': 'Bearer secret'},
+                    params={'owner_id': kw['owner_id'], 'expected_revision': kw['expected_revision']})
+                response.raise_for_status()
+                return response.json()
+
+        async def auth(value):
+            if value != 'Bearer controller':
+                raise HTTPException(401)
+            return 'claimed'
+
+        routes = APIRouter()
+        register_person_routes(routes, Backend(), auth, lambda exc: exc)
+        public = FastAPI()
+        public.include_router(routes)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public), base_url='http://phone') as phone:
+            path = '/persons/p/recognition/retire?expected_revision=3&owner_id=forged'
+            assert (await phone.post(path)).status_code == 401
+            response = await phone.post(path, headers={'Authorization': 'Bearer controller'})
+            assert response.status_code == 200
+            assert response.json()['recognition_state'] == 'retained'
+            assert calls == [('POST', 'claimed', '/p/recognition/retire', {'expected_revision': '3'})]

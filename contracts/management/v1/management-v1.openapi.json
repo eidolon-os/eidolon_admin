@@ -4128,6 +4128,20 @@
             "title": "Display Name",
             "type": "string"
           },
+          "is_named": {
+            "default": true,
+            "title": "Is Named",
+            "type": "boolean"
+          },
+          "maturity": {
+            "default": "established",
+            "enum": [
+              "candidate",
+              "established"
+            ],
+            "title": "Maturity",
+            "type": "string"
+          },
           "person_id": {
             "pattern": "^[a-f0-9]{32}$",
             "title": "Person Id",
@@ -4385,6 +4399,17 @@
             "title": "Expected Revision",
             "type": "integer"
           },
+          "is_named": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Named"
+          },
           "profile": {
             "$ref": "#/components/schemas/PersonProfile"
           },
@@ -4442,6 +4467,20 @@
             "title": "Identity State",
             "type": "string"
           },
+          "is_named": {
+            "default": true,
+            "title": "Is Named",
+            "type": "boolean"
+          },
+          "maturity": {
+            "default": "established",
+            "enum": [
+              "candidate",
+              "established"
+            ],
+            "title": "Maturity",
+            "type": "string"
+          },
           "owner_id": {
             "title": "Owner Id",
             "type": "string"
@@ -4452,6 +4491,15 @@
           },
           "profile": {
             "$ref": "#/components/schemas/PersonProfile"
+          },
+          "recognition_state": {
+            "default": "active",
+            "enum": [
+              "active",
+              "retained"
+            ],
+            "title": "Recognition State",
+            "type": "string"
           },
           "revision": {
             "title": "Revision",
@@ -10916,6 +10964,74 @@
           }
         },
         "summary": "Permanent Delete",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/recognition/retire": {
+      "post": {
+        "operationId": "retire_candidate_api_management_v1_persons__person_id__recognition_retire_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Retire Candidate",
         "tags": [
           "management"
         ]

@@ -69,6 +69,15 @@ async def restore(
     )
 
 
+@router.post("/{person_id}/recognition/retire", response_model=PersonView)
+async def retire_candidate(request: Request, owner_id: str, person_id: str,
+                           expected_revision: int = Query(ge=1)):
+    return await request.app.state.control_plane.data.person_call(
+        "POST", owner_id, "/" + quote(person_id, safe="") + "/recognition/retire",
+        PersonView, params={"expected_revision": str(expected_revision)},
+    )
+
+
 @router.post("/{person_id}/permanent-delete")
 async def permanent_delete(
     request: Request,

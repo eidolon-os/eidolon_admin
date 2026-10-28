@@ -77,6 +77,13 @@ def register_person_routes(router, backend, authenticated_owner, refused):
             expected_revision=expected_revision,
         )
 
+    @router.post("/persons/{person_id}/recognition/retire", response_model=PersonView)
+    async def retire_candidate(person_id: str, expected_revision: int = Query(ge=1),
+                               authorization: str | None = Header(default=None)):
+        return await invoke(authorization,
+            "/" + quote(person_id, safe="") + "/recognition/retire", "POST",
+            expected_revision=expected_revision)
+
     @router.post(
         "/persons/{person_id}/permanent-delete", response_model=PersonMemoryPurgeView
     )

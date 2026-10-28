@@ -698,6 +698,8 @@ export interface PersonCollection {
 
 export interface PersonCreate {
   display_name: string
+  is_named?: boolean
+  maturity?: "candidate" | "established"
   person_id: string
   profile?: PersonProfile
 }
@@ -744,6 +746,7 @@ export interface PersonProfile {
 export interface PersonUpdate {
   display_name: string
   expected_revision: number
+  is_named?: boolean | null
   profile: PersonProfile
   status: "active" | "inactive"
 }
@@ -753,9 +756,12 @@ export interface PersonView {
   deletion_state?: "none" | "pending"
   display_name: string
   identity_state?: "known" | "missing"
+  is_named?: boolean
+  maturity?: "candidate" | "established"
   owner_id: string
   person_id: string
   profile: PersonProfile
+  recognition_state?: "active" | "retained"
   revision: number
   status: "active" | "inactive"
 }
@@ -1172,6 +1178,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/persons/{person_id}/memory-realm/{action}': unknown
   'GET /api/management/v1/persons/{person_id}/memory-state': PersonalMemoryState
   'POST /api/management/v1/persons/{person_id}/permanent-delete': PersonMemoryPurgeView
+  'POST /api/management/v1/persons/{person_id}/recognition/retire': PersonView
   'POST /api/management/v1/persons/{person_id}/restore': PersonView
   'POST /api/management/v1/role-groups/close': RoleGroupStatus
   'POST /api/management/v1/role-groups/open': RoleGroupStatus
