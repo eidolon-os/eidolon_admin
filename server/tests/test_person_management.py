@@ -114,3 +114,33 @@ async def test_local_person_management_derives_owner_and_preserves_delete_revisi
             and calls[-1]["expected_revision"] == 7
         )
         assert (await c.delete("/persons/person")).status_code == 422
+
+
+async def test_memory_management_routes_derive_owner_and_keep_revision():
+    calls = []
+    class Backend:
+        async def person_call(self, **kwargs):
+            calls.append(kwargs)
+            return dict(owner_id="claimed-owner", person_id="p", person_revision=3,
+                        person_status="active", realm_id="r", state="inactive")
+    async def auth(value):
+        if value != "Bearer controller":
+            raise HTTPException(401)
+        return "claimed-owner"
+    router = APIRouter()
+    register_person_routes(router, Backend(), auth, lambda exc: exc)
+    app = FastAPI()
+    app.include_router(router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as c:
+        assert (await c.get("/persons/p/memory-state")).status_code == 401
+        c.headers["Authorization"] = "Bearer controller"
+        assert (await c.get("/persons/p/memory-state?owner_id=forged")).status_code == 200
+        assert calls[-1]["owner_id"] == "claimed-owner"
+        for action in ("suspend", "restore"):
+            path = f"/persons/p/memory-realm/{action}"
+            assert (await c.post(path)).status_code == 422
+            assert (await c.post(path + "?expected_revision=2&owner_id=forged")).status_code == 200
+            assert calls[-1]["expected_revision"] == 2
+            assert calls[-1]["owner_id"] == "claimed-owner"
+            assert calls[-1]["suffix"] == f"/p/memory-realm/{action}"
+        assert (await c.post("/persons/p/memory-realm/delete?expected_revision=2")).status_code == 422

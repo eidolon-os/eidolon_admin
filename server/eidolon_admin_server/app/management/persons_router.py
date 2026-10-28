@@ -1,6 +1,8 @@
 """Person management through the existing Data authority and Local API credential."""
 
 from urllib.parse import quote
+from typing import Literal
+from eidolon_sdk.biz.system_data.models import PersonalMemoryRealmSnapshot, PersonalMemoryState
 from fastapi import APIRouter, Depends, Request, Query
 from pydantic import RootModel
 from eidolon_sdk.biz.person import (
@@ -68,3 +70,24 @@ async def delete(
         params={"expected_revision": str(expected_revision)},
     )
     return PersonDeletion()
+
+
+@router.get("/{person_id}/memory-state", response_model=PersonalMemoryState)
+async def memory_state(request: Request, owner_id: str, person_id: str):
+    return await request.app.state.control_plane.data.person_call(
+        "GET", owner_id, "/" + quote(person_id, safe="") + "/memory-state", PersonalMemoryState)
+
+
+@router.put("/{person_id}/memory-realm", response_model=PersonalMemoryRealmSnapshot)
+async def enable_memory(request: Request, owner_id: str, person_id: str):
+    return await request.app.state.control_plane.data.person_call(
+        "PUT", owner_id, "/" + quote(person_id, safe="") + "/memory-realm", PersonalMemoryRealmSnapshot)
+
+
+@router.post("/{person_id}/memory-realm/{action}")
+async def change_memory(request: Request, owner_id: str, person_id: str,
+                        action: Literal["suspend", "restore"], expected_revision: int = Query(ge=1)):
+    model = PersonalMemoryState if action == "suspend" else PersonalMemoryRealmSnapshot
+    return await request.app.state.control_plane.data.person_call(
+        "POST", owner_id, "/" + quote(person_id, safe="") + "/memory-realm/" + action,
+        model, params={"expected_revision": str(expected_revision)})

@@ -1,6 +1,8 @@
 """Controller-authenticated Person management, scoped to the claimed Owner."""
 
 from urllib.parse import quote
+from typing import Literal
+from eidolon_sdk.biz.system_data.models import PersonalMemoryRealmSnapshot, PersonalMemoryState
 from fastapi import Header, Query
 from eidolon_sdk.biz.person import (
     PersonCreate,
@@ -67,3 +69,20 @@ def register_person_routes(router, backend, authenticated_owner, refused):
             "DELETE",
             expected_revision=expected_revision,
         )
+
+
+    @router.get("/persons/{person_id}/memory-state", response_model=PersonalMemoryState)
+    async def memory_state(person_id: str, authorization: str | None = Header(default=None)):
+        return await invoke(authorization, "/" + quote(person_id, safe="") + "/memory-state")
+
+    @router.put("/persons/{person_id}/memory-realm", response_model=PersonalMemoryRealmSnapshot)
+    async def enable_memory(person_id: str, authorization: str | None = Header(default=None)):
+        return await invoke(authorization, "/" + quote(person_id, safe="") + "/memory-realm", "PUT")
+
+    @router.post("/persons/{person_id}/memory-realm/{action}")
+    async def change_memory(person_id: str, action: Literal["suspend", "restore"],
+                            expected_revision: int = Query(ge=1),
+                            authorization: str | None = Header(default=None)):
+        return await invoke(authorization,
+            "/" + quote(person_id, safe="") + "/memory-realm/" + action, "POST",
+            expected_revision=expected_revision)
