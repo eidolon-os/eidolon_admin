@@ -19,7 +19,7 @@ from eidolon_sdk.biz.person import (
     PersonUpdate,
     PersonView,
     PersonCollection,
-    PersonDeletion,
+    PersonArchival,
 )
 from .backend import ManagementBackendError
 
@@ -78,16 +78,16 @@ def register_person_routes(router, backend, authenticated_owner, refused):
         )
 
     @router.post(
-        "/persons/{person_id}/memory-purge", response_model=PersonMemoryPurgeView
+        "/persons/{person_id}/permanent-delete", response_model=PersonMemoryPurgeView
     )
-    async def purge_memory(
+    async def permanent_delete(
         person_id: str,
         expected_revision: int = Query(ge=1),
         authorization: str | None = Header(default=None),
     ):
         return await invoke(
             authorization,
-            "/" + quote(person_id, safe="") + "/memory-purge",
+            "/" + quote(person_id, safe="") + "/permanent-delete",
             "POST",
             expected_revision=expected_revision,
         )
@@ -109,7 +109,7 @@ def register_person_routes(router, backend, authenticated_owner, refused):
             payload.model_dump(mode="json"),
         )
 
-    @router.delete("/persons/{person_id}", response_model=PersonDeletion)
+    @router.post("/persons/{person_id}/archive", response_model=PersonArchival)
     async def delete(
         person_id: str,
         expected_revision: int = Query(ge=1),
@@ -117,8 +117,8 @@ def register_person_routes(router, backend, authenticated_owner, refused):
     ):
         return await invoke(
             authorization,
-            "/" + quote(person_id, safe=""),
-            "DELETE",
+            "/" + quote(person_id, safe="") + "/archive",
+            "POST",
             expected_revision=expected_revision,
         )
 

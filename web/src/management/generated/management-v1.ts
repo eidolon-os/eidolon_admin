@@ -688,6 +688,10 @@ export interface OwnerNameView {
   revision: number
 }
 
+export interface PersonArchival {
+  archived?: true
+}
+
 export interface PersonCollection {
   persons?: Array<PersonView>
 }
@@ -696,10 +700,6 @@ export interface PersonCreate {
   display_name: string
   person_id: string
   profile?: PersonProfile
-}
-
-export interface PersonDeletion {
-  deleted?: true
 }
 
 export interface PersonFaceImage {
@@ -749,7 +749,10 @@ export interface PersonUpdate {
 }
 
 export interface PersonView {
+  archived_at?: string | null
+  deletion_state?: "none" | "pending"
   display_name: string
+  identity_state?: "known" | "missing"
   owner_id: string
   person_id: string
   profile: PersonProfile
@@ -1158,17 +1161,17 @@ export interface ManagementResponses {
   'GET /api/management/v1/persons': PersonCollection
   'POST /api/management/v1/persons': PersonView
   'GET /api/management/v1/persons/archived': PersonCollection
-  'DELETE /api/management/v1/persons/{person_id}': PersonDeletion
   'GET /api/management/v1/persons/{person_id}': PersonView
   'PUT /api/management/v1/persons/{person_id}': PersonView
+  'POST /api/management/v1/persons/{person_id}/archive': PersonArchival
   'DELETE /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
   'GET /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
   'PUT /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
   'GET /api/management/v1/persons/{person_id}/face-profile/image': PersonFaceImage
-  'POST /api/management/v1/persons/{person_id}/memory-purge': PersonMemoryPurgeView
   'PUT /api/management/v1/persons/{person_id}/memory-realm': PersonalMemoryRealmSnapshot
   'POST /api/management/v1/persons/{person_id}/memory-realm/{action}': unknown
   'GET /api/management/v1/persons/{person_id}/memory-state': PersonalMemoryState
+  'POST /api/management/v1/persons/{person_id}/permanent-delete': PersonMemoryPurgeView
   'POST /api/management/v1/persons/{person_id}/restore': PersonView
   'POST /api/management/v1/role-groups/close': RoleGroupStatus
   'POST /api/management/v1/role-groups/open': RoleGroupStatus

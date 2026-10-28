@@ -134,19 +134,20 @@ async def test_archive_purge_failure_retry_and_restore_through_public_api(
                 rev = created.json()["revision"]
                 assert (
                     await phone.post(
-                        f"{base}/{PID}/memory-purge", params={"expected_revision": rev}
+                        f"{base}/{PID}/permanent-delete",
+                        params={"expected_revision": rev},
                     )
                 ).status_code == 409
                 assert not calls
                 assert (
-                    await phone.delete(
-                        f"{base}/{PID}", params={"expected_revision": rev}
+                    await phone.post(
+                        f"{base}/{PID}/archive", params={"expected_revision": rev}
                     )
                 ).status_code == 200
                 archived = (await phone.get(base + "/archived")).json()["persons"][0]
                 intent_revision = archived["revision"]
                 failed = await phone.post(
-                    f"{base}/{PID}/memory-purge",
+                    f"{base}/{PID}/permanent-delete",
                     params={"expected_revision": intent_revision},
                 )
                 assert failed.status_code == 503, failed.text
@@ -158,29 +159,25 @@ async def test_archive_purge_failure_retry_and_restore_through_public_api(
                     )
                 ).status_code == 409
                 done = await phone.post(
-                    f"{base}/{PID}/memory-purge",
+                    f"{base}/{PID}/permanent-delete",
                     params={"expected_revision": pending["revision"]},
                 )
                 assert (
                     done.status_code == 200 and done.json()["state"] == "completed"
                 ), done.text
                 replay = await phone.post(
-                    f"{base}/{PID}/memory-purge",
+                    f"{base}/{PID}/permanent-delete",
                     params={"expected_revision": intent_revision},
                 )
                 assert replay.json() == done.json() and len(calls) == 2
-                archived = (await phone.get(base + "/archived")).json()["persons"][0]
-                restored = await phone.post(
-                    f"{base}/{PID}/restore",
-                    params={"expected_revision": archived["revision"]},
-                )
-                assert (
-                    restored.status_code == 200
-                    and restored.json()["status"] == "inactive"
-                )
-                state = await phone.get(f"{base}/{PID}/memory-state")
-                assert state.status_code == 200 and state.json()["state"] == "inactive"
                 assert (await phone.get(base + "/archived")).json()["persons"] == []
+                assert (await phone.get(f"{base}/{PID}")).status_code == 404
+                assert (
+                    await phone.post(
+                        f"{base}/{PID}/restore",
+                        params={"expected_revision": pending["revision"]},
+                    )
+                ).status_code == 404
                 foreign = await dc.post(
                     data_authority
                     + "/api/companion-authority/v1/owners/foreign-owner/persons",

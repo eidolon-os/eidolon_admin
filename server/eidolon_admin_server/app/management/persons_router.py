@@ -20,7 +20,7 @@ from eidolon_sdk.biz.person import (
     PersonUpdate,
     PersonView,
     PersonCollection,
-    PersonDeletion,
+    PersonArchival,
 )
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
@@ -69,15 +69,15 @@ async def restore(
     )
 
 
-@router.post("/{person_id}/memory-purge")
-async def purge_memory(
+@router.post("/{person_id}/permanent-delete")
+async def permanent_delete(
     request: Request,
     owner_id: str,
     person_id: str,
     expected_revision: int = Query(ge=1),
 ):
     cp = request.app.state.control_plane
-    suffix = "/" + quote(person_id, safe="") + "/memory-purge/"
+    suffix = "/" + quote(person_id, safe="") + "/permanent-delete/"
     result = await cp.data.person_call(
         "POST",
         owner_id,
@@ -121,7 +121,7 @@ async def update(
     )
 
 
-@router.delete("/{person_id}", response_model=PersonDeletion)
+@router.post("/{person_id}/archive", response_model=PersonArchival)
 async def delete(
     request: Request,
     owner_id: str,
@@ -129,13 +129,13 @@ async def delete(
     expected_revision: int = Query(ge=1),
 ):
     await request.app.state.control_plane.data.person_call(
-        "DELETE",
+        "POST",
         owner_id,
-        "/" + quote(person_id, safe=""),
+        "/" + quote(person_id, safe="") + "/archive",
         None,
         params={"expected_revision": str(expected_revision)},
     )
-    return PersonDeletion()
+    return PersonArchival()
 
 
 @router.get("/{person_id}/memory-state", response_model=PersonalMemoryState)

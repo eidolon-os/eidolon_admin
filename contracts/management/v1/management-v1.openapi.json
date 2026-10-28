@@ -4092,6 +4092,19 @@
         "title": "OwnerNameView",
         "type": "object"
       },
+      "PersonArchival": {
+        "additionalProperties": false,
+        "properties": {
+          "archived": {
+            "const": true,
+            "default": true,
+            "title": "Archived",
+            "type": "boolean"
+          }
+        },
+        "title": "PersonArchival",
+        "type": "object"
+      },
       "PersonCollection": {
         "additionalProperties": false,
         "properties": {
@@ -4129,19 +4142,6 @@
           "display_name"
         ],
         "title": "PersonCreate",
-        "type": "object"
-      },
-      "PersonDeletion": {
-        "additionalProperties": false,
-        "properties": {
-          "deleted": {
-            "const": true,
-            "default": true,
-            "title": "Deleted",
-            "type": "boolean"
-          }
-        },
-        "title": "PersonDeletion",
         "type": "object"
       },
       "PersonFaceImage": {
@@ -4409,8 +4409,37 @@
       "PersonView": {
         "additionalProperties": false,
         "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "deletion_state": {
+            "default": "none",
+            "enum": [
+              "none",
+              "pending"
+            ],
+            "title": "Deletion State",
+            "type": "string"
+          },
           "display_name": {
             "title": "Display Name",
+            "type": "string"
+          },
+          "identity_state": {
+            "default": "known",
+            "enum": [
+              "known",
+              "missing"
+            ],
+            "title": "Identity State",
             "type": "string"
           },
           "owner_id": {
@@ -10190,72 +10219,6 @@
       }
     },
     "/api/management/v1/persons/{person_id}": {
-      "delete": {
-        "operationId": "delete_api_management_v1_persons__person_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "person_id",
-            "required": true,
-            "schema": {
-              "title": "Person Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "expected_revision",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Expected Revision",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PersonDeletion"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Delete",
-        "tags": [
-          "management"
-        ]
-      },
       "get": {
         "operationId": "get_api_management_v1_persons__person_id__get",
         "parameters": [
@@ -10374,6 +10337,74 @@
           }
         },
         "summary": "Update",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/archive": {
+      "post": {
+        "operationId": "delete_api_management_v1_persons__person_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonArchival"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Delete",
         "tags": [
           "management"
         ]
@@ -10627,74 +10658,6 @@
         ]
       }
     },
-    "/api/management/v1/persons/{person_id}/memory-purge": {
-      "post": {
-        "operationId": "purge_memory_api_management_v1_persons__person_id__memory_purge_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "person_id",
-            "required": true,
-            "schema": {
-              "title": "Person Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "expected_revision",
-            "required": true,
-            "schema": {
-              "minimum": 1,
-              "title": "Expected Revision",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PersonMemoryPurgeView"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Refusal"
-                }
-              }
-            },
-            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
-          }
-        },
-        "summary": "Purge Memory",
-        "tags": [
-          "management"
-        ]
-      }
-    },
     "/api/management/v1/persons/{person_id}/memory-realm": {
       "put": {
         "operationId": "enable_memory_api_management_v1_persons__person_id__memory_realm_put",
@@ -10885,6 +10848,74 @@
           }
         },
         "summary": "Memory State",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/permanent-delete": {
+      "post": {
+        "operationId": "permanent_delete_api_management_v1_persons__person_id__permanent_delete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonMemoryPurgeView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Permanent Delete",
         "tags": [
           "management"
         ]

@@ -689,7 +689,7 @@ class AdminManagementClient:
                     **(headers or {}),
                 },
                 timeout=max(self._timeout, 75)
-                if path.endswith("/memory-purge")
+                if path.endswith("/permanent-delete")
                 else max(self._timeout, 40)
                 if path.endswith("/persona-preview") or "/voiceprints/" in path
                 else self._timeout,
