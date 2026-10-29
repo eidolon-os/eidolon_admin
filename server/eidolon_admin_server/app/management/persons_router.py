@@ -193,8 +193,6 @@ async def memory_state(request: Request, owner_id: str, person_id: str):
         owner_id,
         "/" + quote(person_id, safe="") + "/memory-state",
         PersonalMemoryState,
-    ProvisionalMemoryPolicy,
-    ProvisionalMemoryPolicyState,
     )
 
 

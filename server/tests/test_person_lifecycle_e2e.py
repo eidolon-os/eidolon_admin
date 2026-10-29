@@ -134,6 +134,12 @@ async def test_archive_purge_failure_retry_and_restore_through_public_api(
                 assert created.json()["is_named"] is False
                 assert created.json()["maturity"] == "established"
                 rev = created.json()["revision"]
+                memory_state = await phone.get(f"{base}/{PID}/memory-state")
+                assert memory_state.status_code == 200, memory_state.text
+                assert memory_state.json()["person_id"] == PID
+                assert memory_state.json()["person_status"] == "active"
+                assert memory_state.json()["state"] in ("active", "inactive", "unbound")
+
                 assert (
                     await phone.post(
                         f"{base}/{PID}/permanent-delete",
