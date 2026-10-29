@@ -128,9 +128,11 @@ async def test_archive_purge_failure_retry_and_restore_through_public_api(
                 assert (await phone.get(base)).status_code == 401
                 phone.headers.update(await _authenticate(phone))
                 created = await phone.post(
-                    base, json={"person_id": PID, "display_name": "Test"}
+                    base, json={"person_id": PID, "display_name": "Test", "is_named": False}
                 )
                 assert created.status_code == 200, created.text
+                assert created.json()["is_named"] is False
+                assert created.json()["maturity"] == "established"
                 rev = created.json()["revision"]
                 assert (
                     await phone.post(
