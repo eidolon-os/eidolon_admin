@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from urllib.parse import quote
 
@@ -142,3 +143,41 @@ async def device_state(request: Request, device_id: str) -> dict:
     if not isinstance(answer, dict):
         raise HTTPException(503, "设备能力服务答复无法解析")
     return answer
+
+
+@router.get("/device-state/{device_id}/stream")
+async def device_state_stream(request: Request, device_id: str):
+    """Relay the Provider's state stream to the caller without buffering it.
+
+    The shared client carries a request timeout meant for request/response
+    calls; a stream is expected to stay open for minutes, so it is given its own
+    unbounded timeout rather than being cut off on the authority budget.
+    """
+
+    service = request.app.state.registry.get("channel-provider")
+    if service is None or not service.base_url:
+        raise HTTPException(503, "设备能力服务未配置")
+    url = (
+        f"{service.base_url.rstrip('/')}{(service.upstream_prefix or '').rstrip('/')}"
+        f"/v1/device-channels/{quote(device_id, safe='')}/state/stream"
+    )
+
+    async def _relay():
+        async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
+            async with client.stream(
+                "GET", url, headers=upstream_auth_headers(service)
+            ) as response:
+                if response.status_code != 200:
+                    return
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+
+    return StreamingResponse(
+        _relay(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

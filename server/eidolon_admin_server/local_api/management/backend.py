@@ -218,6 +218,20 @@ class AdminManagementClient:
             f"/api/internal/v1/management/device-state/{quote(device_id, safe='')}", {}
         )
 
+    def device_state_stream_url(self, *, device_id: str) -> tuple[str, dict[str, str]]:
+        """Where the state stream lives and how to present this Host to it.
+
+        Returned rather than opened here so the caller can stream with its own
+        timeout: the shared client's budget would end a stream that is meant to
+        stay open.
+        """
+
+        return (
+            f"{self._base_url}/api/internal/v1/management/device-state/"
+            f"{quote(device_id, safe='')}/stream",
+            {"Authorization": f"Bearer {self._service_token}"},
+        )
+
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/mission-control/snapshot",

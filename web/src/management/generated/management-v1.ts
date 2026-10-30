@@ -1383,6 +1383,7 @@ export interface ManagementResponses {
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
   'GET /api/management/v1/devices/{device_id}/state': DeviceStateView
+  'GET /api/management/v1/devices/{device_id}/state/stream': unknown
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire
   'GET /api/management/v1/host/power': HostPowerStatusWire

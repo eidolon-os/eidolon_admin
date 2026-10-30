@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Literal, Protocol, runtime_checkable
 from datetime import UTC, datetime
 
+import httpx
+from fastapi.responses import StreamingResponse
 from eidolon_memory_contracts.owner import MemoryProvenance
 
 from eidolon_sdk.device_foundation.v1 import DeviceRef
@@ -2497,6 +2499,41 @@ def register_management_routes(
                 if isinstance(values, dict)
                 else {}
             ),
+        )
+
+    @router.get("/devices/{device_id}/state/stream")
+    async def stream_device_state(
+        device_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> StreamingResponse:
+        """Follow a device's own state changes for as long as the client listens.
+
+        The credential is checked here, once, before the stream opens: an SSE
+        response has already begun by the time a later refusal could be written,
+        so a caller that is not allowed must be turned away at the door.
+        """
+        await authenticated_controller_session(authorization)
+        url, headers = backend.device_state_stream_url(device_id=device_id)
+
+        async def _relay():
+            async with httpx.AsyncClient(timeout=None, trust_env=False) as client:
+                async with client.stream("GET", url, headers=headers) as response:
+                    if response.status_code != 200:
+                        # The stream is already open, so the status cannot be
+                        # restated; an empty body is what a client recognises as
+                        # "no stream" and will retry.
+                        return
+                    async for chunk in response.aiter_bytes():
+                        yield chunk
+
+        return StreamingResponse(
+            _relay(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     @router.post("/devices/{device_id}/removal", response_model=DeviceRemovalView)

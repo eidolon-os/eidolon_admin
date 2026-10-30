@@ -10255,6 +10255,63 @@
         ]
       }
     },
+    "/api/management/v1/devices/{device_id}/state/stream": {
+      "get": {
+        "description": "Follow a device's own state changes for as long as the client listens.\n\nThe credential is checked here, once, before the stream opens: an SSE\nresponse has already begun by the time a later refusal could be written,\nso a caller that is not allowed must be turned away at the door.",
+        "operationId": "stream_device_state_api_management_v1_devices__device_id__state_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Stream Device State",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/home": {
       "get": {
         "description": "What is mine, right now.\n\nOne read when the app opens, composed here because the answer needs five\nsources and a phone composing it badly is four round trips and a screen\nthat renders in pieces.\n\nEvery part is best-effort and every gap is named. A Host that cannot\nreach its own memory service still knows who its Owner is and which\nEidolon answers; saying so beats a blank screen, and saying *which* part\nis missing beats a spinner that never resolves.",
