@@ -290,6 +290,19 @@ async def test_the_reconciler_advances_reviews_buries_and_sweeps_orphans_twice_s
     assert world.data.tombstones == []
 
 
+async def test_an_authority_not_up_yet_is_one_line_and_the_other_steps_still_run(world, caplog) -> None:
+    async def down():
+        raise AuthorityFailure("data", "unavailable", "System Service Directory is unreachable", 503)
+
+    reconciler = OwnerVoiceReconciler(data=world.data, channel=world.client)
+    reconciler.advance = down
+    with caplog.at_level("WARNING"):
+        await reconciler.tick()
+    skipped = [r for r in caplog.records if "skipped" in r.getMessage()]
+    assert len(skipped) == 1 and skipped[0].exc_info is None
+    assert "unreachable" in skipped[0].getMessage()
+
+
 async def test_after_a_model_change_used_voices_are_cloned_again_from_their_reference(world) -> None:
     consent = OwnerVoiceConsent(method="spoken", subject="self", consent_version="v", accepted_at=NOW)
     voice = await world.voices.clone("owner-1", operation_id="op-clone-5", name="我", consent=consent,

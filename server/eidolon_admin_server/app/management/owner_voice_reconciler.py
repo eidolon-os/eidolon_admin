@@ -58,9 +58,14 @@ class OwnerVoiceReconciler:
 
     @staticmethod
     async def _step(step) -> None:
+        # One failing step must not stop the others.
         try:
             await step()
-        except Exception:  # one failing step must not stop the others
+        except AuthorityFailure as exc:
+            # Data or the voice service not answering — at Host start Admin is up
+            # before them. A known state; the next round asks again.
+            logger.warning("owner voice upkeep %s skipped: %s", step.__name__, exc)
+        except Exception:
             logger.warning("owner voice upkeep %s failed", step.__name__, exc_info=True)
 
     async def advance(self) -> None:
