@@ -1167,6 +1167,12 @@ export interface VoiceAudioRequest {
   pcm_base64: string
 }
 
+export interface VoiceCaptureSession {
+  capture_id: string
+  server_urls: Array<string>
+  token: string
+}
+
 export interface VoiceMatchTestResult {
   audio_ms: number
   elapsed_ms: number
@@ -1310,6 +1316,9 @@ export interface ManagementResponses {
   'POST /api/management/v1/voice-preview': VoicePreviewStatus
   'GET /api/management/v1/voice-preview/{key}/audio': VoiceAudioRequest
   'GET /api/management/v1/voiceprints': VoiceprintCollection
+  'POST /api/management/v1/voiceprints/captures': VoiceCaptureSession
+  'DELETE /api/management/v1/voiceprints/captures/{capture_id}': unknown
+  'POST /api/management/v1/voiceprints/captures/{capture_id}/finish': VoiceAudioRequest
   'POST /api/management/v1/voiceprints/enrollments': EnrollmentView
   'DELETE /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView
   'GET /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView

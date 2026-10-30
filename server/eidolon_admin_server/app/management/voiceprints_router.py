@@ -16,6 +16,7 @@ from eidolon_sdk.biz.voiceprint import (
     EnrollmentCreate,
     SpeakerProfileView,
     VoiceAudioRequest,
+    VoiceCaptureSession,
     ExtractedSample,
     EnrollmentCompletion,
     EnrollmentEvidence,
@@ -310,3 +311,41 @@ async def match_test(
         extraction_ms=extraction_ms,
         elapsed_ms=(perf_counter() - started) * 1000,
     )
+
+
+async def capture_call(request, owner_id, suffix, method):
+    # Resolve owner authority through the same Data boundary as registration.
+    await request.app.state.control_plane.data.voiceprint_call(
+        "GET", owner_id, "", VoiceprintCollection)
+    service = request.app.state.registry.get("channel-provider")
+    if service is None or not service.base_url:
+        raise HTTPException(503, "声纹采集服务暂不可用")
+    url = (service.base_url.rstrip("/") + (service.upstream_prefix or "").rstrip("/")
+           + "/v1/voiceprints/captures" + suffix)
+    try:
+        result = await request.app.state.http_client.request(method, url,
+            headers=upstream_auth_headers(service), json={"owner_id":owner_id}, timeout=12)
+    except httpx.HTTPError:
+        raise HTTPException(503, "录音连接中断，请重新开始") from None
+    if result.status_code != 200:
+        code = result.status_code if result.status_code in (404, 409, 422) else 503
+        raise HTTPException(code, "录音不可用、未完整接收或已有录音进行中，请重新开始")
+    return result.json()
+
+
+@router.post("/voiceprints/captures", response_model=VoiceCaptureSession)
+async def start_capture(request: Request, response: Response, owner_id: str):
+    response.headers["Cache-Control"] = "no-store"
+    return await capture_call(request, owner_id, "", "POST")
+
+
+@router.post("/voiceprints/captures/{capture_id}/finish", response_model=VoiceAudioRequest)
+async def finish_capture(request: Request, response: Response, owner_id: str, capture_id: str):
+    response.headers["Cache-Control"] = "no-store"
+    return await capture_call(request, owner_id, "/" + quote(capture_id, safe="") + "/finish", "POST")
+
+
+@router.delete("/voiceprints/captures/{capture_id}")
+async def cancel_capture(request: Request, response: Response, owner_id: str, capture_id: str):
+    response.headers["Cache-Control"] = "no-store"
+    return await capture_call(request, owner_id, "/" + quote(capture_id, safe=""), "DELETE")

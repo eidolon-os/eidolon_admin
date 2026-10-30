@@ -6698,6 +6698,38 @@
         "title": "VoiceAudioRequest",
         "type": "object"
       },
+      "VoiceCaptureSession": {
+        "additionalProperties": false,
+        "description": "Ephemeral microphone grant; credentials must never be persisted or logged.",
+        "properties": {
+          "capture_id": {
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Capture Id",
+            "type": "string"
+          },
+          "server_urls": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Server Urls",
+            "type": "array"
+          },
+          "token": {
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capture_id",
+          "server_urls",
+          "token"
+        ],
+        "title": "VoiceCaptureSession",
+        "type": "object"
+      },
       "VoiceMatchTestResult": {
         "additionalProperties": false,
         "properties": {
@@ -13981,6 +14013,169 @@
           }
         },
         "summary": "View",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/captures": {
+      "post": {
+        "operationId": "start_capture_api_management_v1_voiceprints_captures_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceCaptureSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Start Capture",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/captures/{capture_id}": {
+      "delete": {
+        "operationId": "cancel_capture_api_management_v1_voiceprints_captures__capture_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Cancel Capture",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voiceprints/captures/{capture_id}/finish": {
+      "post": {
+        "operationId": "finish_capture_api_management_v1_voiceprints_captures__capture_id__finish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "capture_id",
+            "required": true,
+            "schema": {
+              "title": "Capture Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceAudioRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Finish Capture",
         "tags": [
           "management"
         ]

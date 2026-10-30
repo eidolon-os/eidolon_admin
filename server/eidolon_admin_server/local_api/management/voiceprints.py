@@ -8,6 +8,7 @@ from eidolon_sdk.biz.voiceprint import (
     EnrollmentCreate,
     SpeakerProfileView,
     VoiceAudioRequest,
+    VoiceCaptureSession,
     SpeakerExtractionReadiness,
     VoiceMatchTestResult,
 )
@@ -166,3 +167,20 @@ def register_voiceprint_routes(router, backend, authenticated_owner, refused):
             "POST",
             payload.model_dump(mode="json"),
         )
+
+    @router.post("/voiceprints/captures", response_model=VoiceCaptureSession)
+    async def start_capture(response: Response, authorization: str | None = Header(default=None)):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(authorization, "/captures", "POST", None)
+
+    @router.post("/voiceprints/captures/{capture_id}/finish", response_model=VoiceAudioRequest)
+    async def finish_capture(capture_id: str, response: Response,
+                             authorization: str | None = Header(default=None)):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(authorization, "/captures/" + quote(capture_id, safe="") + "/finish", "POST", None)
+
+    @router.delete("/voiceprints/captures/{capture_id}")
+    async def cancel_capture(capture_id: str, response: Response,
+                             authorization: str | None = Header(default=None)):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(authorization, "/captures/" + quote(capture_id, safe=""), "DELETE", None)
