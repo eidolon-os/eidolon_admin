@@ -57,7 +57,6 @@ from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
 from .management.smarthome import register_smarthome_routes
 from .management.teams import register_team_routes
-from .management.voice_preview import register_voice_preview_routes
 from .management.router import (
     ControllerDirectoryPort,
     ManagementBackendError,
@@ -1486,7 +1485,6 @@ def create_app(
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Host identity unavailable")
         return identity
 
-    register_voice_preview_routes(app, backend=management, authenticated_owner=management_owner)
     register_team_routes(app, backend=management, authenticated_owner=management_owner,
                          authenticated_host=management_host_id, authenticate_session=management_device_session,
                          devices=owner_device_port or _Devices())

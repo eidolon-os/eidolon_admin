@@ -36,7 +36,7 @@ from eidolon_sdk.device_foundation.v1 import (
     EnrollmentProposalQuery,
     EnrollmentRecoveryProjection,
 )
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from .contracts import (
     CompanionFace,
@@ -585,6 +585,44 @@ class DataAuthorityClient:
                 _raise_status("data", response)
             return None
         return _parse("data", response, model)
+
+    async def speech_voice_call(self, method, path, model=None, *, json=None, params=None):
+        """Companion voice choices and Owner voices; ``path`` follows ``/api/companion-authority/v1``.
+
+        ``model`` is a type to parse (lists too), ``bytes`` for audio, or ``None``
+        for a 204.
+        """
+        if not self._token:
+            raise AuthorityFailure("data", "configuration", "Data credential missing", 503)
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        response = await _request(
+            "data",
+            self._client,
+            method,
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1{path}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json=json,
+            params=params,
+        )
+        if model is None:
+            if response.status_code != 204:
+                _raise_status("data", response)
+            return None
+        if model is bytes:
+            if response.status_code != 200:
+                _raise_status("data", response)
+            return response.content
+        if not 200 <= response.status_code < 300:
+            _raise_status("data", response)
+        try:
+            return TypeAdapter(model).validate_json(response.content)
+        except (ValueError, ValidationError) as exc:
+            raise _contract_violation("data", "Data voice answer violated the contract") from exc
 
     async def get_companion_face(self, companion_id: str) -> bytes | None:
         """The face itself, or None when this Companion has none.

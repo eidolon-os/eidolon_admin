@@ -145,6 +145,15 @@ export interface CompanionRosterView {
   next_cursor?: string | null
 }
 
+export interface CompanionSpeechVoiceView {
+  companion_id: string
+  effective?: EffectiveVoiceView | null
+  record_state: "valid" | "invalid"
+  revision: number
+  selected_name?: string | null
+  selected_voice_key?: string | null
+}
+
 export interface CompanionSummaryView {
   artwork_id?: string | null
   companion_id: string
@@ -330,6 +339,12 @@ export interface DevicesView {
   contract_version?: "1"
   coverage?: string
   devices: Array<DeviceView>
+}
+
+export interface EffectiveVoiceView {
+  display_name: string
+  reason: string
+  voice_key?: string | null
 }
 
 export interface EnrollmentCreate {
@@ -688,6 +703,34 @@ export interface OwnerNameView {
   revision: number
 }
 
+export interface OwnerVoiceChange {
+  drop_reference?: boolean
+  expected_revision: number
+  keep?: boolean
+  name?: string | null
+}
+
+export interface OwnerVoiceView {
+  consent?: VoiceConsentView | null
+  created_at: string
+  design_prompt?: string | null
+  draft_expires_at?: string | null
+  has_reference: boolean
+  method: "design" | "clone"
+  name: string
+  revision: number
+  state: "draft" | "active"
+  status: "ready" | "preparing" | "rejected" | "unavailable"
+  status_detail?: string | null
+  used_by: Array<string>
+  voice_asset_id: string
+  voice_key: string
+}
+
+export interface OwnerVoicesView {
+  voices: Array<OwnerVoiceView>
+}
+
 export interface PersonArchival {
   archived?: true
 }
@@ -935,6 +978,16 @@ export interface RecollectionsView {
   recollections: Array<RecollectionView>
 }
 
+export interface ReferenceCheckView {
+  accepted: boolean
+  audio_base64?: string | null
+  duration_ms: number
+  problems: Array<string>
+  speech_ms?: number | null
+  window_ms: number
+  window_start_ms: number
+}
+
 export interface Refusal {
   code?: string | null
   kind: "denied" | "not_found" | "conflict" | "invalid" | "not_configured" | "not_running" | "upstream"
@@ -1020,6 +1073,21 @@ export interface SpeakerSimilarity {
   revision: number
   similarity?: number | null
   status: "scored" | "incompatible"
+}
+
+export interface SpeechVoiceCatalogView {
+  catalog_revision: string
+  enrollment: VoiceEnrollmentView
+  host_selectable: boolean
+  limits: VoiceLimitsView
+  not_selectable_reason?: string | null
+  state: "fresh" | "stale" | "degraded"
+  voices: Array<VoiceOptionView>
+}
+
+export interface SpeechVoiceChoice {
+  expected_revision: number
+  voice_key?: string | null
 }
 
 export interface SpokenMessageView {
@@ -1166,6 +1234,55 @@ export interface VoiceCaptureSession {
   token: string
 }
 
+export interface VoiceCloneBody {
+  audio_base64: string
+  consent: VoiceConsentBody
+  name: string
+  operation_id: string
+}
+
+export interface VoiceConsentBody {
+  allow_re_enrollment?: boolean
+  consent_version: string
+  method: "spoken" | "attested"
+  statement?: string | null
+  subject: "self" | "other"
+  subject_label?: string | null
+}
+
+export interface VoiceConsentView {
+  accepted_at: string
+  method: "spoken" | "attested"
+  subject: "self" | "other"
+  subject_label?: string | null
+}
+
+export interface VoiceDesignBody {
+  name: string
+  operation_id: string
+  preview_text: string
+  prompt: string
+}
+
+export interface VoiceEnrollmentView {
+  clone: boolean
+  design: boolean
+  processor?: string | null
+}
+
+export interface VoiceLimitsView {
+  drafts?: number
+  owner_voices?: number
+  preview_text_max_chars?: number
+  preview_text_min_chars?: number
+  prompt_max_chars?: number
+  recording_max_ms?: number
+  recording_min_ms?: number
+  upload_max_bytes?: number
+  upload_max_ms?: number
+  window_ms?: number
+}
+
 export interface VoiceMatchTestResult {
   audio_ms: number
   elapsed_ms: number
@@ -1180,16 +1297,15 @@ export interface VoiceMatchTestResult {
   weights_hash: string
 }
 
-export interface VoicePreviewRequest {
-  regenerate?: boolean
-  request_id: string
-}
-
-export interface VoicePreviewStatus {
-  audio_available: boolean
-  key: string
-  state: "generating" | "ready" | "failed"
-  voice: string
+export interface VoiceOptionView {
+  age_band: string
+  display_name: string
+  gender: string
+  is_host_default: boolean
+  selectable: boolean
+  style_labels: Array<string>
+  summary?: string | null
+  voice_key: string
 }
 
 export interface VoiceprintCollection {
@@ -1215,6 +1331,8 @@ export interface ManagementResponses {
   'PUT /api/management/v1/companions/{companion_id}/persona': PersonaEditSnapshot
   'GET /api/management/v1/companions/{companion_id}/persona-history': PersonaHistoryView
   'PUT /api/management/v1/companions/{companion_id}/persona-restorations': PersonaHistoryView
+  'GET /api/management/v1/companions/{companion_id}/speech-voice': CompanionSpeechVoiceView
+  'PUT /api/management/v1/companions/{companion_id}/speech-voice': CompanionSpeechVoiceView
   'GET /api/management/v1/companions/{companion_id}/tasks': TaskPageView
   'GET /api/management/v1/companions/{companion_id}/tasks/{task_id}': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/cancel': TaskView
@@ -1249,6 +1367,13 @@ export interface ManagementResponses {
   'GET /api/management/v1/mission-control/activities': unknown
   'GET /api/management/v1/mission-control/snapshot': unknown
   'PATCH /api/management/v1/owner': OwnerNameView
+  'GET /api/management/v1/owner-voices': OwnerVoicesView
+  'POST /api/management/v1/owner-voices/clones': OwnerVoiceView
+  'POST /api/management/v1/owner-voices/designs': OwnerVoiceView
+  'POST /api/management/v1/owner-voices/references/check': ReferenceCheckView
+  'DELETE /api/management/v1/owner-voices/{voice_asset_id}': Blob
+  'GET /api/management/v1/owner-voices/{voice_asset_id}': OwnerVoiceView
+  'PATCH /api/management/v1/owner-voices/{voice_asset_id}': OwnerVoiceView
   'POST /api/management/v1/owner/actions/revoke-runtime-sessions': RevokedSessionsView
   'PUT /api/management/v1/owner/default-companion': DefaultCompanionView
   'GET /api/management/v1/persona-authoring-template': PersonaAuthoring
@@ -1297,6 +1422,9 @@ export interface ManagementResponses {
   'DELETE /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'PUT /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'GET /api/management/v1/smarthome/snapshot': HomeSnapshotView
+  'GET /api/management/v1/speech-voices': SpeechVoiceCatalogView
+  'POST /api/management/v1/speech-voices/refresh': SpeechVoiceCatalogView
+  'GET /api/management/v1/speech-voices/{voice_key}/preview': Blob
   'GET /api/management/v1/teams': TeamPage
   'DELETE /api/management/v1/teams/{team_id}': TeamDeleted
   'GET /api/management/v1/teams/{team_id}': TeamRevision
@@ -1306,8 +1434,6 @@ export interface ManagementResponses {
   'POST /api/management/v1/teams/{team_id}/runs': RoleGroupStatus
   'GET /api/management/v1/teams/{team_id}/runs/{session_id}': RoleGroupStatus
   'POST /api/management/v1/teams/{team_id}/runs/{session_id}/close': RoleGroupStatus
-  'POST /api/management/v1/voice-preview': VoicePreviewStatus
-  'GET /api/management/v1/voice-preview/{key}/audio': VoiceAudioRequest
   'GET /api/management/v1/voiceprints': VoiceprintCollection
   'POST /api/management/v1/voiceprints/captures': VoiceCaptureSession
   'DELETE /api/management/v1/voiceprints/captures/{capture_id}': unknown

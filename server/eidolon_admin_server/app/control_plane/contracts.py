@@ -794,7 +794,7 @@ class ControllerDeviceRemovalRequest(StrictModel):
 #: a missing credential, a runtime that is down — died inside the error path and
 #: reached callers as an unexplained 500. One name, two readers: a vocabulary
 #: that cannot be half-extended.
-Authority = Literal["directory", "data", "hub", "kernel", "memory", "agent"]
+Authority = Literal["directory", "data", "hub", "kernel", "memory", "agent", "channel"]
 
 #: How a refusal is to be *treated*, as distinct from what happened in the
 #: domain (that is ``WorkflowFailure.code``). Same single-declaration rule as

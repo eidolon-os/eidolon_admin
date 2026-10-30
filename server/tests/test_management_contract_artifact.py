@@ -105,6 +105,9 @@ def test_the_contract_carries_only_the_management_surface() -> None:
 #:
 #: These six shape an answer about a subject the session already fixed:
 ALLOWED_QUERY_PARAMETERS = {
+    # Which of the two fixed preview sentences; where a long reference file is cut.
+    "sample",
+    "start_ms",
     # Select a Person within the authenticated Owner; never select the Owner.
     "person_id",
     "wing",

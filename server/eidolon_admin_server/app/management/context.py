@@ -85,6 +85,9 @@ _CAPABILITIES: tuple[str, ...] = (
     #: away. Its own name because it is the one part of a Companion a person
     #: changes by choosing a photograph rather than by typing.
     "companion.face",
+    #: How an Eidolon sounds: choosing one of the Host's voices, and the
+    #: Owner's own designed or cloned voices it can wear.
+    "companion.voice",
     "persons.manage",
     "voiceprints.manage",
     "companion.archive",
@@ -171,6 +174,9 @@ _ENABLED: frozenset[str] = frozenset(
         "owner.rename",
         # The face, over the same surface as everything else about a Companion.
         "companion.face",
+        # The voice. Answered by Data and this Host's channel-provider, which
+        # every Host runs, so no credential gates it.
+        "companion.voice",
         "persons.manage",
         "voiceprints.manage",
         # Which phones may manage this Host. Answered by the Host's own trust

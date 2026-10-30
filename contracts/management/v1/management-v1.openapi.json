@@ -829,6 +829,66 @@
         "title": "CompanionRosterView",
         "type": "object"
       },
+      "CompanionSpeechVoiceView": {
+        "additionalProperties": false,
+        "properties": {
+          "companion_id": {
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "effective": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveVoiceView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "record_state": {
+            "enum": [
+              "valid",
+              "invalid"
+            ],
+            "title": "Record State",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "selected_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Name"
+          },
+          "selected_voice_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Voice Key"
+          }
+        },
+        "required": [
+          "companion_id",
+          "revision",
+          "record_state"
+        ],
+        "title": "CompanionSpeechVoiceView",
+        "type": "object"
+      },
       "CompanionSummaryView": {
         "additionalProperties": false,
         "description": "One Eidolon, as a list shows it.\n\nNo \"is the default\" flag. The page says which one is default exactly once,\nso a client cannot render two rows both claiming it, and cannot disagree\nwith the Owner record about which one it is.",
@@ -1978,6 +2038,36 @@
           "devices"
         ],
         "title": "DevicesView",
+        "type": "object"
+      },
+      "EffectiveVoiceView": {
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "voice_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Key"
+          }
+        },
+        "required": [
+          "display_name",
+          "reason"
+        ],
+        "title": "EffectiveVoiceView",
         "type": "object"
       },
       "EnrollmentCreate": {
@@ -4092,6 +4182,182 @@
         "title": "OwnerNameView",
         "type": "object"
       },
+      "OwnerVoiceChange": {
+        "additionalProperties": false,
+        "properties": {
+          "drop_reference": {
+            "default": false,
+            "title": "Drop Reference",
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "keep": {
+            "default": false,
+            "title": "Keep",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "OwnerVoiceChange",
+        "type": "object"
+      },
+      "OwnerVoiceView": {
+        "additionalProperties": false,
+        "properties": {
+          "consent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VoiceConsentView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "design_prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Design Prompt"
+          },
+          "draft_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Expires At"
+          },
+          "has_reference": {
+            "title": "Has Reference",
+            "type": "boolean"
+          },
+          "method": {
+            "enum": [
+              "design",
+              "clone"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "draft",
+              "active"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ready",
+              "preparing",
+              "rejected",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Detail"
+          },
+          "used_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Used By",
+            "type": "array"
+          },
+          "voice_asset_id": {
+            "title": "Voice Asset Id",
+            "type": "string"
+          },
+          "voice_key": {
+            "title": "Voice Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "voice_key",
+          "voice_asset_id",
+          "name",
+          "method",
+          "state",
+          "revision",
+          "status",
+          "used_by",
+          "has_reference",
+          "created_at"
+        ],
+        "title": "OwnerVoiceView",
+        "type": "object"
+      },
+      "OwnerVoicesView": {
+        "additionalProperties": false,
+        "properties": {
+          "voices": {
+            "items": {
+              "$ref": "#/components/schemas/OwnerVoiceView"
+            },
+            "title": "Voices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "voices"
+        ],
+        "title": "OwnerVoicesView",
+        "type": "object"
+      },
       "PersonArchival": {
         "additionalProperties": false,
         "properties": {
@@ -5416,6 +5682,65 @@
         "title": "RecollectionsView",
         "type": "object"
       },
+      "ReferenceCheckView": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "audio_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Base64"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "speech_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speech Ms"
+          },
+          "window_ms": {
+            "title": "Window Ms",
+            "type": "integer"
+          },
+          "window_start_ms": {
+            "title": "Window Start Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted",
+          "problems",
+          "duration_ms",
+          "window_start_ms",
+          "window_ms"
+        ],
+        "title": "ReferenceCheckView",
+        "type": "object"
+      },
       "Refusal": {
         "additionalProperties": false,
         "description": "One refusal, in the only shape an Eidolon surface may publish.\n\nCarried under ``detail`` by HTTP surfaces, because that is where FastAPI's\nerror body puts it and where every client already looks. The status code\nstill says how to treat the response at the transport layer; this says what\nhappened, and the two are different questions — which is why a status alone\nwas never enough to draw a screen from.",
@@ -5917,6 +6242,88 @@
           "status"
         ],
         "title": "SpeakerSimilarity",
+        "type": "object"
+      },
+      "SpeechVoiceCatalogView": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "enrollment": {
+            "$ref": "#/components/schemas/VoiceEnrollmentView"
+          },
+          "host_selectable": {
+            "title": "Host Selectable",
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/VoiceLimitsView"
+          },
+          "not_selectable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Selectable Reason"
+          },
+          "state": {
+            "enum": [
+              "fresh",
+              "stale",
+              "degraded"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "voices": {
+            "items": {
+              "$ref": "#/components/schemas/VoiceOptionView"
+            },
+            "title": "Voices",
+            "type": "array"
+          }
+        },
+        "required": [
+          "catalog_revision",
+          "state",
+          "host_selectable",
+          "voices",
+          "enrollment",
+          "limits"
+        ],
+        "title": "SpeechVoiceCatalogView",
+        "type": "object"
+      },
+      "SpeechVoiceChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "voice_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voice Key"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "SpeechVoiceChoice",
         "type": "object"
       },
       "SpokenMessageView": {
@@ -6690,6 +7097,271 @@
         "title": "VoiceCaptureSession",
         "type": "object"
       },
+      "VoiceCloneBody": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_base64": {
+            "title": "Audio Base64",
+            "type": "string"
+          },
+          "consent": {
+            "$ref": "#/components/schemas/VoiceConsentBody"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Operation Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "name",
+          "consent",
+          "audio_base64"
+        ],
+        "title": "VoiceCloneBody",
+        "type": "object"
+      },
+      "VoiceConsentBody": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_re_enrollment": {
+            "default": true,
+            "title": "Allow Re Enrollment",
+            "type": "boolean"
+          },
+          "consent_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Consent Version",
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "spoken",
+              "attested"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement"
+          },
+          "subject": {
+            "enum": [
+              "self",
+              "other"
+            ],
+            "title": "Subject",
+            "type": "string"
+          },
+          "subject_label": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Label"
+          }
+        },
+        "required": [
+          "method",
+          "subject",
+          "consent_version"
+        ],
+        "title": "VoiceConsentBody",
+        "type": "object"
+      },
+      "VoiceConsentView": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_at": {
+            "format": "date-time",
+            "title": "Accepted At",
+            "type": "string"
+          },
+          "method": {
+            "enum": [
+              "spoken",
+              "attested"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "subject": {
+            "enum": [
+              "self",
+              "other"
+            ],
+            "title": "Subject",
+            "type": "string"
+          },
+          "subject_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Label"
+          }
+        },
+        "required": [
+          "method",
+          "subject",
+          "accepted_at"
+        ],
+        "title": "VoiceConsentView",
+        "type": "object"
+      },
+      "VoiceDesignBody": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "preview_text": {
+            "maxLength": 200,
+            "minLength": 15,
+            "title": "Preview Text",
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "name",
+          "prompt",
+          "preview_text"
+        ],
+        "title": "VoiceDesignBody",
+        "type": "object"
+      },
+      "VoiceEnrollmentView": {
+        "additionalProperties": false,
+        "properties": {
+          "clone": {
+            "title": "Clone",
+            "type": "boolean"
+          },
+          "design": {
+            "title": "Design",
+            "type": "boolean"
+          },
+          "processor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processor"
+          }
+        },
+        "required": [
+          "design",
+          "clone"
+        ],
+        "title": "VoiceEnrollmentView",
+        "type": "object"
+      },
+      "VoiceLimitsView": {
+        "additionalProperties": false,
+        "properties": {
+          "drafts": {
+            "default": 3,
+            "title": "Drafts",
+            "type": "integer"
+          },
+          "owner_voices": {
+            "default": 20,
+            "title": "Owner Voices",
+            "type": "integer"
+          },
+          "preview_text_max_chars": {
+            "default": 200,
+            "title": "Preview Text Max Chars",
+            "type": "integer"
+          },
+          "preview_text_min_chars": {
+            "default": 15,
+            "title": "Preview Text Min Chars",
+            "type": "integer"
+          },
+          "prompt_max_chars": {
+            "default": 500,
+            "title": "Prompt Max Chars",
+            "type": "integer"
+          },
+          "recording_max_ms": {
+            "default": 25000,
+            "title": "Recording Max Ms",
+            "type": "integer"
+          },
+          "recording_min_ms": {
+            "default": 10000,
+            "title": "Recording Min Ms",
+            "type": "integer"
+          },
+          "upload_max_bytes": {
+            "default": 10485760,
+            "title": "Upload Max Bytes",
+            "type": "integer"
+          },
+          "upload_max_ms": {
+            "default": 60000,
+            "title": "Upload Max Ms",
+            "type": "integer"
+          },
+          "window_ms": {
+            "default": 20000,
+            "title": "Window Ms",
+            "type": "integer"
+          }
+        },
+        "title": "VoiceLimitsView",
+        "type": "object"
+      },
       "VoiceMatchTestResult": {
         "additionalProperties": false,
         "properties": {
@@ -6766,61 +7438,62 @@
         "title": "VoiceMatchTestResult",
         "type": "object"
       },
-      "VoicePreviewRequest": {
+      "VoiceOptionView": {
         "additionalProperties": false,
         "properties": {
-          "regenerate": {
-            "default": false,
-            "title": "Regenerate",
-            "type": "boolean"
-          },
-          "request_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9_.:-]+$",
-            "title": "Request Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "request_id"
-        ],
-        "title": "VoicePreviewRequest",
-        "type": "object"
-      },
-      "VoicePreviewStatus": {
-        "additionalProperties": false,
-        "properties": {
-          "audio_available": {
-            "title": "Audio Available",
-            "type": "boolean"
-          },
-          "key": {
-            "pattern": "^[a-f0-9]{64}$",
-            "title": "Key",
+          "age_band": {
+            "title": "Age Band",
             "type": "string"
           },
-          "state": {
-            "enum": [
-              "generating",
-              "ready",
-              "failed"
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "gender": {
+            "title": "Gender",
+            "type": "string"
+          },
+          "is_host_default": {
+            "title": "Is Host Default",
+            "type": "boolean"
+          },
+          "selectable": {
+            "title": "Selectable",
+            "type": "boolean"
+          },
+          "style_labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Style Labels",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "State",
-            "type": "string"
+            "title": "Summary"
           },
-          "voice": {
-            "title": "Voice",
+          "voice_key": {
+            "title": "Voice Key",
             "type": "string"
           }
         },
         "required": [
-          "key",
-          "state",
-          "audio_available",
-          "voice"
+          "voice_key",
+          "display_name",
+          "gender",
+          "age_band",
+          "style_labels",
+          "is_host_default",
+          "selectable"
         ],
-        "title": "VoicePreviewStatus",
+        "title": "VoiceOptionView",
         "type": "object"
       },
       "VoiceprintCollection": {
@@ -7954,6 +8627,130 @@
           }
         },
         "summary": "Put Persona Restoration",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/companions/{companion_id}/speech-voice": {
+      "get": {
+        "operationId": "companion_voice_api_management_v1_companions__companion_id__speech_voice_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSpeechVoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Companion Voice",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "choose_api_management_v1_companions__companion_id__speech_voice_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeechVoiceChoice"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionSpeechVoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Choose",
         "tags": [
           "management"
         ]
@@ -10281,6 +11078,423 @@
           }
         },
         "summary": "Patch Owner",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner-voices": {
+      "get": {
+        "operationId": "owner_voices_api_management_v1_owner_voices_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerVoicesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Owner Voices",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner-voices/clones": {
+      "post": {
+        "operationId": "clone_api_management_v1_owner_voices_clones_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceCloneBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerVoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Clone",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner-voices/designs": {
+      "post": {
+        "operationId": "design_api_management_v1_owner_voices_designs_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoiceDesignBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerVoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Design",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner-voices/references/check": {
+      "post": {
+        "operationId": "check_api_management_v1_owner_voices_references_check_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "start_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Start Ms"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceCheckView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Check",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/owner-voices/{voice_asset_id}": {
+      "delete": {
+        "operationId": "delete_api_management_v1_owner_voices__voice_asset_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "voice_asset_id",
+            "required": true,
+            "schema": {
+              "title": "Voice Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Delete",
+        "tags": [
+          "management"
+        ]
+      },
+      "get": {
+        "operationId": "owner_voice_api_management_v1_owner_voices__voice_asset_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "voice_asset_id",
+            "required": true,
+            "schema": {
+              "title": "Voice Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerVoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Owner Voice",
+        "tags": [
+          "management"
+        ]
+      },
+      "patch": {
+        "operationId": "change_api_management_v1_owner_voices__voice_asset_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "voice_asset_id",
+            "required": true,
+            "schema": {
+              "title": "Voice Asset Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnerVoiceChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnerVoiceView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Change",
         "tags": [
           "management"
         ]
@@ -13203,6 +14417,189 @@
         ]
       }
     },
+    "/api/management/v1/speech-voices": {
+      "get": {
+        "operationId": "catalog_api_management_v1_speech_voices_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-None-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeechVoiceCatalogView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "The catalog the caller holds is current."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Catalog",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/speech-voices/refresh": {
+      "post": {
+        "operationId": "refresh_api_management_v1_speech_voices_refresh_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeechVoiceCatalogView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Refresh",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/speech-voices/{voice_key}/preview": {
+      "get": {
+        "operationId": "preview_api_management_v1_speech_voices__voice_key__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "voice_key",
+            "required": true,
+            "schema": {
+              "title": "Voice Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sample",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 2,
+              "minimum": 1,
+              "title": "Sample",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "audio/wav": {}
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Preview",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/teams": {
       "get": {
         "operationId": "listing_api_management_v1_teams_get",
@@ -13807,123 +15204,6 @@
           }
         },
         "summary": "Close",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/voice-preview": {
-      "post": {
-        "operationId": "preview_api_management_v1_voice_preview_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VoicePreviewRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoicePreviewStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Preview",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/voice-preview/{key}/audio": {
-      "get": {
-        "operationId": "audio_api_management_v1_voice_preview__key__audio_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "key",
-            "required": true,
-            "schema": {
-              "title": "Key",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VoiceAudioRequest"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Audio",
         "tags": [
           "management"
         ]

@@ -290,6 +290,7 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "companion.restore",
         "companion.rename",
         "companion.face",
+        "companion.voice",
         "controller.manage",
         "host.read",
         "host.operate",

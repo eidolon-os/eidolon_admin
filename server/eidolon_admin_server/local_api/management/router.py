@@ -3487,6 +3487,9 @@ def register_management_routes(
     from .persons import register_person_routes
 
     register_person_routes(router, backend, authenticated_owner, _refused)
+    from .speech_voices import register_speech_voice_routes
+
+    register_speech_voice_routes(router, backend, authenticated_owner, _refused)
     app.include_router(router)
 
 

@@ -92,11 +92,36 @@ class AdminManagementClient:
         self._client = client
         self._timeout = timeout_seconds
 
-    async def voice_preview(self, *, owner_id, payload=None, key=None):
-        suffix = "/" + quote(key, safe="") + "/audio" if key is not None else ""
-        return await self._call("GET" if key else "POST",
-            "/api/internal/v1/management/voice-preview" + suffix,
-            {"owner_id": owner_id}, payload)
+    async def speech_voice_call(
+        self, *, owner_id, method, path, payload=None, params=None, content=None, content_type=None
+    ) -> dict:
+        """Speech voices and Owner voices; ``path`` follows ``/internal/v1/management``."""
+        response = await self._raw(
+            method, "/api/internal/v1/management" + path, {"owner_id": owner_id, **(params or {})},
+            body=payload, content=content,
+            headers={"Content-Type": content_type} if content_type else None,
+        )
+        if method == "DELETE" and response.status_code == 204:
+            return {}
+        return self._decoded(response)
+
+    async def speech_voice_catalog(self, *, owner_id, known_etag) -> tuple[int, dict | None, str | None]:
+        response = await self._raw(
+            "GET", "/api/internal/v1/management/speech-voices", {"owner_id": owner_id},
+            headers={"If-None-Match": known_etag} if known_etag else None,
+        )
+        if response.status_code == 304:
+            return 304, None, known_etag
+        return 200, self._decoded(response), response.headers.get("ETag")
+
+    async def speech_voice_preview(self, *, owner_id, voice_key, sample) -> bytes:
+        response = await self._raw(
+            "POST", "/api/internal/v1/management/speech-voices/preview", {"owner_id": owner_id},
+            body={"voice_key": voice_key, "sample": sample},
+        )
+        if response.status_code != 200:
+            self._decoded(response)
+        return response.content
 
     async def team_starts(self, *, owner_id, host_id, team_id, action,
                           payload=None, session_id=None, include_closed=False, after="", limit=50):
@@ -717,6 +742,9 @@ class AdminManagementClient:
                 if path.endswith("/permanent-delete")
                 else max(self._timeout, 40)
                 if path.endswith("/persona-preview") or "/voiceprints/" in path
+                # Synthesis and making a voice take seconds at the provider.
+                else max(self._timeout, 80)
+                if "/speech-voices" in path or "/owner-voices" in path
                 else self._timeout,
             )
         except (
