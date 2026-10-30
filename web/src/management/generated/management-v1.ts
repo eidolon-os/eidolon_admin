@@ -982,11 +982,6 @@ export interface Scene {
   scene_id: string
 }
 
-export interface SceneRole {
-  description?: string
-  name: string
-}
-
 export interface SceneWrite {
   expected_revision: number
   scene: Scene
@@ -1073,7 +1068,6 @@ export interface TeamConfiguration {
   input_device_id: string
   members: Array<TeamMember>
   name: string
-  reply_budget?: number
 }
 
 export interface TeamConflict {
@@ -1097,7 +1091,6 @@ export interface TeamDeleted {
 export interface TeamMember {
   companion_id: string
   output_device_id: string
-  role?: SceneRole | null
 }
 
 export interface TeamPage {

@@ -5695,29 +5695,6 @@
         "title": "Scene",
         "type": "object"
       },
-      "SceneRole": {
-        "additionalProperties": false,
-        "description": "Temporary performance data; never a Companion binding or tool grant.",
-        "properties": {
-          "description": {
-            "default": "",
-            "maxLength": 1000,
-            "title": "Description",
-            "type": "string"
-          },
-          "name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Name",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "SceneRole",
-        "type": "object"
-      },
       "SceneWrite": {
         "additionalProperties": false,
         "properties": {
@@ -6198,13 +6175,6 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
-          },
-          "reply_budget": {
-            "default": 8,
-            "maximum": 32.0,
-            "minimum": 1.0,
-            "title": "Reply Budget",
-            "type": "integer"
           }
         },
         "required": [
@@ -6326,16 +6296,6 @@
             "pattern": "^device-instance-[0-9a-f]{64}$",
             "title": "Output Device Id",
             "type": "string"
-          },
-          "role": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SceneRole"
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
