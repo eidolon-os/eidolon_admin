@@ -1372,6 +1372,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/device-sessions/status': DeviceConversationStatus
   'GET /api/management/v1/devices': DevicesView
   'GET /api/management/v1/devices/presence': DevicePresencesView
+  'GET /api/management/v1/devices/{device_id}/capabilities/{op}': DeviceCapabilityView
   'POST /api/management/v1/devices/{device_id}/capabilities/{op}': DeviceCapabilityView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView

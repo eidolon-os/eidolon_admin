@@ -9811,6 +9811,83 @@
       }
     },
     "/api/management/v1/devices/{device_id}/capabilities/{op}": {
+      "get": {
+        "description": "Read one current device value through the same command authority.",
+        "operationId": "get_device_capability_api_management_v1_devices__device_id__capabilities__op__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "op",
+            "required": true,
+            "schema": {
+              "title": "Op",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceCapabilityView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Device Capability",
+        "tags": [
+          "management"
+        ]
+      },
       "post": {
         "description": "Turn one knob on a device this Owner holds.\n\nThe device's own vocabulary comes back translated: a body acknowledges\nwith words the control layer spells differently, and a client that had\nto know both would report a success as an unfinished command.\n\nWhose device this is, whether it declared the capability and whether the\nvalue is in range are all the Provider's to decide — it holds the\nchannel and the declaration. Nothing here pre-judges them.",
         "operationId": "post_device_capability_api_management_v1_devices__device_id__capabilities__op__post",

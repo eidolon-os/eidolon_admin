@@ -2422,6 +2422,41 @@ def register_management_routes(
             message=str(answer.get("message") or ""),
         )
 
+    @router.get(
+        "/devices/{device_id}/capabilities/{op}", response_model=DeviceCapabilityView
+    )
+    async def get_device_capability(
+        device_id: str,
+        op: str,
+        request_id: str = Query(min_length=1, max_length=128),
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceCapabilityView:
+        """Read one current device value through the same command authority."""
+        session = await authenticated_controller_session(authorization)
+        try:
+            answer = await backend.device_command(
+                owner_id=session.owner_id,
+                device_id=device_id,
+                op=op,
+                capability_version=1,
+                payload={},
+                idempotency_key=request_id,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+
+        status = body_status_from_control(str(answer.get("status") or ""))
+        return DeviceCapabilityView(
+            device_id=str(answer.get("device_id") or device_id),
+            op=str(answer.get("op") or op),
+            capability_version=int(answer.get("capability_version") or 1),
+            status=status,
+            completed=status == "done",
+            result=answer.get("result"),
+            code=str(answer.get("code") or ""),
+            message=str(answer.get("message") or ""),
+        )
+
     @router.post("/devices/{device_id}/removal", response_model=DeviceRemovalView)
     async def remove_device(
         device_id: str,
