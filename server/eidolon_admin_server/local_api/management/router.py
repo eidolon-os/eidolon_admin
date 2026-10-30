@@ -1620,6 +1620,19 @@ class DeviceRemovalConditionView(BaseModel):
     observed_at: str = Field(default="", max_length=64)
 
 
+class DeviceStateView(BaseModel):
+    """Values a device reported changing on its own, keyed by capability value.
+
+    ``values`` holds only what was actually observed, so an empty map is a
+    device that has said nothing yet — not a device set to zero everywhere.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: str = Field(min_length=1, max_length=128)
+    values: dict[str, int] = Field(default_factory=dict)
+
+
 class DeviceRemovalView(BaseModel):
     """Where a removal got to.
 
@@ -1806,6 +1819,8 @@ class ManagementBackendPort(Protocol):
         idempotency_key: str,
         companion_id: str = "",
     ) -> dict: ...
+
+    async def device_state(self, *, device_id: str) -> dict: ...
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
 
@@ -2455,6 +2470,33 @@ def register_management_routes(
             result=answer.get("result"),
             code=str(answer.get("code") or ""),
             message=str(answer.get("message") or ""),
+        )
+
+    @router.get("/devices/{device_id}/state", response_model=DeviceStateView)
+    async def get_device_state(
+        device_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceStateView:
+        """What the device last reported changing without being asked.
+
+        Only values the device actually reported appear. A missing key means
+        nothing has been observed since the Provider started, not that the value
+        is zero — a client drawing a control must fall back to reading it.
+        """
+        await authenticated_controller_session(authorization)
+        try:
+            answer = await backend.device_state(device_id=device_id)
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+
+        values = answer.get("values")
+        return DeviceStateView(
+            device_id=str(answer.get("device_id") or device_id),
+            values=(
+                {str(key): int(value) for key, value in values.items()}
+                if isinstance(values, dict)
+                else {}
+            ),
         )
 
     @router.post("/devices/{device_id}/removal", response_model=DeviceRemovalView)

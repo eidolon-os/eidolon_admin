@@ -828,3 +828,40 @@ async def test_a_refused_capability_command_keeps_the_refusal(tmp_path, monkeypa
     assert response.json()["detail"]["reason"] == (
         "device did not declare that capability"
     )
+
+
+async def test_device_state_reports_only_what_the_device_said(tmp_path, monkeypatch):
+    """An empty map is a device that has said nothing, not one set to zero."""
+
+    class Backend(_Backend):
+        async def device_state(self, *, device_id: str) -> dict:
+            return {"device_id": device_id, "values": {"brightness": 90}}
+
+    _stub_controller(monkeypatch)
+    app = _app(tmp_path, _Unused(), backend=Backend())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://local"
+    ) as client:
+        headers = await _authenticate(client)
+        response = await client.get("/api/management/v1/devices/device-1/state", headers=headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"device_id": "device-1", "values": {"brightness": 90}}
+
+
+async def test_device_state_is_empty_rather_than_zero_before_any_report(tmp_path, monkeypatch):
+    class Backend(_Backend):
+        async def device_state(self, *, device_id: str) -> dict:
+            return {"device_id": device_id, "values": {}}
+
+    _stub_controller(monkeypatch)
+    app = _app(tmp_path, _Unused(), backend=Backend())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://local"
+    ) as client:
+        headers = await _authenticate(client)
+        response = await client.get("/api/management/v1/devices/device-1/state", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["values"] == {}

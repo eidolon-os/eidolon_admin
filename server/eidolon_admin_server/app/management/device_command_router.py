@@ -16,6 +16,7 @@ from __future__ import annotations
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
+from urllib.parse import quote
 
 from eidolon_admin_server.app.gateway.proxy import upstream_auth_headers
 from eidolon_admin_server.app.service_auth import require_local_api_credential
@@ -86,6 +87,52 @@ async def deliver_device_command(request: Request, body: DeviceCommandBody) -> d
             if 400 <= response.status_code < 500
             else 503,
             detail=detail or "设备能力命令被拒绝",
+        )
+
+    try:
+        answer = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, "设备能力服务答复无法解析") from exc
+    if not isinstance(answer, dict):
+        raise HTTPException(503, "设备能力服务答复无法解析")
+    return answer
+
+
+@router.get("/device-state/{device_id}")
+async def device_state(request: Request, device_id: str) -> dict:
+    """What the device last reported changing on its own.
+
+    The Provider keeps this, because it is the process holding the channel the
+    report arrived on. A key the device has never reported is absent rather than
+    zero, so a client must not read a missing value as a setting.
+    """
+
+    service = request.app.state.registry.get("channel-provider")
+    if service is None or not service.base_url:
+        raise HTTPException(503, "设备能力服务未配置")
+    url = (
+        f"{service.base_url.rstrip('/')}{(service.upstream_prefix or '').rstrip('/')}"
+        f"/v1/device-channels/{quote(device_id, safe='')}/state"
+    )
+    try:
+        response = await request.app.state.http_client.get(
+            url, headers=upstream_auth_headers(service), timeout=15.0
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "设备能力服务暂时不可用") from exc
+
+    if response.status_code != 200:
+        detail: object
+        try:
+            payload = response.json()
+            detail = payload.get("detail") if isinstance(payload, dict) else None
+        except ValueError:
+            detail = None
+        raise HTTPException(
+            status_code=response.status_code
+            if 400 <= response.status_code < 500
+            else 503,
+            detail=detail or "设备状态不可读",
         )
 
     try:

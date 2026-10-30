@@ -1931,6 +1931,30 @@
         "title": "DeviceSessionStart",
         "type": "object"
       },
+      "DeviceStateView": {
+        "additionalProperties": false,
+        "description": "Values a device reported changing on its own, keyed by capability value.\n\n``values`` holds only what was actually observed, so an empty map is a\ndevice that has said nothing yet — not a device set to zero everywhere.",
+        "properties": {
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "title": "DeviceStateView",
+        "type": "object"
+      },
       "DeviceStatusView": {
         "additionalProperties": false,
         "properties": {
@@ -10167,6 +10191,65 @@
           }
         },
         "summary": "Remove Device",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/state": {
+      "get": {
+        "description": "What the device last reported changing without being asked.\n\nOnly values the device actually reported appear. A missing key means\nnothing has been observed since the Provider started, not that the value\nis zero — a client drawing a control must fall back to reading it.",
+        "operationId": "get_device_state_api_management_v1_devices__device_id__state_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceStateView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Device State",
         "tags": [
           "management"
         ]

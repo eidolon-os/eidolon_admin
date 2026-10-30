@@ -326,6 +326,11 @@ export interface DeviceSessionStart {
   target_companion_id: string
 }
 
+export interface DeviceStateView {
+  device_id: string
+  values?: Record<string, number>
+}
+
 export interface DeviceStatusView {
   online: boolean
   state: Record<string, boolean | number | number | string | null>
@@ -1377,6 +1382,7 @@ export interface ManagementResponses {
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
+  'GET /api/management/v1/devices/{device_id}/state': DeviceStateView
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire
   'GET /api/management/v1/host/power': HostPowerStatusWire

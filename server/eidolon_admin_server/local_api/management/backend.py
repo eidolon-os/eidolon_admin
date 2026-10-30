@@ -213,6 +213,11 @@ class AdminManagementClient:
             },
         )
 
+    async def device_state(self, *, device_id: str) -> dict:
+        return await self._get(
+            f"/api/internal/v1/management/device-state/{quote(device_id, safe='')}", {}
+        )
+
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/mission-control/snapshot",
