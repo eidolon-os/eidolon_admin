@@ -964,23 +964,11 @@ export interface RevokedSessionsView {
   revoked_at: string
 }
 
-export interface RoleGroupAssignment {
-  output_device_id: string
-  role: SceneRole
-}
-
-export interface RoleGroupStart {
-  goal?: string
-  input_device_id: string
-  output_device_ids: Array<string>
-  reply_budget?: number
-  roles?: Array<RoleGroupAssignment>
-  session_id: string
-}
-
 export interface RoleGroupStatus {
   completion_basis: "native_playout"
   error?: string
+  round_epoch?: number
+  round_error?: string
   scenario: "ip_role_group"
   session_id: string
   state: "preparing" | "ready" | "closing" | "closed" | "failed"
@@ -1080,6 +1068,71 @@ export interface TaskView {
   urgency?: string
 }
 
+export interface TeamConfiguration {
+  goal?: string
+  input_device_id: string
+  members: Array<TeamMember>
+  name: string
+  reply_budget?: number
+}
+
+export interface TeamConflict {
+  companion_ids?: Array<string>
+  device_ids?: Array<string>
+  name: string
+  revision: number
+  session_id: string
+  team_id: string
+}
+
+export interface TeamConflicts {
+  conflicts?: Array<TeamConflict>
+  unresolved_runs?: number
+}
+
+export interface TeamDeleted {
+  team_id: string
+}
+
+export interface TeamMember {
+  companion_id: string
+  output_device_id: string
+  role?: SceneRole | null
+}
+
+export interface TeamPage {
+  next_cursor?: string | null
+  teams: Array<TeamRevision>
+}
+
+export interface TeamRevision {
+  configuration: TeamConfiguration
+  revision: number
+  team_id: string
+}
+
+export interface TeamStartRecord {
+  closed: boolean
+  revision: number
+  session_id: string
+  team_id: string
+}
+
+export interface TeamStartRequest {
+  expected_revision: number
+  session_id: string
+}
+
+export interface TeamStarts {
+  next_cursor?: string | null
+  starts: Array<TeamStartRecord>
+}
+
+export interface TeamWrite {
+  configuration: TeamConfiguration
+  expected_revision: number
+}
+
 export interface TranscriptTurnView {
   finished_at?: string | null
   messages: Array<SpokenMessageView>
@@ -1126,6 +1179,18 @@ export interface VoiceMatchTestResult {
   scoring_version?: "normalized-template-cosine-v1"
   validation_state?: "unvalidated"
   weights_hash: string
+}
+
+export interface VoicePreviewRequest {
+  regenerate?: boolean
+  request_id: string
+}
+
+export interface VoicePreviewStatus {
+  audio_available: boolean
+  key: string
+  state: "generating" | "ready" | "failed"
+  voice: string
 }
 
 export interface VoiceprintCollection {
@@ -1210,9 +1275,6 @@ export interface ManagementResponses {
   'PUT /api/management/v1/persons/{person_id}/provisional-memory/policy': ProvisionalMemoryPolicyState
   'POST /api/management/v1/persons/{person_id}/recognition/retire': PersonView
   'POST /api/management/v1/persons/{person_id}/restore': PersonView
-  'POST /api/management/v1/role-groups/close': RoleGroupStatus
-  'POST /api/management/v1/role-groups/open': RoleGroupStatus
-  'POST /api/management/v1/role-groups/status': RoleGroupStatus
   'GET /api/management/v1/session-traces': unknown
   'GET /api/management/v1/session-traces/{session_id}': unknown
   'POST /api/management/v1/shared-sessions/close': unknown
@@ -1236,6 +1298,17 @@ export interface ManagementResponses {
   'DELETE /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'PUT /api/management/v1/smarthome/scenes/{scene_id}': Registry
   'GET /api/management/v1/smarthome/snapshot': HomeSnapshotView
+  'GET /api/management/v1/teams': TeamPage
+  'DELETE /api/management/v1/teams/{team_id}': TeamDeleted
+  'GET /api/management/v1/teams/{team_id}': TeamRevision
+  'PUT /api/management/v1/teams/{team_id}': TeamRevision
+  'GET /api/management/v1/teams/{team_id}/conflicts': TeamConflicts
+  'GET /api/management/v1/teams/{team_id}/runs': TeamStarts
+  'POST /api/management/v1/teams/{team_id}/runs': RoleGroupStatus
+  'GET /api/management/v1/teams/{team_id}/runs/{session_id}': RoleGroupStatus
+  'POST /api/management/v1/teams/{team_id}/runs/{session_id}/close': RoleGroupStatus
+  'POST /api/management/v1/voice-preview': VoicePreviewStatus
+  'GET /api/management/v1/voice-preview/{key}/audio': VoiceAudioRequest
   'GET /api/management/v1/voiceprints': VoiceprintCollection
   'POST /api/management/v1/voiceprints/enrollments': EnrollmentView
   'DELETE /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView

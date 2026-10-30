@@ -28,6 +28,8 @@ from .management.device_presence_router import router as management_device_prese
 from .management.session_traces_router import router as management_session_traces_router
 from .management.router import router as management_router
 from .management.smarthome_router import router as management_smarthome_router
+from .management.teams import router as management_teams_router
+from .management.voice_preview import router as management_voice_preview_router
 from .control_plane.service import ControlPlaneService
 from .mission_control.router import router as mission_control_router
 from .host_services.client import HostServiceClient
@@ -285,6 +287,8 @@ def create_app(
     from .management.persons_router import router as persons_router
     app.include_router(persons_router, prefix="/api")
     app.include_router(management_smarthome_router, prefix="/api")
+    app.include_router(management_teams_router, prefix="/api")
+    app.include_router(management_voice_preview_router, prefix="/api")
     app.include_router(management_mission_control_router, prefix="/api")
     app.include_router(management_session_traces_router, prefix="/api")
     app.include_router(management_device_presence_router, prefix="/api")

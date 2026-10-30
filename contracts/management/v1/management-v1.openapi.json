@@ -5575,86 +5575,6 @@
         "title": "RevokedSessionsView",
         "type": "object"
       },
-      "RoleGroupAssignment": {
-        "additionalProperties": false,
-        "properties": {
-          "output_device_id": {
-            "maxLength": 80,
-            "minLength": 80,
-            "pattern": "^device-instance-[0-9a-f]{64}$",
-            "title": "Output Device Id",
-            "type": "string"
-          },
-          "role": {
-            "$ref": "#/components/schemas/SceneRole"
-          }
-        },
-        "required": [
-          "output_device_id",
-          "role"
-        ],
-        "title": "RoleGroupAssignment",
-        "type": "object"
-      },
-      "RoleGroupStart": {
-        "additionalProperties": false,
-        "properties": {
-          "goal": {
-            "default": "",
-            "maxLength": 2000,
-            "title": "Goal",
-            "type": "string"
-          },
-          "input_device_id": {
-            "maxLength": 80,
-            "minLength": 80,
-            "pattern": "^device-instance-[0-9a-f]{64}$",
-            "title": "Input Device Id",
-            "type": "string"
-          },
-          "output_device_ids": {
-            "items": {
-              "maxLength": 80,
-              "minLength": 80,
-              "pattern": "^device-instance-[0-9a-f]{64}$",
-              "type": "string"
-            },
-            "maxItems": 16,
-            "minItems": 1,
-            "title": "Output Device Ids",
-            "type": "array"
-          },
-          "reply_budget": {
-            "default": 8,
-            "maximum": 32.0,
-            "minimum": 1.0,
-            "title": "Reply Budget",
-            "type": "integer"
-          },
-          "roles": {
-            "items": {
-              "$ref": "#/components/schemas/RoleGroupAssignment"
-            },
-            "maxItems": 16,
-            "title": "Roles",
-            "type": "array"
-          },
-          "session_id": {
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9_.:-]+$",
-            "title": "Session Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id",
-          "input_device_id",
-          "output_device_ids"
-        ],
-        "title": "RoleGroupStart",
-        "type": "object"
-      },
       "RoleGroupStatus": {
         "additionalProperties": false,
         "properties": {
@@ -5666,6 +5586,17 @@
           "error": {
             "default": "",
             "title": "Error",
+            "type": "string"
+          },
+          "round_epoch": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Round Epoch",
+            "type": "integer"
+          },
+          "round_error": {
+            "default": "",
+            "title": "Round Error",
             "type": "string"
           },
           "scenario": {
@@ -6237,6 +6168,344 @@
         "title": "TaskView",
         "type": "object"
       },
+      "TeamConfiguration": {
+        "additionalProperties": false,
+        "properties": {
+          "goal": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Goal",
+            "type": "string"
+          },
+          "input_device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Input Device Id",
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "title": "Members",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "reply_budget": {
+            "default": 8,
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Reply Budget",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "input_device_id",
+          "members"
+        ],
+        "title": "TeamConfiguration",
+        "type": "object"
+      },
+      "TeamConflict": {
+        "additionalProperties": false,
+        "description": "Owner-scoped locator derived from a still-active immutable run snapshot.",
+        "properties": {
+          "companion_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "type": "string"
+            },
+            "title": "Companion Ids",
+            "type": "array"
+          },
+          "device_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 80,
+              "minLength": 80,
+              "pattern": "^device-instance-[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "title": "Device Ids",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "team_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "name",
+          "session_id",
+          "revision"
+        ],
+        "title": "TeamConflict",
+        "type": "object"
+      },
+      "TeamConflicts": {
+        "additionalProperties": false,
+        "properties": {
+          "conflicts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TeamConflict"
+            },
+            "title": "Conflicts",
+            "type": "array"
+          },
+          "unresolved_runs": {
+            "default": 0,
+            "title": "Unresolved Runs",
+            "type": "integer"
+          }
+        },
+        "title": "TeamConflicts",
+        "type": "object"
+      },
+      "TeamDeleted": {
+        "additionalProperties": false,
+        "properties": {
+          "team_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id"
+        ],
+        "title": "TeamDeleted",
+        "type": "object"
+      },
+      "TeamMember": {
+        "additionalProperties": false,
+        "properties": {
+          "companion_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "output_device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Output Device Id",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SceneRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "companion_id",
+          "output_device_id"
+        ],
+        "title": "TeamMember",
+        "type": "object"
+      },
+      "TeamPage": {
+        "additionalProperties": false,
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "teams": {
+            "items": {
+              "$ref": "#/components/schemas/TeamRevision"
+            },
+            "title": "Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "teams"
+        ],
+        "title": "TeamPage",
+        "type": "object"
+      },
+      "TeamRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/TeamConfiguration"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "team_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "revision",
+          "configuration"
+        ],
+        "title": "TeamRevision",
+        "type": "object"
+      },
+      "TeamStartRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "title": "Closed",
+            "type": "boolean"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "team_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Team Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "team_id",
+          "session_id",
+          "revision",
+          "closed"
+        ],
+        "title": "TeamStartRecord",
+        "type": "object"
+      },
+      "TeamStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "session_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "session_id"
+        ],
+        "title": "TeamStartRequest",
+        "type": "object"
+      },
+      "TeamStarts": {
+        "additionalProperties": false,
+        "properties": {
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "starts": {
+            "items": {
+              "$ref": "#/components/schemas/TeamStartRecord"
+            },
+            "title": "Starts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "starts"
+        ],
+        "title": "TeamStarts",
+        "type": "object"
+      },
+      "TeamWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/TeamConfiguration"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "configuration"
+        ],
+        "title": "TeamWrite",
+        "type": "object"
+      },
       "TranscriptTurnView": {
         "additionalProperties": false,
         "description": "One exchange.",
@@ -6503,6 +6772,63 @@
           "elapsed_ms"
         ],
         "title": "VoiceMatchTestResult",
+        "type": "object"
+      },
+      "VoicePreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "regenerate": {
+            "default": false,
+            "title": "Regenerate",
+            "type": "boolean"
+          },
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "VoicePreviewRequest",
+        "type": "object"
+      },
+      "VoicePreviewStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "audio_available": {
+            "title": "Audio Available",
+            "type": "boolean"
+          },
+          "key": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Key",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "generating",
+              "ready",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "voice": {
+            "title": "Voice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "state",
+          "audio_available",
+          "voice"
+        ],
+        "title": "VoicePreviewStatus",
         "type": "object"
       },
       "VoiceprintCollection": {
@@ -11481,183 +11807,6 @@
         ]
       }
     },
-    "/api/management/v1/role-groups/close": {
-      "post": {
-        "operationId": "close_api_management_v1_role_groups_close_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SharedClose"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoleGroupStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Close",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/role-groups/open": {
-      "post": {
-        "operationId": "start_api_management_v1_role_groups_open_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RoleGroupStart"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoleGroupStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Start",
-        "tags": [
-          "management"
-        ]
-      }
-    },
-    "/api/management/v1/role-groups/status": {
-      "post": {
-        "operationId": "status_api_management_v1_role_groups_status_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SharedClose"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RoleGroupStatus"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Status",
-        "tags": [
-          "management"
-        ]
-      }
-    },
     "/api/management/v1/session-traces": {
       "get": {
         "description": "The Owner's recorded voice sessions, newest first.\n\nEngineering data, not the Owner's reading: 26–30 marks a turn, per-packet\naudio state, the evidence behind an interrupt decision. It is here\nbecause the phone is the only surface this Host presents, not because a\nperson is expected to browse it — see the mobile plan's section 3.\n\nNo ``owner_id`` parameter, like everything else on this plane: the Owner\nis the Controller session's and cannot be named by a client.",
@@ -13057,6 +13206,732 @@
           }
         },
         "summary": "Home Snapshot",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/teams": {
+      "get": {
+        "operationId": "listing_api_management_v1_teams_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "After",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Listing",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/teams/{team_id}": {
+      "delete": {
+        "operationId": "delete_api_management_v1_teams__team_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Revision",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamDeleted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete",
+        "tags": [
+          "management"
+        ]
+      },
+      "get": {
+        "operationId": "get_api_management_v1_teams__team_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamRevision"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "save_api_management_v1_teams__team_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamRevision"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/teams/{team_id}/conflicts": {
+      "get": {
+        "operationId": "conflicts_api_management_v1_teams__team_id__conflicts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamConflicts"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Conflicts",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/teams/{team_id}/runs": {
+      "get": {
+        "operationId": "active_runs_api_management_v1_teams__team_id__runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_closed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Closed",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "After",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamStarts"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Active Runs",
+        "tags": [
+          "management"
+        ]
+      },
+      "post": {
+        "operationId": "start_api_management_v1_teams__team_id__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGroupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/teams/{team_id}/runs/{session_id}": {
+      "get": {
+        "operationId": "inspect_api_management_v1_teams__team_id__runs__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGroupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/teams/{team_id}/runs/{session_id}/close": {
+      "post": {
+        "operationId": "close_api_management_v1_teams__team_id__runs__session_id__close_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "team_id",
+            "required": true,
+            "schema": {
+              "title": "Team Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleGroupStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voice-preview": {
+      "post": {
+        "operationId": "preview_api_management_v1_voice_preview_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoicePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoicePreviewStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/voice-preview/{key}/audio": {
+      "get": {
+        "operationId": "audio_api_management_v1_voice_preview__key__audio_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceAudioRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audio",
         "tags": [
           "management"
         ]

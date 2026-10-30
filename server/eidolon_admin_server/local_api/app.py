@@ -20,9 +20,7 @@ from typing import Annotated, Any, Literal
 from eidolon_sdk.core.http import create_async_client
 from eidolon_sdk.biz.control.shared_session import SharedSessionSelection
 from .shared_sessions import register_shared_session_routes
-from .role_groups import register_role_group_routes
 from ..app.control_plane.role_groups import ControllerRoleGroupStart, ControllerRoleGroupQuery
-from eidolon_sdk.biz.control.coordination import CoordinationSelection, CoordinationMember
 from .device_conversations import register_device_conversation_routes
 from ..app.control_plane.device_conversations import ControllerConversationStart, ControllerConversationQuery
 from eidolon_sdk.biz.control.device_conversation import DeviceConversationSelection
@@ -58,6 +56,8 @@ from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
 from .management.smarthome import register_smarthome_routes
+from .management.teams import register_team_routes
+from .management.voice_preview import register_voice_preview_routes
 from .management.router import (
     ControllerDirectoryPort,
     ManagementBackendError,
@@ -1172,28 +1172,31 @@ def create_app(
         the management router phrases it and does not merge it.
         """
 
-        async def role_group(self, *, session, action, payload):
+        async def resolve_team(self, *, session, configuration, session_id):
+            inventory = await self.list_devices(session=session)
+            held = {item.device_id: item for item in inventory.devices}
+            ids = [configuration.input_device_id, *(m.output_device_id for m in configuration.members)]
+            if any(d not in held for d in ids):
+                raise ManagementBackendError("Selected device is not owned and mounted", status_code=403,
+                    refusal=refusal_for_status(403, "Selected device is not owned and mounted"))
+            try:
+                return configuration.resolve(session_id=session_id,
+                    devices={key: held[key].claim.device_ref for key in ids},
+                    attachments={key: held[key].body.answering_companion_id for key in ids})
+            except (ValueError, AttributeError) as exc:
+                raise ManagementBackendError("Team device binding changed", status_code=409,
+                    refusal=refusal_for_status(409, "Team device binding changed")) from exc
+
+        async def role_group(self, *, session, action, payload, selection=None):
             domain, owner = _admission_scope(session.owner_id)
             authority = dict(contract_version="1", business_owner_id=owner,
                 actor=admission_actor(controller_id=session.controller_id, owner_domain_id=domain))
-            if action == "open":
-                inventory = await self.list_devices(session=session)
-                held = {item.device_id: item for item in inventory.devices}
-                ids = [payload.input_device_id, *payload.output_device_ids]
-                if any(d not in held for d in ids):
-                    raise ManagementBackendError("Selected device is not owned and mounted", status_code=403,
-                        refusal=refusal_for_status(403, "Selected device is not owned and mounted"))
-                try:
-                    roles = {item.output_device_id: item.role for item in payload.roles}
-                    selection = CoordinationSelection(scenario="ip_role_group", session_id=payload.session_id,
-                        input_device=held[payload.input_device_id].claim.device_ref,
-                        members=tuple(CoordinationMember(companion_id=held[d].body.answering_companion_id,
-                            output_device=held[d].claim.device_ref, role=roles.get(d)) for d in payload.output_device_ids),
-                        goal=payload.goal, reply_budget=payload.reply_budget)
-                except (ValueError, AttributeError) as exc:
-                    raise ManagementBackendError("Selected outputs require distinct attached Companions", status_code=409,
-                        refusal=refusal_for_status(409, "Selected outputs require distinct attached Companions")) from exc
+            if action == "open" and selection is not None:
+                if selection.session_id != payload.session_id:
+                    raise ValueError("TEAM_SNAPSHOT_IDENTITY_MISMATCH")
                 command = ControllerRoleGroupStart(**authority, selection=selection)
+            elif action == "open":
+                raise ValueError("SAVED_TEAM_SNAPSHOT_REQUIRED")
             else:
                 command = ControllerRoleGroupQuery(**authority, session_id=payload.session_id)
             try:
@@ -1476,11 +1479,19 @@ def create_app(
         devices=owner_device_port or _Devices(),
         authenticated_controller_session=management_device_session,
     )
+    async def management_host_id():
+        descriptor = await request_bootstrap("descriptor")
+        identity = descriptor.get("host_id")
+        if not isinstance(identity, str) or not identity:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Host identity unavailable")
+        return identity
+
+    register_voice_preview_routes(app, backend=management, authenticated_owner=management_owner)
+    register_team_routes(app, backend=management, authenticated_owner=management_owner,
+                         authenticated_host=management_host_id, authenticate_session=management_device_session,
+                         devices=owner_device_port or _Devices())
     register_smarthome_routes(
         app, backend=management, authenticated_owner=management_owner
-    )
-    register_role_group_routes(
-        app, authenticate=management_device_session, devices=owner_device_port or _Devices(),
     )
     register_device_conversation_routes(
         app, authenticate=management_device_session, devices=owner_device_port or _Devices(),

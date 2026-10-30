@@ -764,6 +764,39 @@ class DataWorkspaceAuthorityClient:
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._token}"}
 
+    async def team_starts(self, owner_id, *, host_id, team_id, action,
+                          payload=None, session_id=None, include_closed=False, after="", limit=50):
+        from eidolon_sdk.biz.control.teams import TeamRevision, TeamDeleted, TeamStarts, TeamStartSnapshot
+        if action not in {"reserve", "list", "get", "snapshot", "confirmed-closed"}:
+            raise ValueError("invalid start operation")
+        suffix = ""
+        if action in {"get", "snapshot", "confirmed-closed"}:
+            suffix = "/" + quote(session_id, safe="")
+            if action == "confirmed-closed":
+                suffix += "/confirmed-closed"
+        response = await _request("data", self._client,
+            "GET" if action in {"list", "get"} else "PUT" if action == "snapshot" else "POST",
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/teams/{quote(team_id, safe='')}/starts{suffix}",
+            timeout=self._timeout, headers=self._headers, json=payload,
+            params={"host_id": host_id,
+                **({"include_closed": str(include_closed).lower(), "after": after, "limit": str(limit)} if action == "list" else {})})
+        return _parse("data", response, {"reserve": TeamRevision,
+            "list": TeamStarts, "get": TeamStartSnapshot, "snapshot": TeamStartSnapshot, "confirmed-closed": TeamDeleted}[action])
+
+    async def teams(self, owner_id: str, *, host_id: str, method: str = "GET",
+                    team_id: str | None = None, payload: dict | None = None,
+                    after: str = "", limit: int = 50, expected_revision: int | None = None):
+        from eidolon_sdk.biz.control.teams import TeamPage, TeamRevision, TeamDeleted
+        suffix = "/" + quote(team_id, safe="") if team_id is not None else ""
+        response = await _request("data", self._client, method,
+            f"{await self._base_url()}/api/workspace-authority/v1/owners/"
+            f"{quote(owner_id, safe='')}/teams{suffix}", timeout=self._timeout,
+            headers=self._headers, json=payload,
+            params={"host_id": host_id, "after": after, "limit": str(limit),
+             **({"expected_revision": str(expected_revision)} if expected_revision is not None else {})})
+        return _parse("data", response, TeamDeleted if method == "DELETE" else TeamRevision if team_id is not None else TeamPage)
+
     async def smarthome_registry(
         self,
         owner_id: str,

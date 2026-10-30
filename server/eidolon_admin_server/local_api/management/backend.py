@@ -92,6 +92,31 @@ class AdminManagementClient:
         self._client = client
         self._timeout = timeout_seconds
 
+    async def voice_preview(self, *, owner_id, payload=None, key=None):
+        suffix = "/" + quote(key, safe="") + "/audio" if key is not None else ""
+        return await self._call("GET" if key else "POST",
+            "/api/internal/v1/management/voice-preview" + suffix,
+            {"owner_id": owner_id}, payload)
+
+    async def team_starts(self, *, owner_id, host_id, team_id, action,
+                          payload=None, session_id=None, include_closed=False, after="", limit=50):
+        if action not in {"reserve", "list", "get", "snapshot", "confirmed-closed"}:
+            raise ValueError("invalid start operation")
+        return await self._call("POST",
+            f"/api/internal/v1/management/teams/{quote(team_id, safe='')}/starts/{action}",
+            {"owner_id": owner_id, "host_id": host_id,
+             **({"session_id": session_id} if session_id is not None else {}),
+             **({"include_closed": str(include_closed).lower(), "after": after, "limit": str(limit)} if action == "list" else {})}, payload)
+
+    async def teams(self, *, owner_id: str, host_id: str, method: str = "GET",
+                    team_id: str | None = None, payload: dict | None = None,
+                    after: str = "", limit: int = 50, expected_revision: int | None = None) -> dict:
+        suffix = "/" + quote(team_id, safe="") if team_id is not None else ""
+        return await self._call(method, f"/api/internal/v1/management/teams{suffix}",
+            {"owner_id": owner_id, "host_id": host_id, "after": after, "limit": str(limit),
+             **({"expected_revision": str(expected_revision)} if expected_revision is not None else {})},
+            payload)
+
     async def smarthome_registry(
         self,
         *,

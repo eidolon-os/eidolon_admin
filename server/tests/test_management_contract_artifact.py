@@ -113,6 +113,9 @@ ALLOWED_QUERY_PARAMETERS = {
     # A position the Host issued. Reading it would make its page boundary part
     # of the client.
     "cursor",
+    # Team asset keyset cursor, scoped by the authenticated Owner and Host.
+    "include_closed",  # explicit bounded Team run history
+    "after",
     # A change the Host named when it accepted a forget, handed back to ask
     # where that change got to. Issued like ``cursor``, and like every other
     # parameter here it cannot reach another Owner's memory: the space is
