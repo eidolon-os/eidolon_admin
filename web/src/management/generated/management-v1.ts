@@ -67,6 +67,37 @@ export interface AreaWrite {
   expected_revision: number
 }
 
+export interface CalibrationCrop {
+  speech_ms: number
+  vector: Array<number>
+}
+
+export interface ChannelCalibrationBatch {
+  batch_id: string
+  channel: string
+  first_captured_at: number
+  last_captured_at: number
+  samples: number
+}
+
+export interface ChannelCalibrationCollection {
+  batches?: Array<ChannelCalibrationBatch>
+}
+
+export interface ChannelCalibrationSample {
+  batch_id: string
+  captured_at: number
+  channel: string
+  sample: EnrollmentSample
+  sample_id: string
+  source?: "public_replay"
+}
+
+export interface ChannelCalibrationUpload {
+  batch_id: string
+  pcm_base64: string
+}
+
 export interface Command {
   command: string
   device_id: string
@@ -352,6 +383,16 @@ export interface EnrollmentCreate {
   operation_id: string
   person_id: string
   profile_id?: string | null
+}
+
+export interface EnrollmentSample {
+  crops?: Array<CalibrationCrop>
+  model_id: string
+  preprocessing_version: string
+  quality?: Record<string, number>
+  speech_ms: number
+  vector: Array<number>
+  weights_hash: string
 }
 
 export interface EnrollmentView {
@@ -1438,6 +1479,9 @@ export interface ManagementResponses {
   'POST /api/management/v1/voiceprints/captures': VoiceCaptureSession
   'DELETE /api/management/v1/voiceprints/captures/{capture_id}': unknown
   'POST /api/management/v1/voiceprints/captures/{capture_id}/finish': VoiceAudioRequest
+  'GET /api/management/v1/voiceprints/channel-calibration': ChannelCalibrationCollection
+  'DELETE /api/management/v1/voiceprints/channel-calibration/batches/{batch_id}': ChannelCalibrationCollection
+  'POST /api/management/v1/voiceprints/channel-calibration/samples': ChannelCalibrationSample
   'POST /api/management/v1/voiceprints/enrollments': EnrollmentView
   'DELETE /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView
   'GET /api/management/v1/voiceprints/enrollments/{enrollment_id}': EnrollmentView
