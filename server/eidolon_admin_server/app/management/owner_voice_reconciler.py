@@ -47,26 +47,30 @@ class OwnerVoiceReconciler:
     async def tick(self) -> None:
         now = self._clock()
         await self._step(self.advance)
+        # A round skipped because Data or the voice service was not up yet is
+        # asked again on the next tick, not ten minutes later: a Host start,
+        # which every model change is, would otherwise leave custom voices
+        # waiting that long to be made again.
         if now >= self._next_upkeep:
-            self._next_upkeep = now + UPKEEP_EVERY_S
-            await self._step(self.expire_drafts)
-            await self._step(self.bury)
-            await self._step(self.re_enroll)
+            ran = [await self._step(s) for s in (self.expire_drafts, self.bury, self.re_enroll)]
+            self._next_upkeep = now + (UPKEEP_EVERY_S if all(ran) else PENDING_EVERY_S)
         if now >= self._next_sweep:
-            self._next_sweep = now + SWEEP_EVERY_S
-            await self._step(self.sweep)
+            ran = await self._step(self.sweep)
+            self._next_sweep = now + (SWEEP_EVERY_S if ran else PENDING_EVERY_S)
 
     @staticmethod
-    async def _step(step) -> None:
-        # One failing step must not stop the others.
+    async def _step(step) -> bool:
+        """Whether the step got to run. One failing step must not stop the others."""
         try:
             await step()
         except AuthorityFailure as exc:
             # Data or the voice service not answering — at Host start Admin is up
             # before them. A known state; the next round asks again.
             logger.warning("owner voice upkeep %s skipped: %s", step.__name__, exc)
+            return False
         except Exception:
             logger.warning("owner voice upkeep %s failed", step.__name__, exc_info=True)
+        return True
 
     async def advance(self) -> None:
         for voice in await self._data.speech_voice_call("GET", "/owner-voices/pending", list[OwnerVoice]):

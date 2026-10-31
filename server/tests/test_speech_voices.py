@@ -11,11 +11,17 @@ import httpx
 import pytest
 from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
 from eidolon_admin_server.app.management.owner_voice_reconciler import (
+    PENDING_EVERY_S,
     OwnerVoiceReconciler,
 )
 from eidolon_admin_server.app.management.speech_voices import (
     ChannelVoices,
     SpeechVoices,
+)
+from eidolon_admin_server.local_api.management.speech_voices import (
+    _catalog_view,
+    _companion_view,
+    _owner_voice_view,
 )
 from eidolon_sdk.biz.speech_voice import (
     CompanionSpeechVoice,
@@ -176,8 +182,10 @@ class Channel:
 
 
 def _binding(voice_id: str, status: str) -> dict:
+    # Made just now, as the provider's are: review time is measured against the
+    # wall clock, and a fixed date turned every review into a timeout once it passed.
     return {"provider": "bailian", "model": DEFAULT.model, "provider_voice_id": voice_id, "status": status,
-            "created_at": NOW.isoformat(), "last_checked_at": "2000-01-01T00:00:00Z"}
+            "created_at": datetime.now(UTC).isoformat(), "last_checked_at": "2000-01-01T00:00:00Z"}
 
 
 @pytest.fixture
@@ -303,6 +311,26 @@ async def test_an_authority_not_up_yet_is_one_line_and_the_other_steps_still_run
     assert "unreachable" in skipped[0].getMessage()
 
 
+async def test_upkeep_skipped_at_host_start_is_asked_again_on_the_next_tick(world) -> None:
+    """A model change always comes with a Host start; custom voices must not wait ten minutes."""
+    clock = [1000.0]
+    reconciler = OwnerVoiceReconciler(data=world.data, channel=world.client, clock=lambda: clock[0])
+    calls = []
+
+    async def re_enroll():
+        calls.append(clock[0])
+        if len(calls) == 1:
+            raise AuthorityFailure("channel", "unavailable", "主机的语音服务暂时连不上", 503)
+
+    reconciler.re_enroll = re_enroll
+    await reconciler.tick()
+    clock[0] += PENDING_EVERY_S
+    await reconciler.tick()
+    clock[0] += PENDING_EVERY_S
+    await reconciler.tick()  # It ran; the next round is the usual one.
+    assert calls == [1000.0, 1000.0 + PENDING_EVERY_S]
+
+
 async def test_after_a_model_change_used_voices_are_cloned_again_from_their_reference(world) -> None:
     consent = OwnerVoiceConsent(method="spoken", subject="self", consent_version="v", accepted_at=NOW)
     voice = await world.voices.clone("owner-1", operation_id="op-clone-5", name="我", consent=consent,
@@ -326,12 +354,6 @@ async def test_a_review_that_never_ends_is_marked_failed(world) -> None:
 
 
 # ----------------------------------------------------------------------------- the phone
-
-from eidolon_admin_server.local_api.management.speech_voices import (
-    _catalog_view,
-    _companion_view,
-    _owner_voice_view,
-)
 
 
 def test_what_a_phone_sees_carries_no_provider_reference() -> None:
