@@ -111,8 +111,6 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
             recording_sha256=body["recording_sha256"],
             template=sample,
             trial=sample,
-            registration_min_similarity=1,
-            trial_min_similarity=1,
         )
         return httpx.Response(200, json=result.model_dump())
 
@@ -279,7 +277,7 @@ async def test_registration_windows_travel_from_extraction_to_evaluation_and_sto
             evidence_digest=enrollment_evidence_digest(
                 {k: EnrollmentSample.model_validate(v) for k, v in body["samples"].items()}),
             recording_sha256=body["recording_sha256"], template=sample, trial=sample,
-            registration_min_similarity=1, trial_min_similarity=1, calibration=calibration)
+            calibration=calibration)
         return httpx.Response(200, json=result.model_dump(mode="json"))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as upstream:
