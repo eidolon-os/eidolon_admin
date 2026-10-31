@@ -17,7 +17,7 @@ from eidolon_sdk.biz.voiceprint import (
     SpeakerProfileView,
     VoiceAudioRequest,
     VoiceCaptureSession,
-    ExtractedSample,
+    EnrollmentSample,
     EnrollmentCompletion,
     EnrollmentEvidence,
     EnrollmentEvaluation,
@@ -80,7 +80,8 @@ async def channel_call(request, path, model, payload=None):
 
 
 async def extract(request, payload):
-    return await channel_call(request, "extract", ExtractedSample, payload)
+    # Registration extraction also returns windows of the sample (calibration).
+    return await channel_call(request, "extract", EnrollmentSample, payload)
 
 
 async def readiness_value(request):

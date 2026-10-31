@@ -229,3 +229,79 @@ async def test_model_outage_preserves_management_but_prevents_recording_and_admi
         ).status_code == 404
         assert (await h.get(prefix + "/readiness?owner_id=other")).status_code == 404
         assert all(method == "GET" for method, _ in calls)
+
+
+async def test_registration_windows_travel_from_extraction_to_evaluation_and_storage(monkeypatch):
+    """Calibration (design §3.3): Admin relays windows; it never drops or makes them."""
+    import base64
+    import json
+    from types import SimpleNamespace
+    from eidolon_admin_server.app.management.voiceprints_router import router
+    from eidolon_sdk.biz.voiceprint import (
+        CalibrationCrop, EnrollmentEvaluation, EnrollmentEvidence, EnrollmentSample,
+        EnrollmentView, GenuineScore, SpeakerProfileView, TemplateCalibration,
+        VoiceprintCollection, enrollment_evidence_digest,
+    )
+
+    monkeypatch.setenv("VOICEPRINT_TEST_CHANNEL_TOKEN", "channel-secret")
+    window = CalibrationCrop(speech_ms=900, vector=[0.6, 0.8])
+    sample = EnrollmentSample(model_id="test", weights_hash="a" * 64, preprocessing_version="v1",
+                              vector=[1, 0], speech_ms=4000, crops=[window])
+    e = EnrollmentView(enrollment_id="e", profile_id="p", state="collecting",
+                       accepted_samples=0, expires_at=9999999999)
+    profile = SpeakerProfileView(person_id="person", profile_id="p", display_name="我",
+                                 revision=1, enrollment_id="e", recording_available=True)
+    calibration = TemplateCalibration(crops=[window], genuine=[GenuineScore(speech_ms=900, similarity=0.7)])
+    puts, evaluated, stored = [], [], []
+
+    class Data:
+        async def voiceprint_call(self, method, owner, suffix, model, payload=None):
+            if method == "PUT":
+                puts.append(payload)
+                return e
+            if suffix.endswith("/complete"):
+                stored.append(payload)
+                return profile
+            if suffix.endswith("/evidence"):
+                return EnrollmentEvidence(enrollment=e, samples={str(i): p for i, p in enumerate(puts)})
+            if not suffix:
+                return VoiceprintCollection(profiles=[profile])
+            return e
+
+    def handle(request):
+        if request.url.path.endswith("/readiness"):
+            return httpx.Response(200, json={"state": "ready", "extraction_ready": True})
+        if request.url.path.endswith("/extract"):
+            return httpx.Response(200, json=sample.model_dump(mode="json"))
+        body = json.loads(request.content)
+        evaluated.append(body)
+        result = EnrollmentEvaluation(
+            evidence_digest=enrollment_evidence_digest(
+                {k: EnrollmentSample.model_validate(v) for k, v in body["samples"].items()}),
+            recording_sha256=body["recording_sha256"], template=sample, trial=sample,
+            registration_min_similarity=1, trial_min_similarity=1, calibration=calibration)
+        return httpx.Response(200, json=result.model_dump(mode="json"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as upstream:
+        app = FastAPI()
+        app.include_router(router)
+        app.state.settings = SimpleNamespace(local_api_service_token="local-secret")
+        app.state.control_plane = SimpleNamespace(data=Data())
+        app.state.http_client = upstream
+        app.state.registry = {"channel-provider": SimpleNamespace(
+            base_url="http://channel", upstream_prefix="",
+            auth=SimpleNamespace(type="bearer", token_env="VOICEPRINT_TEST_CHANNEL_TOKEN"))}
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://admin",
+                                     headers={"Authorization": "Bearer local-secret"}) as h:
+            body = {"pcm_base64": base64.b64encode(b"\x01\x00" * 32000).decode()}
+            base = "/internal/v1/management/voiceprints/enrollments/e"
+            for i in range(3):
+                r = await h.put(f"{base}/samples/{i}?owner_id=owner", json=body)
+                assert r.status_code == 200, r.text
+            r = await h.post(f"{base}/complete?owner_id=owner", json=body)
+            assert r.status_code == 200, r.text
+    assert all(p["crops"] == [window.model_dump(mode="json")] for p in puts)
+    assert evaluated[0]["trial"]["crops"] == [window.model_dump(mode="json")]
+    assert all(s["crops"] for s in evaluated[0]["samples"].values())
+    assert stored[0]["evaluation"]["calibration"] == calibration.model_dump(mode="json")
+    assert "crops" not in stored[0]["evaluation"]["template"]
