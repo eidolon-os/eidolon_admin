@@ -11,9 +11,6 @@ from eidolon_sdk.biz.voiceprint import (
     VoiceCaptureSession,
     SpeakerExtractionReadiness,
     VoiceMatchTestResult,
-    ChannelCalibrationUpload,
-    ChannelCalibrationSample,
-    ChannelCalibrationCollection,
 )
 
 from .backend import ManagementBackendError
@@ -187,40 +184,3 @@ def register_voiceprint_routes(router, backend, authenticated_owner, refused):
                              authorization: str | None = Header(default=None)):
         response.headers["Cache-Control"] = "no-store"
         return await invoke(authorization, "/captures/" + quote(capture_id, safe=""), "DELETE", None)
-
-    @router.post(
-        "/voiceprints/channel-calibration/samples",
-        response_model=ChannelCalibrationSample,
-    )
-    async def channel_calibration_sample(
-        payload: ChannelCalibrationUpload,
-        authorization: str | None = Header(default=None),
-    ):
-        return await invoke(
-            authorization,
-            "/channel-calibration/samples",
-            "POST",
-            payload.model_dump(mode="json"),
-        )
-
-    @router.get(
-        "/voiceprints/channel-calibration",
-        response_model=ChannelCalibrationCollection,
-    )
-    async def channel_calibration(authorization: str | None = Header(default=None)):
-        return await invoke(authorization, "/channel-calibration", "GET", None)
-
-    @router.delete(
-        "/voiceprints/channel-calibration/batches/{batch_id}",
-        response_model=ChannelCalibrationCollection,
-    )
-    async def delete_channel_calibration_batch(
-        batch_id: str,
-        authorization: str | None = Header(default=None),
-    ):
-        return await invoke(
-            authorization,
-            f"/channel-calibration/batches/{quote(batch_id, safe='')}",
-            "DELETE",
-            None,
-        )

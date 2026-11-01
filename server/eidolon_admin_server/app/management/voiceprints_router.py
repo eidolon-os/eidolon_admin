@@ -3,7 +3,6 @@
 import base64
 import binascii
 import hashlib
-import time
 from time import perf_counter
 
 import httpx
@@ -27,12 +26,7 @@ from eidolon_sdk.biz.voiceprint import (
     SpeakerComparisonRequest,
     SpeakerComparisonResult,
     VoiceMatchTestResult,
-    SpeakerExtractionRequest,
-    ChannelCalibrationUpload,
-    ChannelCalibrationSample,
-    ChannelCalibrationCollection,
 )
-from eidolon_sdk.biz.speaker_identity import channel_class
 
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 from eidolon_admin_server.app.gateway.proxy import upstream_auth_headers
@@ -317,70 +311,6 @@ async def match_test(
         audio_ms=len(base64.b64decode(payload.pcm_base64, validate=True)) // 32,
         extraction_ms=extraction_ms,
         elapsed_ms=(perf_counter() - started) * 1000,
-    )
-
-
-#: Calibration recordings are captured by the phone app, the only device that
-#: can join a capture room, so they all belong to the phone channel (§8.2, 1c-a).
-CALIBRATION_CHANNEL = channel_class("eidolon-mobile-android")
-
-
-@router.post(
-    "/voiceprints/channel-calibration/samples",
-    response_model=ChannelCalibrationSample,
-)
-async def channel_calibration_sample(
-    request: Request, owner_id: str, payload: ChannelCalibrationUpload
-):
-    """A replayed public speaker, extracted like a registration sample.
-
-    Only the embedding and its windows reach Data; the audio is dropped here.
-    The time is taken on receipt, before extraction, so it stays close to the
-    end of the recording the phone just finished.
-    """
-    captured_at = time.time()
-    data = request.app.state.control_plane.data
-    await data.voiceprint_call("GET", owner_id, "", VoiceprintCollection)
-    sample = await extract(
-        request,
-        SpeakerExtractionRequest(pcm_base64=payload.pcm_base64, purpose="enrollment"),
-    )
-    return await data.voiceprint_call(
-        "POST",
-        owner_id,
-        "/channel-calibration/samples",
-        ChannelCalibrationSample,
-        {
-            "channel": CALIBRATION_CHANNEL,
-            "batch_id": payload.batch_id,
-            "captured_at": captured_at,
-            "sample": sample.model_dump(mode="json"),
-        },
-    )
-
-
-@router.get(
-    "/voiceprints/channel-calibration",
-    response_model=ChannelCalibrationCollection,
-)
-async def channel_calibration(request: Request, owner_id: str):
-    return await request.app.state.control_plane.data.voiceprint_call(
-        "GET", owner_id, "/channel-calibration", ChannelCalibrationCollection
-    )
-
-
-@router.delete(
-    "/voiceprints/channel-calibration/batches/{batch_id}",
-    response_model=ChannelCalibrationCollection,
-)
-async def delete_channel_calibration_batch(
-    request: Request, owner_id: str, batch_id: str
-):
-    return await request.app.state.control_plane.data.voiceprint_call(
-        "DELETE",
-        owner_id,
-        f"/channel-calibration/batches/{quote(batch_id, safe='')}",
-        ChannelCalibrationCollection,
     )
 
 
