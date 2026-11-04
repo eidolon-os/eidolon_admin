@@ -19,7 +19,6 @@ from cryptography.hazmat.primitives.serialization import load_der_public_key
 
 from . import pake
 from .domain import (
-    is_usable_setup_code,
     BootstrapOperation,
     BootstrapOperationState,
     BootstrapOperationType,
@@ -191,9 +190,9 @@ class CommissioningService:
         store: BootstrapStateStore,
         network: NetworkProvisioning,
         clock: Callable[[], datetime] = _now,
+        host_context: Callable[[], dict[str, str]],
         on_claimed: Callable[[], None] | None = None,
         budget: GuessBudget | None = None,
-        host_context: Callable[[], dict[str, str]] | None = None,
         entropy: Callable[[int], bytes] = secrets.token_bytes,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -205,7 +204,8 @@ class CommissioningService:
         #: composition always passes one.
         self._budget = budget
         #: The Host's long-term and TLS public keys, which the PAKE binds into
-        #: its transcript. None means this composition offers no PAKE.
+        #: its transcript. Required: the PAKE is the only way a Setup code is
+        #: accepted, so a service without them could authorize no one.
         self._host_context = host_context
         self._entropy = entropy
         self._monotonic = monotonic
@@ -218,45 +218,6 @@ class CommissioningService:
         #: only ever needed a hash.
         self._on_claimed = on_claimed
 
-    def authorize(
-        self,
-        *,
-        session_id: str,
-        secret: str,
-        transport: str = "ble",
-        source: str | None = None,
-    ) -> CommissioningAuthorization:
-        """The legacy path: the code itself, compared here. Paced like a PAKE
-        start, so a Host is protected as soon as it is upgraded, whatever the
-        phone talking to it."""
-
-        if not isinstance(session_id, str) or not session_id:
-            raise CommissioningRequestRejected(
-                "commissioning_denied", "Commissioning session is unavailable"
-            )
-        if not isinstance(secret, str) or not is_usable_setup_code(secret):
-            raise CommissioningRequestRejected(
-                "commissioning_denied", "Commissioning session is unavailable"
-            )
-        now = _timestamp(self._clock())
-        if self._budget is not None:
-            self._open_secret_hash(session_id, now)
-            self._spend_guess(session_id, transport, source)
-        secret_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
-        try:
-            self._store.authorize_commissioning_session(
-                session_id=session_id,
-                secret_hash=secret_hash,
-                now=now,
-            )
-        except BootstrapStateConflict as exc:
-            if self._budget is not None:
-                self._budget.failed(window=session_id, transport=transport)
-            raise CommissioningRequestRejected(
-                "commissioning_denied", "Commissioning session is unavailable"
-            ) from exc
-        return CommissioningAuthorization(session_id, secret_hash)
-
     def pake_start(
         self,
         payload: dict[str, Any],
@@ -268,10 +229,6 @@ class CommissioningService:
         will be bound to. Spends one guess, because this is where a guess is
         committed to — the code is fixed by the A the phone sends next."""
 
-        if self._host_context is None:
-            raise CommissioningRequestRejected(
-                "unknown_operation", "Unknown commissioning operation"
-            )
         if payload.get("suite") != pake.SUITE:
             raise CommissioningRequestRejected(
                 "unsupported_suite", f"This Host offers {pake.SUITE} only"

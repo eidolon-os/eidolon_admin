@@ -55,7 +55,6 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..bootstrap.control import BootstrapControlClient, BootstrapControlError
-from ..bootstrap.domain import SETUP_CODE_DIGITS
 from .auth import LocalControllerSessionStore
 from .management.backend import AdminManagementClient
 from .management.smarthome import register_smarthome_routes
@@ -217,20 +216,6 @@ class LanControllerClaim(BaseModel):
     public_key: str = Field(pattern=r"^[A-Za-z0-9_-]{32,1024}$")
     display_name: str = Field(min_length=1, max_length=80)
     platform: Literal["android", "ios"]
-
-
-class LanCommissioningClaimRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    contract_version: Literal["1"]
-    commissioning_id: str = Field(
-        pattern=(
-            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-        )
-    )
-    setup_code: str = Field(pattern=rf"^[0-9]{{{SETUP_CODE_DIGITS}}}$")
-    controller: LanControllerClaim
 
 
 _COMMISSIONING_ID_PATTERN = (
@@ -452,22 +437,8 @@ def create_app(
             lan_commissioning=True,
         )
 
-    @app.put("/api/local/v1/commissioning/claim")
-    async def lan_commissioning_claim(
-        request: LanCommissioningClaimRequest,
-        http_request: Request,
-    ) -> dict:
-        return await request_bootstrap(
-            "commissioning.lan.claim",
-            lan_commissioning=True,
-            commissioning_id=request.commissioning_id,
-            setup_code=request.setup_code,
-            controller=request.controller.model_dump(),
-            source=_client_source(http_request),
-        )
-
-    # The Setup code proven instead of sent (ADR-0008). A Host without these
-    # answers 404, which is how a phone knows to fall back to PUT /claim.
+    # The Setup code is proven, never sent (ADR-0008): no route here takes
+    # the code itself. PUT /commissioning/claim, which did, is gone.
     @app.post("/api/local/v1/commissioning/pake/start")
     async def lan_commissioning_pake_start(
         request: LanPakeStartRequest,

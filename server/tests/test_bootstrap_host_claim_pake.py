@@ -11,7 +11,6 @@ the person standing next to the Host.
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import json
 import secrets
@@ -22,9 +21,7 @@ from pathlib import Path
 import httpx
 import pytest
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
@@ -57,6 +54,14 @@ from eidolon_admin_server.bootstrap.identity import HostIdentityManager
 from eidolon_admin_server.bootstrap.service import BootstrapService
 from eidolon_admin_server.local_api.app import create_app
 from eidolon_admin_server.local_api.config import LocalApiSettings
+from tests.setup_code_claim_support import (
+    b64,
+    claim_over_lan,
+    controller_claim,
+    phone_proof,
+    prove_over_ble,
+    unb64,
+)
 
 ADMIN_ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ADMIN_ROOT / "contracts/bootstrap/v1"
@@ -65,62 +70,12 @@ GOLDEN = json.loads(
 )
 
 
-def _b64(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def _unb64(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
 def _pake_schema(name: str) -> Draft202012Validator:
     schema = json.loads((CONTRACTS / "host-claim-pake.schema.json").read_text())
     return Draft202012Validator(
         {"$ref": f"{schema['$id']}#/$defs/{name}"},
         registry=Registry().with_resource(schema["$id"], Resource.from_contents(schema)),
         format_checker=FormatChecker(),
-    )
-
-
-def _controller() -> dict[str, str]:
-    der = (
-        ec.generate_private_key(ec.SECP256R1())
-        .public_key()
-        .public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-    )
-    return {
-        "controller_id": f"ectrl-{hashlib.sha256(der).hexdigest()[:20]}",
-        "public_key": _b64(der),
-        "display_name": "Bench tablet",
-        "platform": "android",
-    }
-
-
-def _phone(
-    start: dict, *, code: str, overrides: dict | None = None
-) -> tuple[dict[str, str], str]:
-    """The phone's half, written against the module's primitives only: the
-    confirm payload, and the server proof an honest Host must answer with."""
-
-    group = pake.GROUP
-    context = {**start["context"], **(overrides or {})}
-    salt = _unb64(start["salt"])
-    B = group.public_value(_unb64(start["B"]))
-    a = int.from_bytes(secrets.token_bytes(32), "big")
-    A = group.client_public(a)
-    u = group.scrambler(A, B)
-    x = group.private_key(context["commissioning_id"], pake.password_for_code(code), salt)
-    K = pake.session_key(group.client_secret(B, x, a, u))
-    transcript = pake.transcript_hash(pake.context_bytes(context), salt, A, B)
-    keys = pake.confirmation_keys(K, transcript)
-    proof = pake.client_proof(keys, transcript)
-    return (
-        {
-            "handshake_id": start["handshake_id"],
-            "A": _b64(group.pad(A)),
-            "client_proof": _b64(proof),
-        },
-        _b64(pake.server_proof(keys, transcript, proof)),
     )
 
 
@@ -216,7 +171,7 @@ def test_the_confirmation_keys_are_rfc5869_hkdf() -> None:
         assert reference.hex() == expected
 
 
-def test_the_golden_host_half_answers_the_golden_phone() -> None:
+def test_the_golden_host_half_answers_the_goldenphone_proof() -> None:
     handshake = GOLDEN["handshake"]
     exchange = pake.ServerExchange.begin(
         identity=handshake["identity"],
@@ -250,7 +205,7 @@ def test_the_golden_host_half_answers_the_golden_phone() -> None:
 @pytest.mark.asyncio
 async def test_a_phone_with_the_code_claims_without_sending_it(host) -> None:
     bootstrap, store, setup = host
-    controller = _controller()
+    controller = controller_claim()
     session = CommissioningProtocolSession(bootstrap.commissioning)
 
     start = await _ok(session, "pake.start", _start_payload(setup, controller))
@@ -263,11 +218,11 @@ async def test_a_phone_with_the_code_claims_without_sending_it(host) -> None:
     assert start["context"]["reset_epoch"] == endpoint["reset_epoch"]
     assert start["context"]["commissioning_id"] == setup["commissioning_id"]
     assert start["context"]["transport"] == "ble"
-    assert start["context"]["controller_public_key_sha256"] == _b64(
-        hashlib.sha256(_unb64(controller["public_key"])).digest()
+    assert start["context"]["controller_public_key_sha256"] == b64(
+        hashlib.sha256(unb64(controller["public_key"])).digest()
     )
 
-    confirm, expected_server_proof = _phone(start, code=setup["setup_code"])
+    confirm, expected_server_proof = phone_proof(start, code=setup["setup_code"])
     confirmed = await _ok(session, "pake.confirm", confirm)
     _pake_schema("confirm_result").validate(confirmed)
     assert confirmed["server_proof"] == expected_server_proof
@@ -281,10 +236,10 @@ async def test_a_phone_with_the_code_claims_without_sending_it(host) -> None:
 @pytest.mark.asyncio
 async def test_a_claim_must_present_the_key_the_code_was_proven_for(host) -> None:
     bootstrap, store, setup = host
-    proven, other = _controller(), _controller()
+    proven, other = controller_claim(), controller_claim()
     session = CommissioningProtocolSession(bootstrap.commissioning)
     start = await _ok(session, "pake.start", _start_payload(setup, proven))
-    confirm, _ = _phone(start, code=setup["setup_code"])
+    confirm, _ = phone_proof(start, code=setup["setup_code"])
     await _ok(session, "pake.confirm", confirm)
 
     error = await _refused(session, "claim.complete", other)
@@ -296,12 +251,12 @@ async def test_a_claim_must_present_the_key_the_code_was_proven_for(host) -> Non
 @pytest.mark.asyncio
 async def test_a_wrong_code_is_refused_and_the_window_stays_open(host) -> None:
     bootstrap, store, setup = host
-    controller = _controller()
+    controller = controller_claim()
     wrong = "00000012" if setup["setup_code"] != "00000012" else "00000013"
     session = CommissioningProtocolSession(bootstrap.commissioning)
 
     start = await _ok(session, "pake.start", _start_payload(setup, controller))
-    confirm, _ = _phone(start, code=wrong)
+    confirm, _ = phone_proof(start, code=wrong)
     error = await _refused(session, "pake.confirm", confirm)
     assert error == {
         "code": "commissioning_denied",
@@ -313,7 +268,7 @@ async def test_a_wrong_code_is_refused_and_the_window_stays_open(host) -> None:
     assert window.revoked_at is None
 
     start = await _ok(session, "pake.start", _start_payload(setup, controller))
-    confirm, _ = _phone(start, code=setup["setup_code"])
+    confirm, _ = phone_proof(start, code=setup["setup_code"])
     await _ok(session, "pake.confirm", confirm)
 
 
@@ -321,8 +276,8 @@ async def test_a_wrong_code_is_refused_and_the_window_stays_open(host) -> None:
 @pytest.mark.parametrize(
     "field, value",
     [
-        ("tls_spki_fingerprint", "sha256:" + _b64(b"\x01" * 32)),
-        ("host_public_key", _b64(b"\x02" * 32)),
+        ("tls_spki_fingerprint", "sha256:" + b64(b"\x01" * 32)),
+        ("host_public_key", b64(b"\x02" * 32)),
         ("reset_epoch", 99),
         ("transport", "lan"),
     ],
@@ -335,21 +290,21 @@ async def test_a_phone_that_pinned_something_else_cannot_finish(
     Host refuses it even though the code is right."""
 
     bootstrap, _, setup = host
-    controller = _controller()
+    controller = controller_claim()
     session = CommissioningProtocolSession(bootstrap.commissioning)
     start = await _ok(session, "pake.start", _start_payload(setup, controller))
-    confirm, _ = _phone(start, code=setup["setup_code"], overrides={field: value})
+    confirm, _ = phone_proof(start, code=setup["setup_code"], overrides={field: value})
     assert (await _refused(session, "pake.confirm", confirm))["code"] == "commissioning_denied"
 
 
 @pytest.mark.asyncio
 async def test_a_handshake_is_answered_once_and_only_on_its_own_link(host) -> None:
     bootstrap, _, setup = host
-    controller = _controller()
+    controller = controller_claim()
     first = CommissioningProtocolSession(bootstrap.commissioning)
     second = CommissioningProtocolSession(bootstrap.commissioning)
     start = await _ok(first, "pake.start", _start_payload(setup, controller))
-    confirm, _ = _phone(start, code=setup["setup_code"])
+    confirm, _ = phone_proof(start, code=setup["setup_code"])
 
     assert (await _refused(second, "pake.confirm", confirm))["code"] == "pake_handshake_unknown"
     # The link that started it has not lost it to the other link's attempt.
@@ -357,9 +312,9 @@ async def test_a_handshake_is_answered_once_and_only_on_its_own_link(host) -> No
 
     third = CommissioningProtocolSession(bootstrap.commissioning)
     start = await _ok(third, "pake.start", _start_payload(setup, controller))
-    wrong_then_right, _ = _phone(start, code="00000012")
+    wrong_then_right, _ = phone_proof(start, code="00000012")
     await _refused(third, "pake.confirm", wrong_then_right)
-    right, _ = _phone(start, code=setup["setup_code"])
+    right, _ = phone_proof(start, code=setup["setup_code"])
     error = await _refused(third, "pake.confirm", right)
     assert error == {
         "code": "pake_handshake_unknown",
@@ -376,13 +331,14 @@ async def test_a_proof_for_a_window_claimed_meanwhile_is_not_honoured(host) -> N
 
     bootstrap, store, setup = host
     commissioning = bootstrap.commissioning
-    start = commissioning.pake_start(_start_payload(setup, _controller()), transport="ble")
-    confirm, _ = _phone(start, code=setup["setup_code"])
+    start = commissioning.pake_start(_start_payload(setup, controller_claim()), transport="ble")
+    confirm, _ = phone_proof(start, code=setup["setup_code"])
 
-    bootstrap.claim_lan_controller(
+    claim_over_lan(
+        bootstrap,
         commissioning_id=setup["commissioning_id"],
-        setup_code=setup["setup_code"],
-        controller=_controller(),
+        code=setup["setup_code"],
+        controller=controller_claim(),
         source="192.168.1.20",
     )
 
@@ -396,9 +352,9 @@ async def test_a_proof_for_a_window_claimed_meanwhile_is_not_honoured(host) -> N
 
 
 @pytest.mark.asyncio
-async def test_pake_and_legacy_answer_the_same_way_to_an_unknown_suite_and_window(host) -> None:
+async def test_an_unknown_suite_and_an_unknown_window_are_named(host) -> None:
     bootstrap, _, setup = host
-    controller = _controller()
+    controller = controller_claim()
     session = CommissioningProtocolSession(bootstrap.commissioning)
     unknown_suite = {**_start_payload(setup, controller), "suite": "spake2plus-v1"}
     assert (await _refused(session, "pake.start", unknown_suite))["code"] == "unsupported_suite"
@@ -423,8 +379,8 @@ def test_a_half_finished_handshake_expires() -> None:
         store=store,
         network=InMemoryNetworkProvisioning(),
         host_context=lambda: {
-            "host_public_key": _b64(b"\x03" * 32),
-            "tls_spki_fingerprint": "sha256:" + _b64(b"\x04" * 32),
+            "host_public_key": b64(b"\x03" * 32),
+            "tls_spki_fingerprint": "sha256:" + b64(b"\x04" * 32),
         },
         monotonic=lambda: now[0],
     )
@@ -432,11 +388,11 @@ def test_a_half_finished_handshake_expires() -> None:
         {
             "suite": pake.SUITE,
             "commissioning_id": "3f6b8a62-0c1e-4b8e-9a51-2d7c4e9f1a03",
-            "controller_public_key": _controller()["public_key"],
+            "controller_public_key": controller_claim()["public_key"],
         },
         transport="ble",
     )
-    confirm, _ = _phone(start, code="40718256")
+    confirm, _ = phone_proof(start, code="40718256")
     now[0] += 30.0
     with pytest.raises(CommissioningRequestRejected) as refused:
         service.pake_confirm(confirm, transport="ble")
@@ -506,26 +462,25 @@ def test_a_new_window_starts_with_a_full_budget() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_host_paces_the_legacy_path_too(host) -> None:
-    """A Host is protected the day it is upgraded, whatever phone talks to it:
-    ``session.authenticate`` spends from the same budget, and running out is
-    a wait, never a closed window."""
+async def test_the_host_paces_guesses_and_never_closes_the_window(host) -> None:
+    """Running out is a wait on that transport, never a closed window, and the
+    LAN is a separate lane from the person standing at the Host."""
 
     bootstrap, store, setup = host
     wrong = "00000012" if setup["setup_code"] != "00000012" else "00000013"
+    controller = controller_claim()
     for _ in range(BLE_PACE.capacity):
-        session = CommissioningProtocolSession(bootstrap.commissioning)
-        error = await _refused(
-            session,
-            "session.authenticate",
-            {"commissioning_id": setup["commissioning_id"], "setup_code": wrong},
+        answer = await prove_over_ble(
+            CommissioningProtocolSession(bootstrap.commissioning),
+            commissioning_id=setup["commissioning_id"],
+            code=wrong,
+            controller=controller,
         )
-        assert error["code"] == "commissioning_denied"
-    session = CommissioningProtocolSession(bootstrap.commissioning)
+        assert answer["error"]["code"] == "commissioning_denied"
     error = await _refused(
-        session,
-        "session.authenticate",
-        {"commissioning_id": setup["commissioning_id"], "setup_code": setup["setup_code"]},
+        CommissioningProtocolSession(bootstrap.commissioning),
+        "pake.start",
+        _start_payload(setup, controller),
     )
     assert error["code"] == "rate_limited"
     assert error["retryable"] is True
@@ -533,11 +488,11 @@ async def test_the_host_paces_the_legacy_path_too(host) -> None:
     window = store.latest_commissioning_session()
     assert window.failed_attempts == BLE_PACE.capacity
     assert window.revoked_at is None
-    # The LAN is a separate lane.
-    bootstrap.claim_lan_controller(
+    claim_over_lan(
+        bootstrap,
         commissioning_id=setup["commissioning_id"],
-        setup_code=setup["setup_code"],
-        controller=_controller(),
+        code=setup["setup_code"],
+        controller=controller_claim(),
         source="192.168.1.20",
     )
 
@@ -545,7 +500,7 @@ async def test_the_host_paces_the_legacy_path_too(host) -> None:
 @pytest.mark.asyncio
 async def test_an_unknown_window_spends_nothing(host) -> None:
     bootstrap, _, setup = host
-    controller = _controller()
+    controller = controller_claim()
     other = {**_start_payload(setup, controller), "commissioning_id": "3f6b8a62-0c1e-4b8e-9a51-2d7c4e9f1a03"}
     for _ in range(BLE_PACE.capacity * 2):
         session = CommissioningProtocolSession(bootstrap.commissioning)
@@ -592,7 +547,7 @@ async def test_the_lan_claims_by_pake_and_says_so_when_it_will_not(
             await asyncio.sleep(0.01)
         control = BootstrapControlClient(settings.control_socket)
         setup = await control.request("commissioning.code", ttl_seconds=300)
-        controller = _controller()
+        controller = controller_claim()
         start_body = {"contract_version": "1", **_start_payload(setup, controller)}
         app = create_app(LocalApiSettings(bootstrap=settings))
         async with httpx.AsyncClient(
@@ -610,7 +565,7 @@ async def test_the_lan_claims_by_pake_and_says_so_when_it_will_not(
 
             wrong = "00000012" if setup["setup_code"] != "00000012" else "00000013"
             start = (await client.post("/api/local/v1/commissioning/pake/start", json=start_body)).json()
-            confirm, _ = _phone(start, code=wrong)
+            confirm, _ = phone_proof(start, code=wrong)
             refused = await client.post(
                 "/api/local/v1/commissioning/pake/claim",
                 json={"contract_version": "1", **confirm, "controller": controller},
@@ -629,7 +584,7 @@ async def test_the_lan_claims_by_pake_and_says_so_when_it_will_not(
             _pake_schema("start_result").validate(start)
             assert start["context"]["transport"] == "lan"
             assert start["context"]["tls_spki_fingerprint"] == endpoint["tls_spki_fingerprint"]
-            confirm, expected_server_proof = _phone(start, code=setup["setup_code"])
+            confirm, expected_server_proof = phone_proof(start, code=setup["setup_code"])
             claimed = await client.post(
                 "/api/local/v1/commissioning/pake/claim",
                 json={"contract_version": "1", **confirm, "controller": controller},
@@ -664,7 +619,7 @@ async def test_the_local_api_says_when_to_come_back(
             await asyncio.sleep(0.01)
         control = BootstrapControlClient(settings.control_socket)
         setup = await control.request("commissioning.code", ttl_seconds=300)
-        start_body = {"contract_version": "1", **_start_payload(setup, _controller())}
+        start_body = {"contract_version": "1", **_start_payload(setup, controller_claim())}
         app = create_app(LocalApiSettings(bootstrap=settings))
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app, client=("192.168.1.31", 50000)),
@@ -674,14 +629,11 @@ async def test_the_local_api_says_when_to_come_back(
                 ok = await client.post("/api/local/v1/commissioning/pake/start", json=start_body)
                 assert ok.status_code == 200
             limited = await client.post("/api/local/v1/commissioning/pake/start", json=start_body)
-            legacy = await client.put(
-                "/api/local/v1/commissioning/claim",
-                json={
-                    "contract_version": "1",
-                    "commissioning_id": setup["commissioning_id"],
-                    "setup_code": setup["setup_code"],
-                    "controller": _controller(),
-                },
+            # Another address is its own line, until the shared LAN one is spent.
+            neighbour = await client.post(
+                "/api/local/v1/commissioning/pake/start",
+                json=start_body,
+                headers={"x-forwarded-for": "192.168.1.99"},
             )
     finally:
         stop.set()
@@ -691,6 +643,6 @@ async def test_the_local_api_says_when_to_come_back(
     retry_after_ms = limited.json()["detail"]["retry_after_ms"]
     assert 0 < retry_after_ms <= int(LAN_SOURCE_PACE.period * 1000)
     assert int(limited.headers["retry-after"]) == -(-retry_after_ms // 1000)
-    # The legacy claim from the same source waits in the same line.
-    assert legacy.status_code == 429
-    assert "retry-after" in legacy.headers
+    # A forwarded-for header is the caller's claim, not its address: it is
+    # paced with the socket it actually came from.
+    assert neighbour.status_code == 429

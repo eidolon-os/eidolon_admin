@@ -11,6 +11,11 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from tests.setup_code_claim_support import (
+    fixed_host_context,
+    prove_over_ble,
+    prove_setup_code,
+)
 from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
@@ -346,11 +351,19 @@ async def test_commissioning_service_enrolls_then_configures_network(
     bootstrap.initialize()
     descriptor = bootstrap.issue_setup_code(300)
     bootstrap.reconcile_network_state(NetworkState.CONNECTED)
-    commissioning = CommissioningService(store=store, network=network)
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
     try:
-        authorization = commissioning.authorize(
+        controller_payload = {
+            "public_key": _controller_public_key(),
+            "display_name": "Manson 的手机",
+            "platform": "android",
+        }
+        authorization = prove_setup_code(
+            commissioning,
             session_id=descriptor["commissioning_id"],
-            secret=descriptor["setup_code"],
+            code=descriptor["setup_code"],
+            controller=controller_payload,
         )
         scanned = await commissioning.scan_networks(authorization)
         assert scanned["current_network"] == {
@@ -362,11 +375,6 @@ async def test_commissioning_service_enrolls_then_configures_network(
             {"ssid": "Cafe", "signal": 34, "secured": False},
         ]
 
-        controller_payload = {
-            "public_key": _controller_public_key(),
-            "display_name": "Manson 的手机",
-            "platform": "android",
-        }
         claimed = commissioning.claim_controller(authorization, controller_payload)
         admin = commissioning.authorize_controller(claimed["controller"]["controller_id"])
         operation_id = "32c421a3-e0df-40f9-8f75-68745ae39d81"
@@ -468,6 +476,7 @@ def test_a_wrong_setup_code_is_refused_without_closing_the_window(
     try:
         descriptor = bootstrap.issue_setup_code(300)
         commissioning = CommissioningService(
+        host_context=fixed_host_context,
             store=store,
             network=InMemoryNetworkProvisioning(),
         )
@@ -477,9 +486,10 @@ def test_a_wrong_setup_code_is_refused_without_closing_the_window(
                 CommissioningRequestRejected,
                 match="Commissioning session is unavailable",
             ):
-                commissioning.authorize(
+                prove_setup_code(
+                    commissioning,
                     session_id=descriptor["commissioning_id"],
-                    secret=wrong_code,
+                    code=wrong_code,
                 )
             assert store.latest_commissioning_session().failed_attempts == attempt + 1
 
@@ -489,9 +499,10 @@ def test_a_wrong_setup_code_is_refused_without_closing_the_window(
         assert session.revoked_at is None
         assert session.is_open(session.created_at)
         assert (
-            commissioning.authorize(
+            prove_setup_code(
+                commissioning,
                 session_id=descriptor["commissioning_id"],
-                secret=descriptor["setup_code"],
+                code=descriptor["setup_code"],
             )
             is not None
         )
@@ -516,7 +527,8 @@ async def test_claimed_controller_authenticates_and_changes_network(
     network = InMemoryNetworkProvisioning(
         access_points=[WifiAccessPoint("New Home", 90, True)]
     )
-    commissioning = CommissioningService(store=store, network=network)
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
     descriptor = bootstrap.issue_setup_code(300)
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
@@ -526,10 +538,12 @@ async def test_claimed_controller_authenticates_and_changes_network(
     digest = hashlib.sha256(public_der).hexdigest()
     controller_id = f"ectrl-{digest[:20]}"
     protocol = CommissioningProtocolSession(commissioning)
-    authenticated = await protocol.handle(_protocol_request('session.authenticate', {
-        'commissioning_id': descriptor['commissioning_id'],
-        'setup_code': descriptor['setup_code'],
-    }, 8))
+    authenticated = await prove_over_ble(
+        protocol,
+        commissioning_id=descriptor['commissioning_id'],
+        code=descriptor['setup_code'],
+        controller={'public_key': encoded_public},
+    )
     assert authenticated['ok']
     claimed = await protocol.handle(_protocol_request('claim.complete', {
         'controller_id': controller_id, 'public_key': encoded_public,
@@ -595,16 +609,20 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
     bootstrap.initialize()
     descriptor = bootstrap.issue_setup_code(300)
     commissioning = CommissioningService(
+        host_context=fixed_host_context,
         store=store,
         network=InMemoryNetworkProvisioning(),
     )
-    authorization = commissioning.authorize(
-        session_id=descriptor["commissioning_id"],
-        secret=descriptor["setup_code"],
-    )
-    grant = commissioning.claim_controller(authorization, {
+    phone = {
         "public_key": _controller_public_key(), "display_name": "Phone", "platform": "android",
-    })["controller"]
+    }
+    authorization = prove_setup_code(
+        commissioning,
+        session_id=descriptor["commissioning_id"],
+        code=descriptor["setup_code"],
+        controller=phone,
+    )
+    grant = commissioning.claim_controller(authorization, phone)["controller"]
     authorization = commissioning.authorize_controller(grant["controller_id"])
     interrupted_id = "11d8113d-1792-4c31-bfbb-da413232e942"
     await commissioning.configure_network(
@@ -631,7 +649,8 @@ async def test_daemon_restart_fails_interrupted_operation_and_unblocks_retry(
 
         authorization = commissioning.authorize_controller(grant["controller_id"])
         replacement_network = InMemoryNetworkProvisioning()
-        replacement = CommissioningService(store=store, network=replacement_network)
+        replacement = CommissioningService(
+        host_context=fixed_host_context, store=store, network=replacement_network)
         retried = await replacement.configure_network(
             authorization,
             {
@@ -683,19 +702,20 @@ def _claim_a_phone(bootstrap, store, network, name: str) -> str:
     """Run one phone all the way to a Controller grant, and return its id."""
 
     descriptor = bootstrap.issue_setup_code(300)
-    commissioning = CommissioningService(store=store, network=network)
-    authorization = commissioning.authorize(
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
+    phone = {
+        "public_key": _controller_public_key(),
+        "display_name": name,
+        "platform": "android",
+    }
+    authorization = prove_setup_code(
+        commissioning,
         session_id=descriptor["commissioning_id"],
-        secret=descriptor["setup_code"],
+        code=descriptor["setup_code"],
+        controller=phone,
     )
-    claimed = commissioning.claim_controller(
-        authorization,
-        {
-            "public_key": _controller_public_key(),
-            "display_name": name,
-            "platform": "android",
-        },
-    )
+    claimed = commissioning.claim_controller(authorization, phone)
     return claimed["controller"]["controller_id"]
 
 
@@ -725,19 +745,22 @@ def test_a_claimed_host_still_admits_a_second_phone(tmp_path: Path, store_kind: 
 
         # Each peer obtains a Setup code from the Host independently.
         invitation = bootstrap.issue_setup_code(300)
-        commissioning = CommissioningService(store=store, network=network)
-        authorization = commissioning.authorize(
+        commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
+        phone = {
+            "public_key": _controller_public_key(),
+            "display_name": "Phone",
+            "platform": "ios",
+        }
+        authorization = prove_setup_code(
+            commissioning,
             session_id=invitation["commissioning_id"],
-            secret=invitation["setup_code"],
+            code=invitation["setup_code"],
+            controller=phone,
         )
-        second = commissioning.claim_controller(
-            authorization,
-            {
-                "public_key": _controller_public_key(),
-                "display_name": "Phone",
-                "platform": "ios",
-            },
-        )["controller"]["controller_id"]
+        second = commissioning.claim_controller(authorization, phone)[
+            "controller"
+        ]["controller_id"]
 
         listed = bootstrap.list_controllers(controller_id=first)["controllers"]
         assert {grant["controller_id"] for grant in listed} == {first, second}
@@ -774,17 +797,21 @@ def test_the_last_phone_cannot_revoke_itself_into_an_unmanageable_host(
             bootstrap.revoke_controller(controller_id=first, target_id=first)
 
         invitation = bootstrap.issue_setup_code(300)
-        commissioning = CommissioningService(store=store, network=network)
+        commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
+        phone = {
+            "public_key": _controller_public_key(),
+            "display_name": "Phone",
+            "platform": "ios",
+        }
         second = commissioning.claim_controller(
-            commissioning.authorize(
+            prove_setup_code(
+                commissioning,
                 session_id=invitation["commissioning_id"],
-                secret=invitation["setup_code"],
+                code=invitation["setup_code"],
+                controller=phone,
             ),
-            {
-                "public_key": _controller_public_key(),
-                "display_name": "Phone",
-                "platform": "ios",
-            },
+            phone,
         )["controller"]["controller_id"]
 
         # With a peer present, a phone may hand back its own authority.

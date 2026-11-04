@@ -7,8 +7,8 @@ nothing at all — a BLE link answers about ten guesses a second and the LAN as
 many as the Host can serve, against 10^8 codes and a window that never expires.
 
 So guesses are paced instead of counted to a cliff. Every attempt — a PAKE
-start, a legacy ``session.authenticate``, a legacy LAN claim — spends a token
-before the Host looks at the code; a token comes back with time. Nothing here
+start on either transport, the only way a code is tried — spends a token
+before the Host looks at anything; a token comes back with time. Nothing here
 ever closes a window, so the denial of service ADR-0007 removed does not come
 back: the worst an attacker can do is make the legitimate phone wait, and only
 on the transport the attacker is using. BLE and the LAN draw from separate

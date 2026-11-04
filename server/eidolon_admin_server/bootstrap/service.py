@@ -614,39 +614,6 @@ class BootstrapService:
             **result,
         }
 
-    def claim_lan_controller(
-        self,
-        *,
-        commissioning_id: str,
-        setup_code: str,
-        controller: dict[str, Any],
-        source: str | None = None,
-    ) -> dict[str, Any]:
-        """Claim an already-networked Host through the Local API.
-
-        Authorization and the atomic Grant/session consumption are delegated
-        to the same CommissioningService instance the BLE protocol drives.
-        """
-
-        if self._commissioning is None:
-            raise BootstrapOperationRejected(
-                "LAN commissioning requires a network adapter"
-            )
-        commissioning = self._commissioning
-        authorization = commissioning.authorize(
-            session_id=commissioning_id,
-            secret=setup_code,
-            transport="lan",
-            source=source,
-        )
-        result = commissioning.claim_controller(authorization, controller)
-        return {
-            "contract_version": "1",
-            "operation": "local.lan-commissioning-claim",
-            "host_id": self._identity_manager.identity.host_id,
-            **result,
-        }
-
     def _active_setup_session(self) -> dict[str, str] | None:
         """Which setup session, if any, a phone may present a code against.
 

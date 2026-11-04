@@ -9,6 +9,12 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from tests.setup_code_claim_support import (
+    controller_claim,
+    fixed_host_context,
+    phone_proof,
+    start_payload,
+)
 from eidolon_admin_server.bootstrap.adapters.commissioning import (
     in_memory_commissioning_link_pair,
 )
@@ -164,7 +170,8 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
     network = InMemoryNetworkProvisioning(
         access_points=[WifiAccessPoint("Home", 77, True)]
     )
-    commissioning = CommissioningService(store=store, network=network)
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
     server_link, client_link = in_memory_commissioning_link_pair("tls-test")
     server_context = CommissioningTlsSession.server_context(
         str(settings.commissioning_tls_pem_path)
@@ -190,17 +197,21 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
     )
     try:
         await client.handshake()
-        authenticated = await client.request(
+        controller = controller_claim()
+        started = await client.request(
             _request(
-                "session.authenticate",
-                {
-                    "commissioning_id": descriptor["commissioning_id"],
-                    "setup_code": descriptor["setup_code"],
-                },
+                "pake.start",
+                start_payload(descriptor["commissioning_id"], controller),
                 1,
             )
         )
-        assert authenticated["ok"] is True
+        assert started["ok"] is True, started
+        confirm, expected_server_proof = phone_proof(
+            started["result"], code=descriptor["setup_code"]
+        )
+        authenticated = await client.request(_request("pake.confirm", confirm, 4))
+        assert authenticated["ok"] is True, authenticated
+        assert authenticated["result"]["server_proof"] == expected_server_proof
         scanned = await client.request(_request("wifi.scan", {}, 2))
         assert scanned["result"]["current_network"] == {
             "state": "unconfigured",
@@ -211,11 +222,8 @@ async def test_pinned_tls_carries_authenticated_setup_protocol(tmp_path: Path) -
         ]
         denied = await client.request(
             _request(
-                "session.authenticate",
-                {
-                    "commissioning_id": descriptor["commissioning_id"],
-                    "setup_code": "000000",
-                },
+                "pake.start",
+                start_payload(descriptor["commissioning_id"], controller),
                 3,
             )
         )

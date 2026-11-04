@@ -21,6 +21,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from jsonschema import Draft202012Validator, FormatChecker
 
+from tests.setup_code_claim_support import (
+    fixed_host_context,
+    phone_proof,
+    prove_over_ble,
+    start_payload,
+)
 from eidolon_admin_server.bootstrap.adapters.network import InMemoryNetworkProvisioning
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     InMemoryBootstrapStateStore,
@@ -61,7 +67,8 @@ def _service(tmp_path: Path) -> tuple[BootstrapService, InMemoryBootstrapStateSt
 
 def _session(store: InMemoryBootstrapStateStore) -> CommissioningProtocolSession:
     return CommissioningProtocolSession(
-        CommissioningService(store=store, network=InMemoryNetworkProvisioning())
+        CommissioningService(
+        host_context=fixed_host_context, store=store, network=InMemoryNetworkProvisioning())
     )
 
 
@@ -160,17 +167,17 @@ async def test_unknown_controller_is_denied_independently_of_other_grants(
     service.reconcile_network_state(NetworkState.CONNECTED)
     credential = service.issue_setup_code(300)
     session = _session(store)
+    controller = {
+        "public_key": _controller_public_key(),
+        "display_name": "Pad",
+        "platform": "android",
+    }
     assert (
-        await session.handle(
-            {
-                "contract_version": "1",
-                "request_id": "22222222-2222-4222-8222-222222222222",
-                "operation": "session.authenticate",
-                "payload": {
-                    "commissioning_id": credential["commissioning_id"],
-                    "setup_code": credential["setup_code"],
-                },
-            }
+        await prove_over_ble(
+            session,
+            commissioning_id=credential["commissioning_id"],
+            code=credential["setup_code"],
+            controller=controller,
         )
     )["ok"] is True
     claimed = await session.handle(
@@ -178,11 +185,7 @@ async def test_unknown_controller_is_denied_independently_of_other_grants(
             "contract_version": "1",
             "request_id": "33333333-3333-4333-8333-333333333333",
             "operation": "claim.complete",
-            "payload": {
-                "public_key": _controller_public_key(),
-                "display_name": "Pad",
-                "platform": "android",
-            },
+            "payload": controller,
         }
     )
     assert claimed["ok"] is True, claimed
@@ -234,25 +237,54 @@ async def test_a_refusal_log_never_carries_the_payload(
     service, store = _service(tmp_path)
     credential = service.issue_setup_code(300)
     secret = credential["setup_code"]
+    controller = {"public_key": _controller_public_key()}
     with caplog.at_level(logging.WARNING, logger="eidolon.bootstrap.commissioning"):
-        await _refuse(
-            _session(store),
+        # A wrong code, proven: the refusal of pake.confirm.
+        session = _session(store)
+        start = await session.handle(
             {
                 "contract_version": "1",
                 "request_id": "44444444-4444-4444-8444-444444444444",
+                "operation": "pake.start",
+                "payload": start_payload(credential["commissioning_id"], controller),
+            }
+        )
+        confirm, _ = phone_proof(start["result"], code="0" * len(secret))
+        await _refuse(
+            session,
+            {
+                "contract_version": "1",
+                "request_id": "55555555-5555-4555-8555-555555555555",
+                "operation": "pake.confirm",
+                "payload": confirm,
+            },
+        )
+        # And a phone from before ADR-0008 sending the code itself: it is
+        # refused as an unknown operation, and the code is not echoed.
+        stale = await _refuse(
+            _session(store),
+            {
+                "contract_version": "1",
+                "request_id": "66666666-6666-4666-8666-666666666666",
                 "operation": "session.authenticate",
                 "payload": {
                     "commissioning_id": credential["commissioning_id"],
-                    "setup_code": "0" * len(secret),
+                    "setup_code": secret,
                 },
             },
         )
 
+    assert stale["code"] == "unknown_operation"
     message = "\n".join(record.getMessage() for record in caplog.records)
-    assert "session.authenticate" in message
+    assert "pake.confirm" in message
     assert "commissioning_denied" in message
+    assert "session.authenticate" in message
+    assert "unknown_operation" in message
     assert secret not in message
     assert "0" * len(secret) not in message
+    assert controller["public_key"] not in message
+    assert confirm["A"] not in message
+    assert confirm["client_proof"] not in message
 
 
 # --- 窗口的边界只有被消费与被顶掉（ADR-0007）---------------------------------

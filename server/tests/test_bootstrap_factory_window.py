@@ -19,6 +19,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import base64
 
+from tests.setup_code_claim_support import (
+    claim_over_lan,
+    fixed_host_context,
+    prove_over_ble,
+    prove_setup_code,
+)
 from eidolon_admin_server.bootstrap.adapters.network import InMemoryNetworkProvisioning
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     InMemoryBootstrapStateStore,
@@ -152,24 +158,25 @@ def test_a_claimed_host_opens_no_window_however_it_restarts(tmp_path: Path) -> N
     service.reconcile_network_state(NetworkState.CONNECTED)
 
     session = CommissioningProtocolSession(
-        CommissioningService(store=store, network=InMemoryNetworkProvisioning())
+        CommissioningService(
+        host_context=fixed_host_context, store=store, network=InMemoryNetworkProvisioning())
     )
     import asyncio
 
     async def claim() -> dict:
+        controller = {
+            "public_key": _controller_public_key(),
+            "display_name": "Pad",
+            "platform": "android",
+        }
         assert (
-            await session.handle(
-                {
-                    "contract_version": "1",
-                    "request_id": "11111111-1111-4111-8111-111111111111",
-                    "operation": "session.authenticate",
-                    "payload": {
-                        "commissioning_id": service.commissioning_endpoint()[
-                            "setup_session"
-                        ]["commissioning_id"],
-                        "setup_code": FACTORY_CODE,
-                    },
-                }
+            await prove_over_ble(
+                session,
+                commissioning_id=service.commissioning_endpoint()["setup_session"][
+                    "commissioning_id"
+                ],
+                code=FACTORY_CODE,
+                controller=controller,
             )
         )["ok"] is True
         return await session.handle(
@@ -177,11 +184,7 @@ def test_a_claimed_host_opens_no_window_however_it_restarts(tmp_path: Path) -> N
                 "contract_version": "1",
                 "request_id": "22222222-2222-4222-8222-222222222222",
                 "operation": "claim.complete",
-                "payload": {
-                    "public_key": _controller_public_key(),
-                    "display_name": "Pad",
-                    "platform": "android",
-                },
+                "payload": controller,
             }
         )
 
@@ -219,31 +222,32 @@ def test_the_factory_code_is_what_the_window_accepts(tmp_path: Path) -> None:
     _write_factory_code(settings, FACTORY_CODE)
     service, store = _service(settings)
     commissioning = CommissioningService(
+        host_context=fixed_host_context,
         store=store, network=InMemoryNetworkProvisioning()
     )
     window = service.commissioning_endpoint()["setup_session"]
 
-    authorization = commissioning.authorize(
-        session_id=window["commissioning_id"], secret=FACTORY_CODE
+    authorization = prove_setup_code(
+        commissioning, session_id=window["commissioning_id"], code=FACTORY_CODE
     )
 
     assert authorization is not None
 
 
 async def _claim(session, service, auth_id: str, claim_id: str) -> dict:
+    controller = {
+        "public_key": _controller_public_key(),
+        "display_name": "Pad",
+        "platform": "android",
+    }
     assert (
-        await session.handle(
-            {
-                "contract_version": "1",
-                "request_id": f"{auth_id}-1111-4111-8111-111111111111",
-                "operation": "session.authenticate",
-                "payload": {
-                    "commissioning_id": service.commissioning_endpoint()[
-                        "setup_session"
-                    ]["commissioning_id"],
-                    "setup_code": FACTORY_CODE,
-                },
-            }
+        await prove_over_ble(
+            session,
+            commissioning_id=service.commissioning_endpoint()["setup_session"][
+                "commissioning_id"
+            ],
+            code=FACTORY_CODE,
+            controller=controller,
         )
     )["ok"] is True
     return await session.handle(
@@ -251,11 +255,7 @@ async def _claim(session, service, auth_id: str, claim_id: str) -> dict:
             "contract_version": "1",
             "request_id": f"{claim_id}-2222-4222-8222-222222222222",
             "operation": "claim.complete",
-            "payload": {
-                "public_key": _controller_public_key(),
-                "display_name": "Pad",
-                "platform": "android",
-            },
+            "payload": controller,
         }
     )
 
@@ -289,6 +289,7 @@ def test_a_host_that_declares_a_standing_window_reopens_it_after_a_claim(
     service.reconcile_network_state(NetworkState.CONNECTED)
 
     commissioning = CommissioningService(
+        host_context=fixed_host_context,
         store=store,
         network=InMemoryNetworkProvisioning(),
         on_claimed=service.reopen_standing_claim_window,
@@ -297,19 +298,19 @@ def test_a_host_that_declares_a_standing_window_reopens_it_after_a_claim(
     import asyncio
 
     async def claim(request_prefix: str) -> dict:
+        controller = {
+            "public_key": _controller_public_key(),
+            "display_name": "Pad",
+            "platform": "android",
+        }
         assert (
-            await session.handle(
-                {
-                    "contract_version": "1",
-                    "request_id": f"{request_prefix}1111-1111-4111-8111-111111111111"[:36],
-                    "operation": "session.authenticate",
-                    "payload": {
-                        "commissioning_id": service.commissioning_endpoint()[
-                            "setup_session"
-                        ]["commissioning_id"],
-                        "setup_code": FACTORY_CODE,
-                    },
-                }
+            await prove_over_ble(
+                session,
+                commissioning_id=service.commissioning_endpoint()["setup_session"][
+                    "commissioning_id"
+                ],
+                code=FACTORY_CODE,
+                controller=controller,
             )
         )["ok"] is True
         return await session.handle(
@@ -317,11 +318,7 @@ def test_a_host_that_declares_a_standing_window_reopens_it_after_a_claim(
                 "contract_version": "1",
                 "request_id": f"{request_prefix}2222-2222-4222-8222-222222222222"[:36],
                 "operation": "claim.complete",
-                "payload": {
-                    "public_key": _controller_public_key(),
-                    "display_name": "Pad",
-                    "platform": "android",
-                },
+                "payload": controller,
             }
         )
 
@@ -349,7 +346,8 @@ def test_a_restart_reopens_the_window_on_a_claimed_host(tmp_path: Path) -> None:
     service.reconcile_network_state(NetworkState.CONNECTED)
 
     session = CommissioningProtocolSession(
-        CommissioningService(store=store, network=InMemoryNetworkProvisioning())
+        CommissioningService(
+        host_context=fixed_host_context, store=store, network=InMemoryNetworkProvisioning())
     )
     import asyncio
 
@@ -419,6 +417,7 @@ def test_fixed_development_code_admits_multiple_admins_across_restart(tmp_path, 
             store = SQLiteBootstrapStateStore(tmp_path / "bootstrap.sqlite3")
             service, _ = _service(settings, store)
         session = CommissioningProtocolSession(CommissioningService(
+        host_context=fixed_host_context,
             store=store, network=InMemoryNetworkProvisioning(),
             on_claimed=service.reopen_standing_claim_window,
         ))
@@ -479,9 +478,10 @@ def test_a_lan_claim_puts_the_standing_window_back_like_a_ble_one(
         == invite["commissioning_id"]
     )
 
-    service.claim_lan_controller(
+    claim_over_lan(
+        service,
         commissioning_id=invite["commissioning_id"],
-        setup_code=invite["setup_code"],
+        code=invite["setup_code"],
         controller=phone("Phone"),
     )
 
@@ -491,9 +491,10 @@ def test_a_lan_claim_puts_the_standing_window_back_like_a_ble_one(
 
     # And what reopened is the chassis code's window: a third phone gets in
     # with it over the LAN, with no restart and no control socket.
-    service.claim_lan_controller(
+    claim_over_lan(
+        service,
         commissioning_id=reopened["commissioning_id"],
-        setup_code=FACTORY_CODE,
+        code=FACTORY_CODE,
         controller=phone("Spare"),
     )
     assert len(store.list_controllers()) == 3

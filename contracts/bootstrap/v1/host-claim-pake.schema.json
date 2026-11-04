@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eidolon.local/contracts/bootstrap/v1/host-claim-pake.schema.json",
   "title": "Eidolon Host Claim PAKE V1",
-  "description": "SRP-6a over the Setup code (ADR-0008). Over BLE these are the payloads and results of the pake.start and pake.confirm operations inside the pinned TLS session; over the LAN, POST /api/local/v1/commissioning/pake/start and /pake/claim carry the same fields plus contract_version. golden/host-claim-srp6a-v1.json pins the arithmetic.",
+  "description": "SRP-6a over the Setup code (ADR-0008), the only way a Setup code is accepted. Over BLE these are the payloads and results of the pake.start and pake.confirm operations inside the pinned TLS session; over the LAN, POST /api/local/v1/commissioning/pake/start and /pake/claim carry the same fields plus contract_version. golden/host-claim-srp6a-v1.json pins the arithmetic.",
   "$defs": {
     "base64url": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
     "suite": { "const": "srp6a-rfc5054-3072-sha512-v1" },
@@ -80,7 +80,7 @@
       "additionalProperties": false
     },
     "confirm_result": {
-      "description": "BLE: the session is now authorized as session.authenticate would have left it, and claim.complete must present the bound Controller key.",
+      "description": "BLE: the session is now authorized to claim, and claim.complete must present the bound Controller key.",
       "type": "object",
       "required": ["server_proof", "state"],
       "properties": {

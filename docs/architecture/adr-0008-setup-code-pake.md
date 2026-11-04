@@ -83,13 +83,15 @@ M2 = HMAC-SHA512(Ks, TH ‖ M1)
 
 - `pake.start`：`{suite, commissioning_id, controller_public_key}` → `{handshake_id, salt, B, context}`
 - `pake.confirm`：`{handshake_id, A, client_proof}` → `{server_proof, state}`
-- 它们替代 `session.authenticate`。之后的 `claim.complete` 必须出示被绑定的那把管理密钥，
-  换一把会被拒绝。
+- 之后的 `claim.complete` 必须出示被绑定的那把管理密钥，换一把会被拒绝。
+- `session.authenticate` 已删除，没有任何操作接受 Setup 码本身。还在发它的手机得到
+  `unknown_operation`，而不是「码错了」：未知操作在查授权之前就被点名。
 
 **局域网**
 
 - `POST /api/local/v1/commissioning/pake/start`
 - `POST /api/local/v1/commissioning/pake/claim`：一次请求里完成确认和认领，返回认领结果和 `server_proof`。
+- `PUT /api/local/v1/commissioning/claim`（带明文码的那条）已删除，回 404。
 - 这两条路由的错误体带 Host 自己的错误码，因为 409 既可能是「重新开始握手」，也可能是
   「已经被别人认领」，手机不能对两者做同样的反应。
 
@@ -103,13 +105,8 @@ M2 = HMAC-SHA512(Ks, TH ‖ M1)
 
 `bootstrap/guess_budget.py`，令牌桶。
 
-**每一次猜测都扣一个令牌**，扣在 Host 看码之前：
-
-- PAKE 的 start：A 一旦发出，猜的是哪个码就定了；
-- 旧的 `session.authenticate`；
-- 旧的局域网 `PUT /claim`。
-
-旧路径也计入预算，所以 Host 一升级就受到保护，不必等手机更新。
+**每一次猜测都扣一个令牌**，扣在 PAKE 的 start 上，两条通道都一样：A 一旦发出，猜的是
+哪个码就定了。这是猜码的唯一入口。
 
 | 通道 | 容量 | 补充速度 |
 |---|---|---|
@@ -127,13 +124,15 @@ M2 = HMAC-SHA512(Ks, TH ‖ M1)
 - 状态在内存里，只覆盖当前开着的窗口。新签一个窗口，预算回满。
 - `rate_limited` 带 `retry_after_ms`；局域网另带 `Retry-After` 头。
 
-### 6. 兼容与防降级
+### 6. 不兼容旧版本（2026-11-05 决定）
 
-- endpoint 文档**一个字段都不加**：旧手机拒绝未知字段，而文档已经贴近 512 B 的 GATT 上限。
-- 新手机先试 PAKE。旧 Host 在 BLE 上回 `unknown_operation`、在局域网上回 404，手机据此
-  退回旧路径，并且记下这次退回。
-- 等所有 Host 都升级之后，手机拒绝旧路径（Debug 构建可覆盖），Host 增加
-  `legacy_setup_code: refuse`。这一步单独做，日期不在本 ADR 里定。
+产品还在开发阶段，所有 Host 和设备都可以重新配网，所以**不留任何旧路径**：
+
+- Host 只接受 PAKE：`session.authenticate` 和 `PUT /commissioning/claim` 都删了。
+- 手机只走 PAKE：旧 Host 在 BLE 上回 `unknown_operation`、在局域网上回 404，手机据此告诉人
+  「主机软件太旧，先升级主机」，**不退回**明文发码。
+- 因此不存在降级路径：冒充者回一个 404 也拿不到码。
+- endpoint 文档仍然一个字段都不加：它已经贴近 512 B 的 GATT 上限，而 PAKE 不需要它多说什么。
 
 ### 7. 手机只信任确认过的 Host 公钥
 
@@ -153,8 +152,6 @@ M2 = HMAC-SHA512(Ks, TH ‖ M1)
 
 **残余，有记录**
 
-- **兼容期内的降级。** 冒充者可以对新手机回 404 或 `unknown_operation`，逼它走旧路径交出码。
-  第 6 条的最后一步关闭它；在那之前，退回旧路径会被记录。
 - **出厂窗口的长期在线猜测。** 局域网全局速度在慢道上大约每年 52 万次，对 10^8 的码空间约
   为 0.5%。窗口永不过期是 ADR-0007 的选择，这个数字随它一起被接受；要再降，就给慢道降速，
   不必关窗。
@@ -164,5 +161,6 @@ M2 = HMAC-SHA512(Ks, TH ‖ M1)
 
 **运维**
 
-- 不改表结构、不改 endpoint 文档，所以 Host 和手机可以按任意顺序发布。
+- 不改表结构、不改 endpoint 文档；但 Host 和手机必须一起升级，旧的一方只会得到明确的
+  「操作不存在」，不会被悄悄兼容。
 - 握手在 Pi 级 CPU 上每次需要几次 3072 位模幂；对认领这种低频操作可以接受，台架上测 p95。

@@ -1,4 +1,5 @@
 import pytest
+from tests.setup_code_claim_support import fixed_host_context, prove_setup_code
 from eidolon_admin_server.bootstrap.adapters.network import InMemoryNetworkProvisioning
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     InMemoryBootstrapStateStore,
@@ -31,29 +32,34 @@ async def test_offline_peer_enrollment_keeps_network_admin_only(tmp_path, store_
         identity_manager=HostIdentityManager(settings.identity_key_path, settings.mode),
     )
     bootstrap.initialize()
-    service = CommissioningService(store=store, network=network)
+    service = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
     try:
         peers = []
         enrollments = []
         for name in ["First", "Second"]:
             invitation = bootstrap.issue_setup_code()
-            setup = service.authorize(
-                session_id=invitation["commissioning_id"],
-                secret=invitation["setup_code"],
-            )
             payload = {
                 "public_key": _controller_public_key(),
                 "display_name": name,
                 "platform": "android",
             }
+            setup = prove_setup_code(
+                service,
+                session_id=invitation["commissioning_id"],
+                code=invitation["setup_code"],
+                controller=payload,
+            )
             enrollments.append((setup, payload))
             grant = service.claim_controller(setup, payload)["controller"]
             peers.append(service.authorize_controller(grant["controller_id"]))
         assert store.get_state().network_state is NetworkState.UNCONFIGURED
         assert len(store.list_controllers()) == 2
         invitation = bootstrap.issue_setup_code()
-        setup = service.authorize(
-            session_id=invitation["commissioning_id"], secret=invitation["setup_code"]
+        setup = prove_setup_code(
+            service,
+            session_id=invitation["commissioning_id"],
+            code=invitation["setup_code"],
         )
         for method in [
             service.configure_network,
@@ -103,8 +109,11 @@ async def test_offline_peer_enrollment_keeps_network_admin_only(tmp_path, store_
         with pytest.raises(CommissioningRequestRejected):
             service.claim_controller(*enrollments[0])
         invitation = bootstrap.issue_setup_code(300)
-        fresh = service.authorize(
-            session_id=invitation["commissioning_id"], secret=invitation["setup_code"]
+        fresh = prove_setup_code(
+            service,
+            session_id=invitation["commissioning_id"],
+            code=invitation["setup_code"],
+            controller=enrollments[0][1],
         )
         restored = service.claim_controller(fresh, enrollments[0][1])["controller"]
         assert restored["controller_id"] == peers[0].grant.controller_id

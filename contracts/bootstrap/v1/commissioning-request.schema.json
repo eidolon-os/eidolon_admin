@@ -8,7 +8,7 @@
     "contract_version": { "const": "1" },
     "request_id": { "type": "string", "format": "uuid" },
     "operation": {
-      "enum": ["session.authenticate", "pake.start", "pake.confirm", "controller.challenge", "controller.authenticate", "setup.status", "wifi.scan", "wifi.configure", "wifi.confirm", "wifi.rollback", "claim.complete"]
+      "enum": ["pake.start", "pake.confirm", "controller.challenge", "controller.authenticate", "setup.status", "wifi.scan", "wifi.configure", "wifi.confirm", "wifi.rollback", "claim.complete"]
     },
     "payload": { "type": "object" }
   },

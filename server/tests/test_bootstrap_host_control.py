@@ -22,6 +22,13 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 
+from tests.setup_code_claim_support import (
+    claim_over_lan,
+    fixed_host_context,
+    phone_proof,
+    prove_setup_code,
+    start_payload,
+)
 from eidolon_admin_server.bootstrap.adapters.persistence import (
     SQLiteBootstrapStateStore,
 )
@@ -569,13 +576,15 @@ def test_naming_the_same_code_twice_still_leaves_one_window(tmp_path: Path) -> N
         assert current["session_id"] == second["commissioning_id"]
         # And the superseded one cannot be spent.
         commissioning = CommissioningService(
+        host_context=fixed_host_context,
             store=service._store,  # noqa: SLF001 - test application boundary
             network=InMemoryNetworkProvisioning(),
         )
         with pytest.raises(CommissioningRequestRejected):
-            commissioning.authorize(
+            prove_setup_code(
+                commissioning,
                 session_id=first["commissioning_id"],
-                secret="99999990",
+                code="99999990",
             )
     finally:
         service.shutdown()
@@ -810,9 +819,11 @@ def test_a_claim_never_overwrites_a_real_adapter_s_network_state(
         issued = service.issue_setup_code(300)
         assert service.health()["state"]["network_state"] == "unconfigured"
 
-        claimed = service.claim_lan_controller(
+        claimed = claim_over_lan(
+            service,
             commissioning_id=issued["commissioning_id"],
-            setup_code=issued["setup_code"], controller=controller,
+            code=issued["setup_code"],
+            controller=controller,
         )
         assert claimed["state"]["claim_state"] == "claimed"
         # The request did not get to invent an answer on the way through.
@@ -821,9 +832,10 @@ def test_a_claim_never_overwrites_a_real_adapter_s_network_state(
         # With the real adapter reconciled, the very same claim goes through.
         service.reconcile_network_state(NetworkState.CONNECTED)
         reissued = service.issue_setup_code(300)
-        claimed = service.claim_lan_controller(
+        claimed = claim_over_lan(
+            service,
             commissioning_id=reissued["commissioning_id"],
-            setup_code=reissued["setup_code"],
+            code=reissued["setup_code"],
             controller=controller,
         )
         assert claimed["state"]["claim_state"] == "claimed"
@@ -1040,18 +1052,8 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
             commissioning_endpoint = await client.get(
                 "/api/local/v1/commissioning/endpoint"
             )
-            rejected_claim = await client.put(
-                "/api/local/v1/commissioning/claim",
-                json={
-                    "contract_version": "1",
-                    "commissioning_id": setup["commissioning_id"],
-                    "setup_code": (
-                        "00000012" if setup["setup_code"] != "00000012" else "99999987"
-                    ),
-                    "controller": controller,
-                },
-            )
-            accepted_claim = await client.put(
+            # No route takes the code itself any more (ADR-0008).
+            sent_in_the_clear = await client.put(
                 "/api/local/v1/commissioning/claim",
                 json={
                     "contract_version": "1",
@@ -1060,6 +1062,26 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
                     "controller": controller,
                 },
             )
+
+            async def pake_claim(code: str) -> httpx.Response:
+                start = await client.post(
+                    "/api/local/v1/commissioning/pake/start",
+                    json={
+                        "contract_version": "1",
+                        **start_payload(setup["commissioning_id"], controller),
+                    },
+                )
+                assert start.status_code == 200, start.text
+                confirm, _ = phone_proof(start.json(), code=code)
+                return await client.post(
+                    "/api/local/v1/commissioning/pake/claim",
+                    json={"contract_version": "1", **confirm, "controller": controller},
+                )
+
+            rejected_claim = await pake_claim(
+                "00000012" if setup["setup_code"] != "00000012" else "99999987"
+            )
+            accepted_claim = await pake_claim(setup["setup_code"])
 
         assert descriptor.status_code == 200
         assert descriptor.json()["host_id"].startswith("ehost-")
@@ -1098,6 +1120,7 @@ async def test_local_api_is_a_separate_minimal_projection_and_host_proof(
         assert commissioning_endpoint.json()["purpose"] == (
             "eidolon-ble-commissioning-endpoint-v1"
         )
+        assert sent_in_the_clear.status_code == 404
         assert rejected_claim.status_code == 401
         assert accepted_claim.status_code == 200
         assert accepted_claim.json()["host_id"] == descriptor.json()["host_id"]
@@ -1132,12 +1155,9 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
         network=network,
     )
     bootstrap_service.initialize()
-    commissioning = CommissioningService(store=store, network=network)
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
     setup = bootstrap_service.issue_setup_code(300)
-    initial = commissioning.authorize(
-        session_id=setup["commissioning_id"],
-        secret=setup["setup_code"],
-    )
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
         Encoding.DER,
@@ -1145,6 +1165,12 @@ async def _local_api_session(tmp_path: Path, runtime_dir: Path):
     )
     encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
     controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+    initial = prove_setup_code(
+        commissioning,
+        session_id=setup["commissioning_id"],
+        code=setup["setup_code"],
+        controller={"public_key": encoded_public},
+    )
     commissioning.claim_controller(
         initial,
         {
@@ -1245,12 +1271,9 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
         network=network,
     )
     bootstrap_service.initialize()
-    commissioning = CommissioningService(store=store, network=network)
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
     setup = bootstrap_service.issue_setup_code(300)
-    initial = commissioning.authorize(
-        session_id=setup["commissioning_id"],
-        secret=setup["setup_code"],
-    )
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
         Encoding.DER,
@@ -1258,6 +1281,12 @@ async def test_local_api_controller_session_is_one_time_and_reset_bound(
     )
     encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
     controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+    initial = prove_setup_code(
+        commissioning,
+        session_id=setup["commissioning_id"],
+        code=setup["setup_code"],
+        controller={"public_key": encoded_public},
+    )
     commissioning.claim_controller(
         initial,
         {
@@ -1588,11 +1617,8 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
     service.initialize()
     service.reconcile_network_state(NetworkState.CONNECTED)
     issued = service.issue_setup_code()
-    commissioning = CommissioningService(store=store, network=InMemoryNetworkProvisioning())
-    authorization = commissioning.authorize(
-        session_id=issued["commissioning_id"],
-        secret=issued["setup_code"],
-    )
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=InMemoryNetworkProvisioning())
     private_key = ec.generate_private_key(ec.SECP256R1())
     public_der = private_key.public_key().public_bytes(
         Encoding.DER,
@@ -1600,6 +1626,12 @@ async def test_controller_reset_lets_a_new_phone_claim_a_production_host(
     )
     encoded_public = base64.urlsafe_b64encode(public_der).rstrip(b"=").decode()
     controller_id = f"ectrl-{hashlib.sha256(public_der).hexdigest()[:20]}"
+    authorization = prove_setup_code(
+        commissioning,
+        session_id=issued["commissioning_id"],
+        code=issued["setup_code"],
+        controller={"public_key": encoded_public},
+    )
     commissioning.claim_controller(
         authorization,
         {

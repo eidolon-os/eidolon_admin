@@ -158,16 +158,6 @@ class BootstrapControlServer:
             return self._service.commissioning_endpoint()
         if operation == "commissioning.lan.endpoint":
             return self._service.lan_commissioning_endpoint()
-        if operation == "commissioning.lan.claim":
-            controller = request.get("controller")
-            if not isinstance(controller, dict):
-                raise BootstrapControlError("controller must be an object")
-            return self._service.claim_lan_controller(
-                commissioning_id=request.get("commissioning_id"),
-                setup_code=request.get("setup_code"),
-                controller=controller,
-                source=_source(request),
-            )
         if operation == "commissioning.lan.pake.start":
             payload = request.get("payload")
             if not isinstance(payload, dict):

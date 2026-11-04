@@ -32,6 +32,17 @@ _RETRYABLE_CODES = {
     "pake_handshake_unknown",
     "rate_limited",
 }
+#: What an authenticated link may ask. Anything else is named unknown before
+#: the link's authorization is looked at, so a phone from before ADR-0008
+#: sending session.authenticate hears "no such operation", not "wrong code".
+_AUTHENTICATED_OPERATIONS = {
+    "setup.status",
+    "wifi.scan",
+    "wifi.configure",
+    "wifi.confirm",
+    "wifi.rollback",
+    "claim.complete",
+}
 
 
 class CommissioningProtocolSession:
@@ -63,17 +74,11 @@ class CommissioningProtocolSession:
                 raise CommissioningRequestRejected(
                     "invalid_request", "payload must be an object"
                 )
-            if operation == "session.authenticate":
-                if self._authorization is not None:
-                    raise CommissioningRequestRejected(
-                        "operation_conflict", "Session is already authenticated"
-                    )
-                self._authorization = self._service.authorize(
-                    session_id=payload.get("commissioning_id"),
-                    secret=payload.get("setup_code"),
-                )
-                result = self._service.status(self._authorization)
-            elif operation == "pake.start":
+            # There is no operation that takes the Setup code itself. It used
+            # to be session.authenticate; it is proven now, never sent
+            # (ADR-0008), and a phone that still sends it is told the
+            # operation does not exist.
+            if operation == "pake.start":
                 if self._authorization is not None:
                     raise CommissioningRequestRejected(
                         "operation_conflict", "Session is already authenticated"
@@ -124,6 +129,10 @@ class CommissioningProtocolSession:
                 self._authorization = self._authenticate_controller(payload)
                 result = self._service.status(self._authorization)
             else:
+                if operation not in _AUTHENTICATED_OPERATIONS:
+                    raise CommissioningRequestRejected(
+                        "unknown_operation", "Unknown commissioning operation"
+                    )
                 authorization = self._authorization
                 if authorization is None:
                     raise CommissioningRequestRejected(

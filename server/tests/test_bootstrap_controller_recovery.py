@@ -20,6 +20,11 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from tests.setup_code_claim_support import (
+    fixed_host_context,
+    prove_over_ble,
+    prove_setup_code,
+)
 from eidolon_admin_server.bootstrap.adapters.network import (
     InMemoryNetworkProvisioning,
 )
@@ -86,19 +91,16 @@ def _host(tmp_path: Path, store_kind: str):
 
 
 def _claim(store, network, descriptor: dict, public_key: str, name: str) -> dict:
-    commissioning = CommissioningService(store=store, network=network)
-    authorization = commissioning.authorize(
+    commissioning = CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
+    phone = {"public_key": public_key, "display_name": name, "platform": "android"}
+    authorization = prove_setup_code(
+        commissioning,
         session_id=descriptor["commissioning_id"],
-        secret=descriptor["setup_code"],
+        code=descriptor["setup_code"],
+        controller=phone,
     )
-    return commissioning.claim_controller(
-        authorization,
-        {
-            "public_key": public_key,
-            "display_name": name,
-            "platform": "android",
-        },
-    )
+    return commissioning.claim_controller(authorization, phone)
 
 
 @pytest.mark.parametrize("store_kind", ["memory", "sqlite"])
@@ -272,20 +274,16 @@ def test_a_reclaim_never_reaches_a_phone_as_internal_error(tmp_path: Path) -> No
         invitation = service.issue_setup_code(300)
 
         session = CommissioningProtocolSession(
-            CommissioningService(store=store, network=network)
+            CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
         )
 
         async def run() -> list[dict]:
-            authenticated = await session.handle(
-                {
-                    "contract_version": "1",
-                    "request_id": "00000000-0000-4000-8000-000000000001",
-                    "operation": "session.authenticate",
-                    "payload": {
-                        "commissioning_id": invitation["commissioning_id"],
-                        "setup_code": invitation["setup_code"],
-                    },
-                }
+            authenticated = await prove_over_ble(
+                session,
+                commissioning_id=invitation["commissioning_id"],
+                code=invitation["setup_code"],
+                controller={"public_key": phone},
             )
             claimed = await session.handle(
                 {
@@ -329,20 +327,21 @@ def test_the_field_sequence_end_to_end_over_the_wire(tmp_path: Path) -> None:
         recovery = service.open_controller_recovery_window(ttl_seconds=900)
         window = recovery["setup_session"]
         session = CommissioningProtocolSession(
-            CommissioningService(store=store, network=network)
+            CommissioningService(
+        host_context=fixed_host_context, store=store, network=network)
         )
 
         async def run() -> list[dict]:
-            replies = []
+            replies = [
+                await prove_over_ble(
+                    session,
+                    commissioning_id=window["commissioning_id"],
+                    code=window["setup_code"],
+                    controller={"public_key": phone},
+                )
+            ]
             for index, (operation, payload) in enumerate(
                 (
-                    (
-                        "session.authenticate",
-                        {
-                            "commissioning_id": window["commissioning_id"],
-                            "setup_code": window["setup_code"],
-                        },
-                    ),
                     ("wifi.scan", {}),
                     (
                         "claim.complete",
