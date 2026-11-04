@@ -1805,6 +1805,39 @@
         "title": "DeviceRemovalView",
         "type": "object"
       },
+      "DeviceSessionStart": {
+        "additionalProperties": false,
+        "properties": {
+          "device_id": {
+            "maxLength": 80,
+            "minLength": 80,
+            "pattern": "^device-instance-[0-9a-f]{64}$",
+            "title": "Device Id",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "target_companion_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Target Companion Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "device_id",
+          "target_companion_id"
+        ],
+        "title": "DeviceSessionStart",
+        "type": "object"
+      },
       "DeviceStatusView": {
         "additionalProperties": false,
         "properties": {
@@ -9352,6 +9385,183 @@
     "/api/management/v1/device-conversations/status": {
       "post": {
         "operationId": "status_api_management_v1_device_conversations_status_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConversationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Status",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/device-sessions/close": {
+      "post": {
+        "operationId": "close_api_management_v1_device_sessions_close_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SharedClose"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConversationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Close",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/device-sessions/open": {
+      "post": {
+        "operationId": "start_api_management_v1_device_sessions_open_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceSessionStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceConversationStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/device-sessions/status": {
+      "post": {
+        "operationId": "status_api_management_v1_device_sessions_status_post",
         "parameters": [
           {
             "in": "header",

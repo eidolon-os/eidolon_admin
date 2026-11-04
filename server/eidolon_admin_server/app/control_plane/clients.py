@@ -1929,6 +1929,19 @@ class HubManagementClient:
             status_model=DeviceConversationStatus,
         )
 
+    async def device_session(
+        self, *, action: str, command: dict, authorization: str
+    ) -> dict:
+        from eidolon_sdk.biz.control.device_session import DeviceSessionStatus
+
+        return await self._conversation_command(
+            action=action,
+            command=command,
+            authorization=authorization,
+            resource="device-sessions",
+            status_model=DeviceSessionStatus,
+        )
+
     async def role_group(
         self, *, action: str, command: dict, authorization: str
     ) -> dict:

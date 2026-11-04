@@ -51,6 +51,7 @@ from eidolon_admin_server.app.service_auth import require_local_api_credential
 from .service import ControlPlaneService
 from .shared_sessions import ControllerSharedStart, ControllerSharedClose
 from .role_groups import ControllerRoleGroupStart, ControllerRoleGroupQuery
+from .device_sessions import ControllerDeviceSessionStart, ControllerDeviceSessionQuery
 from .device_conversations import ControllerConversationStart, ControllerConversationQuery
 
 #: Every route mounted here requires the Local API service credential, and it
@@ -358,6 +359,27 @@ async def status_device_conversation(owner_id: str, payload: ControllerConversat
     if str(payload.business_owner_id) != owner_id:
         raise HTTPException(409, "Shared session Owner does not match")
     return await _service(request).device_conversation(payload=payload, action="status")
+
+
+@router.post("/owners/{owner_id}/device-sessions/open")
+async def open_device_session(owner_id: str, payload: ControllerDeviceSessionStart, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).device_session(payload=payload, action="open")
+
+
+@router.post("/owners/{owner_id}/device-sessions/close")
+async def close_device_session(owner_id: str, payload: ControllerDeviceSessionQuery, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).device_session(payload=payload, action="close")
+
+
+@router.post("/owners/{owner_id}/device-sessions/status")
+async def status_device_session(owner_id: str, payload: ControllerDeviceSessionQuery, request: Request):
+    if str(payload.business_owner_id) != owner_id:
+        raise HTTPException(409, "Shared session Owner does not match")
+    return await _service(request).device_session(payload=payload, action="status")
 
 
 @router.post("/owners/{owner_id}/shared-sessions/open")

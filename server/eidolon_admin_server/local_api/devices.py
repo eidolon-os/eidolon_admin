@@ -234,6 +234,11 @@ class AdminOwnerDevicesClient:
         return await self._conversation_command(payload=payload, action=action,
             resource="device-conversations", status_model=DeviceConversationStatus)
 
+    async def device_session(self, *, payload, action: str) -> dict:
+        from eidolon_sdk.biz.control.device_session import DeviceSessionStatus
+        return await self._conversation_command(payload=payload, action=action,
+            resource="device-sessions", status_model=DeviceSessionStatus)
+
     async def role_group(self, *, payload, action: str) -> dict:
         from eidolon_sdk.biz.control.coordination import RoleGroupStatus
         return await self._conversation_command(payload=payload, action=action,
