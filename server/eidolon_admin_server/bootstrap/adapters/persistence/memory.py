@@ -120,6 +120,23 @@ class InMemoryBootstrapStateStore:
             break
         raise BootstrapStateConflict("commissioning session is unavailable")
 
+    def commissioning_secret_hash(self, *, session_id: str, now: str) -> str:
+        self._require_open()
+        for metadata, stored_hash in self._sessions:
+            if metadata.session_id == session_id and metadata.is_open(now):
+                return stored_hash
+        raise BootstrapStateConflict("commissioning session is unavailable")
+
+    def record_failed_commissioning_attempt(self, *, session_id: str) -> None:
+        self._require_open()
+        for index, (metadata, stored_hash) in enumerate(self._sessions):
+            if metadata.session_id == session_id:
+                self._sessions[index] = (
+                    replace(metadata, failed_attempts=metadata.failed_attempts + 1),
+                    stored_hash,
+                )
+                return
+
     def claim_controller(
         self,
         *,

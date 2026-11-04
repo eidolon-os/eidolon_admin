@@ -233,6 +233,42 @@ class LanCommissioningClaimRequest(BaseModel):
     controller: LanControllerClaim
 
 
+_COMMISSIONING_ID_PATTERN = (
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+
+
+class LanPakeStartRequest(BaseModel):
+    """The first PAKE message over the LAN (ADR-0008). The suite is checked by
+    the Host, not here, so an unknown one is answered as ``unsupported_suite``
+    rather than as a malformed request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"]
+    suite: str = Field(min_length=1, max_length=64)
+    commissioning_id: str = Field(pattern=_COMMISSIONING_ID_PATTERN)
+    controller_public_key: str = Field(pattern=r"^[A-Za-z0-9_-]{32,1024}$")
+
+
+class LanPakeClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["1"]
+    handshake_id: str = Field(pattern=r"^[A-Za-z0-9_-]{22}$")
+    #: 384 bytes and 64 bytes, unpadded base64url.
+    A: str = Field(pattern=r"^[A-Za-z0-9_-]{512}$")
+    client_proof: str = Field(pattern=r"^[A-Za-z0-9_-]{86}$")
+    controller: LanControllerClaim
+
+
+def _client_source(request: Request) -> str | None:
+    """The peer address a LAN guess is paced under. Only the socket's own
+    peer: a forwarded-for header is the caller's claim, not a fact."""
+
+    return request.client.host if request.client is not None else None
+
+
 def create_app(
     settings: LocalApiSettings | None = None,
     *,
@@ -334,6 +370,7 @@ def create_app(
         *,
         authentication: bool = False,
         lan_commissioning: bool = False,
+        coded_errors: bool = False,
         **parameters: Any,
     ) -> dict:
         try:
@@ -347,12 +384,28 @@ def create_app(
             if lan_commissioning:
                 code = {
                     "commissioning_denied": status.HTTP_401_UNAUTHORIZED,
+                    "controller_denied": status.HTTP_401_UNAUTHORIZED,
                     "operation_conflict": status.HTTP_409_CONFLICT,
+                    "pake_handshake_unknown": status.HTTP_409_CONFLICT,
                     "invalid_controller_key": status.HTTP_422_UNPROCESSABLE_CONTENT,
                     "invalid_request": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "unsupported_suite": status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    "rate_limited": status.HTTP_429_TOO_MANY_REQUESTS,
                     "BootstrapOperationRejected": status.HTTP_404_NOT_FOUND,
                 }.get(exc.code, status.HTTP_503_SERVICE_UNAVAILABLE)
-                raise HTTPException(code, str(exc)) from exc
+                headers = None
+                if exc.retry_after_ms is not None:
+                    headers = {"Retry-After": str(max(1, -(-exc.retry_after_ms // 1000)))}
+                # The PAKE routes answer with the Host's own code, because two
+                # of their refusals share a status: a 409 is either "start the
+                # exchange again" or "someone else claimed it", and a phone
+                # must not answer both the same way.
+                detail: Any = str(exc)
+                if coded_errors:
+                    detail = {"code": exc.code, "message": str(exc)}
+                    if exc.retry_after_ms is not None:
+                        detail["retry_after_ms"] = exc.retry_after_ms
+                raise HTTPException(code, detail, headers=headers) from exc
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "bootstrap control plane unavailable",
@@ -402,6 +455,7 @@ def create_app(
     @app.put("/api/local/v1/commissioning/claim")
     async def lan_commissioning_claim(
         request: LanCommissioningClaimRequest,
+        http_request: Request,
     ) -> dict:
         return await request_bootstrap(
             "commissioning.lan.claim",
@@ -409,6 +463,34 @@ def create_app(
             commissioning_id=request.commissioning_id,
             setup_code=request.setup_code,
             controller=request.controller.model_dump(),
+            source=_client_source(http_request),
+        )
+
+    # The Setup code proven instead of sent (ADR-0008). A Host without these
+    # answers 404, which is how a phone knows to fall back to PUT /claim.
+    @app.post("/api/local/v1/commissioning/pake/start")
+    async def lan_commissioning_pake_start(
+        request: LanPakeStartRequest,
+        http_request: Request,
+    ) -> dict:
+        return await request_bootstrap(
+            "commissioning.lan.pake.start",
+            lan_commissioning=True,
+            coded_errors=True,
+            payload=request.model_dump(exclude={"contract_version"}),
+            source=_client_source(http_request),
+        )
+
+    @app.post("/api/local/v1/commissioning/pake/claim")
+    async def lan_commissioning_pake_claim(request: LanPakeClaimRequest) -> dict:
+        return await request_bootstrap(
+            "commissioning.lan.pake.claim",
+            lan_commissioning=True,
+            coded_errors=True,
+            payload={
+                **request.model_dump(exclude={"contract_version", "controller"}),
+                "controller": request.controller.model_dump(),
+            },
         )
 
     @app.post("/api/local/v1/auth/challenges")

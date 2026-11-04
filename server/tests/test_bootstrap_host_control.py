@@ -1502,7 +1502,7 @@ def test_bootstrap_contracts_are_valid_json() -> None:
 
     documents = [json.loads(path.read_text()) for path in contracts.glob("*.json")]
 
-    assert len(documents) == 6
+    assert len(documents) == 7
     assert all(document["$schema"].endswith("2020-12/schema") for document in documents)
 
     local_api_contract = json.loads(

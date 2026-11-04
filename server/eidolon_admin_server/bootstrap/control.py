@@ -21,9 +21,24 @@ logger = logging.getLogger("eidolon.bootstrap.control")
 class BootstrapControlError(RuntimeError):
     """A structured error returned by the local control socket."""
 
-    def __init__(self, message: str, *, code: str = "BootstrapControlError") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "BootstrapControlError",
+        retry_after_ms: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.retry_after_ms = retry_after_ms
+
+
+def _source(request: dict[str, Any]) -> str | None:
+    """Where a LAN request came from, as the Local API saw it: the key the
+    per-source guess bucket is kept under, and nothing else."""
+
+    source = request.get("source")
+    return source if isinstance(source, str) and 0 < len(source) <= 64 else None
 
 
 class BootstrapControlServer:
@@ -77,6 +92,8 @@ class BootstrapControlServer:
                     "message": str(exc),
                 },
             }
+            if exc.retry_after_ms is not None:
+                response["error"]["retry_after_ms"] = exc.retry_after_ms
         except (
             BootstrapControlError,
             BootstrapOperationRejected,
@@ -149,7 +166,18 @@ class BootstrapControlServer:
                 commissioning_id=request.get("commissioning_id"),
                 setup_code=request.get("setup_code"),
                 controller=controller,
+                source=_source(request),
             )
+        if operation == "commissioning.lan.pake.start":
+            payload = request.get("payload")
+            if not isinstance(payload, dict):
+                raise BootstrapControlError("payload must be an object")
+            return self._service.lan_pake_start(payload, source=_source(request))
+        if operation == "commissioning.lan.pake.claim":
+            payload = request.get("payload")
+            if not isinstance(payload, dict):
+                raise BootstrapControlError("payload must be an object")
+            return self._service.lan_pake_claim(payload)
         if operation == "controller.reset":
             raw_ttl = request.get("ttl_seconds")
             return self._service.open_controller_recovery_window(
@@ -199,9 +227,16 @@ class BootstrapControlClient:
                 ) from exc
             if not isinstance(response, dict) or response.get("ok") is not True:
                 error = response.get("error", {}) if isinstance(response, dict) else {}
+                retry_after_ms = error.get("retry_after_ms")
                 raise BootstrapControlError(
                     str(error.get("message", "bootstrap control request failed")),
                     code=str(error.get("code", "BootstrapControlError")),
+                    retry_after_ms=(
+                        retry_after_ms
+                        if isinstance(retry_after_ms, int)
+                        and not isinstance(retry_after_ms, bool)
+                        else None
+                    ),
                 )
             result = response.get("result")
             if not isinstance(result, dict):

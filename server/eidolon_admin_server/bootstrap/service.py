@@ -37,6 +37,7 @@ from .domain import (
     is_usable_setup_code,
 )
 from .endpoint_encoding import GATT_MAX_ATTRIBUTE_BYTES, endpoint_size
+from .guess_budget import GuessBudget
 from .host_addresses import IPNetwork, local_api_base_urls
 from .ports import (
     BootstrapStateConflict,
@@ -111,6 +112,10 @@ class BootstrapService:
                 store=store,
                 network=network,
                 on_claimed=self.reopen_standing_claim_window,
+                # One budget for both transports' guesses, kept apart inside
+                # it by transport: see guess_budget.py.
+                budget=GuessBudget(),
+                host_context=self._pake_host_context,
             )
         )
         self._run_id: str | None = None
@@ -579,12 +584,43 @@ class BootstrapService:
 
         return self.commissioning_endpoint()
 
+    def _pake_host_context(self) -> dict[str, str]:
+        """The two keys a PAKE transcript names: the ones the endpoint document
+        already told the phone to pin, read from the same managers."""
+
+        return {
+            "host_public_key": self._identity_manager.identity.public_key,
+            "tls_spki_fingerprint": self._tls_identity_manager.identity.spki_fingerprint,
+        }
+
+    def lan_pake_start(
+        self, payload: dict[str, Any], *, source: str | None = None
+    ) -> dict[str, Any]:
+        """The first PAKE message over the Local API (ADR-0008)."""
+
+        return {
+            "contract_version": "1",
+            **self.commissioning.pake_start(payload, transport="lan", source=source),
+        }
+
+    def lan_pake_claim(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Prove the code and claim in one request, then prove the Host back."""
+
+        result = self.commissioning.pake_claim(payload, transport="lan")
+        return {
+            "contract_version": "1",
+            "operation": "local.lan-commissioning-claim",
+            "host_id": self._identity_manager.identity.host_id,
+            **result,
+        }
+
     def claim_lan_controller(
         self,
         *,
         commissioning_id: str,
         setup_code: str,
         controller: dict[str, Any],
+        source: str | None = None,
     ) -> dict[str, Any]:
         """Claim an already-networked Host through the Local API.
 
@@ -600,6 +636,8 @@ class BootstrapService:
         authorization = commissioning.authorize(
             session_id=commissioning_id,
             secret=setup_code,
+            transport="lan",
+            source=source,
         )
         result = commissioning.claim_controller(authorization, controller)
         return {

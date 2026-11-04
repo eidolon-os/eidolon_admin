@@ -212,8 +212,10 @@ class BootstrapOperation:
 
 #: A Setup code is read aloud or typed from a label, so it is short by
 #: necessity. Eight digits is what Matter and HomeKit both settled on: about
-#: 26.6 bits, low enough to be usable and safe only because the session it
-#: unlocks is one-time, expires, and dies after a few wrong guesses.
+#: 26.6 bits, low enough to be usable and safe only because it is never sent —
+#: it keys an SRP-6a exchange (ADR-0008), so it can be guessed only online, one
+#: paced guess at a time, and a window is spent by the claim it authorises.
+#: Nothing closes a window on wrong guesses (ADR-0007).
 SETUP_CODE_DIGITS = 8
 _SETUP_CODE = re.compile(r"^[0-9]{8}$")
 

@@ -56,6 +56,18 @@ class BootstrapStateStore(Protocol):
         now: str,
     ) -> CommissioningSessionMetadata: ...
 
+    def commissioning_secret_hash(self, *, session_id: str, now: str) -> str:
+        """The stored hash of an open window's code, for the Host's half of the
+        PAKE. Raises BootstrapStateConflict when the window is not open. Reads
+        only: comparing a guess against it is the PAKE's job, not the store's.
+        """
+        ...
+
+    def record_failed_commissioning_attempt(self, *, session_id: str) -> None:
+        """Count one wrong code against a window, as evidence. Nothing acts on
+        the count (ADR-0007); a window that no longer exists is ignored."""
+        ...
+
     def claim_controller(
         self,
         *,

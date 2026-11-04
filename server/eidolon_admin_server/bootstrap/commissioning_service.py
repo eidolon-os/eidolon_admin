@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import logging
 import re
+import secrets
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,6 +17,7 @@ from typing import Any, Callable
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
+from . import pake
 from .domain import (
     is_usable_setup_code,
     BootstrapOperation,
@@ -23,6 +27,7 @@ from .domain import (
     ControllerRole,
     NetworkState,
 )
+from .guess_budget import GuessBudget, GuessRefused
 from .ports import (
     BootstrapStateConflict,
     BootstrapStateStore,
@@ -33,6 +38,11 @@ from .ports import (
 
 
 _CONTROLLER_ID = re.compile(r"^ectrl-[0-9a-f]{20}$")
+#: How long the Host holds its half of a PAKE between start and confirm.
+PAKE_HANDSHAKE_SECONDS = 30.0
+#: How many half-finished handshakes are held at once; the oldest goes first.
+#: Each one cost a guess to start, so the budget bounds how fast they arrive.
+PAKE_MAX_HANDSHAKES = 16
 
 logger = logging.getLogger("eidolon.bootstrap.commissioning")
 
@@ -40,9 +50,13 @@ logger = logging.getLogger("eidolon.bootstrap.commissioning")
 class CommissioningRequestRejected(RuntimeError):
     """A setup request is invalid or not allowed in the current state."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self, code: str, message: str, *, retry_after_ms: int | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        #: Set on ``rate_limited`` only: when the next attempt would be taken.
+        self.retry_after_ms = retry_after_ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +65,20 @@ class CommissioningAuthorization:
 
     session_id: str
     secret_hash: str
+    #: Set when the code was proven by PAKE: the controller key that proof was
+    #: bound to, which is then the only key this authorization can claim with.
+    controller_key_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Handshake:
+    session_id: str
+    secret_hash: str
+    transport: str
+    exchange: pake.ServerExchange
+    context: bytes
+    controller_key_sha256: str
+    expires_at: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,11 +114,12 @@ def _decode_base64url(value: str, *, field: str) -> bytes:
     return decoded
 
 
-def _controller_grant(
-    payload: dict[str, Any], *, reset_epoch: int, created_at: str
-) -> ControllerGrant:
-    encoded_key = payload.get("public_key")
-    der = _decode_base64url(encoded_key, field="public_key")
+def _base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _p256_public_key_der(encoded_key: Any, *, field: str = "public_key") -> bytes:
+    der = _decode_base64url(encoded_key, field=field)
     try:
         public_key = load_der_public_key(der)
     except ValueError as exc:
@@ -103,6 +132,18 @@ def _controller_grant(
         raise CommissioningRequestRejected(
             "invalid_controller_key", "Controller key must be P-256"
         )
+    return der
+
+
+def _controller_key_sha256(der: bytes) -> str:
+    return _base64url(hashlib.sha256(der).digest())
+
+
+def _controller_grant(
+    payload: dict[str, Any], *, reset_epoch: int, created_at: str
+) -> ControllerGrant:
+    encoded_key = payload.get("public_key")
+    der = _p256_public_key_der(encoded_key)
     digest = hashlib.sha256(der).hexdigest()
     controller_id = f"ectrl-{digest[:20]}"
     supplied_id = payload.get("controller_id")
@@ -151,10 +192,24 @@ class CommissioningService:
         network: NetworkProvisioning,
         clock: Callable[[], datetime] = _now,
         on_claimed: Callable[[], None] | None = None,
+        budget: GuessBudget | None = None,
+        host_context: Callable[[], dict[str, str]] | None = None,
+        entropy: Callable[[int], bytes] = secrets.token_bytes,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
         self._network = network
         self._clock = clock
+        #: Paces guesses at the code (guess_budget.py). None paces nothing,
+        #: which is what a test of this service on its own wants; the Host
+        #: composition always passes one.
+        self._budget = budget
+        #: The Host's long-term and TLS public keys, which the PAKE binds into
+        #: its transcript. None means this composition offers no PAKE.
+        self._host_context = host_context
+        self._entropy = entropy
+        self._monotonic = monotonic
+        self._handshakes: dict[str, _Handshake] = {}
         #: Called after a claim has been committed, so the composition that
         #: knows this Host's claim-window policy can act on it. Kept as a
         #: callback rather than a settings object: whether a window should be
@@ -163,7 +218,18 @@ class CommissioningService:
         #: only ever needed a hash.
         self._on_claimed = on_claimed
 
-    def authorize(self, *, session_id: str, secret: str) -> CommissioningAuthorization:
+    def authorize(
+        self,
+        *,
+        session_id: str,
+        secret: str,
+        transport: str = "ble",
+        source: str | None = None,
+    ) -> CommissioningAuthorization:
+        """The legacy path: the code itself, compared here. Paced like a PAKE
+        start, so a Host is protected as soon as it is upgraded, whatever the
+        phone talking to it."""
+
         if not isinstance(session_id, str) or not session_id:
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
@@ -172,18 +238,190 @@ class CommissioningService:
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
             )
+        now = _timestamp(self._clock())
+        if self._budget is not None:
+            self._open_secret_hash(session_id, now)
+            self._spend_guess(session_id, transport, source)
         secret_hash = hashlib.sha256(secret.encode("utf-8")).hexdigest()
         try:
             self._store.authorize_commissioning_session(
                 session_id=session_id,
                 secret_hash=secret_hash,
+                now=now,
+            )
+        except BootstrapStateConflict as exc:
+            if self._budget is not None:
+                self._budget.failed(window=session_id, transport=transport)
+            raise CommissioningRequestRejected(
+                "commissioning_denied", "Commissioning session is unavailable"
+            ) from exc
+        return CommissioningAuthorization(session_id, secret_hash)
+
+    def pake_start(
+        self,
+        payload: dict[str, Any],
+        *,
+        transport: str,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """The Host's first PAKE message: salt, B, and the context both proofs
+        will be bound to. Spends one guess, because this is where a guess is
+        committed to — the code is fixed by the A the phone sends next."""
+
+        if self._host_context is None:
+            raise CommissioningRequestRejected(
+                "unknown_operation", "Unknown commissioning operation"
+            )
+        if payload.get("suite") != pake.SUITE:
+            raise CommissioningRequestRejected(
+                "unsupported_suite", f"This Host offers {pake.SUITE} only"
+            )
+        session_id = payload.get("commissioning_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise CommissioningRequestRejected(
+                "commissioning_denied", "Commissioning session is unavailable"
+            )
+        key_der = _p256_public_key_der(
+            payload.get("controller_public_key"), field="controller_public_key"
+        )
+        secret_hash = self._open_secret_hash(session_id, _timestamp(self._clock()))
+        self._spend_guess(session_id, transport, source)
+        salt = self._entropy(pake.SALT_BYTES)
+        b = int.from_bytes(self._entropy(pake.EPHEMERAL_BYTES), "big")
+        handshake_id = _base64url(self._entropy(16))
+        exchange = pake.ServerExchange.begin(
+            identity=session_id, password=secret_hash, salt=salt, b=b
+        )
+        host = self._host_context()
+        context = {
+            "commissioning_id": session_id,
+            "controller_public_key_sha256": _controller_key_sha256(key_der),
+            "handshake_id": handshake_id,
+            "host_public_key": host["host_public_key"],
+            "reset_epoch": self._store.get_state().reset_epoch,
+            "suite": pake.SUITE,
+            "tls_spki_fingerprint": host["tls_spki_fingerprint"],
+            "transport": transport,
+        }
+        self._remember(
+            handshake_id,
+            _Handshake(
+                session_id=session_id,
+                secret_hash=secret_hash,
+                transport=transport,
+                exchange=exchange,
+                context=pake.context_bytes(context),
+                controller_key_sha256=context["controller_public_key_sha256"],
+                expires_at=self._monotonic() + PAKE_HANDSHAKE_SECONDS,
+            ),
+        )
+        return {
+            "suite": pake.SUITE,
+            "handshake_id": handshake_id,
+            "salt": _base64url(salt),
+            "B": _base64url(exchange.B_encoded),
+            "context": context,
+        }
+
+    def pake_confirm(
+        self, payload: dict[str, Any], *, transport: str
+    ) -> tuple[CommissioningAuthorization, str]:
+        """Check the phone's proof; on success, the authorization and the
+        Host's own proof. A handshake is answered once, right or wrong."""
+
+        handshake_id = payload.get("handshake_id")
+        handshake = (
+            self._handshakes.pop(handshake_id, None)
+            if isinstance(handshake_id, str)
+            else None
+        )
+        if (
+            handshake is None
+            or handshake.expires_at <= self._monotonic()
+            or handshake.transport != transport
+        ):
+            raise CommissioningRequestRejected(
+                "pake_handshake_unknown", "Start the Setup code exchange again"
+            )
+        client_public = _decode_base64url(payload.get("A"), field="A")
+        client_proof = _decode_base64url(payload.get("client_proof"), field="client_proof")
+        try:
+            server_proof = handshake.exchange.finish(
+                A_encoded=client_public,
+                context=handshake.context,
+                presented_proof=client_proof,
+            )
+        except pake.PakeRejected as exc:
+            self._store.record_failed_commissioning_attempt(
+                session_id=handshake.session_id
+            )
+            if self._budget is not None:
+                self._budget.failed(window=handshake.session_id, transport=transport)
+            raise CommissioningRequestRejected(
+                "commissioning_denied", "Commissioning session is unavailable"
+            ) from exc
+        # The window may have been consumed or superseded while the phone was
+        # computing; the proof is only as good as the window it was made for.
+        try:
+            self._store.authorize_commissioning_session(
+                session_id=handshake.session_id,
+                secret_hash=handshake.secret_hash,
                 now=_timestamp(self._clock()),
             )
         except BootstrapStateConflict as exc:
             raise CommissioningRequestRejected(
                 "commissioning_denied", "Commissioning session is unavailable"
             ) from exc
-        return CommissioningAuthorization(session_id, secret_hash)
+        return (
+            CommissioningAuthorization(
+                handshake.session_id,
+                handshake.secret_hash,
+                controller_key_sha256=handshake.controller_key_sha256,
+            ),
+            _base64url(server_proof),
+        )
+
+    def pake_claim(
+        self, payload: dict[str, Any], *, transport: str
+    ) -> dict[str, Any]:
+        """Confirm and claim in one step, for a transport with no session to
+        hold an authorization between requests (the LAN)."""
+
+        controller = payload.get("controller")
+        if not isinstance(controller, dict):
+            raise CommissioningRequestRejected(
+                "invalid_request", "controller must be an object"
+            )
+        authorization, server_proof = self.pake_confirm(payload, transport=transport)
+        return {**self.claim_controller(authorization, controller), "server_proof": server_proof}
+
+    def _open_secret_hash(self, session_id: str, now: str) -> str:
+        try:
+            return self._store.commissioning_secret_hash(session_id=session_id, now=now)
+        except BootstrapStateConflict as exc:
+            raise CommissioningRequestRejected(
+                "commissioning_denied", "Commissioning session is unavailable"
+            ) from exc
+
+    def _spend_guess(self, session_id: str, transport: str, source: str | None) -> None:
+        if self._budget is None:
+            return
+        try:
+            self._budget.take(window=session_id, transport=transport, source=source)
+        except GuessRefused as exc:
+            raise CommissioningRequestRejected(
+                "rate_limited",
+                "Too many Setup code attempts; wait before trying again",
+                retry_after_ms=exc.retry_after_ms,
+            ) from exc
+
+    def _remember(self, handshake_id: str, handshake: _Handshake) -> None:
+        now = self._monotonic()
+        for key in [k for k, v in self._handshakes.items() if v.expires_at <= now]:
+            del self._handshakes[key]
+        while len(self._handshakes) >= PAKE_MAX_HANDSHAKES:
+            del self._handshakes[next(iter(self._handshakes))]
+        self._handshakes[handshake_id] = handshake
 
     def authorize_controller(self, controller_id: str) -> ControllerAuthorization:
         if not isinstance(controller_id, str) or not _CONTROLLER_ID.fullmatch(
@@ -411,6 +649,15 @@ class CommissioningService:
         grant = _controller_grant(
             payload, reset_epoch=state.reset_epoch, created_at=now
         )
+        bound = authorization.controller_key_sha256
+        if bound is not None and not hmac.compare_digest(
+            _controller_key_sha256(_decode_base64url(grant.public_key, field="public_key")),
+            bound,
+        ):
+            raise CommissioningRequestRejected(
+                "controller_denied",
+                "The Setup code was proven for a different Controller key",
+            )
         try:
             grant = self._store.claim_controller(
                 session_id=authorization.session_id,

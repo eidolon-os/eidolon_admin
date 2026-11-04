@@ -444,6 +444,26 @@ class SQLiteBootstrapStateStore:
             raise BootstrapStateConflict("commissioning session is unavailable")
         return _session_of(row)
 
+    def commissioning_secret_hash(self, *, session_id: str, now: str) -> str:
+        row = self.connection.execute(
+            "SELECT * FROM commissioning_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None or not _session_of(row).is_open(now):
+            raise BootstrapStateConflict("commissioning session is unavailable")
+        return row["secret_hash"]
+
+    def record_failed_commissioning_attempt(self, *, session_id: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE commissioning_sessions
+                   SET failed_attempts = failed_attempts + 1
+                 WHERE session_id = ?
+                """,
+                (session_id,),
+            )
+
     def claim_controller(
         self,
         *,

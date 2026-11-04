@@ -16,6 +16,9 @@
         "operation_conflict",
         "operation_expired",
         "commissioning_denied",
+        "pake_handshake_unknown",
+        "rate_limited",
+        "unsupported_suite",
         "controller_denied",
         "invalid_controller_key",
         "invalid_network",
@@ -29,7 +32,12 @@
     },
     "message": { "type": "string", "minLength": 1, "maxLength": 512 },
     "retryable": { "type": "boolean" },
-    "operation_id": { "type": ["string", "null"], "format": "uuid" }
+    "operation_id": { "type": ["string", "null"], "format": "uuid" },
+    "retry_after_ms": {
+      "description": "Sent with rate_limited only: how long until this Host takes another Setup code attempt on this transport.",
+      "type": "integer",
+      "minimum": 1
+    }
   },
   "additionalProperties": false
 }

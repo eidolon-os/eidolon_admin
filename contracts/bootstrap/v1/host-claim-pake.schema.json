@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eidolon.local/contracts/bootstrap/v1/host-claim-pake.schema.json",
+  "title": "Eidolon Host Claim PAKE V1",
+  "description": "SRP-6a over the Setup code (ADR-0008). Over BLE these are the payloads and results of the pake.start and pake.confirm operations inside the pinned TLS session; over the LAN, POST /api/local/v1/commissioning/pake/start and /pake/claim carry the same fields plus contract_version. golden/host-claim-srp6a-v1.json pins the arithmetic.",
+  "$defs": {
+    "base64url": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" },
+    "suite": { "const": "srp6a-rfc5054-3072-sha512-v1" },
+    "handshake_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
+    "public_value": {
+      "description": "384 bytes, big-endian, left-padded with zeros.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{512}$"
+    },
+    "proof": {
+      "description": "HMAC-SHA512, 64 bytes.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$"
+    },
+    "context": {
+      "description": "What both proofs are bound to. Hashed as canonical JSON: keys sorted, no whitespace, ASCII. A phone compares every field but handshake_id with what it already pinned or holds before it proves anything.",
+      "type": "object",
+      "required": [
+        "commissioning_id",
+        "controller_public_key_sha256",
+        "handshake_id",
+        "host_public_key",
+        "reset_epoch",
+        "suite",
+        "tls_spki_fingerprint",
+        "transport"
+      ],
+      "properties": {
+        "commissioning_id": { "type": "string", "format": "uuid" },
+        "controller_public_key_sha256": {
+          "description": "SHA-256 of the Controller's DER public key, unpadded base64url. The claim that follows must present that key.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "handshake_id": { "$ref": "#/$defs/handshake_id" },
+        "host_public_key": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" },
+        "reset_epoch": { "type": "integer", "minimum": 0 },
+        "suite": { "$ref": "#/$defs/suite" },
+        "tls_spki_fingerprint": { "type": "string", "pattern": "^sha256:[A-Za-z0-9_-]{43}$" },
+        "transport": { "enum": ["ble", "lan"] }
+      },
+      "additionalProperties": false
+    },
+    "start_request": {
+      "type": "object",
+      "required": ["suite", "commissioning_id", "controller_public_key"],
+      "properties": {
+        "suite": { "type": "string" },
+        "commissioning_id": { "type": "string", "format": "uuid" },
+        "controller_public_key": { "$ref": "#/$defs/base64url" }
+      },
+      "additionalProperties": false
+    },
+    "start_result": {
+      "type": "object",
+      "required": ["suite", "handshake_id", "salt", "B", "context"],
+      "properties": {
+        "contract_version": { "const": "1" },
+        "suite": { "$ref": "#/$defs/suite" },
+        "handshake_id": { "$ref": "#/$defs/handshake_id" },
+        "salt": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
+        "B": { "$ref": "#/$defs/public_value" },
+        "context": { "$ref": "#/$defs/context" }
+      },
+      "additionalProperties": false
+    },
+    "confirm_request": {
+      "type": "object",
+      "required": ["handshake_id", "A", "client_proof"],
+      "properties": {
+        "handshake_id": { "$ref": "#/$defs/handshake_id" },
+        "A": { "$ref": "#/$defs/public_value" },
+        "client_proof": { "$ref": "#/$defs/proof" }
+      },
+      "additionalProperties": false
+    },
+    "confirm_result": {
+      "description": "BLE: the session is now authorized as session.authenticate would have left it, and claim.complete must present the bound Controller key.",
+      "type": "object",
+      "required": ["server_proof", "state"],
+      "properties": {
+        "server_proof": { "$ref": "#/$defs/proof" },
+        "state": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "lan_claim_result": {
+      "description": "LAN: confirm and claim in one request. A phone checks server_proof before it believes anything else in this object.",
+      "type": "object",
+      "required": ["contract_version", "operation", "host_id", "controller", "state", "server_proof"],
+      "properties": {
+        "contract_version": { "const": "1" },
+        "operation": { "const": "local.lan-commissioning-claim" },
+        "host_id": { "type": "string" },
+        "controller": { "type": "object" },
+        "state": { "type": "object" },
+        "server_proof": { "$ref": "#/$defs/proof" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

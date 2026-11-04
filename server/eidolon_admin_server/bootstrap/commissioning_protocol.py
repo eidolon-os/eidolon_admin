@@ -29,6 +29,8 @@ _RETRYABLE_CODES = {
     "network_confirm_failed",
     "network_rollback_failed",
     "network_stage_failed",
+    "pake_handshake_unknown",
+    "rate_limited",
 }
 
 
@@ -39,6 +41,9 @@ class CommissioningProtocolSession:
         self._service = service
         self._authorization: CommissioningAccess | None = None
         self._controller_challenge: tuple[str, str, int, float] | None = None
+        #: The PAKE this link started, if any. Confirming someone else's
+        #: handshake from this link is refused, even with the right id.
+        self._pake_handshake_id: str | None = None
 
     async def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         request_id = request.get("request_id")
@@ -68,6 +73,31 @@ class CommissioningProtocolSession:
                     secret=payload.get("setup_code"),
                 )
                 result = self._service.status(self._authorization)
+            elif operation == "pake.start":
+                if self._authorization is not None:
+                    raise CommissioningRequestRejected(
+                        "operation_conflict", "Session is already authenticated"
+                    )
+                result = self._service.pake_start(payload, transport="ble")
+                self._pake_handshake_id = result["handshake_id"]
+            elif operation == "pake.confirm":
+                if self._authorization is not None:
+                    raise CommissioningRequestRejected(
+                        "operation_conflict", "Session is already authenticated"
+                    )
+                started, self._pake_handshake_id = self._pake_handshake_id, None
+                if started is None or payload.get("handshake_id") != started:
+                    raise CommissioningRequestRejected(
+                        "pake_handshake_unknown", "Start the Setup code exchange again"
+                    )
+                authorization, server_proof = self._service.pake_confirm(
+                    payload, transport="ble"
+                )
+                self._authorization = authorization
+                result = {
+                    "server_proof": server_proof,
+                    **self._service.status(authorization),
+                }
             elif operation == "controller.challenge":
                 controller_id = payload.get("controller_id")
                 authorization = self._service.authorize_controller(controller_id)
@@ -147,15 +177,18 @@ class CommissioningProtocolSession:
                 exc.code,
                 request_id if isinstance(request_id, str) else "<malformed>",
             )
+            error = {
+                "code": exc.code,
+                "message": str(exc),
+                "retryable": exc.code in _RETRYABLE_CODES,
+            }
+            if exc.retry_after_ms is not None:
+                error["retry_after_ms"] = exc.retry_after_ms
             return {
                 "contract_version": "1",
                 "request_id": request_id if isinstance(request_id, str) else None,
                 "ok": False,
-                "error": {
-                    "code": exc.code,
-                    "message": str(exc),
-                    "retryable": exc.code in _RETRYABLE_CODES,
-                },
+                "error": error,
             }
         except Exception:
             logger.exception("unexpected commissioning request failure")
