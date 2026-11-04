@@ -3149,6 +3149,12 @@
             "title": "Entry Id",
             "type": "string"
           },
+          "layer": {
+            "default": "",
+            "maxLength": 16,
+            "title": "Layer",
+            "type": "string"
+          },
           "preview": {
             "default": "",
             "maxLength": 4096,
@@ -4579,10 +4585,15 @@
       },
       "PersonMemoryDefaults": {
         "additionalProperties": false,
-        "description": "Owner defaults for future candidates and automatic promotion only.",
+        "description": "The Owner's memory policy.\n\nDefaults for future candidates and automatic promotion, which never\nrewrite an existing Person's permissions; and whether the household layer\nis on: the Owner's default Realm, which every speaker reads and writes\n(design §3.6). On unless the Owner turns it off.",
         "properties": {
           "candidate": {
             "$ref": "#/components/schemas/ProvisionalMemoryPolicy"
+          },
+          "household_memory": {
+            "default": true,
+            "title": "Household Memory",
+            "type": "boolean"
           },
           "prepare_on_promotion": {
             "default": false,

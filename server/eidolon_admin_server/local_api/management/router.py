@@ -970,6 +970,10 @@ class MemoryEntryView(BaseModel):
     preview: str = Field(default="", max_length=4096)
     provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
     value: str = ""
+    #: ``personal`` or ``household`` (design §3.6); empty for what was written
+    #: before the layer existed. In the household Realm anything not household
+    #: is unclaimed: kept and listed, never recalled.
+    layer: str = Field(default="", max_length=16)
 
 
 class MemoryDayView(BaseModel):

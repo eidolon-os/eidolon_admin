@@ -541,6 +541,7 @@ export interface MemoryDayView {
 
 export interface MemoryEntryView {
   entry_id: string
+  layer?: string
   preview?: string
   provenance?: MemoryProvenance
   recorded_at: string
@@ -773,6 +774,7 @@ export interface PersonFaceUpdate {
 
 export interface PersonMemoryDefaults {
   candidate?: ProvisionalMemoryPolicy
+  household_memory?: boolean
   prepare_on_promotion?: boolean
 }
 

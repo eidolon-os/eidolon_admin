@@ -383,6 +383,7 @@ class MemoryEntryInternal(BaseModel):
     preview: str = Field(default="", max_length=4096)
     provenance: MemoryProvenance = Field(default_factory=MemoryProvenance)
     value: str = ""
+    layer: str = Field(default="", max_length=16)
 
 
 class MemoryDayInternal(BaseModel):
@@ -1679,6 +1680,7 @@ async def get_memory_entries(
                 preview=entry.preview,
                 provenance=entry.provenance,
                 value=entry.value,
+                layer=entry.layer,
             )
             for entry in day.entries
         ],

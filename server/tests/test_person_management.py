@@ -301,6 +301,8 @@ async def test_owner_defaults_bridge_keeps_controller_owner_and_owner_revision()
             assert (await phone.get(path + '?owner_id=forged')).status_code == 200
             assert (await phone.put(path, json=body)).status_code == 422
             assert (await phone.put(path + '?expected_revision=3&owner_id=forged', json=body)).status_code == 200
-            assert calls[-1] == ('PUT', 'claimed', '/memory-policy', body, {'expected_revision': '3'})
+            # Forwarded as the full policy, so an omitted field carries its default.
+            assert calls[-1] == ('PUT', 'claimed', '/memory-policy', {**body, 'household_memory': True},
+                                 {'expected_revision': '3'})
             assert all(call[1] == 'claimed' for call in calls)
             assert (await phone.get('/persons/p/provisional-memory/access')).status_code == 404
