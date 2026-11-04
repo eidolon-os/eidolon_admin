@@ -190,7 +190,6 @@ class MemoryEntryView:
     preview: str
     provenance: MemoryProvenance
     value: str
-    layer: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,7 +246,6 @@ async def read_day(
                 preview=entry.preview,
                 provenance=entry.provenance,
                 value=entry.value,
-                layer=entry.layer,
             )
             for entry in page.entries
         ),

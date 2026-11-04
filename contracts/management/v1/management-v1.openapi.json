@@ -3149,12 +3149,6 @@
             "title": "Entry Id",
             "type": "string"
           },
-          "layer": {
-            "default": "",
-            "maxLength": 16,
-            "title": "Layer",
-            "type": "string"
-          },
           "preview": {
             "default": "",
             "maxLength": 4096,

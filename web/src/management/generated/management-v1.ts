@@ -541,7 +541,6 @@ export interface MemoryDayView {
 
 export interface MemoryEntryView {
   entry_id: string
-  layer?: string
   preview?: string
   provenance?: MemoryProvenance
   recorded_at: string
