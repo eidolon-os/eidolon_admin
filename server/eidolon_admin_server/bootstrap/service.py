@@ -743,8 +743,9 @@ class BootstrapService:
 
         Bounded, because a Host advertising an open claim window forever is a
         Host that belongs to whoever walks past it next. The window is one
-        commissioning session row: it expires, it is one-time, it dies after
-        five wrong codes, and it is the durable record that this happened.
+        commissioning session row: it expires and it is one-time; wrong codes
+        are slowed by the guess budget, never allowed to close it (ADR-0007,
+        ADR-0008); and it is the durable record that this happened.
 
         What authorizes this is reaching the Host's own root-owned control
         socket. That is operator presence, not physical presence — a Pi has no
