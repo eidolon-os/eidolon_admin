@@ -27,8 +27,23 @@ class CommissioningTlsIdentity:
     spki_fingerprint: str
 
 
+#: The certificate only wraps the Host's transport key; phones pin that key,
+#: vouched for by the Host identity, and never rely on the certificate's dates.
+#: So it lives as long as the key, like the Owner root and the Hub leaf, and
+#: no code path renews it.
+TLS_IDENTITY_LIFETIME_YEARS = 99
+
+
 def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _lifetime_end(start: datetime) -> datetime:
+    year = start.year + TLS_IDENTITY_LIFETIME_YEARS
+    try:
+        return start.replace(year=year)
+    except ValueError:  # 29 February, in a year that has none
+        return start.replace(year=year, day=28)
 
 
 class CommissioningTlsIdentityManager:
@@ -80,6 +95,13 @@ class CommissioningTlsIdentityManager:
             raise CommissioningTlsIdentityError(
                 "commissioning TLS certificate belongs to another Host"
             )
+        if certificate.not_valid_after_utc < _lifetime_end(
+            certificate.not_valid_before_utc
+        ):
+            # Issued before the lifetime policy. Phones pin the key, so the same
+            # key is certified again and nothing a phone holds changes.
+            self._issue(host_id, private_key)
+            return self.load(host_id)
         now = datetime.now(UTC)
         if (
             certificate.not_valid_before_utc > now
@@ -109,7 +131,9 @@ class CommissioningTlsIdentityManager:
 
     def _generate(self, host_id: str) -> None:
         self._pem_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        private_key = ec.generate_private_key(ec.SECP256R1())
+        self._issue(host_id, ec.generate_private_key(ec.SECP256R1()))
+
+    def _issue(self, host_id: str, private_key: ec.EllipticCurvePrivateKey) -> None:
         now = datetime.now(UTC)
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host_id)])
         certificate = (
@@ -119,7 +143,7 @@ class CommissioningTlsIdentityManager:
             .public_key(private_key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - timedelta(days=1))
-            .not_valid_after(now + timedelta(days=3650))
+            .not_valid_after(_lifetime_end(now))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
             .add_extension(
                 x509.SubjectAlternativeName(
