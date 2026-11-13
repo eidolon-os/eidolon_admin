@@ -508,6 +508,7 @@ export interface HostVitalsView {
 }
 
 export interface InputSelection {
+  camera?: "off" | "local" | "capture" | null
   microphone?: boolean
 }
 

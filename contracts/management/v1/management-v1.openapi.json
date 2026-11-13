@@ -2942,8 +2942,24 @@
       },
       "InputSelection": {
         "additionalProperties": false,
-        "description": "Owner permission to send microphone audio, independent of response outputs.",
+        "description": "Owner permission for what a device may take in, independent of response outputs.\n\n``camera`` is None for every device that has not declared the camera\ncontract: its camera use then follows from its Manifest, as it always has.",
         "properties": {
+          "camera": {
+            "anyOf": [
+              {
+                "enum": [
+                  "off",
+                  "local",
+                  "capture"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Camera"
+          },
           "microphone": {
             "default": false,
             "title": "Microphone",
