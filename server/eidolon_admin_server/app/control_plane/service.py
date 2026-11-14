@@ -221,6 +221,7 @@ class ControlPlaneService:
                 timeout_seconds=settings.authority_timeout_seconds,
             ),
             vision=VisionFaceClient(
+                directory=directory,
                 base_url=settings.vision_url,
                 service_token=settings.vision_service_token,
                 client=http_client,

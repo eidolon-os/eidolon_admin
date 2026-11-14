@@ -314,7 +314,8 @@ FACE_STATE = {"person_id": "p", "revision": 3, "has_image": True}
 VECTOR = [0.25, 0.5, -0.125]
 
 
-def _recognition_app(vision_answer, *, image_revision=3, image="/9j/", vision_url="http://vision"):
+def _recognition_app(vision_answer, *, image_revision=3, image="/9j/", vision_url="http://vision",
+                     vision_token="vision-token", directory=None):
     """The internal hop with a fake Data and the real Vision client over a fake wire."""
     import base64
 
@@ -345,7 +346,7 @@ def _recognition_app(vision_answer, *, image_revision=3, image="/9j/", vision_ur
     app.include_router(people)
     app.state.settings = SimpleNamespace(local_api_service_token="secret")
     vision = VisionFaceClient(
-        base_url=vision_url, service_token="vision-token", timeout_seconds=5,
+        base_url=vision_url, service_token=vision_token, timeout_seconds=5, directory=directory,
         client=httpx.AsyncClient(transport=httpx.MockTransport(answer)))
     app.state.control_plane = SimpleNamespace(data=Data(), vision=vision)
     client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://admin",
@@ -438,6 +439,79 @@ async def test_recognition_is_unavailable_whenever_vision_cannot_answer(answer, 
     assert refusal["code"] == "face_recognition_unavailable" and refusal["kind"] == kind
     assert len(data_calls) == 1
     assert "0.125" not in response.text
+
+
+class _Directory:
+    """eidolond's endpoint directory, answering for Vision the way a Host would."""
+
+    def __init__(self, *, failure=None, contract="eidolon.vision.faces.v1"):
+        self.failure, self.contract, self.asked = failure, contract, []
+
+    async def resolve(self, *, service_id, endpoint_id, required_contract):
+        from eidolon_admin_server.app.control_plane.contracts import ServiceEndpoint
+
+        self.asked.append((service_id, endpoint_id, required_contract))
+        if self.failure is not None:
+            raise self.failure
+        assert required_contract == self.contract
+        return ServiceEndpoint(
+            operation="system.service-endpoint", service_id=service_id, endpoint_id=endpoint_id,
+            protocol="http", address="http://127.0.0.1:18085/", contract=self.contract)
+
+
+async def test_vision_is_found_through_the_directory_and_needs_no_token():
+    # A Host: no address written anywhere and no shared secret. The Directory
+    # lists Vision because the Host declares face identity.
+    directory = _Directory()
+    client, data_calls, vision_requests = _recognition_app(
+        _embedded(), vision_url="", vision_token="", directory=directory)
+    async with client as c:
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+    assert response.status_code == 200 and response.json()["recognition_state"] == "enabled"
+    assert directory.asked == [("vision", "face-identity.http", "eidolon.vision.faces.v1")]
+    [sent] = vision_requests
+    assert sent.url == "http://127.0.0.1:18085/v1/faces/embed"
+    assert "authorization" not in sent.headers
+    assert len(data_calls) == 2
+
+
+async def test_an_explicit_vision_address_is_used_without_asking_the_directory():
+    directory = _Directory()
+    client, _, vision_requests = _recognition_app(_embedded(), directory=directory)
+    async with client as c:
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+    assert response.status_code == 200 and directory.asked == []
+    assert vision_requests[0].headers["authorization"] == "Bearer vision-token"
+
+
+@pytest.mark.parametrize("status, failure_kind, kind, retryable", [
+    # No such service: this Host does not declare face identity.
+    (404, "unavailable", "not_configured", False),
+    # Listed, and its readiness probe has not passed.
+    (503, "unavailable", "not_running", True),
+    (None, "unavailable", "not_running", True),  # eidolond itself unreachable
+    (None, "contract_violation", "upstream", False),
+])
+async def test_recognition_is_unavailable_when_the_directory_has_no_vision_to_give(
+    status, failure_kind, kind, retryable
+):
+    from eidolon_admin_server.app.control_plane.errors import AuthorityFailure
+
+    directory = _Directory(failure=AuthorityFailure(
+        "directory", failure_kind, "service endpoint is not ready: vision/face-identity.http",
+        503 if failure_kind == "unavailable" else 502, status, retryable or status == 404))
+    client, data_calls, vision_requests = _recognition_app(
+        _embedded(), vision_url="", vision_token="", directory=directory)
+    async with client as c:
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+    assert response.status_code == 503
+    refusal = response.json()["detail"]["refusal"]
+    assert refusal["code"] == "face_recognition_unavailable" and refusal["kind"] == kind
+    assert refusal["retryable"] is retryable
+    assert vision_requests == [] and len(data_calls) == 1
 
 
 async def test_recognition_without_a_vision_client_is_unavailable_and_disable_passes_through():

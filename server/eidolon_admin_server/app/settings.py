@@ -200,14 +200,16 @@ class Settings(BaseSettings):
     #: nothing, retries with backoff and purges nothing. That is the safe
     #: direction: no history is lost while this is unset, only delayed.
     audit_nats_url: str = ""
-    #: Where eidolon_vision answers, for deriving a face feature when the Owner
-    #: turns recognition on for a Person. Vision is not in the System Directory.
-    #: Empty means this Host has no face recognition, and enabling it is refused
-    #: as unavailable rather than attempted.
+    #: Development override for where eidolon_vision answers. Empty, which is
+    #: what a Host leaves it, means Vision is resolved through the System
+    #: Directory: a Host that declares face identity lists it there, and on one
+    #: that does not, enabling recognition is refused as unavailable rather than
+    #: attempted.
     vision_url: str = ""
-    #: The Host service token Vision's face routes require. Read from the
-    #: **unprefixed** variable Vision itself reads, for the same reason as the
-    #: Agent credential above: one secret with two names is how they disagree.
+    #: Optional. A Host's Vision is loopback-only and takes no token; this is
+    #: for a Vision that was started with one. Read from the **unprefixed**
+    #: variable Vision itself reads, for the same reason as the Agent credential
+    #: above: one secret with two names is how they disagree.
     vision_service_token: str = Field(
         default="", validation_alias="EIDOLON_VISION_SERVICE_TOKEN"
     )

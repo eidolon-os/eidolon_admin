@@ -773,24 +773,37 @@ FACE_RECOGNITION_UNAVAILABLE = "face_recognition_unavailable"
 FACE_PHOTO_REJECTED = "face_photo_rejected"
 
 
+#: The face routes eidolon_vision serves to the Host's own services, as the
+#: System Directory names them (eidolon_kernel config/system-services.yaml).
+VISION_SERVICE_ID = "vision"
+VISION_FACES_ENDPOINT_ID = "face-identity.http"
+VISION_FACES_CONTRACT = "eidolon.vision.faces.v1"
+
+
 class VisionFaceClient:
     """eidolon_vision's enrollment route: one reference photo in, one feature out.
 
-    Not resolved through the System Directory, which does not list Vision; an
-    empty ``base_url`` is a Host without face recognition. Neither the photo nor
-    the feature is logged here, and a failure names its cause without them.
+    Found through the System Directory, like Data: a Host that runs face
+    identity lists the service, and one that does not has no such entry, which
+    is what "not configured on this Host" means here. ``base_url`` names the
+    service directly instead and is for development, where Vision may run
+    outside the Host's topology. The token is optional: on a Host, Vision is
+    loopback-only and takes none. Neither the photo nor the feature is logged
+    here, and a failure names its cause without them.
     """
 
     def __init__(
         self,
         *,
-        base_url: str,
-        service_token: str,
         client: httpx.AsyncClient,
+        directory: SystemDirectoryClient | None = None,
+        base_url: str = "",
+        service_token: str = "",
         timeout_seconds: float = 5.0,
     ) -> None:
+        self._directory = directory
         self._base_url = base_url.strip().rstrip("/")
-        self._token = service_token
+        self._token = service_token.strip()
         self._client = client
         self._timeout = timeout_seconds
 
@@ -799,6 +812,41 @@ class VisionFaceClient:
         return AuthorityFailure(
             "vision", kind, detail, 503, upstream, retryable, FACE_RECOGNITION_UNAVAILABLE
         )
+
+    async def _address(self) -> str:
+        """Where Vision answers on this Host, or the refusal that says it does not."""
+
+        if self._base_url:
+            return self._base_url
+        if self._directory is None:
+            raise self._unavailable(
+                "configuration", "face recognition is not configured on this Host"
+            )
+        try:
+            endpoint = await self._directory.resolve(
+                service_id=VISION_SERVICE_ID,
+                endpoint_id=VISION_FACES_ENDPOINT_ID,
+                required_contract=VISION_FACES_CONTRACT,
+            )
+        except AuthorityFailure as exc:
+            # Every Directory answer becomes this feature's one refusal. Only
+            # 404 is the Host's standing state — it does not list the service
+            # because it does not declare the capability. The rest (not ready
+            # yet, Directory unreachable, an entry that is not what this client
+            # speaks) keep their kind: a Host failing at something it does have.
+            if exc.upstream_status == 404:
+                raise self._unavailable(
+                    "configuration",
+                    "face recognition is not configured on this Host",
+                    upstream=404,
+                ) from exc
+            raise self._unavailable(
+                exc.kind,
+                "face recognition could not be reached through the System Directory",
+                upstream=exc.upstream_status,
+                retryable=exc.retryable,
+            ) from exc
+        return endpoint.address.rstrip("/")
 
     async def embed(self, *, owner_id: str, image: bytes) -> FaceFeatures:
         """The feature for the single face in ``image``, or a refusal.
@@ -809,15 +857,12 @@ class VisionFaceClient:
         only a code and a reason, and the phone words each token itself.
         """
 
-        if not self._base_url or not self._token:
-            raise self._unavailable(
-                "configuration", "face recognition is not configured on this Host"
-            )
+        base_url = await self._address()
         try:
             # No reconnect-and-replay helper here: the body is a multipart photo.
             response = await self._client.post(
-                f"{self._base_url}/v1/faces/embed",
-                headers={"Authorization": f"Bearer {self._token}"},
+                f"{base_url}/v1/faces/embed",
+                headers={"Authorization": f"Bearer {self._token}"} if self._token else {},
                 files={"image": ("face.jpg", image, "image/jpeg")},
                 data={"owner_id": owner_id, "correlation_id": "face-enroll"},
                 timeout=self._timeout,
@@ -829,8 +874,9 @@ class VisionFaceClient:
             ) from exc
         status = response.status_code
         if status != 200:
-            # Vision answers 503 when it has no face model or no token, and 401
-            # when the two tokens differ: both are this Host's setup.
+            # Vision answers 503 when it has no face model (or is bound off
+            # loopback with no token), and 401 when it requires a token this
+            # client was not given: both are this Host's setup.
             kind = "configuration" if status in {401, 403} else "unavailable"
             raise self._unavailable(
                 kind,
