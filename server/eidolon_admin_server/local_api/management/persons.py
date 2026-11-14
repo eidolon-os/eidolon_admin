@@ -1,6 +1,7 @@
 """Controller-authenticated Person management, scoped to the claimed Owner."""
 
 from eidolon_sdk.biz.person_face import (
+    PersonFaceRecognitionEnable,
     PersonFaceState,
     PersonFaceUpdate,
     PersonFaceImage,
@@ -237,4 +238,36 @@ def register_person_routes(router, backend, authenticated_owner, refused):
             "/" + quote(person_id, safe="") + "/face-profile",
             "DELETE",
             expected_revision=expected_revision,
+        )
+
+    @router.put(
+        "/persons/{person_id}/face-profile/recognition", response_model=PersonFaceState
+    )
+    async def face_recognition_enable(
+        person_id: str,
+        payload: PersonFaceRecognitionEnable,
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(
+            authorization,
+            "/" + quote(person_id, safe="") + "/face-profile/recognition",
+            "PUT",
+            payload.model_dump(mode="json"),
+        )
+
+    @router.delete(
+        "/persons/{person_id}/face-profile/recognition", response_model=PersonFaceState
+    )
+    async def face_recognition_disable(
+        person_id: str,
+        response: Response,
+        authorization: str | None = Header(default=None),
+    ):
+        response.headers["Cache-Control"] = "no-store"
+        return await invoke(
+            authorization,
+            "/" + quote(person_id, safe="") + "/face-profile/recognition",
+            "DELETE",
         )

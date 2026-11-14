@@ -745,6 +745,9 @@ class AdminManagementClient:
                 # Synthesis and making a voice take seconds at the provider.
                 else max(self._timeout, 80)
                 if "/speech-voices" in path or "/owner-voices" in path
+                # Enabling recognition runs the face model on the stored photo.
+                else max(self._timeout, 15)
+                if path.endswith("/face-profile/recognition")
                 else self._timeout,
             )
         except (

@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import httpx
+import pytest
 from fastapi import APIRouter, FastAPI, HTTPException
 from eidolon_sdk.biz.person import PersonView, PersonProfile
 from eidolon_sdk.biz.voiceprint import VoiceprintCollection
@@ -306,3 +307,188 @@ async def test_owner_defaults_bridge_keeps_controller_owner_and_owner_revision()
                                  {'expected_revision': '3'})
             assert all(call[1] == 'claimed' for call in calls)
             assert (await phone.get('/persons/p/provisional-memory/access')).status_code == 404
+
+
+CONSENT = {"consent_version": "face-1", "statement": "They agreed.", "attested": True}
+FACE_STATE = {"person_id": "p", "revision": 3, "has_image": True}
+VECTOR = [0.25, 0.5, -0.125]
+
+
+def _recognition_app(vision_answer, *, image_revision=3, image="/9j/", vision_url="http://vision"):
+    """The internal hop with a fake Data and the real Vision client over a fake wire."""
+    import base64
+
+    from eidolon_admin_server.app.control_plane.clients import VisionFaceClient
+    from eidolon_admin_server.app.control_plane.failure_handler import (
+        install_authority_failure_handler,
+    )
+
+    data_calls, vision_requests = [], []
+
+    class Data:
+        async def person_call(self, method, owner, suffix, model, payload=None, params=None):
+            data_calls.append((method, owner, suffix, payload, params))
+            if suffix.endswith("/image"):
+                return model(revision=image_revision, image_base64=image,
+                             content_type="image/jpeg" if image else None)
+            enabled = method == "PUT"
+            return model(**FACE_STATE, recognition_state="enabled" if enabled else "not_configured")
+
+    def answer(request):
+        vision_requests.append(request)
+        if isinstance(vision_answer, Exception):
+            raise vision_answer
+        return vision_answer
+
+    app = FastAPI()
+    install_authority_failure_handler(app)
+    app.include_router(people)
+    app.state.settings = SimpleNamespace(local_api_service_token="secret")
+    vision = VisionFaceClient(
+        base_url=vision_url, service_token="vision-token", timeout_seconds=5,
+        client=httpx.AsyncClient(transport=httpx.MockTransport(answer)))
+    app.state.control_plane = SimpleNamespace(data=Data(), vision=vision)
+    client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://admin",
+                               headers={"Authorization": "Bearer secret"})
+    assert base64.b64decode("/9j/") == b"\xff\xd8\xff"
+    return client, data_calls, vision_requests
+
+
+def _embedded(**changes):
+    return httpx.Response(200, json={
+        "accepted": True, "faces": 1, "rejection": None, "face_px": 200, "model_id": "face-model",
+        "weights_hash": "c" * 64, "preprocessing_version": "prep-1", "feature_schema_version": 1,
+        "vector": VECTOR, **changes})
+
+
+RECOGNITION = "/internal/v1/management/persons/p/face-profile/recognition"
+
+
+async def test_enabling_recognition_sends_the_stored_photo_to_vision_and_the_feature_to_data(caplog):
+    client, data_calls, vision_requests = _recognition_app(_embedded())
+    body = {"expected_revision": 3,
+            "consent": {**CONSENT, "accepted_at": "1999-01-01T00:00:00+00:00"}}
+    with caplog.at_level("DEBUG"):
+        async with client as c:
+            assert (await c.put(RECOGNITION, json=body)).status_code == 422  # owner_id is required
+            response = await c.put(RECOGNITION, params={"owner_id": "owner"}, json=body)
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json()["recognition_state"] == "enabled"
+    assert "vector" not in response.text and "0.125" not in response.text
+    [sent] = vision_requests
+    assert sent.url == "http://vision/v1/faces/embed"
+    assert sent.headers["authorization"] == "Bearer vision-token"
+    assert sent.headers["content-type"].startswith("multipart/form-data")
+    assert b'name="image"' in sent.content and b"\xff\xd8\xff" in sent.content
+    assert b'name="owner_id"\r\n\r\nowner' in sent.content
+    assert [call[:3] for call in data_calls] == [
+        ("GET", "owner", "/p/face-profile/image"), ("PUT", "owner", "/p/face-profile/recognition")]
+    written = data_calls[-1][3]
+    assert written["expected_revision"] == 3
+    # Data stamps the time; what the client claimed is not passed on.
+    assert written["consent"] == {**CONSENT, "accepted_at": None}
+    assert written["features"] == {
+        "model_id": "face-model", "weights_hash": "c" * 64, "preprocessing_version": "prep-1",
+        "feature_schema_version": 1, "vector": VECTOR}
+    assert "0.125" not in caplog.text and "/9j/" not in caplog.text
+
+
+@pytest.mark.parametrize("stored", [dict(image_revision=4), dict(image=None)])
+async def test_a_photo_changed_since_the_consent_is_never_sent_to_vision(stored):
+    client, data_calls, vision_requests = _recognition_app(_embedded(), **stored)
+    async with client as c:
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+    assert response.status_code == 409
+    assert response.json()["detail"]["refusal"]["kind"] == "conflict"
+    assert vision_requests == [] and len(data_calls) == 1
+
+
+@pytest.mark.parametrize("rejection", ["no_face", "multiple_faces", "face_too_small", "low_confidence"])
+async def test_a_photo_vision_rejects_is_refused_with_the_reason(rejection):
+    client, data_calls, _ = _recognition_app(
+        _embedded(accepted=False, rejection=rejection, vector=None))
+    async with client as c:
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+    assert response.status_code == 422
+    assert response.json()["detail"]["refusal"] == {
+        "kind": "invalid", "code": "face_photo_rejected", "reason": rejection, "retryable": False}
+    assert len(data_calls) == 1  # nothing was written
+
+
+@pytest.mark.parametrize("answer, url, kind", [
+    (_embedded(), "", "not_configured"),
+    (httpx.Response(503, json={"detail": "face identity is not configured"}), "http://vision", "not_running"),
+    (httpx.Response(500), "http://vision", "not_running"),
+    (httpx.Response(401, json={"detail": "service token required"}), "http://vision", "not_configured"),
+    (httpx.ConnectError("refused"), "http://vision", "not_running"),
+    (httpx.ReadTimeout("slow"), "http://vision", "not_running"),
+    (_embedded(weights_hash=""), "http://vision", "upstream"),
+    (_embedded(vector=None), "http://vision", "upstream"),
+    (_embedded(accepted=False, rejection="something_new", vector=None), "http://vision", "upstream"),
+])
+async def test_recognition_is_unavailable_whenever_vision_cannot_answer(answer, url, kind):
+    client, data_calls, _ = _recognition_app(answer, vision_url=url)
+    async with client as c:
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+    assert response.status_code == 503
+    refusal = response.json()["detail"]["refusal"]
+    assert refusal["code"] == "face_recognition_unavailable" and refusal["kind"] == kind
+    assert len(data_calls) == 1
+    assert "0.125" not in response.text
+
+
+async def test_recognition_without_a_vision_client_is_unavailable_and_disable_passes_through():
+    client, data_calls, vision_requests = _recognition_app(_embedded())
+    async with client as c:
+        del c._transport.app.state.control_plane.vision
+        response = await c.put(RECOGNITION, params={"owner_id": "owner"},
+                               json={"expected_revision": 3, "consent": CONSENT})
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "face_recognition_unavailable"
+        disabled = await c.delete(RECOGNITION, params={"owner_id": "owner"})
+    assert disabled.status_code == 200 and disabled.headers["cache-control"] == "no-store"
+    assert disabled.json() == {**disabled.json(), **FACE_STATE, "recognition_state": "not_configured"}
+    assert data_calls[-1] == ("DELETE", "owner", "/p/face-profile/recognition", None, None)
+    assert vision_requests == []
+
+
+async def test_local_face_recognition_derives_owner_and_relays_the_consent():
+    calls = []
+
+    class Backend:
+        async def person_call(self, **kwargs):
+            calls.append(kwargs)
+            return {**FACE_STATE, "recognition_state":
+                    "enabled" if kwargs["method"] == "PUT" else "not_configured"}
+
+    async def auth(value):
+        if value != "Bearer controller":
+            raise HTTPException(401)
+        return "claimed-owner"
+
+    router = APIRouter()
+    register_person_routes(router, Backend(), auth, lambda exc: exc)
+    app = FastAPI()
+    app.include_router(router)
+    path = "/persons/p/face-profile/recognition"
+    body = {"expected_revision": 3, "consent": CONSENT}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://local") as c:
+        assert (await c.put(path, json=body)).status_code == 401
+        assert (await c.delete(path)).status_code == 401
+        c.headers["Authorization"] = "Bearer controller"
+        enabled = await c.put(path + "?owner_id=forged", json=body)
+        assert enabled.status_code == 200 and enabled.headers["cache-control"] == "no-store"
+        assert enabled.json()["recognition_state"] == "enabled"
+        assert calls[-1] == dict(owner_id="claimed-owner", suffix="/p/face-profile/recognition",
+                                 method="PUT", expected_revision=None,
+                                 payload={**body, "consent": {**CONSENT, "accepted_at": None}})
+        for refused in ({"expected_revision": 3}, {**body, "features": {"vector": VECTOR}},
+                        {**body, "consent": {**CONSENT, "attested": False}}):
+            assert (await c.put(path, json=refused)).status_code == 422
+        disabled = await c.delete(path + "?owner_id=forged")
+        assert disabled.status_code == 200 and disabled.json()["recognition_state"] == "not_configured"
+        assert calls[-1]["method"] == "DELETE" and calls[-1]["owner_id"] == "claimed-owner"
+        assert calls[-1]["expected_revision"] is None and calls[-1]["payload"] is None

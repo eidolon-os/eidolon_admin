@@ -9,6 +9,7 @@ from urllib.parse import quote
 import httpx
 
 from eidolon_sdk.core.http import request_with_reconnect
+from eidolon_sdk.biz.person_face import FACE_ENROLLMENT_REJECTIONS, FaceFeatures
 from eidolon_sdk.biz.persona import (
     ConversationPreferences,
     PersonaAuthoring,
@@ -764,6 +765,110 @@ class DataAuthorityClient:
                 "data", "Data returned a different Owner runtime snapshot"
             )
         return runtime
+
+
+#: The one code a client sees for "face recognition cannot be turned on right
+#: now", whatever the cause on this Host. Which cause is in the journal.
+FACE_RECOGNITION_UNAVAILABLE = "face_recognition_unavailable"
+FACE_PHOTO_REJECTED = "face_photo_rejected"
+
+
+class VisionFaceClient:
+    """eidolon_vision's enrollment route: one reference photo in, one feature out.
+
+    Not resolved through the System Directory, which does not list Vision; an
+    empty ``base_url`` is a Host without face recognition. Neither the photo nor
+    the feature is logged here, and a failure names its cause without them.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        service_token: str,
+        client: httpx.AsyncClient,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        self._base_url = base_url.strip().rstrip("/")
+        self._token = service_token
+        self._client = client
+        self._timeout = timeout_seconds
+
+    @staticmethod
+    def _unavailable(kind: str, detail: str, *, upstream=None, retryable=False):
+        return AuthorityFailure(
+            "vision", kind, detail, 503, upstream, retryable, FACE_RECOGNITION_UNAVAILABLE
+        )
+
+    async def embed(self, *, owner_id: str, image: bytes) -> FaceFeatures:
+        """The feature for the single face in ``image``, or a refusal.
+
+        A photo Vision will not enroll is a 422 whose ``code`` is
+        ``face_photo_rejected`` and whose ``detail`` is Vision's rejection token
+        (``no_face``, ``multiple_faces``, ...): the published refusal carries
+        only a code and a reason, and the phone words each token itself.
+        """
+
+        if not self._base_url or not self._token:
+            raise self._unavailable(
+                "configuration", "face recognition is not configured on this Host"
+            )
+        try:
+            # No reconnect-and-replay helper here: the body is a multipart photo.
+            response = await self._client.post(
+                f"{self._base_url}/v1/faces/embed",
+                headers={"Authorization": f"Bearer {self._token}"},
+                files={"image": ("face.jpg", image, "image/jpeg")},
+                data={"owner_id": owner_id, "correlation_id": "face-enroll"},
+                timeout=self._timeout,
+            )
+        except httpx.HTTPError as exc:
+            _LOG.warning("vision transport failed: %s", type(exc).__name__)
+            raise self._unavailable(
+                "unavailable", "face recognition is not answering", retryable=True
+            ) from exc
+        status = response.status_code
+        if status != 200:
+            # Vision answers 503 when it has no face model or no token, and 401
+            # when the two tokens differ: both are this Host's setup.
+            kind = "configuration" if status in {401, 403} else "unavailable"
+            raise self._unavailable(
+                kind,
+                f"face recognition returned HTTP {status}",
+                upstream=status,
+                retryable=status >= 500,
+            )
+        try:
+            body = response.json()
+            if not isinstance(body, dict) or not isinstance(body.get("accepted"), bool):
+                raise ValueError("accepted missing")
+            if not body["accepted"]:
+                rejection = body.get("rejection")
+                if rejection not in FACE_ENROLLMENT_REJECTIONS:
+                    raise ValueError("unknown rejection")
+                raise AuthorityFailure(
+                    "vision", "invalid_request", rejection, 422, 200, False, FACE_PHOTO_REJECTED
+                )
+            return FaceFeatures.model_validate(
+                {
+                    name: body.get(name)
+                    for name in (
+                        "model_id",
+                        "weights_hash",
+                        "preprocessing_version",
+                        "feature_schema_version",
+                        "vector",
+                    )
+                }
+            )
+        except (ValueError, ValidationError) as exc:
+            # Field names and error types only; the values are a face feature.
+            _LOG.warning("vision answer violated FaceFeatures: %s", _violations(exc))
+            raise self._unavailable(
+                "contract_violation",
+                "face recognition answered outside its contract",
+                upstream=200,
+            ) from exc
 
 
 class DataWorkspaceAuthorityClient:

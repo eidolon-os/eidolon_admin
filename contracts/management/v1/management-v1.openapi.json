@@ -2186,6 +2186,47 @@
         "title": "EnrollmentView",
         "type": "object"
       },
+      "FaceRecognitionConsent": {
+        "additionalProperties": false,
+        "description": "The Owner's explicit, separate agreement to derive a face feature.\n\n``attested`` is the Owner stating, in the phone app, that the person in the\nphoto agreed. ``statement`` is the text the Owner was shown, kept so the\nrecord says what was agreed to and not only that something was.",
+        "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "attested": {
+            "const": true,
+            "title": "Attested",
+            "type": "boolean"
+          },
+          "consent_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Consent Version",
+            "type": "string"
+          },
+          "statement": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consent_version",
+          "statement",
+          "attested"
+        ],
+        "title": "FaceRecognitionConsent",
+        "type": "object"
+      },
       "ForgetConfirmRequest": {
         "additionalProperties": false,
         "description": "The token the preview handed back, unchanged.",
@@ -4511,6 +4552,26 @@
         "title": "PersonFaceImage",
         "type": "object"
       },
+      "PersonFaceRecognitionEnable": {
+        "additionalProperties": false,
+        "description": "Owner request: use this Person's current photo for recognition.",
+        "properties": {
+          "consent": {
+            "$ref": "#/components/schemas/FaceRecognitionConsent"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "consent"
+        ],
+        "title": "PersonFaceRecognitionEnable",
+        "type": "object"
+      },
       "PersonFaceState": {
         "additionalProperties": false,
         "properties": {
@@ -4567,9 +4628,34 @@
             ],
             "title": "Preprocessing Version"
           },
+          "recognition_consent_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recognition Consent Version"
+          },
+          "recognition_enabled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recognition Enabled At"
+          },
           "recognition_state": {
-            "const": "not_configured",
             "default": "not_configured",
+            "enum": [
+              "not_configured",
+              "enabled"
+            ],
             "title": "Recognition State",
             "type": "string"
           },
@@ -12706,6 +12792,130 @@
           }
         },
         "summary": "Face Image",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/persons/{person_id}/face-profile/recognition": {
+      "delete": {
+        "operationId": "face_recognition_disable_api_management_v1_persons__person_id__face_profile_recognition_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonFaceState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Face Recognition Disable",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "face_recognition_enable_api_management_v1_persons__person_id__face_profile_recognition_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonFaceRecognitionEnable"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PersonFaceState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Face Recognition Enable",
         "tags": [
           "management"
         ]

@@ -368,6 +368,13 @@ export interface EnrollmentView {
   state: "collecting" | "ready" | "cancelled" | "expired"
 }
 
+export interface FaceRecognitionConsent {
+  accepted_at?: string | null
+  attested: true
+  consent_version: string
+  statement: string
+}
+
 export interface ForgetConfirmRequest {
   confirmation_token: string
 }
@@ -760,6 +767,11 @@ export interface PersonFaceImage {
   revision: number
 }
 
+export interface PersonFaceRecognitionEnable {
+  consent: FaceRecognitionConsent
+  expected_revision: number
+}
+
 export interface PersonFaceState {
   content_type?: "image/jpeg" | null
   feature_schema_version?: number | null
@@ -767,7 +779,9 @@ export interface PersonFaceState {
   model_id?: string | null
   person_id: string
   preprocessing_version?: string | null
-  recognition_state?: "not_configured"
+  recognition_consent_version?: string | null
+  recognition_enabled_at?: string | null
+  recognition_state?: "not_configured" | "enabled"
   revision: number
   schema_version?: 1
   sha256?: string | null
@@ -1402,6 +1416,8 @@ export interface ManagementResponses {
   'GET /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
   'PUT /api/management/v1/persons/{person_id}/face-profile': PersonFaceState
   'GET /api/management/v1/persons/{person_id}/face-profile/image': PersonFaceImage
+  'DELETE /api/management/v1/persons/{person_id}/face-profile/recognition': PersonFaceState
+  'PUT /api/management/v1/persons/{person_id}/face-profile/recognition': PersonFaceState
   'PUT /api/management/v1/persons/{person_id}/memory-realm': PersonalMemoryRealmSnapshot
   'POST /api/management/v1/persons/{person_id}/memory-realm/{action}': unknown
   'GET /api/management/v1/persons/{person_id}/memory-state': PersonalMemoryState

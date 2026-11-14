@@ -28,6 +28,7 @@ from .clients import (
     AgentActivityClient,
     MemoryRecollectionsClient,
     MemorySupervisorClient,
+    VisionFaceClient,
 )
 from .contracts import (
     AdmissionDecisionWorkflowResult,
@@ -103,6 +104,7 @@ class ControlPlaneService:
         activity: AgentActivityClient,
         memory_supervisor: MemorySupervisorClient | None = None,
         smarthome: HubSmartHomeClient | None = None,
+        vision: VisionFaceClient | None = None,
         hub_credentials: HubAdminCredentialIssuer | None = None,
         commissioning_vouchers: CommissioningVoucherIssuer | None = None,
         admission_intents=None,
@@ -118,6 +120,7 @@ class ControlPlaneService:
         self.activity = activity
         self.memory_supervisor = memory_supervisor
         self.smarthome = smarthome
+        self.vision = vision
         self.hub_credentials = hub_credentials
         self.commissioning_vouchers = commissioning_vouchers
         self.admission_intents = (
@@ -216,6 +219,12 @@ class ControlPlaneService:
                 client=http_client,
                 service_token=settings.hub_smarthome_token,
                 timeout_seconds=settings.authority_timeout_seconds,
+            ),
+            vision=VisionFaceClient(
+                base_url=settings.vision_url,
+                service_token=settings.vision_service_token,
+                client=http_client,
+                timeout_seconds=settings.vision_timeout_seconds,
             ),
             hub_credentials=HubAdminCredentialIssuer(
                 secret=settings.hub_management_jwt_secret.get_secret_value().encode(),
