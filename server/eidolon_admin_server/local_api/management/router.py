@@ -13,7 +13,7 @@ authenticates, and is passed down as an argument.
 
 from __future__ import annotations
 
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 from datetime import UTC, datetime
 
 from eidolon_memory_contracts.owner import MemoryProvenance
@@ -1411,6 +1411,47 @@ class DevicePresencesView(BaseModel):
     devices: list[DevicePresenceRow]
 
 
+class DevicePropertiesView(BaseModel):
+    """What a device reports about its own values, by property name.
+
+    Only what the device itself reported. A property it declares but could not
+    be asked about right now is absent, never a default, so a client drawing a
+    control knows not to draw it rather than drawing it at zero.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    device_id: str = Field(min_length=1, max_length=128)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceCapabilityRequest(BaseModel):
+    """One Owner-controllable capability, such as setting a device's volume.
+
+    ``request_id`` is the caller's and must survive a retry of the same intent:
+    it names the execution, so the device answers a retry with the outcome it
+    already reached rather than acting twice.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceCapabilityExecutionView(BaseModel):
+    """What the device did, in the one execution vocabulary every capability uses.
+
+    ``state`` is the device's terminal answer (``completed`` is success) and
+    ``result`` what it applied — the volume it actually set, not the one asked.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    device_id: str = Field(min_length=1, max_length=128)
+    capability: str = Field(min_length=1, max_length=128)
+    state: Literal["accepted", "running", "completed", "cancelled", "failed", "rejected"]
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str = Field(default="", max_length=128)
+
+
 class DeviceView(BaseModel):
     """One device this Owner holds, as a person reads it.
 
@@ -1756,6 +1797,13 @@ class ManagementBackendPort(Protocol):
     async def roster(self, *, owner_id: str, cursor: str | None) -> dict: ...
 
     async def device_presence(self, *, owner_domain_id: str) -> dict: ...
+
+    async def device_properties(self, *, owner_id: str, device_id: str) -> dict: ...
+
+    async def invoke_device_capability(
+        self, *, owner_id: str, device_id: str, capability: str,
+        request_id: str, arguments: dict,
+    ) -> dict: ...
 
     async def mission_control_snapshot(self, *, owner_id: str) -> dict: ...
 
@@ -2274,6 +2322,66 @@ def register_management_routes(
                 )
             )
         return DevicePresencesView(devices=rows)
+
+    @router.get("/devices/{device_id}/properties", response_model=DevicePropertiesView)
+    async def get_device_properties(
+        device_id: str,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DevicePropertiesView:
+        """What one of my devices reports about its own values, such as its volume."""
+        session = await authenticated_controller_session(authorization)
+        try:
+            answer = await backend.device_properties(
+                owner_id=session.owner_id, device_id=device_id
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        values = answer.get("values")
+        return DevicePropertiesView(
+            device_id=device_id, values=values if isinstance(values, dict) else {}
+        )
+
+    @router.post(
+        "/devices/{device_id}/capabilities/{capability}",
+        response_model=DeviceCapabilityExecutionView,
+    )
+    async def invoke_device_capability(
+        device_id: str,
+        capability: str,
+        payload: DeviceCapabilityRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceCapabilityExecutionView:
+        """Ask one of my devices to do something its Owner may ask outside a conversation.
+
+        Which capabilities those are, whether this device declared one and
+        whether the arguments fit are the Host's installed contracts to decide;
+        nothing here pre-judges them, and a refusal arrives with their reason.
+        """
+        session = await authenticated_controller_session(authorization)
+        try:
+            answer = await backend.invoke_device_capability(
+                owner_id=session.owner_id,
+                device_id=device_id,
+                capability=capability,
+                request_id=payload.request_id,
+                arguments=payload.arguments,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
+        execution = answer.get("execution")
+        if not isinstance(execution, dict):
+            raise _refused(ManagementBackendError(
+                "Host management backend answered outside its contract",
+                status_code=502,
+                refusal=refusal_for_status(502, "device answer had no execution", None),
+            ))
+        return DeviceCapabilityExecutionView(
+            device_id=device_id,
+            capability=capability,
+            state=execution.get("state"),
+            result=execution.get("result") if isinstance(execution.get("result"), dict) else {},
+            error=str(execution.get("error") or ""),
+        )
 
     @router.put("/devices/{device_id}/companion", response_model=DeviceView)
     async def put_device_companion(

@@ -187,6 +187,24 @@ class AdminManagementClient:
             {"owner_domain_id": owner_domain_id},
         )
 
+    async def device_properties(self, *, owner_id: str, device_id: str) -> dict:
+        return await self._get(
+            f"/api/internal/v1/management/devices/{quote(device_id, safe='')}/properties",
+            {"owner_id": owner_id},
+        )
+
+    async def invoke_device_capability(
+        self, *, owner_id: str, device_id: str, capability: str,
+        request_id: str, arguments: dict,
+    ) -> dict:
+        return await self._call(
+            "POST",
+            f"/api/internal/v1/management/devices/{quote(device_id, safe='')}"
+            f"/capabilities/{quote(capability, safe='')}",
+            {},
+            {"owner_id": owner_id, "request_id": request_id, "arguments": arguments},
+        )
+
     async def mission_control_snapshot(self, *, owner_id: str) -> dict:
         return await self._get(
             "/api/internal/v1/management/mission-control/snapshot",

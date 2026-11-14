@@ -1443,6 +1443,77 @@
         "title": "Device",
         "type": "object"
       },
+      "DeviceCapabilityExecutionView": {
+        "additionalProperties": false,
+        "description": "What the device did, in the one execution vocabulary every capability uses.\n\n``state`` is the device's terminal answer (``completed`` is success) and\n``result`` what it applied — the volume it actually set, not the one asked.",
+        "properties": {
+          "capability": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Capability",
+            "type": "string"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "error": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Error",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": true,
+            "title": "Result",
+            "type": "object"
+          },
+          "state": {
+            "enum": [
+              "accepted",
+              "running",
+              "completed",
+              "cancelled",
+              "failed",
+              "rejected"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "device_id",
+          "capability",
+          "state"
+        ],
+        "title": "DeviceCapabilityExecutionView",
+        "type": "object"
+      },
+      "DeviceCapabilityRequest": {
+        "additionalProperties": false,
+        "description": "One Owner-controllable capability, such as setting a device's volume.\n\n``request_id`` is the caller's and must survive a retry of the same intent:\nit names the execution, so the device answers a retry with the outcome it\nalready reached rather than acting twice.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "request_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "DeviceCapabilityRequest",
+        "type": "object"
+      },
       "DeviceCompanionRequest": {
         "additionalProperties": false,
         "description": "Which Eidolon answers through this device, or that none does.\n\nOne command with two values rather than two commands: a null\n``companion_id`` is \"nothing answers through it\", which is an ordinary\nstate and the way back from every other one.",
@@ -1703,6 +1774,28 @@
           "devices"
         ],
         "title": "DevicePresencesView",
+        "type": "object"
+      },
+      "DevicePropertiesView": {
+        "additionalProperties": false,
+        "description": "What a device reports about its own values, by property name.\n\nOnly what the device itself reported. A property it declares but could not\nbe asked about right now is absent, never a default, so a client drawing a\ncontrol knows not to draw it rather than drawing it at zero.",
+        "properties": {
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Device Id",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "title": "DevicePropertiesView",
         "type": "object"
       },
       "DeviceRemovalConditionView": {
@@ -9745,6 +9838,84 @@
         ]
       }
     },
+    "/api/management/v1/devices/{device_id}/capabilities/{capability}": {
+      "post": {
+        "description": "Ask one of my devices to do something its Owner may ask outside a conversation.\n\nWhich capabilities those are, whether this device declared one and\nwhether the arguments fit are the Host's installed contracts to decide;\nnothing here pre-judges them, and a refusal arrives with their reason.",
+        "operationId": "invoke_device_capability_api_management_v1_devices__device_id__capabilities__capability__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "capability",
+            "required": true,
+            "schema": {
+              "title": "Capability",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCapabilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceCapabilityExecutionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Invoke Device Capability",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/devices/{device_id}/companion": {
       "put": {
         "description": "Say which of my Eidolons answers through this device, or that none does.\n\nThe Host validates the Eidolon against its own authority — one that has\nbeen put away is refused there rather than pre-judged here — and the\nrevision is the compare-and-swap over what this phone was looking at.",
@@ -9878,6 +10049,65 @@
           }
         },
         "summary": "Put Device Outputs",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/properties": {
+      "get": {
+        "description": "What one of my devices reports about its own values, such as its volume.",
+        "operationId": "get_device_properties_api_management_v1_devices__device_id__properties_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePropertiesView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Device Properties",
         "tags": [
           "management"
         ]

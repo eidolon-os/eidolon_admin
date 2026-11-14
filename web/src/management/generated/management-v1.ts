@@ -236,6 +236,19 @@ export interface Device {
   type: "light" | "switch" | "climate" | "water_heater" | "cover" | "fan" | "media" | "appliance" | "lock" | "camera" | "sensor"
 }
 
+export interface DeviceCapabilityExecutionView {
+  capability: string
+  device_id: string
+  error?: string
+  result?: Record<string, unknown>
+  state: "accepted" | "running" | "completed" | "cancelled" | "failed" | "rejected"
+}
+
+export interface DeviceCapabilityRequest {
+  arguments?: Record<string, unknown>
+  request_id: string
+}
+
 export interface DeviceCompanionRequest {
   companion_id?: string | null
   expected_revision: number
@@ -282,6 +295,11 @@ export interface DevicePresenceView {
 
 export interface DevicePresencesView {
   devices: Array<DevicePresenceRow>
+}
+
+export interface DevicePropertiesView {
+  device_id: string
+  values?: Record<string, unknown>
 }
 
 export interface DeviceRemovalConditionView {
@@ -1371,8 +1389,10 @@ export interface ManagementResponses {
   'POST /api/management/v1/device-sessions/{action}': DeviceSessionStatus
   'GET /api/management/v1/devices': DevicesView
   'GET /api/management/v1/devices/presence': DevicePresencesView
+  'POST /api/management/v1/devices/{device_id}/capabilities/{capability}': DeviceCapabilityExecutionView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
+  'GET /api/management/v1/devices/{device_id}/properties': DevicePropertiesView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire

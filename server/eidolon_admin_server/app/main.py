@@ -25,6 +25,7 @@ from .control_plane.router import (
 )
 from .management.mission_control_router import router as management_mission_control_router
 from .management.device_presence_router import router as management_device_presence_router
+from .management.device_settings_router import router as management_device_settings_router
 from .management.session_traces_router import router as management_session_traces_router
 from .management.router import router as management_router
 from .management.smarthome_router import router as management_smarthome_router
@@ -309,6 +310,7 @@ def create_app(
     app.include_router(management_mission_control_router, prefix="/api")
     app.include_router(management_session_traces_router, prefix="/api")
     app.include_router(management_device_presence_router, prefix="/api")
+    app.include_router(management_device_settings_router, prefix="/api")
     # Read-only and second-hand: it asks the same authorities every other
     # surface here asks. Registered rather than merely present, because a
     # module nothing routes to is one nobody can tell is broken.
