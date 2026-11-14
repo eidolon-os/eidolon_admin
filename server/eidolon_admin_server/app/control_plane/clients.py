@@ -2091,6 +2091,7 @@ class HubManagementClient:
             authorization=authorization,
             resource="device-sessions",
             status_model=DeviceSessionStatus,
+            echo=("device_id", command["device"]["device_instance_id"]),
         )
 
     async def role_group(
@@ -2114,9 +2115,12 @@ class HubManagementClient:
         authorization: str,
         resource: str,
         status_model,
+        echo: tuple[str, str] | None = None,
     ) -> dict:
+        """``echo`` is the field the answer must repeat; a session's own id unless said."""
         if action not in {"open", "status", "close"}:
             raise ValueError("invalid device conversation action")
+        field, expected = echo or ("session_id", command["session_id"])
         base_url = await self._base_url()
         response = await _request(
             "hub",
@@ -2137,7 +2141,7 @@ class HubManagementClient:
             ) from exc
         try:
             result = status_model.model_validate(result).model_dump(mode="json")
-            if result["session_id"] != command["session_id"]:
+            if result[field] != expected:
                 raise ValueError("unexpected session")
         except ValueError as exc:
             raise _contract_violation(

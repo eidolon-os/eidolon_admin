@@ -237,14 +237,17 @@ class AdminOwnerDevicesClient:
     async def device_session(self, *, payload, action: str) -> dict:
         from eidolon_sdk.biz.control.device_session import DeviceSessionStatus
         return await self._conversation_command(payload=payload, action=action,
-            resource="device-sessions", status_model=DeviceSessionStatus)
+            resource="device-sessions", status_model=DeviceSessionStatus,
+            echo=("device_id", payload.request.device.device_instance_id))
 
     async def role_group(self, *, payload, action: str) -> dict:
         from eidolon_sdk.biz.control.coordination import RoleGroupStatus
         return await self._conversation_command(payload=payload, action=action,
             resource="role-groups", status_model=RoleGroupStatus)
 
-    async def _conversation_command(self, *, payload, action: str, resource: str, status_model) -> dict:
+    async def _conversation_command(self, *, payload, action: str, resource: str, status_model,
+                                    echo: tuple[str, str] | None = None) -> dict:
+        """``echo`` is the field the answer must repeat; a session's own id unless said."""
         if action not in {"open", "status", "close"}:
             raise ValueError("invalid device conversation action")
         if not self._token:
@@ -262,9 +265,10 @@ class AdminOwnerDevicesClient:
             raise DeviceInventoryError("Device conversation refused", status_code=response.status_code)
         try:
             result = response.json()
-            session_id = payload.selection.session_id if action == "open" else payload.session_id
+            field, expected = echo or ("session_id", payload.selection.session_id
+                                       if action == "open" else payload.session_id)
             result = status_model.model_validate(result).model_dump(mode="json")
-            if result["session_id"] != session_id:
+            if result[field] != expected:
                 raise ValueError("unexpected device conversation response")
             return result
         except ValueError as exc:

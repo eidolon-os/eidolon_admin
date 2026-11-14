@@ -22,8 +22,8 @@ from eidolon_sdk.biz.control.shared_session import SharedSessionSelection
 from .shared_sessions import register_shared_session_routes
 from ..app.control_plane.role_groups import ControllerRoleGroupStart, ControllerRoleGroupQuery
 from .device_sessions import register_device_session_routes
-from ..app.control_plane.device_sessions import ControllerDeviceSessionStart, ControllerDeviceSessionQuery
-from eidolon_sdk.biz.control.device_session import DeviceSessionSelection
+from ..app.control_plane.device_sessions import ControllerDeviceSession
+from eidolon_sdk.biz.control.device_session import DeviceSessionRequest
 from .device_conversations import register_device_conversation_routes
 from ..app.control_plane.device_conversations import ControllerConversationStart, ControllerConversationQuery
 from eidolon_sdk.biz.control.device_conversation import DeviceConversationSelection
@@ -1287,18 +1287,10 @@ def create_app(
             domain, owner = _admission_scope(session.owner_id)
             authority = dict(contract_version="1", business_owner_id=owner,
                 actor=admission_actor(controller_id=session.controller_id, owner_domain_id=domain))
-            if action == "open":
-                inventory = await self.list_devices(session=session)
-                held = {item.device_id: item for item in inventory.devices}
-                if any(d not in held for d in (payload.device_id,)):
-                    raise ManagementBackendError("Selected device is not owned and mounted", status_code=403,
-                        refusal=refusal_for_status(403, "Selected device is not owned and mounted"))
-                selection = DeviceSessionSelection(session_id=payload.session_id,
-                    device=held[payload.device_id].claim.device_ref,
-                    target_companion_id=payload.target_companion_id)
-                command = ControllerDeviceSessionStart(**authority, selection=selection)
-            else:
-                command = ControllerDeviceSessionQuery(**authority, session_id=payload.session_id)
+            command = ControllerDeviceSession(**authority, request=DeviceSessionRequest(
+                device=await _owned_device_ref(session.owner_id, session.controller_id,
+                                               payload.device_id),
+                conversation_id=payload.conversation_id))
             try:
                 return await devices.device_session(payload=command, action=action)
             except DeviceInventoryError as exc:

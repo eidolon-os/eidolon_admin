@@ -303,10 +303,16 @@ export interface DeviceRemovalView {
   request_id: string
 }
 
-export interface DeviceSessionStart {
+export interface DeviceSessionStatus {
+  conversation_id?: string | null
   device_id: string
-  session_id: string
-  target_companion_id: string
+  error?: string
+  state: "standby" | "starting" | "in_conversation" | "closing" | "occupied"
+}
+
+export interface DeviceSessionTarget {
+  conversation_id?: string | null
+  device_id: string
 }
 
 export interface DeviceStatusView {
@@ -1362,9 +1368,7 @@ export interface ManagementResponses {
   'POST /api/management/v1/device-conversations/close': DeviceConversationStatus
   'POST /api/management/v1/device-conversations/open': DeviceConversationStatus
   'POST /api/management/v1/device-conversations/status': DeviceConversationStatus
-  'POST /api/management/v1/device-sessions/close': DeviceConversationStatus
-  'POST /api/management/v1/device-sessions/open': DeviceConversationStatus
-  'POST /api/management/v1/device-sessions/status': DeviceConversationStatus
+  'POST /api/management/v1/device-sessions/{action}': DeviceSessionStatus
   'GET /api/management/v1/devices': DevicesView
   'GET /api/management/v1/devices/presence': DevicePresencesView
   'PUT /api/management/v1/devices/{device_id}/companion': DeviceView
