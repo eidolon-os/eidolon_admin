@@ -74,7 +74,6 @@ async def test_completion_checks_authority_and_recovers_success_without_reextrac
     profile = SpeakerProfileView(
         person_id="person",
         profile_id="p",
-        display_name="我",
         revision=1,
         enrollment_id="e",
         recording_available=True,
@@ -216,7 +215,7 @@ async def test_model_outage_preserves_management_but_prevents_recording_and_admi
         assert (
             await h.post(
                 prefix + "/enrollments?owner_id=owner",
-                json={"operation_id": "one", "display_name": "我", "person_id": "p"},
+                json={"operation_id": "one", "person_id": "p"},
             )
         ).status_code == 503
         assert (
@@ -247,7 +246,7 @@ async def test_registration_windows_travel_from_extraction_to_evaluation_and_sto
                               vector=[1, 0], speech_ms=4000, crops=[window])
     e = EnrollmentView(enrollment_id="e", profile_id="p", state="collecting",
                        accepted_samples=0, expires_at=9999999999)
-    profile = SpeakerProfileView(person_id="person", profile_id="p", display_name="我",
+    profile = SpeakerProfileView(person_id="person", profile_id="p",
                                  revision=1, enrollment_id="e", recording_available=True)
     calibration = TemplateCalibration(crops=[window], genuine=[GenuineScore(speech_ms=900, similarity=0.7)])
     puts, evaluated, stored = [], [], []

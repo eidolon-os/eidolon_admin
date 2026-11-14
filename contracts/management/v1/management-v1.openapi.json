@@ -2106,12 +2106,6 @@
       "EnrollmentCreate": {
         "additionalProperties": false,
         "properties": {
-          "display_name": {
-            "maxLength": 80,
-            "minLength": 1,
-            "title": "Display Name",
-            "type": "string"
-          },
           "operation_id": {
             "maxLength": 64,
             "minLength": 1,
@@ -2140,8 +2134,7 @@
         },
         "required": [
           "person_id",
-          "operation_id",
-          "display_name"
+          "operation_id"
         ],
         "title": "EnrollmentCreate",
         "type": "object"
@@ -6265,10 +6258,6 @@
       "SpeakerProfileView": {
         "additionalProperties": false,
         "properties": {
-          "display_name": {
-            "title": "Display Name",
-            "type": "string"
-          },
           "enrollment_id": {
             "anyOf": [
               {
@@ -6332,7 +6321,6 @@
         "required": [
           "person_id",
           "profile_id",
-          "display_name",
           "revision"
         ],
         "title": "SpeakerProfileView",
@@ -6341,11 +6329,6 @@
       "SpeakerSimilarity": {
         "additionalProperties": false,
         "properties": {
-          "display_name": {
-            "default": "",
-            "title": "Display Name",
-            "type": "string"
-          },
           "profile_id": {
             "title": "Profile Id",
             "type": "string"

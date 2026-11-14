@@ -354,7 +354,6 @@ export interface EffectiveVoiceView {
 }
 
 export interface EnrollmentCreate {
-  display_name: string
   operation_id: string
   person_id: string
   profile_id?: string | null
@@ -1078,7 +1077,6 @@ export interface SpeakerExtractionReadiness {
 }
 
 export interface SpeakerProfileView {
-  display_name: string
   enrollment_id?: string | null
   origin?: "enrollment" | "observation"
   person_id: string
@@ -1090,7 +1088,6 @@ export interface SpeakerProfileView {
 }
 
 export interface SpeakerSimilarity {
-  display_name?: string
   profile_id: string
   revision: number
   similarity?: number | null
