@@ -218,9 +218,13 @@ services:
     integration: proxy
     base_url: http://127.0.0.1:$EIDOLON_CHANNEL_PROVIDER_PORT
     upstream_prefix: ""
-    # Same shape as the Agent entry above, and the same reason the variable is
-    # unprefixed: this registry names the exact one Ops writes.
-    auth: { type: bearer, token_env: EIDOLON_CHANNEL_PROVIDER_TOKEN }
+    # The Provider's management-role credential: presence, session traces,
+    # voiceprints, voices and device settings, and none of the channel or
+    # conversation routes Hub drives. Admin held Hub's own credential here
+    # until the Provider gave each caller a role. Unprefixed for the same
+    # reason as the Agent entry above: this registry names the exact variable
+    # Ops writes.
+    auth: { type: bearer, token_env: EIDOLON_CHANNEL_PROVIDER_MANAGEMENT_TOKEN }
     health: http://127.0.0.1:$EIDOLON_CHANNEL_PROVIDER_PORT/health
     features: []
 
