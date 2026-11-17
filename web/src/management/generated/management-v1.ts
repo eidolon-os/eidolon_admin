@@ -1294,6 +1294,7 @@ export interface ToolCompanionSwitchView {
   effective: boolean
   enabled: boolean
   name: string
+  revision: number
 }
 
 export interface ToolOverviewRowView {

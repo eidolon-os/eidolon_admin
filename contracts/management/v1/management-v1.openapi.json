@@ -7434,11 +7434,17 @@
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
           }
         },
         "required": [
           "companion_id",
           "name",
+          "revision",
           "enabled",
           "effective"
         ],

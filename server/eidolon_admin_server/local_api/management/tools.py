@@ -19,7 +19,7 @@ from eidolon_sdk.biz.tools import (
     ToolReservation,
 )
 from fastapi import Header
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .backend import ManagementBackendError
 from .router import refusal_for_status
@@ -32,6 +32,8 @@ class _View(BaseModel):
 class ToolCompanionSwitchView(_View):
     companion_id: str
     name: str
+    #: The revision of this Companion's switches: what a change to them names.
+    revision: int = Field(ge=0)
     #: The Companion's own switch. Kept while the Owner's switch is off, so
     #: turning that back on restores each Companion's choice.
     enabled: bool

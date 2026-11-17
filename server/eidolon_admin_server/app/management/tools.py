@@ -91,6 +91,8 @@ class CompanionSwitch(_View):
 
     companion_id: str
     name: str
+    #: The revision of that Companion's switches, which a change to it names.
+    revision: int
     #: The Companion's own value, kept when the Owner's switch is off.
     enabled: bool
     effective: bool
@@ -285,6 +287,7 @@ def _overview(catalog: ToolCatalog, state: OwnerToolPolicyState, names: dict[str
                 companions=[
                     CompanionSwitch(
                         companion_id=c.companion_id, name=names[c.companion_id],
+                        revision=c.policy.revision,
                         enabled=_switch(c.policy, entry),
                         effective=blocked_by(entry, state.policy, c.policy) is None,
                     )
