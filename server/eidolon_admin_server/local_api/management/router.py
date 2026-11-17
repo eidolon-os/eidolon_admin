@@ -3598,6 +3598,11 @@ def register_management_routes(
     from .speech_voices import register_speech_voice_routes
 
     register_speech_voice_routes(router, backend, authenticated_owner, _refused)
+    from .tools import register_tool_routes
+
+    register_tool_routes(
+        router, backend, authenticated_owner, authenticated_controller_session, devices, _refused
+    )
     app.include_router(router)
 
 

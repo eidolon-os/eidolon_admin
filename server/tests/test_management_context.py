@@ -298,6 +298,7 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "device.read",
         "device.manage",
         "body.assign",
+        "tools.govern",
     ):
         assert context.capabilities[closed] is True, closed
     for still_open in ("device.identify",):
@@ -359,10 +360,31 @@ async def test_a_host_without_the_agent_key_does_not_offer_the_agent_surface() -
 
     capabilities = await _capabilities("memory")
 
-    for withdrawn in ("conversation.read", "task.read", "task.manage", "session.revoke"):
+    for withdrawn in (
+        "conversation.read", "task.read", "task.manage", "session.revoke", "tools.govern"
+    ):
         assert capabilities[withdrawn] is False, withdrawn
     assert capabilities["memory.read"] is True
     assert capabilities["companion.read"] is True
+
+
+async def test_the_tool_switches_need_the_agent_key_for_their_catalog() -> None:
+    """The catalog the switches range over is the Agent's; without its key there is nothing to switch."""
+
+    from eidolon_admin_server.app.management.context import WITHHELD_HOST_NOT_CONFIGURED
+
+    class _Owners:
+        async def get_owner(self, owner_id: str):
+            return SimpleNamespace(
+                owner_id=owner_id, display_name="Manson", revision=3, default_companion_id=None
+            )
+
+    without = await read_context(owner_id="owner-1", owners=_Owners(), credentials=_Holding("memory"))
+    with_key = await read_context(owner_id="owner-1", owners=_Owners(), credentials=_Holding("agent"))
+
+    assert without.capabilities["tools.govern"] is False
+    assert without.unavailable["tools.govern"] == WITHHELD_HOST_NOT_CONFIGURED
+    assert with_key.capabilities["tools.govern"] is True
 
 
 async def test_a_capability_needing_no_authority_is_unaffected_by_keys() -> None:

@@ -54,6 +54,7 @@ from eidolon_admin_server.app.management.activity import CompanionActivityReader
 from eidolon_admin_server.app.management.persona import PersonaHistorian
 from eidolon_admin_server.app.management.recollecting import MemoryRecollector
 from eidolon_admin_server.app.management.sessions import RuntimeSessionRevoker
+from eidolon_admin_server.app.management.tools import ToolCatalogReader, ToolPolicyStore
 from eidolon_admin_server.app.management.roster import (
     ActivityReader,
     DefaultCompanionWriter,
@@ -111,6 +112,14 @@ PORTS: dict[str, tuple[object | None, str | None]] = {
     # Same client as the reads above: the runtime that holds the sessions is the
     # one that ends them.
     "RuntimeSessionRevoker": (RuntimeSessionRevoker, "activity"),
+    # The tool catalog is the Agent's: only the process that assembles a turn's
+    # tools knows the whole set. Both layers of switches are Data's.
+    "ToolCatalogReader": (ToolCatalogReader, "activity"),
+    "ToolPolicyStore": (ToolPolicyStore, "data"),
+    # What a device's channel offers is the Channel Provider's, read per request
+    # through the registry like the device settings beside it; nothing on this
+    # service holds a Provider client.
+    "DeviceOfferReader": (None, None),
     # Which authorities this Host holds a key to. Satisfied by the composed
     # service itself rather than by one client on it, because the question spans
     # them: it is what stops ``/context`` advertising a memory feature on a Host
