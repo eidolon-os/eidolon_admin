@@ -24,6 +24,7 @@ from eidolon_sdk.biz.tools import (
     CompanionToolPolicy,
     CompanionToolPolicyState,
     DeviceToolOffer,
+    DeviceToolRestriction,
     OwnerToolPolicyState,
     ToolCatalog,
     ToolCatalogEntry,
@@ -463,21 +464,76 @@ _OPEN = CompanionToolPolicy()
 def test_device_reasons(key, owner, companion, offer, catalog, expected):
     entry = catalog.entry(key)
 
-    assert device_reasons(entry, owner=owner, companion=companion, offer=offer) == expected
+    assert device_reasons(
+        entry, owner=owner, companion=companion, offer=offer, restriction=None
+    ) == expected
+
+
+RESTRICTED = DeviceToolRestriction(
+    revision=2,
+    denied=("audio.volume.set", "delegate_to_coworker", "get_weather", "stackchan_head", "vision.look"),
+)
+#: What the Provider grants a BOX-3 whose volume contract is restricted.
+BOX3_RESTRICTED = BOX3.model_copy(update={"session_capabilities": ()})
+
+
+@pytest.mark.parametrize(
+    ("key", "owner", "companion", "offer", "restriction", "catalog", "expected"),
+    [
+        ("get_weather", ToolPolicy(), _OPEN, BOX3, RESTRICTED, CATALOG, ["device_restricted"]),
+        # Right after the switches' reasons, before what the device can do.
+        ("get_weather", ToolPolicy(overrides={"get_weather": False}), None, BOX3, RESTRICTED, CATALOG,
+         ["global_off", "no_companion", "device_restricted"]),
+        ("get_weather", ToolPolicy(), CompanionToolPolicy(overrides={"get_weather": False}), BOX3,
+         RESTRICTED, CATALOG, ["companion_off", "device_restricted"]),
+        ("stackchan_head", ToolPolicy(), CompanionToolPolicy(allow_body_control=False), BOX3,
+         RESTRICTED, CATALOG,
+         ["body_control_off", "device_restricted", "motion_profile_mismatch", "output_not_allowed:motion"]),
+        ("audio.volume.set", ToolPolicy(), _OPEN, BOX3_RESTRICTED, RESTRICTED, CATALOG,
+         ["device_restricted"]),
+        ("audio.volume.set", ToolPolicy(), _OPEN, None, RESTRICTED, CATALOG,
+         ["device_restricted", "channel_not_ready"]),
+        ("vision.look", ToolPolicy(), _OPEN, STACKCHAN_ALL, RESTRICTED, CATALOG, ["device_restricted"]),
+        ("vision.look", ToolPolicy(), _OPEN, STACKCHAN_ALL, RESTRICTED, _catalog(vision_host=False),
+         ["device_restricted", "host_not_configured:vision_model"]),
+        # Reserved stays the only reason; a tool nobody restricted is untouched.
+        ("delegate_to_coworker", ToolPolicy(), _OPEN, BOX3, RESTRICTED, CATALOG, ["reserved"]),
+        ("music.play", ToolPolicy(), _OPEN, BOX3, RESTRICTED, CATALOG, []),
+        # A restriction listing nothing withholds nothing.
+        ("get_weather", ToolPolicy(), _OPEN, BOX3, DeviceToolRestriction(revision=3), CATALOG, []),
+    ],
+)
+def test_device_reasons_with_a_restriction(key, owner, companion, offer, restriction, catalog, expected):
+    entry = catalog.entry(key)
+
+    assert device_reasons(
+        entry, owner=owner, companion=companion, offer=offer, restriction=restriction
+    ) == expected
 
 
 def test_a_declared_contract_the_channel_still_withholds_is_logged_not_invented(caplog):
     # Requirements met and declared, yet not offered: the Provider and the
     # catalog disagree, which is for an operator, not a reason for the phone.
-    disagreeing = BOX3.model_copy(update={"session_capabilities": ()})
-
     with caplog.at_level(logging.WARNING, logger="eidolon_admin_server.app.management.tools"):
         reasons = device_reasons(
-            CATALOG.entry("audio.volume.set"), owner=ToolPolicy(), companion=_OPEN, offer=disagreeing
+            CATALOG.entry("audio.volume.set"), owner=ToolPolicy(), companion=_OPEN,
+            offer=BOX3_RESTRICTED, restriction=None,
         )
 
     assert reasons == []
     assert "does not offer it" in caplog.text
+
+
+def test_a_restricted_contract_missing_from_the_session_is_expected_not_logged(caplog):
+    # The grant leaves restricted contracts out; that is the restriction working.
+    with caplog.at_level(logging.WARNING, logger="eidolon_admin_server.app.management.tools"):
+        reasons = device_reasons(
+            CATALOG.entry("audio.volume.set"), owner=ToolPolicy(), companion=_OPEN,
+            offer=BOX3_RESTRICTED, restriction=RESTRICTED,
+        )
+
+    assert reasons == ["device_restricted"]
+    assert caplog.text == ""
 
 
 async def test_a_device_view_reads_the_offer_once_and_uses_the_bound_companions_switches():
@@ -485,7 +541,7 @@ async def test_a_device_view_reads_the_offer_once_and_uses_the_bound_companions_
     governance, _, data = _governance(offers=offers)
     data.companions["companion-a"] = CompanionToolPolicy(allow_body_control=False)
 
-    view = await governance.device("owner-1", "stackchan", "companion-a")
+    view = await governance.device("owner-1", "stackchan", "companion-a", None)
 
     assert offers.asked == [("owner-1", "stackchan")]
     assert (view.device_id, view.companion_id, view.restriction) == ("stackchan", "companion-a", None)
@@ -499,18 +555,29 @@ async def test_a_device_view_reads_the_offer_once_and_uses_the_bound_companions_
 async def test_a_device_without_a_companion_says_so_on_every_tool_it_could_use():
     governance, _, _ = _governance(offers=Offers(BOX3))
 
-    view = await governance.device("owner-1", "box3", None)
+    view = await governance.device("owner-1", "box3", None, None)
 
     assert view.companion_id is None
     assert _row(view, "get_time").reasons == ["no_companion"]
     assert _row(view, "delegate_to_coworker").reasons == ["reserved"]
 
 
+async def test_a_device_view_carries_its_restriction_and_says_what_it_withholds():
+    governance, _, _ = _governance(offers=Offers(BOX3_RESTRICTED))
+
+    view = await governance.device("owner-1", "box3", "companion-a", RESTRICTED)
+
+    assert view.restriction == RESTRICTED
+    assert _row(view, "audio.volume.set").reasons == ["device_restricted"]
+    assert _row(view, "get_weather").reasons == ["device_restricted"]
+    assert (_row(view, "get_time").available, _row(view, "music.play").available) == (True, True)
+
+
 async def test_a_bound_companion_the_owner_does_not_keep_is_a_disagreement_not_defaults():
     governance, _, _ = _governance(offers=Offers(BOX3))
 
     with pytest.raises(AuthorityFailure) as refused:
-        await governance.device("owner-1", "box3", "companion-gone")
+        await governance.device("owner-1", "box3", "companion-gone", None)
 
     assert refused.value.status_code == 409
 
@@ -696,9 +763,22 @@ async def test_the_internal_routes_need_the_local_api_credential():
     assert answered.json()["catalog_revision"] == CATALOG.catalog_revision
 
 
-async def _phone(tmp_path, monkeypatch, internal: FastAPI, *devices):
+class _ToolDevices(_Devices):
+    """The Owner's devices, and each one's tool restriction as Hub would answer."""
+
+    def __init__(self, *devices, restriction: DeviceToolRestriction | None = None) -> None:
+        super().__init__(*devices)
+        self.restriction = restriction
+        self.restriction_reads: list = []
+
+    async def read_device_tool_restriction(self, *, session, device_ref):
+        self.restriction_reads.append((session.owner_id, device_ref))
+        return self.restriction
+
+
+async def _phone(tmp_path, monkeypatch, internal: FastAPI, *devices, restriction=None):
     _stub_controller(monkeypatch)
-    devices = _Devices(*(devices or (_device(),)))
+    devices = _ToolDevices(*(devices or (_device(),)), restriction=restriction)
     transport = httpx.ASGITransport(app=_app(tmp_path, devices, _backend(internal)))
     return httpx.AsyncClient(transport=transport, base_url="https://local.test"), devices
 
@@ -775,7 +855,10 @@ async def test_the_phone_reads_a_devices_tools_with_its_companion_from_the_inven
         return httpx.Response(200, json=STACKCHAN_ALL.model_copy(update={"device_id": _KNOWN})
                               .model_dump(mode="json"))
 
-    client, devices = await _phone(tmp_path, monkeypatch, _internal(Data(), provider))
+    restriction = DeviceToolRestriction(revision=2, denied=("get_weather", "vision.look"))
+    client, devices = await _phone(
+        tmp_path, monkeypatch, _internal(Data(), provider), restriction=restriction
+    )
     async with client:
         headers = await _authenticate(client)
         answer = await client.get(f"/api/management/v1/devices/{_KNOWN}/tools", headers=headers)
@@ -783,11 +866,15 @@ async def test_the_phone_reads_a_devices_tools_with_its_companion_from_the_inven
 
     assert answer.status_code == 200
     body = answer.json()
-    assert (body["device_id"], body["companion_id"], body["restriction"]) == (_KNOWN, "companion-a", None)
-    head = next(t for t in body["tools"] if t["key"] == "stackchan_head")
-    assert (head["available"], head["reasons"]) == (True, [])
-    assert next(t for t in body["tools"] if t["key"] == "delegate_to_coworker")["reasons"] == ["reserved"]
+    assert (body["device_id"], body["companion_id"]) == (_KNOWN, "companion-a")
+    assert body["restriction"] == {"revision": 2, "denied": ["get_weather", "vision.look"]}
+    reasons = {t["key"]: t["reasons"] for t in body["tools"]}
+    assert (reasons["stackchan_head"], reasons["delegate_to_coworker"]) == ([], ["reserved"])
+    assert (reasons["get_weather"], reasons["vision.look"]) == (["device_restricted"], ["device_restricted"])
     assert seen == [{"owner_id": "owner-1"}]
+    # Hub was asked about the DeviceRef the inventory holds, for the session's Owner.
+    [(owner, device_ref)] = devices.restriction_reads
+    assert (owner, device_ref.device_instance_id) == ("owner-1", _KNOWN)
     # A device that is not in the Owner's inventory is never asked about.
     assert missing.status_code == 404
 
@@ -820,8 +907,10 @@ async def test_the_local_api_client_speaks_the_internal_routes():
         await client.tools(owner_id="owner-1", change={"expected_revision": 0})
         await client.companion_tools(owner_id="owner-1", companion_id="c/1")
         await client.companion_tools(owner_id="owner-1", companion_id="c/1", change={"expected_revision": 2})
-        await client.device_tools(owner_id="owner-1", device_id="dev/1", companion_id="c/1")
-        await client.device_tools(owner_id="owner-1", device_id="dev/1", companion_id=None)
+        await client.device_tools(owner_id="owner-1", device_id="dev/1", companion_id="c/1",
+                                  restriction={"revision": 1, "denied": ["get_weather"]})
+        await client.device_tools(owner_id="owner-1", device_id="dev/1", companion_id=None,
+                                  restriction=None)
 
     base = "/api/internal/v1/management"
     assert calls == [
@@ -829,8 +918,10 @@ async def test_the_local_api_client_speaks_the_internal_routes():
         ("PUT", f"{base}/tools", {"owner_id": "owner-1"}, {"expected_revision": 0}),
         ("GET", f"{base}/companions/c%2F1/tools", {"owner_id": "owner-1"}, None),
         ("PUT", f"{base}/companions/c%2F1/tools", {"owner_id": "owner-1"}, {"expected_revision": 2}),
-        ("GET", f"{base}/devices/dev%2F1/tools", {"owner_id": "owner-1", "companion_id": "c/1"}, None),
-        ("GET", f"{base}/devices/dev%2F1/tools", {"owner_id": "owner-1"}, None),
+        ("POST", f"{base}/devices/dev%2F1/tools-queries", {"owner_id": "owner-1"},
+         {"companion_id": "c/1", "restriction": {"revision": 1, "denied": ["get_weather"]}}),
+        ("POST", f"{base}/devices/dev%2F1/tools-queries", {"owner_id": "owner-1"},
+         {"companion_id": None, "restriction": None}),
     ]
 
 

@@ -22,6 +22,7 @@ from eidolon_sdk.biz.tools import (
     CompanionToolPolicy,
     CompanionToolPolicyState,
     DeviceToolOffer,
+    DeviceToolRestriction,
     OwnerToolPolicyState,
     ToolCatalog,
     ToolCatalogEntry,
@@ -156,7 +157,7 @@ class DeviceTools(_View):
     device_id: str
     companion_id: str | None
     tools: list[DeviceTool]
-    restriction: None = None
+    restriction: DeviceToolRestriction | None
 
 
 # ----------------------------------------------------------------------------- rules
@@ -178,13 +179,16 @@ def device_reasons(
     owner: ToolPolicy,
     companion: CompanionToolPolicy | None,
     offer: DeviceToolOffer | None,
+    restriction: DeviceToolRestriction | None,
 ) -> list[str]:
     """Why ``entry`` cannot be used on this device, in order; empty when it can.
 
     ``companion`` is the policy of the Companion bound to the device, ``None``
     when none is. ``offer`` is what the device's channel offers a session,
-    ``None`` when it has no channel yet. The switches go through the SDK's one
-    rule; the device facts are the Provider's, only translated into codes.
+    ``None`` when it has no channel yet. ``restriction`` is what the Owner
+    withheld on this device, ``None`` when nothing ever was. The switches go
+    through the SDK's one rule; the device facts are the Provider's, only
+    translated into codes.
     """
 
     if entry.reserved is not None:
@@ -197,9 +201,12 @@ def device_reasons(
         reasons.append("no_companion")
     elif layer is not None and layer != "global":
         reasons.append(_LAYER_REASONS[layer])
+    restricted = restriction is not None and entry.key in restriction.denied
+    if restricted:
+        reasons.append("device_restricted")
 
     if entry.kind in DEVICE_KINDS:
-        reasons.extend(_device_facts(entry, offer))
+        reasons.extend(_device_facts(entry, offer, restricted=restricted))
 
     if entry.host_available is False:
         feature = entry.requires.host_feature
@@ -207,7 +214,9 @@ def device_reasons(
     return reasons
 
 
-def _device_facts(entry: ToolCatalogEntry, offer: DeviceToolOffer | None) -> list[str]:
+def _device_facts(
+    entry: ToolCatalogEntry, offer: DeviceToolOffer | None, *, restricted: bool
+) -> list[str]:
     if offer is None:
         return ["channel_not_ready"]
     requires = entry.requires
@@ -231,10 +240,11 @@ def _device_facts(entry: ToolCatalogEntry, offer: DeviceToolOffer | None) -> lis
     if entry.kind == "device" and entry.key not in offer.session_capabilities:
         if entry.key not in offer.declared_capabilities:
             add(f"device_not_declared:{entry.key}")
-        elif not facts:
+        elif not facts and not restricted:
             # The checks above restate the contract's own requirements, so a
             # declared contract the session still lacks means they disagree
-            # with the Provider. Logged, not invented as a reason.
+            # with the Provider. Logged, not invented as a reason. A restricted
+            # one is expected: the grant leaves restricted contracts out.
             logger.warning(
                 "device %s declares %s and meets its requirements, yet its channel does not offer it",
                 offer.device_id, entry.key,
@@ -381,13 +391,20 @@ class ToolGovernance:
 
     # ------------------------------------------------------------------ one device
 
-    async def device(self, owner_id: str, device_id: str, companion_id: str | None) -> DeviceTools:
+    async def device(
+        self,
+        owner_id: str,
+        device_id: str,
+        companion_id: str | None,
+        restriction: DeviceToolRestriction | None,
+    ) -> DeviceTools:
         """Which tools a session on this device could use now, and why not the others.
 
-        ``device_id`` and ``companion_id`` come from the Owner's device
-        inventory at Local API, never from a client. The Companion is checked
-        against the Owner's own switches all the same: one the Owner does not
-        keep is a disagreement between authorities, not a device with defaults.
+        ``device_id``, ``companion_id`` and ``restriction`` come from Local API,
+        which read them under the Owner's Controller (the inventory and Hub),
+        never from a client. The Companion is checked against the Owner's own
+        switches all the same: one the Owner does not keep is a disagreement
+        between authorities, not a device with defaults.
         """
 
         catalog = await self._catalog.tool_catalog()
@@ -403,9 +420,14 @@ class ToolGovernance:
         offer = await self._offers.offer(owner_id=owner_id, device_id=device_id)
         tools = []
         for entry in _ordered(catalog):
-            reasons = device_reasons(entry, owner=state.policy, companion=companion, offer=offer)
+            reasons = device_reasons(
+                entry, owner=state.policy, companion=companion, offer=offer,
+                restriction=restriction,
+            )
             tools.append(DeviceTool(
                 key=entry.key, label=entry.label, summary=entry.summary, group=entry.group,
                 kind=entry.kind, available=not reasons, reasons=reasons, requires=entry.requires,
             ))
-        return DeviceTools(device_id=device_id, companion_id=companion_id, tools=tools)
+        return DeviceTools(
+            device_id=device_id, companion_id=companion_id, tools=tools, restriction=restriction
+        )

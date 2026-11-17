@@ -194,13 +194,14 @@ class AdminManagementClient:
         )
 
     async def device_tools(
-        self, *, owner_id: str, device_id: str, companion_id: str | None
+        self, *, owner_id: str, device_id: str, companion_id: str | None,
+        restriction: dict | None,
     ) -> dict:
-        params = {"owner_id": owner_id}
-        if companion_id is not None:
-            params["companion_id"] = companion_id
-        return await self._get(
-            f"/api/internal/v1/management/devices/{quote(device_id, safe='')}/tools", params
+        return await self._put(
+            f"/api/internal/v1/management/devices/{quote(device_id, safe='')}/tools-queries",
+            {"owner_id": owner_id},
+            {"companion_id": companion_id, "restriction": restriction},
+            method="POST",
         )
 
     async def tools(self, *, owner_id: str, change: dict | None = None) -> dict:

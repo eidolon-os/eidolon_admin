@@ -91,6 +91,8 @@ from .devices import (
     LocalDeviceView,
     output_configuration_query,
     output_policy_decision,
+    tool_restriction_decision,
+    tool_restriction_query,
     owner_device_inventory_view,
     validate_inventory_membership,
 )
@@ -1427,6 +1429,66 @@ def create_app(
                     refusal=refusal_for_status(exc.status_code, str(exc)),
                 ) from exc
             return await self._reread(session=session, device_id=device_id)
+
+        async def read_device_tool_restriction(self, *, session, device_ref):
+            """Which tools this device never offers, for a DeviceRef read from the inventory."""
+
+            owner_domain_id, business_owner_id = _admission_scope(session.owner_id)
+            try:
+                configuration = await devices.read_tool_restriction(
+                    payload=tool_restriction_query(
+                        controller_id=session.controller_id,
+                        owner_domain_id=owner_domain_id,
+                        business_owner_id=business_owner_id,
+                        device_ref=device_ref,
+                    )
+                )
+            except DeviceInventoryError as exc:
+                raise ManagementBackendError(
+                    str(exc),
+                    status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc), exc.code),
+                ) from exc
+            return configuration.restriction
+
+        async def set_device_tool_restriction(
+            self, *, session, device_id: str, expected_revision: int, denied
+        ):
+            """Carry the Owner's restriction for one device, proved theirs as outputs are.
+
+            The DeviceRef comes from the inventory this Owner holds, never from
+            the phone. Hub's refusals keep their code: a stale revision is read
+            again, ``output_policy_required`` sends the Owner to the outputs.
+            """
+
+            owner_domain_id, business_owner_id = _admission_scope(session.owner_id)
+            inventory = await self.list_devices(session=session)
+            held = next(
+                (item for item in inventory.devices if item.device_id == device_id), None
+            )
+            if held is None:
+                raise ManagementBackendError(
+                    "Device is not mounted",
+                    status_code=404,
+                    refusal=refusal_for_status(404, "Device is not mounted"),
+                )
+            try:
+                return await devices.set_tool_restriction(
+                    payload=tool_restriction_decision(
+                        controller_id=session.controller_id,
+                        owner_domain_id=owner_domain_id,
+                        business_owner_id=business_owner_id,
+                        device_ref=held.claim.device_ref,
+                        expected_revision=expected_revision,
+                        denied=tuple(denied),
+                    )
+                )
+            except DeviceInventoryError as exc:
+                raise ManagementBackendError(
+                    str(exc),
+                    status_code=exc.status_code,
+                    refusal=refusal_for_status(exc.status_code, str(exc), exc.code),
+                ) from exc
 
         async def _reread(self, *, session, device_id: str):
             """The device as the authorities now describe it, or say it is gone."""

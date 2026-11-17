@@ -2146,6 +2146,59 @@
         "title": "DeviceStatusView",
         "type": "object"
       },
+      "DeviceToolRestriction": {
+        "additionalProperties": false,
+        "description": "Tools one device never offers a session, whichever Companion it carries.\n\nKept by Hub with the device and its generation. It only narrows: it cannot\ngrant what the Owner's or the Companion's switches withhold, nor widen what\nthe device's output policy allows.",
+        "properties": {
+          "denied": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Denied",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "DeviceToolRestriction",
+        "type": "object"
+      },
+      "DeviceToolRestrictionRequest": {
+        "additionalProperties": false,
+        "description": "Which of its Companion's tools this device never offers, decided by its Owner.\n\nThe whole list each time, not a change: a restriction is short, and the\nrevision makes a write against a list this phone was not looking at a 409.\nWhich device is named by the path and proved by the Host; the phone never\nsends a DeviceRef.",
+        "properties": {
+          "denied": {
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Denied",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "DeviceToolRestrictionRequest",
+        "type": "object"
+      },
       "DeviceToolRowView": {
         "additionalProperties": false,
         "properties": {
@@ -2219,14 +2272,12 @@
           "restriction": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/DeviceToolRestriction"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Restriction"
+            ]
           },
           "tools": {
             "items": {
@@ -2239,7 +2290,8 @@
         "required": [
           "device_id",
           "companion_id",
-          "tools"
+          "tools",
+          "restriction"
         ],
         "title": "DeviceToolsView",
         "type": "object"
@@ -10795,9 +10847,78 @@
         ]
       }
     },
+    "/api/management/v1/devices/{device_id}/tool-restriction": {
+      "put": {
+        "description": "Say which tools this device of mine never offers, whoever answers through it.\n\nIt only narrows: a tool the Owner's or the Companion's switches withhold\nstays withheld. Hub keeps it and ends the conversation this device is\nholding, so the next one starts without those tools. A device whose\noutputs were never decided is refused with ``output_policy_required``.",
+        "operationId": "put_device_tool_restriction_api_management_v1_devices__device_id__tool_restriction_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceToolRestrictionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceToolRestriction"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Device Tool Restriction",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/devices/{device_id}/tools": {
       "get": {
-        "description": "Which tools my Eidolon could use through this device of mine.\n\nWhich device is proved from the inventory this Owner holds, and the\nCompanion it answers as is read from the same row, so neither comes\nfrom the phone.",
+        "description": "Which tools my Eidolon could use through this device of mine.\n\nWhich device is proved from the inventory this Owner holds; the\nCompanion it answers as is read from the same row, and its restriction\nfrom Hub for the DeviceRef in that row, so none of it comes from the\nphone.",
         "operationId": "get_device_tools_api_management_v1_devices__device_id__tools_get",
         "parameters": [
           {

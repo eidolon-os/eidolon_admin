@@ -299,6 +299,7 @@ async def test_a_capability_is_true_only_for_a_slice_declared_closed() -> None:
         "device.manage",
         "body.assign",
         "tools.govern",
+        "device.tool_restriction",
     ):
         assert context.capabilities[closed] is True, closed
     for still_open in ("device.identify",):
@@ -411,6 +412,8 @@ async def test_a_capability_needing_no_authority_is_unaffected_by_keys() -> None
         "activity.read",
         "device.read",
         "device.manage",
+        # Hub's, carried by the Controller like the device's outputs.
+        "device.tool_restriction",
     ):
         assert capabilities[independent] is True, independent
 

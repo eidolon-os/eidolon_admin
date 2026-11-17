@@ -3,13 +3,15 @@
 ``owner_id`` arrives as a query parameter, as on every internal management
 route: Local API passes the Owner bound to the Controller session it verified.
 For a device it also passes the Companion that device answers as, read from the
-same inventory that proved the device is this Owner's.
+same inventory that proved the device is this Owner's, and the device's tool
+restriction, which only a Controller may read from Hub.
 """
 
 from __future__ import annotations
 
-from eidolon_sdk.biz.tools import ToolPolicyChange
+from eidolon_sdk.biz.tools import DeviceToolRestriction, ToolPolicyChange
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, ConfigDict
 
 from eidolon_admin_server.app.service_auth import require_local_api_credential
 
@@ -55,8 +57,18 @@ async def change_companion_tools(
     return await _governance(request).change_companion(owner_id, companion_id, body)
 
 
-@router.get("/devices/{device_id}/tools", response_model=DeviceTools)
-async def device_tools(
-    request: Request, device_id: str, owner_id: str, companion_id: str | None = None
-):
-    return await _governance(request).device(owner_id, device_id, companion_id)
+class DeviceToolsQuery(BaseModel):
+    """What Local API read about one device under the Owner's Controller."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    companion_id: str | None = None
+    restriction: DeviceToolRestriction | None = None
+
+
+# A query rather than a GET: the restriction it carries can be a long list.
+@router.post("/devices/{device_id}/tools-queries", response_model=DeviceTools)
+async def device_tools(request: Request, device_id: str, owner_id: str, body: DeviceToolsQuery):
+    return await _governance(request).device(
+        owner_id, device_id, body.companion_id, body.restriction
+    )

@@ -362,6 +362,16 @@ export interface DeviceStatusView {
   state: Record<string, boolean | number | number | string | null>
 }
 
+export interface DeviceToolRestriction {
+  denied?: Array<string>
+  revision: number
+}
+
+export interface DeviceToolRestrictionRequest {
+  denied?: Array<string>
+  expected_revision: number
+}
+
 export interface DeviceToolRowView {
   available: boolean
   group: string
@@ -376,7 +386,7 @@ export interface DeviceToolRowView {
 export interface DeviceToolsView {
   companion_id: string | null
   device_id: string
-  restriction?: Record<string, unknown> | null
+  restriction: DeviceToolRestriction | null
   tools: Array<DeviceToolRowView>
 }
 
@@ -1485,6 +1495,7 @@ export interface ManagementResponses {
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'GET /api/management/v1/devices/{device_id}/properties': DevicePropertiesView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
+  'PUT /api/management/v1/devices/{device_id}/tool-restriction': DeviceToolRestriction
   'GET /api/management/v1/devices/{device_id}/tools': DeviceToolsView
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire

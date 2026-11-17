@@ -259,6 +259,9 @@ def admission_actor(
             "device.output-policy.write",
             "device.shared-session.control",
             "device.conversation.control",
+            # Which of its Companion's tools a device of theirs never offers:
+            # the same Owner's decision about the same device.
+            "device.tool-restriction.write",
         ),
         authentication_strength="software",
     )

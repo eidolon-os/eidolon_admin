@@ -338,6 +338,9 @@ async def test_enrollment_page_and_cursor_reach_the_admission_authority(
         "device.read",
         "device.claim.approve",
         "device.output-policy.write",
+        "device.shared-session.control",
+        "device.conversation.control",
+        "device.tool-restriction.write",
     )
     # The default page includes acknowledged Grants: a device that finished its
     # handoff while the phone was closed must still be findable by its setup.
@@ -369,6 +372,9 @@ async def test_one_enrollment_is_readable_without_deciding_anything(
         "device.read",
         "device.claim.approve",
         "device.output-policy.write",
+        "device.shared-session.control",
+        "device.conversation.control",
+        "device.tool-restriction.write",
     )
     assert port.decisions == []
 

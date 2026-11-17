@@ -11,9 +11,13 @@ client answers by reading again.
 
 from __future__ import annotations
 
-from typing import Any
-
-from eidolon_sdk.biz.tools import BlockedBy, ToolPolicyChange, ToolRequirements, ToolReservation
+from eidolon_sdk.biz.tools import (
+    BlockedBy,
+    DeviceToolRestriction,
+    ToolPolicyChange,
+    ToolRequirements,
+    ToolReservation,
+)
 from fastapi import Header
 from pydantic import BaseModel, ConfigDict
 
@@ -104,9 +108,10 @@ class DeviceToolRowView(_View):
     available: bool
     #: Every reason it cannot be used here, in order; empty when it can. Codes:
     #: ``reserved``, ``global_off``, ``no_companion``, ``body_control_off``,
-    #: ``companion_off``, ``channel_not_ready``, ``motion_profile_mismatch``,
-    #: ``device_not_declared:<contract>``, ``output_not_allowed:<output>``,
-    #: ``input_not_allowed:camera``, ``host_not_configured:<feature>``.
+    #: ``companion_off``, ``device_restricted``, ``channel_not_ready``,
+    #: ``motion_profile_mismatch``, ``device_not_declared:<contract>``,
+    #: ``output_not_allowed:<output>``, ``input_not_allowed:camera``,
+    #: ``host_not_configured:<feature>``.
     reasons: list[str]
     requires: ToolRequirements
 
@@ -118,10 +123,9 @@ class DeviceToolsView(_View):
     #: The Companion this device answers as; null when it answers as none.
     companion_id: str | None
     tools: list[DeviceToolRowView]
-    #: What this device's own restriction withholds. Always null until device
-    #: restrictions exist; typed as an object because the generated clients
-    #: cannot carry a field that is only ever null.
-    restriction: dict[str, Any] | None = None
+    #: What its Owner withheld on this device; null when nothing ever was. Send
+    #: its revision back as ``expected_revision`` when changing it.
+    restriction: DeviceToolRestriction | None
 
 
 def register_tool_routes(
@@ -170,9 +174,10 @@ def register_tool_routes(
     async def get_device_tools(device_id: str, authorization: str | None = Header(default=None)):
         """Which tools my Eidolon could use through this device of mine.
 
-        Which device is proved from the inventory this Owner holds, and the
-        Companion it answers as is read from the same row, so neither comes
-        from the phone.
+        Which device is proved from the inventory this Owner holds; the
+        Companion it answers as is read from the same row, and its restriction
+        from Hub for the DeviceRef in that row, so none of it comes from the
+        phone.
         """
         session = await authenticated_controller_session(authorization)
         try:
@@ -183,9 +188,13 @@ def register_tool_routes(
                     "Device is not mounted", status_code=404,
                     refusal=refusal_for_status(404, "Device is not mounted"),
                 )
+            restriction = await devices.read_device_tool_restriction(
+                session=session, device_ref=held.claim.device_ref
+            )
             answer = await backend.device_tools(
                 owner_id=session.owner_id, device_id=device_id,
                 companion_id=held.body.answering_companion_id,
+                restriction=None if restriction is None else restriction.model_dump(mode="json"),
             )
         except ManagementBackendError as exc:
             raise refused(exc) from exc

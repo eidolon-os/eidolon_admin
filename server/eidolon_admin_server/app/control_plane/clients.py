@@ -29,7 +29,11 @@ from eidolon_sdk.biz.presentation.device import (
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
 from eidolon_sdk.biz.tools import (
     CompanionToolPolicyState,
+    DeviceToolRestriction,
+    DeviceToolRestrictionConfiguration,
     OwnerToolPolicyState,
+    ReadDeviceToolRestriction,
+    SetDeviceToolRestriction,
     ToolCatalog,
     ToolPolicyChange,
 )
@@ -2302,6 +2306,47 @@ class HubManagementClient:
                 "hub", "Hub stored an output policy other than the one decided"
             )
         return policy
+
+    async def read_device_tool_restriction(
+        self, *, query: ReadDeviceToolRestriction, authorization: str
+    ) -> DeviceToolRestrictionConfiguration:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{base_url}/api/device-control/v1/tool-restriction-queries",
+            replay_safe=True,
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=query.model_dump(mode="json"),
+        )
+        configuration = _parse("hub", response, DeviceToolRestrictionConfiguration)
+        if configuration.device_ref != query.device_ref:
+            raise _contract_violation(
+                "hub", "Hub tool restriction answered about another device"
+            )
+        return configuration
+
+    async def set_device_tool_restriction(
+        self, *, command: SetDeviceToolRestriction, authorization: str
+    ) -> DeviceToolRestriction:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "PUT",
+            f"{base_url}/api/device-control/v1/tool-restriction",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=command.model_dump(mode="json"),
+        )
+        restriction = _parse("hub", response, DeviceToolRestriction)
+        if restriction.denied != command.denied:
+            raise _contract_violation(
+                "hub", "Hub stored a tool restriction other than the one decided"
+            )
+        return restriction
 
     async def get_enrollment_recovery(
         self,

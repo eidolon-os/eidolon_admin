@@ -126,6 +126,10 @@ _CAPABILITIES: tuple[str, ...] = (
     #: Host, and this is about which sessions may *talk* to a Companion. A person
     #: who signs their devices out must not lose their management app with them.
     "session.revoke",
+    #: Which of its Companion's tools one device never offers. Its own name
+    #: beside ``device.manage`` and ``tools.govern``: it is a decision about a
+    #: device, kept by Hub, and it only narrows what the switches allow.
+    "device.tool_restriction",
     #: Which tools an Eidolon may use: the Owner's switch for every Companion,
     #: each Companion's own, and what one device can use now. Its own name
     #: because it is about what an Eidolon may *do*, not who it is.
@@ -218,6 +222,10 @@ _ENABLED: frozenset[str] = frozenset(
         # (eidolon_sdk@6c24516) — before that this flag would have been a button
         # that bricked every device an Owner has.
         "session.revoke",
+        # A device's tool restriction: kept by Hub, carried by the same
+        # Controller authority as the device's outputs, so it needs no key the
+        # device surfaces do not already need.
+        "device.tool_restriction",
         # The tool switches: the Agent publishes the catalog they range over,
         # Data keeps both layers, and a device's half is the Channel Provider's
         # offer, which every Host runs.
