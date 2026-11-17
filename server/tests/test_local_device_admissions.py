@@ -115,6 +115,9 @@ def test_local_decision_derives_explicit_actor_and_owner_context() -> None:
         "device.read",
         "device.claim.approve",
         "device.output-policy.write",
+        "device.shared-session.control",
+        "device.conversation.control",
+        "device.tool-restriction.write",
     )
     assert payload.decision.target_business_owner_id == BUSINESS_OWNER
     assert payload.decision.reviewed_manifest_ref == MANIFEST

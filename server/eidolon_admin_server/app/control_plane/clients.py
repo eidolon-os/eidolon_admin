@@ -27,6 +27,16 @@ from eidolon_sdk.biz.presentation.device import (
     SetDeviceOutputPolicy,
 )
 from eidolon_sdk.biz.system_data import CompanionRuntimeSnapshot
+from eidolon_sdk.biz.tools import (
+    CompanionToolPolicyState,
+    DeviceToolRestriction,
+    DeviceToolRestrictionConfiguration,
+    OwnerToolPolicyState,
+    ReadDeviceToolRestriction,
+    SetDeviceToolRestriction,
+    ToolCatalog,
+    ToolPolicyChange,
+)
 from eidolon_sdk.device_foundation.v1 import (
     ClaimPage,
     ClaimQuery,
@@ -624,6 +634,73 @@ class DataAuthorityClient:
             return TypeAdapter(model).validate_json(response.content)
         except (ValueError, ValidationError) as exc:
             raise _contract_violation("data", "Data voice answer violated the contract") from exc
+
+    async def owner_tool_policy(self, owner_id: str) -> OwnerToolPolicyState:
+        """The Owner's tool switches and those of every Companion it keeps."""
+        state = await self._tool_policy_call(
+            "GET", f"/owners/{quote(owner_id, safe='')}/tool-policy", OwnerToolPolicyState
+        )
+        if state.owner_id != owner_id:
+            raise _contract_violation("data", "Data returned another Owner's tool policy")
+        return state
+
+    async def change_owner_tool_policy(
+        self, owner_id: str, change: ToolPolicyChange
+    ) -> OwnerToolPolicyState:
+        state = await self._tool_policy_call(
+            "PUT", f"/owners/{quote(owner_id, safe='')}/tool-policy", OwnerToolPolicyState,
+            change,
+        )
+        if state.owner_id != owner_id:
+            raise _contract_violation("data", "Data returned another Owner's tool policy")
+        return state
+
+    async def companion_tool_policy(self, companion_id: str) -> CompanionToolPolicyState:
+        """One Companion's switches. Whose Companion it is was proved before asking."""
+        state = await self._tool_policy_call(
+            "GET", f"/companions/{quote(companion_id, safe='')}/tool-policy",
+            CompanionToolPolicyState,
+        )
+        if state.companion_id != companion_id:
+            raise _contract_violation("data", "Data returned another Companion's tool policy")
+        return state
+
+    async def change_companion_tool_policy(
+        self, companion_id: str, change: ToolPolicyChange
+    ) -> CompanionToolPolicyState:
+        state = await self._tool_policy_call(
+            "PUT", f"/companions/{quote(companion_id, safe='')}/tool-policy",
+            CompanionToolPolicyState, change,
+        )
+        if state.companion_id != companion_id:
+            raise _contract_violation("data", "Data returned another Companion's tool policy")
+        return state
+
+    async def _tool_policy_call(
+        self, method: str, path: str, model: type[ModelT], change: ToolPolicyChange | None = None
+    ) -> ModelT:
+        """Either layer of the tool switches; ``path`` follows ``/api/companion-authority/v1``.
+
+        A stale revision arrives as Data's own 409 ``tool_policy_changed`` and
+        leaves as that, through ``_parse``, like every other refusal here.
+        """
+        if not self._token:
+            raise AuthorityFailure("data", "configuration", "Data credential missing", 503)
+        endpoint = await self._directory.resolve(
+            service_id="data",
+            endpoint_id="companion-authority.http",
+            required_contract=DATA_CONTRACT,
+        )
+        response = await _request(
+            "data",
+            self._client,
+            method,
+            f"{endpoint.address.rstrip('/')}/api/companion-authority/v1{path}",
+            timeout=self._timeout,
+            headers={"Authorization": f"Bearer {self._token}"},
+            json=None if change is None else change.model_dump(mode="json"),
+        )
+        return _parse("data", response, model)
 
     async def get_companion_face(self, companion_id: str) -> bytes | None:
         """The face itself, or None when this Companion has none.
@@ -1969,6 +2046,15 @@ class AgentActivityClient:
         )
         return _parse("agent", response, PersonaPreviewResponse)
 
+    async def tool_catalog(self) -> ToolCatalog:
+        """Every tool this Host's Agent can offer a model: what the Owner's switches cover.
+
+        The Agent's alone, because only the process that assembles a turn's
+        tools knows the whole set and what each of them needs.
+        """
+
+        return _parse("agent", await self._call("GET", "/tools/catalog", params=None), ToolCatalog)
+
     async def _call(
         self,
         method: str,
@@ -2220,6 +2306,47 @@ class HubManagementClient:
                 "hub", "Hub stored an output policy other than the one decided"
             )
         return policy
+
+    async def read_device_tool_restriction(
+        self, *, query: ReadDeviceToolRestriction, authorization: str
+    ) -> DeviceToolRestrictionConfiguration:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "POST",
+            f"{base_url}/api/device-control/v1/tool-restriction-queries",
+            replay_safe=True,
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=query.model_dump(mode="json"),
+        )
+        configuration = _parse("hub", response, DeviceToolRestrictionConfiguration)
+        if configuration.device_ref != query.device_ref:
+            raise _contract_violation(
+                "hub", "Hub tool restriction answered about another device"
+            )
+        return configuration
+
+    async def set_device_tool_restriction(
+        self, *, command: SetDeviceToolRestriction, authorization: str
+    ) -> DeviceToolRestriction:
+        base_url = await self._base_url()
+        response = await _request(
+            "hub",
+            self._client,
+            "PUT",
+            f"{base_url}/api/device-control/v1/tool-restriction",
+            timeout=self._timeout,
+            headers=self._headers(authorization),
+            json=command.model_dump(mode="json"),
+        )
+        restriction = _parse("hub", response, DeviceToolRestriction)
+        if restriction.denied != command.denied:
+            raise _contract_violation(
+                "hub", "Hub stored a tool restriction other than the one decided"
+            )
+        return restriction
 
     async def get_enrollment_recovery(
         self,

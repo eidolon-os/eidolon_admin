@@ -193,6 +193,34 @@ class AdminManagementClient:
             {"owner_id": owner_id},
         )
 
+    async def device_tools(
+        self, *, owner_id: str, device_id: str, companion_id: str | None,
+        restriction: dict | None,
+    ) -> dict:
+        return await self._put(
+            f"/api/internal/v1/management/devices/{quote(device_id, safe='')}/tools-queries",
+            {"owner_id": owner_id},
+            {"companion_id": companion_id, "restriction": restriction},
+            method="POST",
+        )
+
+    async def tools(self, *, owner_id: str, change: dict | None = None) -> dict:
+        """The Owner's switches; with ``change``, changed first."""
+        path, params = "/api/internal/v1/management/tools", {"owner_id": owner_id}
+        if change is None:
+            return await self._get(path, params)
+        return await self._put(path, params, change)
+
+    async def companion_tools(
+        self, *, owner_id: str, companion_id: str, change: dict | None = None
+    ) -> dict:
+        """One Companion's switches; with ``change``, changed first."""
+        path = f"/api/internal/v1/management/companions/{quote(companion_id, safe='')}/tools"
+        params = {"owner_id": owner_id}
+        if change is None:
+            return await self._get(path, params)
+        return await self._put(path, params, change)
+
     async def invoke_device_capability(
         self, *, owner_id: str, device_id: str, capability: str,
         request_id: str, arguments: dict,

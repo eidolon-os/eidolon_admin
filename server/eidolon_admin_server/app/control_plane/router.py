@@ -16,6 +16,7 @@ from eidolon_sdk.device_foundation.v1 import (
 
 from eidolon_sdk.biz.presentation import DeviceOutputPolicy
 from eidolon_sdk.biz.presentation.device import DeviceOutputConfiguration
+from eidolon_sdk.biz.tools import DeviceToolRestriction, DeviceToolRestrictionConfiguration
 
 from .contracts import (
     CommissioningVoucherIssued,
@@ -24,6 +25,8 @@ from .contracts import (
     ControllerWithdrawn,
     ControllerDeviceOutputPolicyQuery,
     ControllerDeviceOutputPolicyUpdate,
+    ControllerDeviceToolRestrictionQuery,
+    ControllerDeviceToolRestrictionUpdate,
     BoundaryCapabilities,
     AdmissionDecisionWorkflowResult,
     ControllerClaimQuery,
@@ -318,6 +321,40 @@ async def set_device_output_policy(
     ):
         raise HTTPException(409, "Output policy path and decision do not match")
     return await _service(request).set_device_output_policy(payload=payload)
+
+
+@router.post(
+    "/owners/{owner_id}/devices/{device_id}/tool-restriction-queries",
+    response_model=DeviceToolRestrictionConfiguration,
+)
+async def read_device_tool_restriction(
+    owner_id: str,
+    device_id: str,
+    payload: ControllerDeviceToolRestrictionQuery,
+    request: Request,
+) -> DeviceToolRestrictionConfiguration:
+    if str(payload.business_owner_id) != owner_id or (
+        payload.device_ref.device_instance_id != device_id
+    ):
+        raise HTTPException(409, "Tool restriction path and query do not match")
+    return await _service(request).read_device_tool_restriction(payload=payload)
+
+
+@router.put(
+    "/owners/{owner_id}/devices/{device_id}/tool-restriction",
+    response_model=DeviceToolRestriction,
+)
+async def set_device_tool_restriction(
+    owner_id: str,
+    device_id: str,
+    payload: ControllerDeviceToolRestrictionUpdate,
+    request: Request,
+) -> DeviceToolRestriction:
+    if str(payload.business_owner_id) != owner_id or (
+        payload.restriction.device_ref.device_instance_id != device_id
+    ):
+        raise HTTPException(409, "Tool restriction path and decision do not match")
+    return await _service(request).set_device_tool_restriction(payload=payload)
 
 
 @router.post("/owners/{owner_id}/role-groups/open")

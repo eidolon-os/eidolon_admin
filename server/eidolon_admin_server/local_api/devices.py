@@ -16,6 +16,11 @@ from eidolon_sdk.biz.presentation.device import (
     DeviceOutputConfiguration,
     SetDeviceOutputPolicy,
 )
+from eidolon_sdk.biz.tools import (
+    DeviceToolRestriction,
+    DeviceToolRestrictionConfiguration,
+    SetDeviceToolRestriction,
+)
 from eidolon_sdk.device_foundation.v1 import (
     BusinessOwnerId,
     ClaimPage,
@@ -29,6 +34,8 @@ from ..app.control_plane.contracts import (
     ControllerBodyAssignment,
     ControllerDeviceOutputPolicyQuery,
     ControllerDeviceOutputPolicyUpdate,
+    ControllerDeviceToolRestrictionQuery,
+    ControllerDeviceToolRestrictionUpdate,
     KernelBodyEndpoint,
     KernelBodyEndpointPage,
     assignment_revision_of,
@@ -37,9 +44,13 @@ from .device_admissions import admission_actor
 
 
 class DeviceInventoryError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int = 503) -> None:
+    def __init__(
+        self, message: str, *, status_code: int = 503, code: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        #: The authority's own word for which refusal this is, when it said one.
+        self.code = code
 
 
 class AdminOwnerDevicesPort(Protocol):
@@ -53,6 +64,12 @@ class AdminOwnerDevicesPort(Protocol):
     async def set_output_policy(
         self, *, payload: ControllerDeviceOutputPolicyUpdate
     ) -> DeviceOutputPolicy: ...
+    async def read_tool_restriction(
+        self, *, payload: ControllerDeviceToolRestrictionQuery
+    ) -> DeviceToolRestrictionConfiguration: ...
+    async def set_tool_restriction(
+        self, *, payload: ControllerDeviceToolRestrictionUpdate
+    ) -> DeviceToolRestriction: ...
     async def close(self) -> None: ...
 
 
@@ -94,6 +111,46 @@ def output_policy_decision(
             expected_revision=expected_revision,
             allowed=allowed,
             inputs=inputs,
+        ),
+    )
+
+
+def tool_restriction_query(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    device_ref: DeviceRef,
+) -> ControllerDeviceToolRestrictionQuery:
+    return ControllerDeviceToolRestrictionQuery(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        device_ref=device_ref,
+    )
+
+
+def tool_restriction_decision(
+    *,
+    controller_id: str,
+    owner_domain_id: OwnerDomainId,
+    business_owner_id: BusinessOwnerId,
+    device_ref: DeviceRef,
+    expected_revision: int,
+    denied: tuple[str, ...],
+) -> ControllerDeviceToolRestrictionUpdate:
+    return ControllerDeviceToolRestrictionUpdate(
+        contract_version="1",
+        actor=admission_actor(
+            controller_id=controller_id, owner_domain_id=owner_domain_id
+        ),
+        business_owner_id=business_owner_id,
+        restriction=SetDeviceToolRestriction(
+            device_ref=device_ref,
+            expected_revision=expected_revision,
+            denied=denied,
         ),
     )
 
@@ -304,10 +361,12 @@ class AdminOwnerDevicesClient:
                             device_id: str, payload, model, operation: str):
         """One device-scoped call to the Admin control plane, and its refusals.
 
-        The two output-policy calls differ only in verb, suffix and answer
-        type, so they share the transport rather than each carrying its own
-        copy of the status mapping — the one place a read and a write silently
-        disagree about what 409 means.
+        The output-policy and tool-restriction calls differ only in verb,
+        suffix and answer type, so they share the transport rather than each
+        carrying its own copy of the status mapping — the one place a read and
+        a write silently disagree about what 409 means. A refusal keeps the
+        authority's code, so a client can tell "read again" from "decide the
+        outputs first".
         """
 
         if not self._token:
@@ -320,7 +379,7 @@ class AdminOwnerDevicesClient:
                 f"{self._base_url}/api/control-plane/v1/owners/"
                 f"{quote(owner_id, safe='')}/devices/"
                 f"{quote(device_id, safe='')}/{suffix}",
-                replay_safe=verb == "POST" and suffix == "output-policy-queries",
+                replay_safe=verb == "POST" and suffix.endswith("-queries"),
                 headers={"Authorization": f"Bearer {self._token}"},
                 json=payload.model_dump(mode="json"),
                 timeout=self._timeout,
@@ -333,6 +392,7 @@ class AdminOwnerDevicesClient:
                 status_code=response.status_code
                 if response.status_code in {401, 403, 404, 409}
                 else 503,
+                code=_refusal_code(response),
             )
         try:
             return model.model_validate(response.json())
@@ -378,9 +438,58 @@ class AdminOwnerDevicesClient:
             )
         return policy
 
+    async def read_tool_restriction(
+        self, *, payload: ControllerDeviceToolRestrictionQuery
+    ) -> DeviceToolRestrictionConfiguration:
+        configuration = await self._device_scoped(
+            verb="POST",
+            suffix="tool-restriction-queries",
+            owner_id=str(payload.business_owner_id),
+            device_id=payload.device_ref.device_instance_id,
+            payload=payload,
+            model=DeviceToolRestrictionConfiguration,
+            operation="tool restriction",
+        )
+        if configuration.device_ref != payload.device_ref:
+            raise DeviceInventoryError(
+                "Admin Device tool restriction answered about another device",
+                status_code=502,
+            )
+        return configuration
+
+    async def set_tool_restriction(
+        self, *, payload: ControllerDeviceToolRestrictionUpdate
+    ) -> DeviceToolRestriction:
+        restriction = await self._device_scoped(
+            verb="PUT",
+            suffix="tool-restriction",
+            owner_id=str(payload.business_owner_id),
+            device_id=payload.restriction.device_ref.device_instance_id,
+            payload=payload,
+            model=DeviceToolRestriction,
+            operation="tool restriction decision",
+        )
+        if restriction.denied != payload.restriction.denied:
+            raise DeviceInventoryError(
+                "Admin Device tool restriction stored another decision", status_code=502
+            )
+        return restriction
+
     async def close(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+
+def _refusal_code(response: httpx.Response) -> str | None:
+    """The code Admin relayed with a refusal, from its own envelope or a plain one."""
+
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    code = detail.get("code") if isinstance(detail, dict) else None
+    return str(code)[:64] if code else None
 
 
 def validate_inventory_membership(

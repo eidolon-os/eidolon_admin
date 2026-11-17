@@ -5,6 +5,7 @@ device is this Owner's, whether the capability is an installed contract the
 Owner's app may use, whether the device declared it, whether the arguments fit,
 and what the device then did. This hop adds the credential and relays the
 answer — a refusal with the Provider's own code and sentence — unchanged.
+``DeviceOffers`` reads the same way, for the tools page that composes it.
 
 The Owner is not chosen here either. Local API passes the one bound to the
 Controller session it verified; nothing on this plane lets a client name one.
@@ -16,8 +17,9 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from eidolon_sdk.biz.tools import DeviceToolOffer
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from eidolon_admin_server.app.gateway.proxy import upstream_auth_headers
 from eidolon_admin_server.app.service_auth import require_local_api_credential
@@ -74,20 +76,56 @@ def _relayed(response: httpx.Response) -> dict:
     )
 
 
-@router.get("/devices/{device_id}/properties")
-async def device_properties(request: Request, device_id: str, owner_id: str) -> dict:
+async def _read(request: Request, device_id: str, leaf: str, owner_id: str) -> httpx.Response:
+    """One of the Provider's reads about a device, asked for the Owner Local API named."""
+
     url, headers = _provider_url(
-        request, f"/v1/device-channels/{quote(device_id, safe='')}/properties"
+        request, f"/v1/device-channels/{quote(device_id, safe='')}/{leaf}"
     )
     try:
-        response = await request.app.state.http_client.get(
+        return await request.app.state.http_client.get(
             url, params={"owner_id": owner_id}, headers=headers, timeout=10.0
         )
     except httpx.HTTPError as exc:
         raise HTTPException(
             503, {"code": "CHANNEL_PROVIDER_UNAVAILABLE", "detail": "设备通道服务暂时不可用"}
         ) from exc
-    return _relayed(response)
+
+
+@router.get("/devices/{device_id}/properties")
+async def device_properties(request: Request, device_id: str, owner_id: str) -> dict:
+    return _relayed(await _read(request, device_id, "properties", owner_id))
+
+
+class DeviceOffers:
+    """What a device's channel offers a session, read from the Provider that granted it.
+
+    Not a route of its own: the tools page composes it with the Owner's
+    switches, and the device facts in that answer are the Provider's, read
+    rather than re-derived here.
+    """
+
+    def __init__(self, request: Request) -> None:
+        self._request = request
+
+    async def offer(self, *, owner_id: str, device_id: str) -> DeviceToolOffer | None:
+        """The offer, or ``None`` when this device has no channel on this Host yet.
+
+        Any other refusal (another Owner's device) is relayed like the reads
+        above, and an answer that cannot be read is the Provider being unable
+        to answer, never the client's fault.
+        """
+
+        response = await _read(self._request, device_id, "offer", owner_id)
+        if response.status_code == 404:
+            return None
+        try:
+            return DeviceToolOffer.model_validate(_relayed(response))
+        except ValidationError as exc:
+            raise HTTPException(
+                503,
+                {"code": "CHANNEL_PROVIDER_UNAVAILABLE", "detail": "设备通道服务的答复不符合约定"},
+            ) from exc
 
 
 @router.post("/devices/{device_id}/capabilities/{capability}")

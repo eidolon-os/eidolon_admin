@@ -988,6 +988,136 @@
         "title": "CompanionSummaryView",
         "type": "object"
       },
+      "CompanionToolRowView": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reserved",
+                  "global",
+                  "body_control",
+                  "companion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          },
+          "body_control": {
+            "title": "Body Control",
+            "type": "boolean"
+          },
+          "companion_enabled": {
+            "title": "Companion Enabled",
+            "type": "boolean"
+          },
+          "companion_overridden": {
+            "title": "Companion Overridden",
+            "type": "boolean"
+          },
+          "default_enabled": {
+            "title": "Default Enabled",
+            "type": "boolean"
+          },
+          "effective": {
+            "title": "Effective",
+            "type": "boolean"
+          },
+          "global_enabled": {
+            "title": "Global Enabled",
+            "type": "boolean"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "requires": {
+            "$ref": "#/components/schemas/ToolRequirements"
+          },
+          "reserved": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolReservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "summary",
+          "group",
+          "kind",
+          "reserved",
+          "default_enabled",
+          "global_enabled",
+          "companion_enabled",
+          "companion_overridden",
+          "effective",
+          "body_control",
+          "blocked_by",
+          "requires"
+        ],
+        "title": "CompanionToolRowView",
+        "type": "object"
+      },
+      "CompanionToolsView": {
+        "additionalProperties": false,
+        "description": "What one Companion may use, and its own switches beneath the Owner's.",
+        "properties": {
+          "allow_body_control": {
+            "title": "Allow Body Control",
+            "type": "boolean"
+          },
+          "companion_id": {
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/CompanionToolRowView"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "companion_id",
+          "revision",
+          "allow_body_control",
+          "tools"
+        ],
+        "title": "CompanionToolsView",
+        "type": "object"
+      },
       "ControllerView": {
         "additionalProperties": false,
         "description": "One phone that may manage this Host.\n\nNo public key. A key is how the Host recognises a phone, not how a person\ndoes — and handing every controller's key to every other controller is\nspending authority material to draw a list. The fingerprint is what a person\nis shown when pairing, so it is what is shown here.",
@@ -2014,6 +2144,156 @@
           "state"
         ],
         "title": "DeviceStatusView",
+        "type": "object"
+      },
+      "DeviceToolRestriction": {
+        "additionalProperties": false,
+        "description": "Tools one device never offers a session, whichever Companion it carries.\n\nKept by Hub with the device and its generation. It only narrows: it cannot\ngrant what the Owner's or the Companion's switches withhold, nor widen what\nthe device's output policy allows.",
+        "properties": {
+          "denied": {
+            "default": [],
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Denied",
+            "type": "array"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision"
+        ],
+        "title": "DeviceToolRestriction",
+        "type": "object"
+      },
+      "DeviceToolRestrictionRequest": {
+        "additionalProperties": false,
+        "description": "Which of its Companion's tools this device never offers, decided by its Owner.\n\nThe whole list each time, not a change: a restriction is short, and the\nrevision makes a write against a list this phone was not looking at a 409.\nWhich device is named by the path and proved by the Host; the phone never\nsends a DeviceRef.",
+        "properties": {
+          "denied": {
+            "items": {
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Denied",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "DeviceToolRestrictionRequest",
+        "type": "object"
+      },
+      "DeviceToolRowView": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "requires": {
+            "$ref": "#/components/schemas/ToolRequirements"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "summary",
+          "group",
+          "kind",
+          "available",
+          "reasons",
+          "requires"
+        ],
+        "title": "DeviceToolRowView",
+        "type": "object"
+      },
+      "DeviceToolsView": {
+        "additionalProperties": false,
+        "description": "Which tools a conversation on this device could use now, and why not the others.",
+        "properties": {
+          "companion_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Companion Id"
+          },
+          "device_id": {
+            "title": "Device Id",
+            "type": "string"
+          },
+          "restriction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeviceToolRestriction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceToolRowView"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "device_id",
+          "companion_id",
+          "tools",
+          "restriction"
+        ],
+        "title": "DeviceToolsView",
         "type": "object"
       },
       "DeviceView": {
@@ -7136,6 +7416,291 @@
         "title": "TeamWrite",
         "type": "object"
       },
+      "ToolCompanionSwitchView": {
+        "additionalProperties": false,
+        "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reserved",
+                  "global",
+                  "body_control",
+                  "companion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          },
+          "companion_id": {
+            "title": "Companion Id",
+            "type": "string"
+          },
+          "effective": {
+            "title": "Effective",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "companion_id",
+          "name",
+          "revision",
+          "enabled",
+          "effective",
+          "blocked_by"
+        ],
+        "title": "ToolCompanionSwitchView",
+        "type": "object"
+      },
+      "ToolOverviewRowView": {
+        "additionalProperties": false,
+        "properties": {
+          "companions": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCompanionSwitchView"
+            },
+            "title": "Companions",
+            "type": "array"
+          },
+          "default_enabled": {
+            "title": "Default Enabled",
+            "type": "boolean"
+          },
+          "global_enabled": {
+            "title": "Global Enabled",
+            "type": "boolean"
+          },
+          "global_overridden": {
+            "title": "Global Overridden",
+            "type": "boolean"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "host_available": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Available"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "requires": {
+            "$ref": "#/components/schemas/ToolRequirements"
+          },
+          "reserved": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolReservation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "side_effect": {
+            "title": "Side Effect",
+            "type": "boolean"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "summary",
+          "group",
+          "kind",
+          "side_effect",
+          "reserved",
+          "default_enabled",
+          "global_enabled",
+          "global_overridden",
+          "requires",
+          "host_available",
+          "companions"
+        ],
+        "title": "ToolOverviewRowView",
+        "type": "object"
+      },
+      "ToolPolicyChange": {
+        "additionalProperties": false,
+        "description": "Changes to one layer, checked against the revision the writer read.\n\n``None`` removes an override, returning the tool to its default. Carrying\nonly what changed keeps one switch from overwriting another just changed.",
+        "properties": {
+          "allow_body_control": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Body Control"
+          },
+          "changes": {
+            "maxProperties": 256,
+            "patternProperties": {
+              "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "propertyNames": {
+              "maxLength": 128
+            },
+            "title": "Changes",
+            "type": "object"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "ToolPolicyChange",
+        "type": "object"
+      },
+      "ToolRequirements": {
+        "additionalProperties": false,
+        "description": "What a session needs before this tool is offered, as the Agent decides it.\n\nEvery field restates an existing gate, never a new rule: a contract's\nrequired output or input, the contracts the device must declare, the head\nprofile ``stackchan_head`` needs, and the Host feature that must be set up.",
+        "properties": {
+          "device_contracts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Device Contracts",
+            "type": "array"
+          },
+          "host_feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Feature"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "motion_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Motion Profile"
+          },
+          "outputs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Outputs",
+            "type": "array"
+          }
+        },
+        "title": "ToolRequirements",
+        "type": "object"
+      },
+      "ToolReservation": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "const": "interactive_session",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ToolReservation",
+        "type": "object"
+      },
+      "ToolsOverviewView": {
+        "additionalProperties": false,
+        "description": "Every tool this Host has, with the Owner's switch and each Companion's.",
+        "properties": {
+          "catalog_revision": {
+            "title": "Catalog Revision",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolOverviewRowView"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "catalog_revision",
+          "tools"
+        ],
+        "title": "ToolsOverviewView",
+        "type": "object"
+      },
       "TranscriptTurnView": {
         "additionalProperties": false,
         "description": "One exchange.",
@@ -9331,6 +9896,130 @@
         ]
       }
     },
+    "/api/management/v1/companions/{companion_id}/tools": {
+      "get": {
+        "operationId": "get_companion_tools_api_management_v1_companions__companion_id__tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionToolsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Companion Tools",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "put_companion_tools_api_management_v1_companions__companion_id__tools_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "companion_id",
+            "required": true,
+            "schema": {
+              "title": "Companion Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolPolicyChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanionToolsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Companion Tools",
+        "tags": [
+          "management"
+        ]
+      }
+    },
     "/api/management/v1/context": {
       "get": {
         "operationId": "get_context_api_management_v1_context_get",
@@ -10177,6 +10866,134 @@
           }
         },
         "summary": "Remove Device",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/tool-restriction": {
+      "put": {
+        "description": "Say which tools this device of mine never offers, whoever answers through it.\n\nIt only narrows: a tool the Owner's or the Companion's switches withhold\nstays withheld. Hub keeps it and ends the conversation this device is\nholding, so the next one starts without those tools. A device whose\noutputs were never decided is refused with ``output_policy_required``.",
+        "operationId": "put_device_tool_restriction_api_management_v1_devices__device_id__tool_restriction_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceToolRestrictionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceToolRestriction"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Device Tool Restriction",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/devices/{device_id}/tools": {
+      "get": {
+        "description": "Which tools my Eidolon could use through this device of mine.\n\nWhich device is proved from the inventory this Owner holds; the\nCompanion it answers as is read from the same row, and its restriction\nfrom Hub for the DeviceRef in that row, so none of it comes from the\nphone.",
+        "operationId": "get_device_tools_api_management_v1_devices__device_id__tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "device_id",
+            "required": true,
+            "schema": {
+              "title": "Device Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceToolsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Device Tools",
         "tags": [
           "management"
         ]
@@ -15801,6 +16618,112 @@
           }
         },
         "summary": "Close",
+        "tags": [
+          "management"
+        ]
+      }
+    },
+    "/api/management/v1/tools": {
+      "get": {
+        "operationId": "get_tools_api_management_v1_tools_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsOverviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Get Tools",
+        "tags": [
+          "management"
+        ]
+      },
+      "put": {
+        "operationId": "put_tools_api_management_v1_tools_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolPolicyChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolsOverviewView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            },
+            "description": "Any answer that is not a success. One shape for all of them: the status says how to treat it, `kind` says which refusal it is."
+          }
+        },
+        "summary": "Put Tools",
         "tags": [
           "management"
         ]

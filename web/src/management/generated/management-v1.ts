@@ -168,6 +168,30 @@ export interface CompanionSummaryView {
   updated_at: string
 }
 
+export interface CompanionToolRowView {
+  blocked_by: "reserved" | "global" | "body_control" | "companion" | null
+  body_control: boolean
+  companion_enabled: boolean
+  companion_overridden: boolean
+  default_enabled: boolean
+  effective: boolean
+  global_enabled: boolean
+  group: string
+  key: string
+  kind: string
+  label: string
+  requires: ToolRequirements
+  reserved: ToolReservation | null
+  summary: string
+}
+
+export interface CompanionToolsView {
+  allow_body_control: boolean
+  companion_id: string
+  revision: number
+  tools: Array<CompanionToolRowView>
+}
+
 export interface ControllerView {
   claimed_at: string
   controller_id: string
@@ -336,6 +360,34 @@ export interface DeviceSessionTarget {
 export interface DeviceStatusView {
   online: boolean
   state: Record<string, boolean | number | number | string | null>
+}
+
+export interface DeviceToolRestriction {
+  denied?: Array<string>
+  revision: number
+}
+
+export interface DeviceToolRestrictionRequest {
+  denied?: Array<string>
+  expected_revision: number
+}
+
+export interface DeviceToolRowView {
+  available: boolean
+  group: string
+  key: string
+  kind: string
+  label: string
+  reasons: Array<string>
+  requires: ToolRequirements
+  summary: string
+}
+
+export interface DeviceToolsView {
+  companion_id: string | null
+  device_id: string
+  restriction: DeviceToolRestriction | null
+  tools: Array<DeviceToolRowView>
 }
 
 export interface DeviceView {
@@ -1237,6 +1289,55 @@ export interface TeamWrite {
   expected_revision: number
 }
 
+export interface ToolCompanionSwitchView {
+  blocked_by: "reserved" | "global" | "body_control" | "companion" | null
+  companion_id: string
+  effective: boolean
+  enabled: boolean
+  name: string
+  revision: number
+}
+
+export interface ToolOverviewRowView {
+  companions: Array<ToolCompanionSwitchView>
+  default_enabled: boolean
+  global_enabled: boolean
+  global_overridden: boolean
+  group: string
+  host_available: boolean | null
+  key: string
+  kind: string
+  label: string
+  requires: ToolRequirements
+  reserved: ToolReservation | null
+  side_effect: boolean
+  summary: string
+}
+
+export interface ToolPolicyChange {
+  allow_body_control?: boolean | null
+  changes?: Record<string, unknown>
+  expected_revision: number
+}
+
+export interface ToolRequirements {
+  device_contracts?: Array<string>
+  host_feature?: string | null
+  inputs?: Record<string, string>
+  motion_profile?: string | null
+  outputs?: Array<string>
+}
+
+export interface ToolReservation {
+  reason: "interactive_session"
+}
+
+export interface ToolsOverviewView {
+  catalog_revision: string
+  revision: number
+  tools: Array<ToolOverviewRowView>
+}
+
 export interface TranscriptTurnView {
   finished_at?: string | null
   messages: Array<SpokenMessageView>
@@ -1380,6 +1481,8 @@ export interface ManagementResponses {
   'GET /api/management/v1/companions/{companion_id}/tasks/{task_id}': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/cancel': TaskView
   'POST /api/management/v1/companions/{companion_id}/tasks/{task_id}/retry': TaskView
+  'GET /api/management/v1/companions/{companion_id}/tools': CompanionToolsView
+  'PUT /api/management/v1/companions/{companion_id}/tools': CompanionToolsView
   'GET /api/management/v1/context': ManagementContextView
   'GET /api/management/v1/controllers': ControllersView
   'DELETE /api/management/v1/controllers/{controller_id}': ControllerView
@@ -1394,6 +1497,8 @@ export interface ManagementResponses {
   'PUT /api/management/v1/devices/{device_id}/outputs': DeviceView
   'GET /api/management/v1/devices/{device_id}/properties': DevicePropertiesView
   'POST /api/management/v1/devices/{device_id}/removal': DeviceRemovalView
+  'PUT /api/management/v1/devices/{device_id}/tool-restriction': DeviceToolRestriction
+  'GET /api/management/v1/devices/{device_id}/tools': DeviceToolsView
   'GET /api/management/v1/home': HomeView
   'GET /api/management/v1/host/monitor': HostMonitorWire
   'GET /api/management/v1/host/power': HostPowerStatusWire
@@ -1482,6 +1587,8 @@ export interface ManagementResponses {
   'POST /api/management/v1/teams/{team_id}/runs': RoleGroupStatus
   'GET /api/management/v1/teams/{team_id}/runs/{session_id}': RoleGroupStatus
   'POST /api/management/v1/teams/{team_id}/runs/{session_id}/close': RoleGroupStatus
+  'GET /api/management/v1/tools': ToolsOverviewView
+  'PUT /api/management/v1/tools': ToolsOverviewView
   'GET /api/management/v1/voiceprints': VoiceprintCollection
   'POST /api/management/v1/voiceprints/captures': VoiceCaptureSession
   'DELETE /api/management/v1/voiceprints/captures/{capture_id}': unknown

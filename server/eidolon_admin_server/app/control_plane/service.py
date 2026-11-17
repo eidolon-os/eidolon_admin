@@ -35,6 +35,8 @@ from .contracts import (
     ControllerClaimQuery,
     ControllerDeviceOutputPolicyQuery,
     ControllerDeviceOutputPolicyUpdate,
+    ControllerDeviceToolRestrictionQuery,
+    ControllerDeviceToolRestrictionUpdate,
     ControllerEnrollmentDecisionIntent,
     ControllerEnrollmentQuery,
     ControllerBodyAssignment,
@@ -62,6 +64,11 @@ from eidolon_sdk.biz.presentation import DeviceOutputPolicy
 from eidolon_sdk.biz.presentation.device import (
     DeviceOutputConfiguration,
     ReadDeviceOutputPolicy,
+)
+from eidolon_sdk.biz.tools import (
+    DeviceToolRestriction,
+    DeviceToolRestrictionConfiguration,
+    ReadDeviceToolRestriction,
 )
 
 from .admission_intents import (
@@ -757,6 +764,38 @@ class ControlPlaneService:
                 actor=payload.actor,
                 business_owner_id=payload.business_owner_id,
                 target_device_ref=payload.policy.device_ref,
+            ),
+        )
+
+    async def read_device_tool_restriction(
+        self, *, payload: ControllerDeviceToolRestrictionQuery
+    ) -> DeviceToolRestrictionConfiguration:
+        issuer = self._admission_issuer()
+        return await self.hub.read_device_tool_restriction(
+            query=ReadDeviceToolRestriction(device_ref=payload.device_ref),
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+                target_device_ref=payload.device_ref,
+            ),
+        )
+
+    async def set_device_tool_restriction(
+        self, *, payload: ControllerDeviceToolRestrictionUpdate
+    ) -> DeviceToolRestriction:
+        """Carry the Owner's restriction to Hub, which compares and keeps it.
+
+        Like the output policy: the command carries the revision it expects,
+        so a repeat is the same write or a refused one.
+        """
+
+        issuer = self._admission_issuer()
+        return await self.hub.set_device_tool_restriction(
+            command=payload.restriction,
+            authorization=issuer.issue_admission_context(
+                actor=payload.actor,
+                business_owner_id=payload.business_owner_id,
+                target_device_ref=payload.restriction.device_ref,
             ),
         )
 

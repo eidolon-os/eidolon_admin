@@ -468,6 +468,8 @@ def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> N
         "ControllerClaimQuery",
         "ControllerDeviceOutputPolicyQuery",
         "ControllerDeviceOutputPolicyUpdate",
+        "ControllerDeviceToolRestrictionQuery",
+        "ControllerDeviceToolRestrictionUpdate",
         "ControllerEnrollmentDecisionIntent",
         "ControllerWithdrawalRequest",
     }
@@ -477,6 +479,7 @@ def test_every_controller_command_checks_the_owner_and_the_scope_it_needs() -> N
             "device.read",
             "device.claim.approve",
             "device.output-policy.write",
+            "device.tool-restriction.write",
         }
         # And the check itself is inherited, never re-implemented.
         assert "_authority" not in vars(command)

@@ -14,6 +14,7 @@ from eidolon_sdk.biz.presentation.device import (
     SetDeviceOutputPolicy,
 )
 from eidolon_sdk.biz.contracts.refusal import Refusal, RefusalKind
+from eidolon_sdk.biz.tools import SetDeviceToolRestriction
 from eidolon_sdk.device_foundation.v1 import (
     BusinessOwnerId,
     ClaimQuery,
@@ -703,6 +704,35 @@ class ControllerDeviceOutputPolicyUpdate(ControllerCommand):
 
     def target_owner_domain_id(self) -> OwnerDomainId:
         return self.policy.device_ref.owner_domain_id
+
+
+class ControllerDeviceToolRestrictionQuery(ControllerCommand):
+    """Read which tools one device never offers a session."""
+
+    required_scope: ClassVar[str] = "device.read"
+
+    business_owner_id: BusinessOwnerId
+    device_ref: DeviceRef
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.device_ref.owner_domain_id
+
+
+class ControllerDeviceToolRestrictionUpdate(ControllerCommand):
+    """The Owner's decision about which tools one device never offers.
+
+    Its own scope beside the output policy's: what a device may present and
+    which of its Companion's tools a session on it may use are two decisions,
+    each the Hub aggregate's to compare and store.
+    """
+
+    required_scope: ClassVar[str] = "device.tool-restriction.write"
+
+    business_owner_id: BusinessOwnerId
+    restriction: SetDeviceToolRestriction
+
+    def target_owner_domain_id(self) -> OwnerDomainId:
+        return self.restriction.device_ref.owner_domain_id
 
 
 class ControllerEnrollmentDecisionIntent(ControllerCommand):

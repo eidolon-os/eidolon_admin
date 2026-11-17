@@ -22,6 +22,7 @@ from eidolon_sdk.device_foundation.v1 import DeviceRef
 from eidolon_sdk.biz.contracts.refusal import Refusal
 from eidolon_sdk.biz.presentation import InputSelection, OutputSelection
 from eidolon_sdk.biz.presentation.negotiation import output_policy_required
+from eidolon_sdk.biz.tools import MAX_RESTRICTED, DeviceToolRestriction, ToolKey
 from eidolon_sdk.biz.persona import (
     ConversationPreferences,
     PersonaAuthoring,
@@ -1559,6 +1560,21 @@ class DeviceOutputsRequest(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class DeviceToolRestrictionRequest(BaseModel):
+    """Which of its Companion's tools this device never offers, decided by its Owner.
+
+    The whole list each time, not a change: a restriction is short, and the
+    revision makes a write against a list this phone was not looking at a 409.
+    Which device is named by the path and proved by the Host; the phone never
+    sends a DeviceRef.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=0)
+    denied: list[ToolKey] = Field(default_factory=list, max_length=MAX_RESTRICTED)
+
+
 class DevicesView(BaseModel):
     """Every device this Owner holds, and what this list does not know.
 
@@ -1757,6 +1773,12 @@ class OwnerDevicePort(Protocol):
         allowed,
         expected_revision: int,
         inputs=None,
+    ): ...
+
+    async def read_device_tool_restriction(self, *, session, device_ref): ...
+
+    async def set_device_tool_restriction(
+        self, *, session, device_id: str, expected_revision: int, denied
     ): ...
 
 
@@ -2433,6 +2455,32 @@ def register_management_routes(
         except ManagementBackendError as exc:
             raise _refused(exc) from exc
         return _device_view(device, await _companion_names(backend, session.owner_id))
+
+    @router.put(
+        "/devices/{device_id}/tool-restriction", response_model=DeviceToolRestriction
+    )
+    async def put_device_tool_restriction(
+        device_id: str,
+        payload: DeviceToolRestrictionRequest,
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> DeviceToolRestriction:
+        """Say which tools this device of mine never offers, whoever answers through it.
+
+        It only narrows: a tool the Owner's or the Companion's switches withhold
+        stays withheld. Hub keeps it and ends the conversation this device is
+        holding, so the next one starts without those tools. A device whose
+        outputs were never decided is refused with ``output_policy_required``.
+        """
+        session = await authenticated_controller_session(authorization)
+        try:
+            return await devices.set_device_tool_restriction(
+                session=session,
+                device_id=device_id,
+                expected_revision=payload.expected_revision,
+                denied=payload.denied,
+            )
+        except ManagementBackendError as exc:
+            raise _refused(exc) from exc
 
     @router.post("/devices/{device_id}/removal", response_model=DeviceRemovalView)
     async def remove_device(
@@ -3598,6 +3646,11 @@ def register_management_routes(
     from .speech_voices import register_speech_voice_routes
 
     register_speech_voice_routes(router, backend, authenticated_owner, _refused)
+    from .tools import register_tool_routes
+
+    register_tool_routes(
+        router, backend, authenticated_owner, authenticated_controller_session, devices, _refused
+    )
     app.include_router(router)
 
 

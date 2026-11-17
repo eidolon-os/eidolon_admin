@@ -18,6 +18,7 @@ with holes in it is worse than a history with an unfamiliar line in it.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -36,6 +37,10 @@ _DETAIL_FIELDS: dict[str, tuple[str, ...]] = {
         "previous_companion_id",
         "reason",
     ),
+    # Which switches moved: a tool key to true, false, or null for "back to
+    # its default", carried as the JSON object it was written as.
+    "owner.tool_policy.changed": ("changes",),
+    "companion.tool_policy.changed": ("changes", "allow_body_control"),
 }
 
 
@@ -153,7 +158,14 @@ def _detail(
         value = payload.get(field)
         if value is None:
             continue
-        detail[field] = str(value)
+        # A string is the sentence's own word; anything else (a map of switches,
+        # a boolean) travels as JSON, which a client can read back, rather than
+        # as Python's spelling of it.
+        detail[field] = (
+            value
+            if isinstance(value, str)
+            else json.dumps(value, ensure_ascii=False, sort_keys=True)
+        )
         # A companion id in a detail is as unreadable as one in a subject, so it
         # gets the same treatment.
         if field.endswith("companion_id"):
