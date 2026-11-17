@@ -96,6 +96,8 @@ class CompanionSwitch(_View):
     #: The Companion's own value, kept when the Owner's switch is off.
     enabled: bool
     effective: bool
+    #: The first layer that keeps the tool from it (SDK ``blocked_by``).
+    blocked_by: BlockedBy | None
 
 
 class OverviewTool(_View):
@@ -289,7 +291,8 @@ def _overview(catalog: ToolCatalog, state: OwnerToolPolicyState, names: dict[str
                         companion_id=c.companion_id, name=names[c.companion_id],
                         revision=c.policy.revision,
                         enabled=_switch(c.policy, entry),
-                        effective=blocked_by(entry, state.policy, c.policy) is None,
+                        effective=(layer := blocked_by(entry, state.policy, c.policy)) is None,
+                        blocked_by=layer,
                     )
                     for c in companions
                 ],

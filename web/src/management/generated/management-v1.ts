@@ -1290,6 +1290,7 @@ export interface TeamWrite {
 }
 
 export interface ToolCompanionSwitchView {
+  blocked_by: "reserved" | "global" | "body_control" | "companion" | null
   companion_id: string
   effective: boolean
   enabled: boolean

@@ -7419,6 +7419,23 @@
       "ToolCompanionSwitchView": {
         "additionalProperties": false,
         "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reserved",
+                  "global",
+                  "body_control",
+                  "companion"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By"
+          },
           "companion_id": {
             "title": "Companion Id",
             "type": "string"
@@ -7446,7 +7463,8 @@
           "name",
           "revision",
           "enabled",
-          "effective"
+          "effective",
+          "blocked_by"
         ],
         "title": "ToolCompanionSwitchView",
         "type": "object"

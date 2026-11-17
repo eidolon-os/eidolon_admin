@@ -229,6 +229,8 @@ async def test_the_owners_switch_off_turns_every_companion_off_and_keeps_their_o
     clock = _row(view, "get_time")
     assert (clock.global_enabled, clock.global_overridden) == (True, False)
     assert [c.effective for c in clock.companions] == [True, True]
+    # Which switch holds each one back is the SDK's answer, not the phone's guess.
+    assert [c.blocked_by for c in weather.companions] == ["global", "global"]
 
 
 async def test_turning_the_owners_switch_back_on_restores_each_companions_choice():
@@ -243,6 +245,7 @@ async def test_turning_the_owners_switch_back_on_restores_each_companions_choice
     assert view.revision == 2
     assert (weather.global_enabled, weather.global_overridden) == (True, False)
     assert [(c.enabled, c.effective) for c in weather.companions] == [(True, True), (False, False)]
+    assert [c.blocked_by for c in weather.companions] == [None, "companion"]
 
 
 async def test_tools_are_ordered_by_group_then_key_with_reserved_tools_last():
@@ -257,6 +260,7 @@ async def test_tools_are_ordered_by_group_then_key_with_reserved_tools_last():
     reserved = _row(view, "delegate_to_coworker")
     assert reserved.reserved == ToolReservation(reason="interactive_session")
     assert not any(c.effective for c in reserved.companions)
+    assert {c.blocked_by for c in reserved.companions} == {"reserved"}
 
 
 async def test_companion_names_come_from_every_roster_page_and_only_named_companions_show():

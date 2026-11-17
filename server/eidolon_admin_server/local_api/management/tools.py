@@ -39,6 +39,9 @@ class ToolCompanionSwitchView(_View):
     enabled: bool
     #: Whether this Companion may use the tool now, all switches considered.
     effective: bool
+    #: Which switch keeps it from this Companion: reserved, global,
+    #: body_control or companion; null when none does.
+    blocked_by: BlockedBy | None
 
 
 class ToolOverviewRowView(_View):
